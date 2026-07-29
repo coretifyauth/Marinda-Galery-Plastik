@@ -125,8 +125,26 @@ create policy user_roles_select_self on user_roles
   for select using (user_id = auth.uid());
 ```
 
+## Grants + RLS `roles` (migration 0002, ditambah setelah deploy pertama)
+
+Project Supabase disetup dengan **"Automatically expose new tables" dimatikan** (keputusan sadar — kontrol akses manual, gak mau tabel baru otomatis ke-expose sebelum RLS-nya jelas). Konsekuensinya: tabel baru gak otomatis dapat *grant* privilege Postgres ke role `anon`/`authenticated`. Tanpa grant ini, PostgREST nolak request duluan (`permission denied for table ...`) sebelum sempat ngecek RLS policy — jadi grant dan RLS dua lapis yang **sama-sama wajib ada**, bukan salah satu doang.
+
+```sql
+grant select, insert, update on accounts to authenticated;
+grant select on user_roles to authenticated;
+grant select on roles to authenticated;
+```
+
+Ketauan juga waktu deploy pertama: tabel `roles` di migration 0001 belum ada RLS sama sekali (celah dari draft awal — harusnya tiap tabel wajib RLS sejak awal per `docs/architecture/app/tech-stack-decisions.md`). Ditutup di migration 0002: read-only buat `authenticated`, gak ada policy insert/update/delete (assign role baru tetap manual/migration, bukan lewat client).
+
+```sql
+alter table roles enable row level security;
+
+create policy roles_select on roles
+  for select using (auth.role() = 'authenticated');
+```
+
 ## Belum termasuk (dependency ke modul lain)
 
-- Trigger "published lock" (`code`/`category`/`normal_balance`/`parent_id` terkunci setelah dipakai transaksi) — butuh `journal_lines`, dibuat pas modul Journal Entry.
-- Trigger "leaf-only posting" (tolak posting ke akun yang masih punya child/header account) — juga butuh `journal_lines`, dibuat bareng trigger di atas. Ref konsep: `docs/domain/human/chart-of-accounts.md` bagian Struktur Hierarkikal.
+- ~~Trigger "published lock"~~ dan ~~trigger "leaf-only posting"~~ — **selesai**, dibangun di `docs/architecture/data/journal-entry-schema.md` (Fase 2, sekarang `journal_lines` udah ada). Sekalian nambah 1 trigger baru (`accounts_no_retroactive_header`) buat nutup edge case yang ketemu pas desain Fase 2: akun leaf yang udah keposting gak boleh diam-diam jadi header lewat child baru.
 - Policy admin buat assign role user lain — butuh `security definer` function biar gak circular-check ke tabel sendiri. Digarap pas ada screen user management.

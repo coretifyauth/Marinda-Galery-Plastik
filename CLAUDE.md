@@ -8,7 +8,7 @@ Read [AGENT.md](AGENT.md) first, every session — it defines the agent persona,
 
 ## Project state
 
-No code scaffolded yet (`modules/` is empty, no `package.json`). Before writing any code, check whether `/docs` exists yet — AGENT.md says it grows organically as modules are built, not pre-scaffolded. If `/docs/brief.md` exists, read it first for the current map of `/docs`.
+Next.js app scaffolded (App Router, TypeScript strict, Tailwind), Supabase client + Zod + Vitest installed. Chart of Accounts migration written at `supabase/migrations/0001_coa_schema.sql`, not yet applied to a live Supabase project (needs `.env.local` from `.env.local.example` + a linked/local Supabase instance). Check `/docs` before writing any code — it grows organically as modules are built. Read `/docs/brief.md` first for the current map.
 
 ## Non-negotiable process (from AGENT.md)
 
@@ -24,6 +24,6 @@ No code scaffolded yet (`modules/` is empty, no `package.json`). Before writing 
 - Every transaction traceable to a source document.
 - Money as integer cents or Decimal — never float.
 
-## Tech stack (once scaffolded)
+## Tech stack
 
-Next.js (App Router) + TypeScript strict, PostgreSQL + Prisma, Zod, NextAuth (if roles needed), Vitest/Jest. API routes at `/app/api/[module]/route.ts`. Financial writes wrapped in Prisma `$transaction` — no partial writes.
+Next.js (App Router) + TypeScript strict, Supabase (Postgres + Auth + RLS) via `@supabase/supabase-js` — no Prisma, no NextAuth (see `docs/architecture/app/tech-stack-decisions.md`). Zod, Vitest. API routes at `/app/api/[module]/route.ts`. Financial writes wrapped in a Postgres RPC (`supabase.rpc(...)`) — no partial writes.
