@@ -33,8 +33,11 @@ function buildTree(accounts: Account[]): TreeNode[] {
 function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
   return (
     <>
-      <tr className="border-b border-slate-100">
-        <td className="py-2 pr-4 font-mono text-sm" style={{ paddingLeft: depth * 20 }}>
+      <tr className="border-b border-slate-100 text-sm hover:bg-slate-50">
+        <td className="w-8 py-2 pl-4">
+          <input type="checkbox" className="rounded border-slate-300" />
+        </td>
+        <td className="py-2 pr-4 font-mono" style={{ paddingLeft: depth * 20 }}>
           {node.code}
         </td>
         <td className="py-2 pr-4">{node.name}</td>
@@ -46,6 +49,10 @@ function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
       ))}
     </>
   );
+}
+
+function countNodes(nodes: TreeNode[]): number {
+  return nodes.reduce((sum, n) => sum + 1 + countNodes(n.children), 0);
 }
 
 export default function AccountsPage() {
@@ -62,6 +69,9 @@ export default function AccountsPage() {
   const [parentId, setParentId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [showFilter, setShowFilter] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
 
   const loadAccounts = useCallback(async () => {
     const { data, error } = await supabase
@@ -120,6 +130,7 @@ export default function AccountsPage() {
     setCode("");
     setName("");
     setParentId("");
+    setShowForm(false);
     await loadAccounts();
   }
 
@@ -127,7 +138,10 @@ export default function AccountsPage() {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
 
-  const tree = buildTree(accounts);
+  const filteredAccounts = categoryFilter
+    ? accounts.filter((a) => a.category === categoryFilter)
+    : accounts;
+  const tree = buildTree(filteredAccounts);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
@@ -144,32 +158,79 @@ export default function AccountsPage() {
 
       {loadError && <p className="text-sm text-red-600">{loadError}</p>}
 
-      <table className="w-full text-left">
-        <thead>
-          <tr className="border-b border-slate-200 text-sm text-slate-500">
-            <th className="py-2 pr-4 font-medium">Kode</th>
-            <th className="py-2 pr-4 font-medium">Nama</th>
-            <th className="py-2 pr-4 font-medium">Kategori</th>
-            <th className="py-2 pr-4 font-medium">Normal Balance</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tree.map((node) => (
-            <TreeRow key={node.id} node={node} depth={0} />
-          ))}
-        </tbody>
-      </table>
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-black">Chart of Accounts</span>
+            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+              {countNodes(tree)}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button variant="toolbar" onClick={() => setShowFilter((v) => !v)}>
+              Filter
+            </Button>
+            <Button variant="toolbar" onClick={() => loadAccounts()}>
+              Refresh
+            </Button>
+            {canWrite && (
+              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+                + New
+              </Button>
+            )}
+          </div>
+        </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-4 font-semibold text-black">Tambah Akun</h2>
-        {!canWrite && (
-          <p className="mb-4 text-sm text-amber-600">
-            Kamu belum punya role admin/accountant — submit di bawah kemungkinan
-            bakal ketolak RLS. Ini expected behavior, bukan bug (lihat
-            docs/story/chart-of-accounts.md).
-          </p>
+        {showFilter && (
+          <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2">
+            <Label htmlFor="category_filter" className="text-xs">
+              Kategori
+            </Label>
+            <Select
+              id="category_filter"
+              className="w-40"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+            >
+              <option value="">Semua</option>
+              {accountCategories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </Select>
+          </div>
         )}
-        <form onSubmit={handleCreate} className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="w-8 py-2 pl-4" />
+              <th className="py-2 pr-4">Kode</th>
+              <th className="py-2 pr-4">Nama</th>
+              <th className="py-2 pr-4">Kategori</th>
+              <th className="py-2 pr-4">Normal Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tree.map((node) => (
+              <TreeRow key={node.id} node={node} depth={0} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {showForm && (
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="mb-4 font-semibold text-black">Tambah Akun</h2>
+          {!canWrite && (
+            <p className="mb-4 text-sm text-amber-600">
+              Kamu belum punya role admin/accountant — submit di bawah kemungkinan
+              bakal ketolak RLS. Ini expected behavior, bukan bug (lihat
+              docs/story/chart-of-accounts.md).
+            </p>
+          )}
+          <form onSubmit={handleCreate} className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="code">Kode</Label>
             <Input
@@ -219,12 +280,13 @@ export default function AccountsPage() {
             {submitting ? "Menyimpan..." : "Simpan"}
           </Button>
         </form>
-        {formError && (
-          <div className="mt-3">
-            <FormError>{formError}</FormError>
-          </div>
-        )}
-      </div>
+          {formError && (
+            <div className="mt-3">
+              <FormError>{formError}</FormError>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

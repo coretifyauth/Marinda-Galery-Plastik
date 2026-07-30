@@ -62,7 +62,7 @@ export default function LoginPage() {
         </Button>
         <p className="text-sm text-slate-500">
           Belum punya akun?{" "}
-          <Link href="/signup" className="font-medium text-amber-600 underline">
+          <Link href="/signup" className="font-medium text-blue-600 underline">
             Daftar
           </Link>
         </p>

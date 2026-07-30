@@ -73,7 +73,7 @@ export default function SignupPage() {
         </Button>
         <p className="text-sm text-slate-500">
           Sudah punya akun?{" "}
-          <Link href="/login" className="font-medium text-amber-600 underline">
+          <Link href="/login" className="font-medium text-blue-600 underline">
             Masuk
           </Link>
         </p>

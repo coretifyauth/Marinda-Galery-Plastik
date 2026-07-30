@@ -1,6 +1,6 @@
 # Form Components & Background — Design Reference
 
-Lanjutan dari `admin-shell-design.md` (masih 1 warna aksen dominan, kartu putih rounded, shadow lembut). Ini bagian form-nya — dipakai di semua halaman yang ada input (login, signup, tambah data, dst), biar gak ada 3 gaya input beda di 3 halaman.
+Lanjutan dari `admin-shell-design.md` (sekarang pola ERPNext: list-view padat + detail-view polos, bukan card-grid). Warna aksen di dokumen ini di-supersede jadi ERPNext blue (lihat bagian "Warna aksen" di bawah) — masih 1 warna aksen dominan, bukan multi-warna. Bagian form-nya dipakai di semua halaman yang ada input (login, signup, tambah data, dst), biar gak ada 3 gaya input beda di 3 halaman.
 
 ## Background
 
@@ -11,7 +11,9 @@ Lanjutan dari `admin-shell-design.md` (masih 1 warna aksen dominan, kartu putih 
 
 ## Warna aksen
 
-Tetap 1 warna aksen dominan: **amber-500** (dari sidebar/topbar yang udah dibangun). Dipakai buat: tombol primary, focus ring input, link aktif. Jangan nambah warna aksen kedua.
+**Ganti dari amber-500 ke blue-600** (`#2490EF`-ish, ERPNext brand blue) — supersede versi lama. Tetap 1 warna aksen dominan, dipakai buat: tombol primary, focus ring input, link aktif, item sidebar aktif. Jangan nambah warna aksen kedua.
+
+Migrasi: semua `amber-500`/`amber-600`/`amber-500/40` di komponen existing (`src/components/ui/*`, `sidebar.tsx`, `topbar.tsx`) diganti `blue-600`/`blue-700`/`blue-600/40` pas implementasi jalan.
 
 ## Komponen
 
@@ -25,7 +27,7 @@ text-sm font-medium text-slate-700
 ```
 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm
 placeholder:text-slate-400
-focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:border-amber-500
+focus:outline-none focus:ring-2 focus:ring-blue-600/40 focus:border-blue-600
 ```
 
 ### Select
@@ -34,8 +36,8 @@ Sama kayak input di atas (border, radius, focus ring) — biar visual konsisten,
 ### Button — Primary
 Aksi utama sebuah form (submit, simpan). Cuma 1 per form.
 ```
-rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white
-hover:bg-amber-600
+rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white
+hover:bg-blue-700
 disabled:opacity-50 disabled:cursor-not-allowed
 ```
 
@@ -44,6 +46,18 @@ Aksi sekunder (batal, keluar, aksi non-destruktif lain).
 ```
 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700
 hover:bg-slate-50
+```
+
+### Button — Toolbar (list view)
+Tombol kecil di toolbar list view (`+ New`, Filter, Sort, Refresh) — lihat `admin-shell-design.md` poin 2. Lebih kecil dari button form biasa, dipakai berjejer.
+```
+rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600
+hover:bg-slate-50
+```
+Varian `+ New` (primary di toolbar):
+```
+rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white
+hover:bg-blue-700
 ```
 
 ### Form error text

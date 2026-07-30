@@ -30,7 +30,7 @@ export function Topbar() {
   }
 
   return (
-    <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+    <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-4">
       <nav className="text-sm text-slate-500">
         {breadcrumb.map((crumb, i) => (
           <span key={crumb}>
@@ -45,7 +45,7 @@ export function Topbar() {
           onClick={() => setMenuOpen((v) => !v)}
           className="flex items-center gap-2 rounded-full text-sm"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500 text-sm font-medium text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-sm font-medium text-white">
             {email ? email[0].toUpperCase() : "?"}
           </span>
           <span className="hidden max-w-[10rem] truncate text-slate-700 sm:inline">{email}</span>

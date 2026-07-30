@@ -116,13 +116,13 @@ export default function GeneralLedgerPage() {
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-slate-500">
-                <th className="px-4 py-2 font-medium">Tanggal</th>
-                <th className="px-4 py-2 font-medium">Deskripsi</th>
-                <th className="px-4 py-2 font-medium">Source Ref</th>
-                <th className="px-4 py-2 text-right font-medium">Debit</th>
-                <th className="px-4 py-2 text-right font-medium">Kredit</th>
-                <th className="px-4 py-2 text-right font-medium">Saldo Berjalan</th>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Deskripsi</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2 text-right">Debit</th>
+                <th className="px-4 py-2 text-right">Kredit</th>
+                <th className="px-4 py-2 text-right">Saldo Berjalan</th>
               </tr>
             </thead>
             <tbody>
@@ -141,7 +141,7 @@ export default function GeneralLedgerPage() {
                 </tr>
               )}
               {rows.map((row) => (
-                <tr key={row.id} className="border-b border-slate-100">
+                <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="whitespace-nowrap px-4 py-2">
                     {row.journal_entries.entry_date}
                   </td>

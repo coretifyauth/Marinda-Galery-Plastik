@@ -31,6 +31,7 @@ export default function JournalEntriesPage() {
   const [lines, setLines] = useState<LineInput[]>([emptyLine(), emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
   const leafAccounts = getLeafAccounts(accounts);
 
@@ -130,6 +131,7 @@ export default function JournalEntriesPage() {
     setDescription("");
     setSourceRef("");
     setLines([emptyLine(), emptyLine()]);
+    setShowForm(false);
     await loadEntries();
   }
 
@@ -152,21 +154,43 @@ export default function JournalEntriesPage() {
       {loadError && <FormError>{loadError}</FormError>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-black">Journal Entries</span>
+            <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+              {entries.length}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button variant="toolbar" onClick={() => loadEntries()}>
+              Refresh
+            </Button>
+            {canWrite && (
+              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+                + New
+              </Button>
+            )}
+          </div>
+        </div>
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b border-slate-200 text-slate-500">
-              <th className="px-4 py-2 font-medium">Tanggal</th>
-              <th className="px-4 py-2 font-medium">Deskripsi</th>
-              <th className="px-4 py-2 font-medium">Source Ref</th>
-              <th className="px-4 py-2 font-medium">Baris</th>
-              <th className="px-4 py-2 text-right font-medium">Total</th>
+            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="w-8 px-4 py-2" />
+              <th className="px-4 py-2">Tanggal</th>
+              <th className="px-4 py-2">Deskripsi</th>
+              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Baris</th>
+              <th className="px-4 py-2 text-right">Total</th>
             </tr>
           </thead>
           <tbody>
             {entries.map((entry) => {
               const total = entry.journal_lines.reduce((sum, l) => sum + l.debit, 0);
               return (
-                <tr key={entry.id} className="border-b border-slate-100 align-top">
+                <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                  <td className="px-4 py-2">
+                    <input type="checkbox" className="rounded border-slate-300" />
+                  </td>
                   <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
                   <td className="px-4 py-2">
                     {entry.description}
@@ -197,7 +221,7 @@ export default function JournalEntriesPage() {
             })}
             {entries.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
                   Belum ada journal entry.
                 </td>
               </tr>
@@ -206,6 +230,7 @@ export default function JournalEntriesPage() {
         </table>
       </div>
 
+      {showForm && (
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="mb-4 font-semibold text-black">Tambah Journal Entry</h2>
         {!canWrite && (
@@ -313,6 +338,7 @@ export default function JournalEntriesPage() {
           </Button>
         </form>
       </div>
+      )}
     </div>
   );
 }

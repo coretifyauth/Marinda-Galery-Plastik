@@ -1,33 +1,41 @@
-# Admin Shell & Entity Detail Page — Design Reference
+# Admin Shell, List View & Detail View — Design Reference
 
 ## Sumber
 
-Screenshot referensi dashboard HR SaaS ("HRMent" — halaman detail staff) yang dikasih user. Yang diambil di sini cuma **pola struktural/visual**-nya, BUKAN konten HR-nya — field "Education information", "Marital status", dll gak relevan ke domain akuntansi kita. Kalau bikin halaman detail buat entity kita sendiri (Account, Journal Entry, dst), pola di bawah ini yang jadi acuan, isinya menyesuaikan domain.
+Supersede reference lama (HRMent card-dashboard style — lihat git history file ini kalau perlu balikin). Acuan sekarang: pola visual & struktural **ERPNext/Frappe desk**, bukan konten HR-nya — pola list-view/detail-view generic-nya yang dipake buat entity kita (Account, Journal Entry, dst).
 
-## 1. App Shell (berlaku di semua halaman, gak cuma detail page)
+Kenapa ganti: ERPNext dirancang buat data operasional padat (banyak baris, banyak field, banyak entity terkait) — cocok sama sifat data akuntansi (COA bisa ratusan akun, journal entries ribuan baris). Pola card-dashboard HRMent lebih pas buat data personal (1 staff = 1 halaman rich), bukan buat tabel transaksi.
 
-- **Sidebar kiri persisten** — logo+nama app di atas, list menu utama (icon+label), beberapa item collapsible (chevron di kanan buat submenu).
-- **Item menu aktif** ditandai warna aksen + garis vertikal tipis di kiri item — bukan cuma ganti warna teks doang.
-- **Top bar** — kiri: konteks organisasi/workspace yang lagi aktif (kalau nanti multi-entity/multi-cabang). Kanan: ikon notifikasi + user menu (avatar + nama + chevron dropdown).
-- **Breadcrumb** di bawah top bar: `Modul / Sub-list / Detail` — jejak navigasi hierarkis, bukan cuma judul halaman polos.
+## 1. App Shell
 
-## 2. Entity Detail Page — pola reusable
+- **Sidebar kiri persisten, ramping** — logo+nama app di atas. Di bawahnya list modul (Accounting, Journal Entries, General Ledger, dst), tiap modul = 1 baris icon+label, flat (bukan kartu). Modul yang collapsible expand jadi sub-list item indented (contoh: "Accounting" expand ke "Chart of Accounts", "Journal Entries", "General Ledger").
+- **Item aktif**: background abu-abu muda (`bg-slate-100`) di baris itu + teks jadi warna aksen/bold — bukan garis vertikal tebal, bukan pill.
+- **Top bar tipis** — kiri: breadcrumb (`Module / List / Detail`). Kanan: search global (icon kaca pembesar, expand jadi input), lalu notifikasi, lalu avatar+nama user (dropdown: profile/settings/logout). Top bar TIDAK berat/tinggi — ERPNext top bar cuma ~48-56px, beda dari HRMent yang lebih tebal.
+- Breadcrumb selalu ada, bahkan di halaman list (`Accounting / Chart of Accounts`) — bukan cuma muncul di detail page.
 
-Ini yang paling kepake ulang ke depan (Account detail, Journal Entry detail, nanti Customer/Vendor pas AR/AP):
+## 2. List View — pola default buat semua data tabular
 
-- **Tab horizontal** di bawah breadcrumb, mecah 1 entity jadi beberapa sub-view (di reference: Staff profile/Work information/Timesheet/Contracts/Payroll/Company assets). Dipakai kalau 1 entity punya beberapa "wajah" berbeda yang gak muat/gak related ditumpuk 1 halaman.
-- **Header row** di atas (bukan di dalam kartu) — identitas utama entity: avatar/icon + nama + subtitle (role/kategori), plus beberapa field kunci rata kanan (ID, kontak). Ini ringkasan cepat, bukan detail lengkap.
-- **Body berupa grid kartu** — tiap kartu putih rounded = **1 kelompok informasi tematik** (contoh: "Personal information", "Education information", "Account information"). Jangan 1 kartu raksasa isi semua field.
-- **Ikon pensil (edit) di pojok kanan atas tiap kartu** — edit per-section, bukan 1 form besar buat seluruh entity.
-- **Di dalam kartu**: pola label-value berulang — label kecil abu-abu di atas, value bold hitam di bawah, disusun 2 kolom per baris.
+Ini pola utama ERPNext, dipake di HAMPIR SEMUA index halaman kita (`/accounts`, `/journal-entries`), gantiin pola card-grid lama.
 
-## 3. Visual style
+- **Toolbar tipis nempel langsung di atas tabel** (bukan di atas page): kiri judul list ("Chart of Accounts") + count badge (jumlah row), kanan sederet tombol kecil — `+ New` (primary, paling menonjol), Filter, Sort, Refresh, kolom-visibility (opsional). Semua tombol kecil (`text-sm`, padding tipis), bukan tombol besar.
+- **Filter sidebar kiri** (di dalam content area, bukan app sidebar) — opsional, muncul kalau user klik "Filter" atau kalau list-nya emang butuh (COA butuh filter by category/normal_balance). Kolom sempit (~200px), isi checkbox/dropdown per field yang bisa difilter.
+- **Tabel padat**: baris pendek (`py-2`, bukan `py-4`), font `text-sm`, border cuma horizontal antar baris (`border-b border-slate-100`) — TIDAK ada border vertikal antar kolom, TIDAK ada shadow per-row. Header kolom: `text-xs font-medium text-slate-500 uppercase`, background sedikit beda (`bg-slate-50`), sticky waktu scroll.
+- **Checkbox kolom pertama** tiap baris (buat bulk-select/bulk-action) — konsisten di semua list view, walau belum ada bulk action jalan (siapin strukturnya).
+- **Klik baris (bukan icon) navigasi ke detail** — seluruh row clickable, hover kasih `bg-slate-50`.
+- **Pagination/infinite scroll** di bawah tabel, bukan di tengah page — kompak, cuma "Load more" atau angka halaman kecil di kanan bawah.
+- List view TIDAK pakai kartu putih rounded per baris data (beda dari pola lama) — datanya tabel murni di dalam 1 container putih besar.
 
-- Background halaman abu-abu/biru sangat muda, kartu solid putih — kontras dari spacing & shadow lembut, bukan border tebal.
-- Rounded corner besar di kartu & sidebar container, shadow halus (bukan flat/hard-edge).
-- **1 warna aksen dominan doang** (di reference: orange) buat logo & state aktif/link — sisanya netral (hitam/abu-abu/putih). Jangan multi-warna random per section.
-- Avatar bulat; subtitle/kategori (misal jabatan/departemen) ditulis teks kecil warna aksen di bawah nama — bukan pill/badge kotak.
+## 3. Detail/Form View — pola buat 1 entity (Account detail, Journal Entry form)
+
+- **Header row di atas** (di luar body form): breadcrumb + judul entity (nama/kode akun) + tombol aksi kanan atas (`Save`, `Delete`/`Cancel`, status badge kalau ada seperti "Published"/"Draft").
+- **Body form**: field disusun 2 kolom per baris (label kecil abu-abu di atas, input/value di bawah), TAPI tanpa dipecah jadi banyak kartu kecil terpisah — 1 form section polos dalam 1 container putih, dipisah cuma pakai divider/spacing antar grup field, bukan card border+shadow tiap grup.
+- Field yang locked/published (lihat `state-naming-convention.md`) ditampilkan read-only dengan style abu-abu + ikon gembok kecil, bukan disembunyikan.
+- Untuk entity yang punya banyak related data (Journal Entry -> journal lines), related data ditampilkan sebagai **tabel editable inline di bawah form utama** (child table pattern ERPNext) — bukan tab terpisah, karena datanya bagian tak terpisah dari transaksi itu sendiri (harus keliatan bareng pas review balance debit=credit).
+- Tab horizontal cuma dipake kalau entity punya sub-view yang BENERAN independen & jarang diliat bareng (contoh: Account detail bisa punya tab "Ledger" buat lihat histori transaksi akun itu, terpisah dari tab "Details" form utamanya) — bukan default buat semua detail page.
 
 ## Kapan dipakai, kapan enggak
 
-Pola tab+card ini pas buat halaman **"lihat detail 1 entity yang punya banyak sub-informasi"**. Buat halaman lain (form input transaksi kayak Journal Entry baru, atau list/tabel COA yang udah kita bangun di `/accounts`) gak wajib dipaksa ikut pola ini — form input tetap 1 halaman form biasa, list tetap tabel. App shell (poin 1) tetap berlaku di semua halaman.
+- List view (poin 2): default buat semua index/listing halaman data (`/accounts`, `/journal-entries`).
+- Detail/form view (poin 3): dipake buat halaman tambah/edit/lihat 1 entity.
+- App shell (poin 1): berlaku di semua halaman tanpa kecuali.
+- Landing/dashboard halaman ringkasan (kalau nanti dibikin, misal financial report overview) boleh pakai kartu ringkasan/stat tile — itu bukan list data mentah, jadi gak wajib ikut pola tabel.
