@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpenCheck, ScrollText, BookOpenText, Users, FileText, HandCoins } from "lucide-react";
+import {
+  BookOpenCheck,
+  ScrollText,
+  BookOpenText,
+  Users,
+  FileText,
+  HandCoins,
+  Truck,
+  Receipt,
+  Banknote,
+} from "lucide-react";
 
 const navItems = [
   { href: "/accounts", label: "Chart of Accounts", icon: BookOpenCheck },
@@ -11,6 +21,9 @@ const navItems = [
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/ar-invoices", label: "AR Invoices", icon: FileText },
   { href: "/ar-payments", label: "AR Payments", icon: HandCoins },
+  { href: "/suppliers", label: "Suppliers", icon: Truck },
+  { href: "/ap-bills", label: "AP Bills", icon: Receipt },
+  { href: "/ap-payments", label: "AP Payments", icon: Banknote },
 ];
 
 export function Sidebar() {
