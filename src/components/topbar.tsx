@@ -9,6 +9,13 @@ const routeLabels: Record<string, string> = {
   "/accounts": "Chart of Accounts",
   "/journal-entries": "Journal Entries",
   "/general-ledger": "General Ledger",
+  "/items": "Items",
+  "/inventory": "Stock Position",
+  "/purchase-orders": "Purchase Orders",
+  "/goods-receipts": "Goods Receipts",
+  "/bom": "BOM",
+  "/production-orders": "Production Orders",
+  "/goods-issues": "Goods Issues",
 };
 
 export function Topbar() {
