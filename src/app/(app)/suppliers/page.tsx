@@ -130,7 +130,11 @@ export default function SuppliersPage() {
           </thead>
           <tbody>
             {suppliers.map((s) => (
-              <tr key={s.id} className="border-b border-slate-100 hover:bg-slate-50">
+              <tr
+                key={s.id}
+                className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                onClick={() => router.push(`/suppliers/${s.id}`)}
+              >
                 <td className="px-4 py-2 font-medium text-black">{s.name}</td>
                 <td className="px-4 py-2">{s.contact ?? "-"}</td>
                 <td className="px-4 py-2">{s.payment_term_days}</td>

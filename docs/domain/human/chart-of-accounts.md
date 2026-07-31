@@ -104,6 +104,63 @@ Modal awal Rp 10jt (Kas=10jt, Equity=10jt).
 - Bayar gaji cash Rp 500rb: Debit Beban Gaji 500rb, Kredit Kas 500rb → Equity ikut turun jadi 11,5jt
 - Asset akhir = 10jt+2jt-500rb = 11,5jt. Equity akhir = 10jt+2jt-500rb = 11,5jt. Balance.
 
+## Akun Kontra (Contra Account)
+
+Aturan normal balance di atas (tabel 5 kategori) punya 1 pengecualian yang disengaja: **akun kontra**. Kategorinya tetep ikut akun induknya, tapi arah normal balance-nya kebalik dari default kategori itu.
+
+**Definisi presisi:** akun kontra adalah akun yang normal balance-nya **tetap konsisten** (gak goyang-goyang, sama kayak akun biasa), tapi arahnya **berlawanan dari aturan default kategorinya sendiri**. Bukan "kadang debit kadang kredit" — begitu ditentukan arahnya, dia selalu konsisten ke arah itu, cuma arahnya beda dari saudara-saudara sekategorinya.
+
+Fungsinya: nampung **pengurang** dari akun pasangannya, tanpa menyentuh saldo akun pasangan itu — biar histori nilai kotor (gross) tetap utuh dan bisa ditelusur balik, sementara nilai bersih (net) tetap bisa dihitung dengan menjumlahkan keduanya.
+
+### Kalau Akun Kontra Gak Ada — Apa yang Rusak
+
+Simulasi: Motor Rp24.000.000, disusutkan Rp500.000/bulan, 3 bulan jalan, **tanpa** akun kontra (kredit langsung ke akun Motor):
+
+| Tanggal | Keterangan | Debit | Kredit | Saldo Motor |
+|---|---|---|---|---|
+| 1 Jan | Beli motor | 24.000.000 | | 24.000.000 |
+| 31 Jan | Penyusutan bulan 1 | | 500.000 | 23.500.000 |
+| 28 Feb | Penyusutan bulan 2 | | 500.000 | 23.000.000 |
+| 31 Mar | Penyusutan bulan 3 | | 500.000 | 22.500.000 |
+
+Saldo akun Motor sekarang `22.500.000` — angka campuran. Tanya "motor ini beli berapa dulu?" gak bisa dijawab dari saldo, harus gali ulang baris paling atas (makin susah kalau udah jalan bertahun-tahun, puluhan baris penyusutan).
+
+**Dengan** akun kontra (Akumulasi Penyusutan Motor, akun terpisah):
+
+Akun **Motor** (gak pernah disentuh lagi setelah akuisisi):
+
+| Tanggal | Keterangan | Debit | Kredit | Saldo |
+|---|---|---|---|---|
+| 1 Jan | Beli motor | 24.000.000 | | 24.000.000 |
+
+Akun **Akumulasi Penyusutan Motor** (baru, kategori asset, normal kredit — kebalik dari asset biasa):
+
+| Tanggal | Keterangan | Debit | Kredit | Saldo |
+|---|---|---|---|---|
+| 31 Jan-31 Mar | 3x penyusutan | | 500.000/bulan | 1.500.000 |
+
+Tanya "beli berapa dulu?" → langsung liat akun Motor: `24.000.000`. Tanya "udah disusutkan berapa?" → langsung liat Akumulasi Penyusutan: `1.500.000`. Nilai buku (`24.000.000 - 1.500.000 = 22.500.000`) sama persis kayak skenario tanpa kontra — **bukan soal angka akhir beda, soal informasi apa yang ketinggalan di jalan**.
+
+### Contoh Lain Lintas Kategori
+
+| Kategori Induk | Akun Biasa (normal) | Akun Kontra (normal kebalik) | Dipakai di Modul |
+|---|---|---|---|
+| Asset (normal debit) | Aset Tetap | **Akumulasi Penyusutan** (kredit) | Fixed Assets |
+| Asset (normal debit) | Piutang Usaha | **Cadangan Kerugian Piutang** (kredit) — estimasi piutang gak ketagih, piutang riil tetap utuh buat dasar nagih | AR (scope debt, belum dibangun) |
+| Revenue (normal kredit) | Pendapatan Penjualan | **Retur & Potongan Penjualan** (debit) — retur dicatat terpisah, gak langsung ngurangin Pendapatan | AR/AP (scope debt, belum dibangun) |
+
+Pola yang selalu berulang: kategori ikut induk, arah kebalik, fungsi selalu mengurangi nilai gross tanpa menghapus histori aslinya.
+
+### Analogi
+
+Akun biasa kayak "berat badan sekarang" — berdiri sendiri, punya makna tanpa perlu akun lain. Akun kontra kayak "total berat yang udah turun dari awal diet" — gak ada artinya sendirian (butuh tau berat awal buat masuk akal), tapi dua-duanya dibutuhin bareng buat tau "berat awal berapa" DAN "progress penurunan berapa".
+
+### Status di Project Ini
+
+Sampai fase Inventory (fase 5), COA project ini **belum punya** satupun akun kontra — semua akun asset yang lahir (Kas, Piutang, Persediaan, Aset Tetap) normal debit polos. `accounts.normal_balance` (`coa-schema.md`) masih **generated column** rigid: `category in ('asset','expense') → debit`, tanpa pengecualian — ini justru secara struktural **mencegah** siapapun keceplosan bikin akun kontra sebelum desainnya siap.
+
+Gap ini diselesaikan di Fase 6 (Fixed Assets): tambah kolom `accounts.is_contra` (boolean), rumus generated `normal_balance` ikut flag ini. Detail + DDL final: `docs/domain/human/fixed-assets.md`, `docs/architecture/data/fixed-assets-schema.md` (migration `0014_fixed_assets_schema.sql`), dan `docs/scope-debt/fixed-assets-akun-kontra-asset.md`. Migration udah ditulis, belum diterapkan ke instance Supabase beneran.
+
 ## Common Mistake
 
 - Bikin akun terlalu granular di awal (misal akun kas per meja kasir per cabang) — bikin COA bengkak, susah maintain. Solusi: pakai dimensi lain (cost center/department), bukan bikin akun baru.

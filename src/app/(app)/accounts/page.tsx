@@ -31,10 +31,14 @@ function buildTree(accounts: Account[]): TreeNode[] {
 }
 
 function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
+  const router = useRouter();
   return (
     <>
-      <tr className="border-b border-slate-100 text-sm hover:bg-slate-50">
-        <td className="w-8 py-2 pl-4">
+      <tr
+        className="cursor-pointer border-b border-slate-100 text-sm hover:bg-slate-50"
+        onClick={() => router.push(`/accounts/${node.id}`)}
+      >
+        <td className="w-8 py-2 pl-4" onClick={(e) => e.stopPropagation()}>
           <input type="checkbox" className="rounded border-slate-300" />
         </td>
         <td className="py-2 pr-4 font-mono" style={{ paddingLeft: depth * 20 }}>

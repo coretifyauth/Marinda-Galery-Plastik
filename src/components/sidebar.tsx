@@ -25,6 +25,7 @@ import {
   Wallet,
   CreditCard,
   Boxes,
+  Building2,
 } from "lucide-react";
 
 const navGroups = [
@@ -67,6 +68,11 @@ const navGroups = [
       { href: "/production-orders", label: "Production Orders", icon: Factory },
       { href: "/goods-issues", label: "Goods Issues", icon: PackageMinus },
     ],
+  },
+  {
+    label: "Fixed Assets",
+    icon: Building2,
+    items: [{ href: "/fixed-assets", label: "Fixed Assets", icon: Building2 }],
   },
 ];
 

@@ -153,7 +153,11 @@ export default function ItemsPage() {
             {items.map((item) => {
               const account = accounts.find((a) => a.id === item.inventory_account_id);
               return (
-                <tr key={item.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <tr
+                  key={item.id}
+                  className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                  onClick={() => router.push(`/items/${item.id}`)}
+                >
                   <td className="px-4 py-2 font-medium text-black">{item.name}</td>
                   <td className="px-4 py-2">
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">

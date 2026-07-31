@@ -34,6 +34,15 @@ Ini pola utama ERPNext, dipake di HAMPIR SEMUA index halaman kita (`/accounts`, 
 - Untuk entity yang punya banyak related data (Journal Entry -> journal lines), related data ditampilkan sebagai **tabel editable inline di bawah form utama** (child table pattern ERPNext) — bukan tab terpisah, karena datanya bagian tak terpisah dari transaksi itu sendiri (harus keliatan bareng pas review balance debit=credit).
 - Tab horizontal cuma dipake kalau entity punya sub-view yang BENERAN independen & jarang diliat bareng (contoh: Account detail bisa punya tab "Ledger" buat lihat histori transaksi akun itu, terpisah dari tab "Details" form utamanya) — bukan default buat semua detail page.
 
+## Detail Page — entity yang sudah diterapkan
+
+5 entity dikasih detail page (`/accounts/[id]`, `/customers/[id]`, `/suppliers/[id]`, `/items/[id]`, `/fixed-assets/[id]`), dipicu dari kebutuhan riil: informasi terkait 1 entity (histori transaksi, invoice+payment, lot stok, penyusutan) sebelumnya tersebar di halaman list LAIN (harus dicari manual), bukan dari keputusan desain di awal.
+
+- **Pola implementasi**: tiap route `[id]` punya `page.tsx` (Server Component tipis, cuma `await params` — Next 16 `params` selalu `Promise` di Page component) yang render `view.tsx` (Client Component, isi logic query+UI-nya, nerima `id` sebagai prop biasa). Bukan bikin 1 file client langsung baca `params` via `use()` — pemisahan ini lebih simpel & konsisten dipakai di semua 5 detail page.
+- **Row klik navigasi** ditambahkan di halaman list yang punya detail page (poin 2 di atas, "Klik baris navigasi ke detail") — `onClick` di `<tr>`, tombol aksi di dalam baris (mis. "Posting Penyusutan") pakai `stopPropagation` biar gak ikut ke-trigger navigasi.
+- **Tab cuma dipake di `/accounts/[id]`** (Detail + Ledger) — sesuai kriteria poin 3 di atas, karena histori jurnal 1 akun beneran independen dari form detailnya & jarang diliat bareng. 4 entity lain (customer/supplier/item/fixed-asset) **gak pakai tab** — related data (invoice+payment, lot stok, histori penyusutan) ditampilkan sebagai tabel bertumpuk langsung di bawah header, karena datanya emang lazim diliat bareng buat ngerti relasi (mis. saldo outstanding customer butuh liat invoice DAN payment sekaligus).
+- **Breadcrumb rute dinamis**: `Topbar` (`src/components/topbar.tsx`) di-generalize — kalau `pathname` gak match persis `routeLabels`, dicek prefix (mis. `/accounts/abc-123` cocok prefix `/accounts`) lalu breadcrumb jadi `[Label List, "Detail"]`. Gak fetch nama entity di topbar (topbar komponen global, gak punya akses ke data halaman) — breadcrumb generic "Detail" cukup, nama entity udah ada di `<h1>` halaman itu sendiri.
+
 ## Kapan dipakai, kapan enggak
 
 - List view (poin 2): default buat semua index/listing halaman data (`/accounts`, `/journal-entries`).

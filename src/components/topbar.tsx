@@ -9,6 +9,12 @@ const routeLabels: Record<string, string> = {
   "/accounts": "Chart of Accounts",
   "/journal-entries": "Journal Entries",
   "/general-ledger": "General Ledger",
+  "/customers": "Customers",
+  "/ar-invoices": "AR Invoices",
+  "/ar-payments": "AR Payments",
+  "/suppliers": "Suppliers",
+  "/ap-bills": "AP Bills",
+  "/ap-payments": "AP Payments",
   "/items": "Items",
   "/inventory": "Stock Position",
   "/purchase-orders": "Purchase Orders",
@@ -16,12 +22,27 @@ const routeLabels: Record<string, string> = {
   "/bom": "BOM",
   "/production-orders": "Production Orders",
   "/goods-issues": "Goods Issues",
+  "/fixed-assets": "Fixed Assets",
 };
+
+function getBreadcrumb(pathname: string): string[] {
+  if (routeLabels[pathname]) {
+    return [routeLabels[pathname]];
+  }
+  // Rute detail (mis. /accounts/[id]) -> cocokkan prefix listnya, tambah "Detail".
+  const prefix = Object.keys(routeLabels).find(
+    (route) => pathname.startsWith(route + "/") && pathname !== route
+  );
+  if (prefix) {
+    return [routeLabels[prefix], "Detail"];
+  }
+  return [pathname];
+}
 
 export function Topbar() {
   const router = useRouter();
   const pathname = usePathname();
-  const breadcrumb = [routeLabels[pathname] ?? pathname];
+  const breadcrumb = getBreadcrumb(pathname);
   const [email, setEmail] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
 

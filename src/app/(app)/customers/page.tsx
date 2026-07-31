@@ -130,7 +130,11 @@ export default function CustomersPage() {
           </thead>
           <tbody>
             {customers.map((c) => (
-              <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50">
+              <tr
+                key={c.id}
+                className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                onClick={() => router.push(`/customers/${c.id}`)}
+              >
                 <td className="px-4 py-2 font-medium text-black">{c.name}</td>
                 <td className="px-4 py-2">{c.contact ?? "-"}</td>
                 <td className="px-4 py-2">{c.payment_term_days}</td>

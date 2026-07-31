@@ -23,6 +23,7 @@ export type Account = {
   name: string;
   category: (typeof accountCategories)[number];
   normal_balance: "debit" | "credit";
+  is_contra: boolean;
   parent_id: string | null;
   archived_at: string | null;
 };
