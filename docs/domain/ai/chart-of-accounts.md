@@ -56,7 +56,7 @@ Without a contra account, the paired account gets credited/debited directly and 
 
 Project status: as of Inventory (phase 5), zero contra accounts exist. `accounts.normal_balance` (`coa-schema.md`) is a rigid generated column (`asset|expense → debit`, no exception) — this structurally prevented anyone from creating a contra account before the design was ready.
 
-Decided in Fixed Assets (phase 6): add `accounts.is_contra boolean default false`, `normal_balance` generated formula branches on it. See `docs/domain/ai/fixed-assets.md` + `docs/architecture/data/fixed-assets-schema.md` (migration `0014_fixed_assets_schema.sql`) + `docs/scope-debt/fixed-assets-akun-kontra-asset.md` for DDL + rationale. Migration written, not yet applied to a live Supabase instance.
+Decided in Fixed Assets (phase 6): add `accounts.is_contra boolean default false`, `normal_balance` generated formula branches on it. See `docs/domain/ai/fixed-assets.md` + `docs/architecture/data/fixed-assets-schema.md` (migration `0014_fixed_assets_schema.sql`) + `docs/scope-debt/fixed-assets-akun-kontra-asset.md` for DDL + rationale. Migration applied to a live Supabase instance.
 
 ## Common mistakes to guard against in validation/UX
 

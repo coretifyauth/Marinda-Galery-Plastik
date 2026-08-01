@@ -22,7 +22,7 @@ Akumulasi Penyusutan: `category = asset`, tapi `normal_balance = credit` (kebali
 
 **Dampak schema**: `accounts.normal_balance` (`coa-schema.md`) generated column, `asset → debit` tanpa exception.
 
-**Keputusan (Opsi A)**: add `accounts.is_contra boolean default false`, generated `normal_balance` formula branches on this flag. `is_contra` also added to `published` field-lock list (locked after account used in a transaction). Full rationale: `docs/scope-debt/fixed-assets-akun-kontra-asset.md`. Final DDL + migration: `docs/architecture/data/fixed-assets-schema.md` (`0014_fixed_assets_schema.sql`) — written, not yet applied to a live Supabase instance.
+**Keputusan (Opsi A)**: add `accounts.is_contra boolean default false`, generated `normal_balance` formula branches on this flag. `is_contra` also added to `published` field-lock list (locked after account used in a transaction). Full rationale: `docs/scope-debt/fixed-assets-akun-kontra-asset.md`. Final DDL + migration: `docs/architecture/data/fixed-assets-schema.md` (`0014_fixed_assets_schema.sql`) — applied to a live Supabase instance, UI (`/fixed-assets`) built and tested.
 
 ## Metode Penyusutan (2 in-scope: Straight-Line + Declining Balance)
 

@@ -32,7 +32,7 @@ Konsekuensi tambahan: `published` field-lock di `accounts` (`coa-schema.md`, fie
 
 ## Selesai
 
-Migration `0014_fixed_assets_schema.sql` nulis `ALTER TABLE accounts ADD COLUMN is_contra` bareng skema `fixed_assets`+`depreciation_entries` sekali jalan. Belum diterapkan ke instance Supabase beneran (masih di file migration doang).
+Migration `0014_fixed_assets_schema.sql` nulis `ALTER TABLE accounts ADD COLUMN is_contra` bareng skema `fixed_assets`+`depreciation_entries` sekali jalan — sudah diapply ke instance Supabase + UI dites.
 
 ## Referensi
 

@@ -159,7 +159,7 @@ Akun biasa kayak "berat badan sekarang" — berdiri sendiri, punya makna tanpa p
 
 Sampai fase Inventory (fase 5), COA project ini **belum punya** satupun akun kontra — semua akun asset yang lahir (Kas, Piutang, Persediaan, Aset Tetap) normal debit polos. `accounts.normal_balance` (`coa-schema.md`) masih **generated column** rigid: `category in ('asset','expense') → debit`, tanpa pengecualian — ini justru secara struktural **mencegah** siapapun keceplosan bikin akun kontra sebelum desainnya siap.
 
-Gap ini diselesaikan di Fase 6 (Fixed Assets): tambah kolom `accounts.is_contra` (boolean), rumus generated `normal_balance` ikut flag ini. Detail + DDL final: `docs/domain/human/fixed-assets.md`, `docs/architecture/data/fixed-assets-schema.md` (migration `0014_fixed_assets_schema.sql`), dan `docs/scope-debt/fixed-assets-akun-kontra-asset.md`. Migration udah ditulis, belum diterapkan ke instance Supabase beneran.
+Gap ini diselesaikan di Fase 6 (Fixed Assets): tambah kolom `accounts.is_contra` (boolean), rumus generated `normal_balance` ikut flag ini. Detail + DDL final: `docs/domain/human/fixed-assets.md`, `docs/architecture/data/fixed-assets-schema.md` (migration `0014_fixed_assets_schema.sql`), dan `docs/scope-debt/fixed-assets-akun-kontra-asset.md`. Migration sudah diterapkan ke instance Supabase.
 
 ## Common Mistake
 

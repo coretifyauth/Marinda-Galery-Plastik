@@ -52,7 +52,7 @@ Akumulasi Penyusutan adalah **akun kontra-asset** — konsep umum akun kontra di
 
 **Dampak ke schema existing**: `accounts.normal_balance` di `coa-schema.md` adalah generated column yang derive otomatis dari `category` (`asset`/`expense` → selalu `debit`, tanpa pengecualian). Ini gak bisa nampung akun kontra-asset tanpa perubahan.
 
-**Keputusan diambil (Opsi A)**: tambah kolom `accounts.is_contra` (boolean, default `false`), rumus generated column `normal_balance` ikut flag ini — kategori asset dengan `is_contra=true` jadi normal kredit, dst. `is_contra` juga masuk daftar field yang dikunci setelah akun kepakai transaksi (`published` field-lock). Detail rumus + alasan pilih Opsi A dibanding Opsi B: `docs/scope-debt/fixed-assets-akun-kontra-asset.md`. DDL final + migration: `docs/architecture/data/fixed-assets-schema.md` (`0014_fixed_assets_schema.sql`) — belum diterapkan ke instance Supabase beneran.
+**Keputusan diambil (Opsi A)**: tambah kolom `accounts.is_contra` (boolean, default `false`), rumus generated column `normal_balance` ikut flag ini — kategori asset dengan `is_contra=true` jadi normal kredit, dst. `is_contra` juga masuk daftar field yang dikunci setelah akun kepakai transaksi (`published` field-lock). Detail rumus + alasan pilih Opsi A dibanding Opsi B: `docs/scope-debt/fixed-assets-akun-kontra-asset.md`. DDL final + migration: `docs/architecture/data/fixed-assets-schema.md` (`0014_fixed_assets_schema.sql`) — sudah diterapkan ke instance Supabase, UI (`/fixed-assets`) sudah dibangun & dites.
 
 ## Metode Penyusutan: Garis Lurus & Saldo Menurun
 
