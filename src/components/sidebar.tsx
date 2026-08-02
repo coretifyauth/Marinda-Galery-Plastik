@@ -26,6 +26,12 @@ import {
   CreditCard,
   Boxes,
   Building2,
+  BarChart3,
+  Scale,
+  TrendingUp,
+  Landmark,
+  Waves,
+  Lock,
 } from "lucide-react";
 
 const navGroups = [
@@ -74,6 +80,17 @@ const navGroups = [
     icon: Building2,
     items: [{ href: "/fixed-assets", label: "Fixed Assets", icon: Building2 }],
   },
+  {
+    label: "Financial Reports",
+    icon: BarChart3,
+    items: [
+      { href: "/reports/trial-balance", label: "Trial Balance", icon: Scale },
+      { href: "/reports/income-statement", label: "Income Statement", icon: TrendingUp },
+      { href: "/reports/balance-sheet", label: "Balance Sheet", icon: Landmark },
+      { href: "/reports/cash-flow", label: "Cash Flow", icon: Waves },
+      { href: "/reports/period-closing", label: "Tutup Buku", icon: Lock },
+    ],
+  },
 ];
 
 export function Sidebar() {
@@ -95,7 +112,7 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-white">
+    <aside className="fixed inset-y-0 left-0 z-20 flex h-screen w-56 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white">
       <div className="flex items-center gap-2 px-4 py-4">
         <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
         <span className="font-semibold text-black">Custom ERP</span>

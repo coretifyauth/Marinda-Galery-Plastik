@@ -1,6 +1,6 @@
 # Story — Inventory & HPP: CV Roti Barokah
 
-Fase 5. Konteks bisnis: `docs/story/company-profile.md` (poin 5: "hitung HPP roti, butuh FIFO/weighted average karena harga tepung naik-turun"). Konsep: `docs/domain/human/inventory.md`. ERD & DDL: `docs/architecture/data/inventory-schema.md`. Lanjutan langsung dari `docs/story/accounts-payable.md` — bahan baku yang sudah dicatat di sana (dari Toko Tepung Makmur & Toko Gula Sejahtera) sekarang ditelusuri lebih detail: qty & harga per kg, diolah jadi roti, sampai akhirnya kejual dan HPP-nya kehitung.
+Fase 5. Konteks bisnis: `docs/story/company-profile.md` (poin 5: "hitung HPP roti, butuh FIFO/weighted average karena harga tepung naik-turun"). Konsep: `docs/domain/inventory.md`. ERD & DDL: `docs/architecture/inventory-schema.md`. Lanjutan langsung dari `docs/story/accounts-payable.md` — bahan baku yang sudah dicatat di sana (dari Toko Tepung Makmur & Toko Gula Sejahtera) sekarang ditelusuri lebih detail: qty & harga per kg, diolah jadi roti, sampai akhirnya kejual dan HPP-nya kehitung.
 
 Timeline cerita ini: **Agustus 2026** (bulan setelah AR/AP per 30 Juli 2026).
 

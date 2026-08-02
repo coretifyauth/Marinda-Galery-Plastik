@@ -1,79 +1,49 @@
-# Docs Brief — Entry Point
+# Docs Brief — Entry Point (untuk Kamu)
 
-Peta seluruh `/docs`. Baca ini duluan tiap orientasi ulang.
+Peta seluruh `/docs`. Ini adalah knowledge base kamu — media informasi bisnis/akuntansi & jejak pembangunan project, ditulis naratif dan non-teknis. Bahasa program (RPC, trigger, DDL) sengaja dihindari di sini; kalau butuh itu, itu ada di `/memory` (context Claude, bukan buat dibaca manual).
 
 ## Struktur
 
 ```
 /docs
   brief.md               <- file ini
-  /domain
-    /human                <- knowledge bisnis/akuntansi, versi manusia (naratif)
-    /ai                   <- knowledge bisnis/akuntansi, versi compact context
-  /rules                  <- mental model wajib agent SEBELUM bangun fitur
+  /domain                 <- knowledge bisnis/akuntansi, naratif, buat belajar
   /architecture
-    /app                  <- keputusan level aplikasi (stack, konvensi kode)
-    /data                 <- ERD, skema, DDL — level data
-  /preferences
-    /system               <- preferensi level sistem (naming, konvensi non-UI)
-    /ui                    <- preferensi UI/UX & behavior design
-  /story                  <- skenario bisnis riil (1 perusahaan fiktif), dipakai berkelanjutan lintas fase roadmap
-  /scope-debt              <- keputusan desain yang sengaja ditunda lintas modul, 1 file per konsep
+    /data                 <- ERD & struktur data tiap modul, dijelasin non-teknis (tabel, bukan DDL)
+  /story                  <- skenario bisnis riil (1 perusahaan fiktif, CV Roti Barokah), dipakai berkelanjutan lintas fase roadmap
 ```
 
-Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor — lihat `docs/preferences/system/md-file-naming.md`. Nama sama antara `domain/human/` dan `domain/ai/`.
+Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor. Nama file sama antara `docs/domain/*.md` dan `memory/domain/*.md` (padanan naratif vs compact — lihat `memory/brief.md` kalau butuh versi teknis/RPC/trigger).
+
+## Docs viewer di web app
+
+Seluruh isi `/docs` direpresentasikan juga di web app-nya sendiri, di routing `/docs` (`src/app/docs/`) — halaman dokumentasi produk biar gak perlu buka file `.md` manual. Baca file langsung dari folder ini lewat `src/lib/docs/fs.ts` (server-side, gak ada duplikasi konten), render markdown (termasuk fence ```mermaid) lewat `src/components/docs/`. Gerbang login sama seperti halaman ERP lain (`useRequireAuth`).
 
 ## Isi saat ini
 
 ### domain/
-- `chart-of-accounts.md` (human + ai) — 5 kategori akun, normal balance, kenapa expense=debit/revenue=kredit (derivasi dari persamaan akuntansi), struktur hierarkikal (header vs leaf account, rule leaf-only posting), **akun kontra** (definisi, simulasi dengan/tanpa kontra, contoh lintas kategori: Akumulasi Penyusutan/Cadangan Kerugian Piutang/Retur Penjualan, status project belum ada kontra sama sekali), contoh angka, common mistake.
-- `general-ledger.md` (human + ai) — Journal Entry vs General Ledger, accrual vs cash basis, constraint wajib (balance, min 2 baris, leaf-only, immutability/reversing entry, source_ref, atomicity), period closing (konsep + kenapa levelnya beda dari immutability, belum termasuk scope awal), contoh transaksi generik, common mistake.
-- `accounts-receivable.md` (human + ai) — customer master data + termin, invoice (due_date snapshot) & payment & payment allocation (many-to-many, kenapa gak cukup invoice_id langsung), status invoice derived, constraint (journal-backed, immutability, anti over-allocation, cancellation guard), 5 skenario alokasi, belum termasuk (retur, DP, overpayment) — ref `docs/scope-debt/`.
-- `accounts-payable.md` (human + ai) — kebalikan AR: supplier master data + termin (ditentuin SUPPLIER, bukan kita — beda konteks bisnis dari AR), bill & payment & payment allocation, constraint identik AR + cancellation guard diterapkan dari awal, 5 skenario (termasuk aging yang maknanya kebalik dari AR), belum termasuk (retur, diskon bayar cepat, DP, bill compound) — ref `docs/scope-debt/`.
-- `inventory.md` (human + ai) — membeli ≠ berbiaya (matching principle), FIFO vs Weighted Average (per item, gak global), BOM/Production Order (biaya bahan baku doang, belum labor/overhead), PO → GRN+Bill (3-way matching di procurement, GRN & Bill dibuat bersamaan), Goods Issue (titik HPP diakui), belum termasuk (GR/IR clearing, Sales Order, price variance report) — ref `docs/scope-debt/`.
-- `fixed-assets.md` (human + ai) — matching by time (beda dari Inventory yang matching by event), **2 metode penyusutan in-scope**: garis lurus (SLM) & saldo menurun (declining balance, per-asset lewat `depreciation_method`), kenapa kredit penyusutan wajib ke akun Akumulasi Penyusutan terpisah (bukan langsung ke akun Aset Tetap), akun kontra-asset (`normal_balance` kredit di kategori asset — **keputusan diambil: Opsi A, flag `is_contra`**), contoh angka oven Rp15jt/5th (SLM) & motor Rp24jt/40% (declining balance), belum termasuk (disposal, metode Unit Produksi, revaluasi, ganti metode di tengah jalan) — ref `docs/scope-debt/fixed-assets-akun-kontra-asset.md`.
-- `financial-reports.md` (human + ai) — read-only agregasi dari `journal_lines`, 4 laporan: Trial Balance (fondasi), Income Statement (rentang waktu, Revenue-Expense), Balance Sheet (snapshot, Asset=Liability+Equity, Equity butuh closing Laba Bersih ke Laba Ditahan, kontra-asset wajib dikurangkan), Cash Flow (fisik kas doang, Indirect vs Direct method, depreciation add-back, kasus non-cash investing/financing dari akuisisi Fixed Assets). Urutan wajib: TB→IS→BS→CF (CF butuh 2 Trial Balance). Cara validasi: Saldo Kas Akhir CF harus cocok saldo akun Kas di TB sekarang (bukan sekadar bandingin 2 TB). **Contoh angka lengkap 1 periode tervalidasi end-to-end** (7 transaksi, TB→IS→BS→CF nyambung & balance semua). **Period Closing** (bagian dari Fase 7 ini, bukan fase terpisah) — konteks bisnis kenapa periode yang udah dilaporin ke bank gak boleh diam-diam berubah (beda dari reversing entry yang emang keliatan), + kenapa Bu Nur butuh Revenue/Expense direset tiap bulan buat bandingin performa. Mekanisme teknis di `general-ledger.md`. Belum termasuk: Direct Method, TB rollup performance — ref `docs/scope-debt/trial-balance-rollup.md`.
+- `chart-of-accounts.md` — 5 kategori akun, normal balance, kenapa expense=debit/revenue=kredit (derivasi dari persamaan akuntansi), struktur hierarkikal (header vs leaf account, rule leaf-only posting), **akun kontra** (definisi, simulasi dengan/tanpa kontra, contoh lintas kategori: Akumulasi Penyusutan/Cadangan Kerugian Piutang/Retur Penjualan), contoh angka, common mistake.
+- `general-ledger.md` — Journal Entry vs General Ledger, accrual vs cash basis, constraint wajib (balance, min 2 baris, leaf-only, immutability/reversing entry, source_ref, atomicity), period closing (konsep + kenapa levelnya beda dari immutability), contoh transaksi generik, common mistake.
+- `accounts-receivable.md` — customer master data + termin, invoice (due_date snapshot) & payment & payment allocation (many-to-many, kenapa gak cukup invoice_id langsung), status invoice derived, constraint (journal-backed, immutability, anti over-allocation, cancellation guard), 5 skenario alokasi, belum termasuk (retur, DP, overpayment).
+- `accounts-payable.md` — kebalikan AR: supplier master data + termin (ditentuin SUPPLIER, bukan kita), bill & payment & payment allocation, constraint identik AR + cancellation guard, 5 skenario (termasuk aging kebalik dari AR), belum termasuk (retur, diskon bayar cepat, DP, bill compound).
+- `inventory.md` — membeli ≠ berbiaya (matching principle), FIFO vs Weighted Average (per item, gak global), BOM/Production Order (biaya bahan baku doang, belum labor/overhead), PO → GRN+Bill (3-way matching), Goods Issue (titik HPP diakui), belum termasuk (GR/IR clearing, Sales Order, price variance report).
+- `fixed-assets.md` — matching by time (beda dari Inventory yang matching by event), 2 metode penyusutan in-scope: garis lurus (SLM) & saldo menurun (declining balance), kenapa kredit penyusutan wajib ke akun Akumulasi Penyusutan terpisah, akun kontra-asset, contoh angka oven Rp15jt/5th (SLM) & motor Rp24jt/40% (declining balance), belum termasuk (disposal, metode Unit Produksi, revaluasi, ganti metode di tengah jalan).
+- `financial-reports.md` — read-only agregasi dari jurnal, 4 laporan: Trial Balance, Income Statement, Balance Sheet, Cash Flow. Urutan wajib TB→IS→BS→CF, cara validasi silang. Contoh angka lengkap 1 periode tervalidasi end-to-end. Period Closing (konteks bisnis).
 
-### rules/
-(belum ada — diisi saat pertama kali dibutuhkan, lihat AGENT.md)
-
-### architecture/app/
-- `tech-stack-decisions.md` — Supabase (Postgres+Auth+RLS) dipilih, drop Prisma & NextAuth, impact ke tiap modul. Juga keputusan: Journal Entry gak pakai draft/posted workflow (entry final begitu dibuat), alasan & kapan perlu direvisit.
-
-### architecture/data/
-- `coa-schema.md` — DDL final tabel `accounts`, `roles`, `user_roles` + RLS policy, tiap tabel/policy dijelasin humanable. Normal_balance derived, is_active dibuang, published-lock & leaf-only-posting trigger dependency ke modul Journal Entry.
-- `journal-entry-schema.md` — DDL final `journal_entries`+`journal_lines`, 5 trigger (leaf-only posting, balance-check deferred, block edit/delete, published-lock & no-retroactive-header di `accounts`), RPC atomik `create_journal_entry`+`reverse_journal_entry`, RLS/grant. Nutup dependency yang ditunda di `coa-schema.md`.
-- `ar-schema.md` — DDL final `customers`+`ar_invoices`+`ar_payments`+`ar_payment_allocations`, due_date snapshot (bukan generated), status invoice derived dari alokasi, trigger anti over-allocation + reuse `block_edit_delete`, RPC atomik `create_ar_invoice`+`record_ar_payment`+`cancel_ar_invoice` (manggil `create_journal_entry`/`reverse_journal_entry`, gak insert GL manual), RLS/grant. Migration `0007`+`0009` (cancellation ditambah belakangan).
-- `ap-schema.md` — DDL `suppliers`+`ap_bills`+`ap_payments`+`ap_payment_allocations`, struktur mirror persis `ar-schema.md` (arah kebalik), beda: `payment_term_days` maknanya syarat DARI supplier bukan yang kita tetapkan, `create_ap_bill` terima akun debit generik (Persediaan/Beban), `cancel_ap_bill` diterapkan dari awal. Migration `0010_ap_schema.sql`+`0011_seed_demo_ap.sql`.
-- `inventory-schema.md` — **DDL final**. Entity: `items`+`inventory_balances` (master; penamaan tabel ikut pola AR/AP — master polos, transaksional pakai prefix `inventory_`), `purchase_orders`+`goods_receipt_notes` (3-way matching ke `ap_bills` tanpa ubah tabelnya), `inventory_lots`+`inventory_lot_consumptions` (khusus FIFO — `source_type`/`consumption_type` sengaja dibedain nama eksplisit `PURCHASE_RECEIPT`/`PRODUCTION_OUTPUT` vs `PRODUCTION_INPUT`/`SALES_ISSUE`, biar kata "produksi" gak nyampur maknanya di 2 tabel beda arah), `bom_headers`+`production_orders` (khusus produksi), `goods_issues` (3-way ke `ar_invoices`, titik HPP diakui). Satu-satunya state tersimpan (bukan derived) di project ini: `inventory_balances` (Weighted Average), karena rata-rata berjalan gak bisa direduksi jadi 1 SUM sederhana. RPC: `create_purchase_order`, `create_goods_receipt` (reuse `create_ap_bill`), `create_production_order`, `create_goods_issue` (reuse `create_ar_invoice`), helper `consume_fifo`/`consume_weighted_average`. Migration `0012_inventory_schema.sql`+`0013_seed_demo_inventory.sql` — sudah diapply ke instance Supabase.
-- `fixed-assets-schema.md` — **DDL final**. `accounts.is_contra` (`ALTER`, regenerate `normal_balance` generated column, `accounts_published_lock` ikut nambah `is_contra`), entity baru `fixed_assets` (master unit aset, 3 FK akun tervalidasi trigger `fixed_assets_validate_accounts`) + `depreciation_entries` (histori posting per periode, `amount` disimpan eksplisit — nutup kebutuhan `declining_balance` tanpa kolom tambahan). Trigger `depreciation_entries_cap_check` (cap `acquisition_cost - salvage_value`, jaring kedua di luar RPC), `fixed_assets_published_lock` (kunci field nilai/akun/metode setelah ada penyusutan pertama). RPC: `create_fixed_asset` (insert doang, akuisisi jurnal manual lewat `create_journal_entry`), `post_depreciation` (hitung otomatis per `depreciation_method`, reuse `create_journal_entry`). Migration `0014_fixed_assets_schema.sql` — sudah diapply ke instance Supabase.
-
-### preferences/system/
-- `state-naming-convention.md` — pemisahan `archived` (soft-delete) vs `published` (derived, komitmen data/locked-state), berlaku semua modul.
-- `md-file-naming.md` — konvensi penamaan file `.md`: kebab-case, tanpa prefix nomor.
-- `schema-doc-format.md` — tiap schema doc (`architecture/data/*.md`) wajib ada penjelasan humanable per tabel & per RLS policy, gak boleh cuma dump SQL.
-
-### preferences/ui/
-- `admin-shell-design.md` — konvensi layout dari referensi (sidebar+topbar+breadcrumb, pola entity detail page: tab + grid kartu tematik + edit-per-section), visual style (1 warna aksen, kartu putih rounded), kapan pola ini dipakai vs enggak.
-- `form-components.md` — background light (`slate-100` halaman, `white` kartu/input), komponen form reusable (`Label`/`Input`/`Select`/`Button`/`FormError`/`FormHint` di `src/components/ui/`), spacing, kenapa reusable bukan className diulang.
+### architecture/
+ERD & struktur data tiap modul, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan bahas RPC/trigger secara kode):
+- `coa-schema.md`, `journal-entry-schema.md`, `ar-schema.md`, `ap-schema.md`, `inventory-schema.md`, `fixed-assets-schema.md`.
+- `financial-reports-schema.md` — 4 laporan (Trial Balance/Income Statement/Balance Sheet/Cash Flow) dijelaskan sebagai lapisan baca di atas 3 tabel yang sudah ada (`accounts`, `journal_entries`, `journal_lines`), gak ada tabel baru. Tutup Buku (Period Closing) beda — nambah 1 tabel (`period_closings`), plus aturan urutan-bersambung & gak bisa dibuka lagi. Keterbatasan lain: Cash Flow Direct Method, kategorisasi Investing/Financing otomatis.
 
 ### story/
 - `company-profile.md` — profil bisnis CV Roti Barokah (UMKM roti, Bandung), konteks & motivasi yang dipakai berulang tiap fase roadmap.
-- `chart-of-accounts.md` — COA nyata Bu Nur (seed data di `supabase/migrations/0003_seed_demo_coa.sql`) + guide simulasi interface (Supabase Studio + curl REST) buat ngerasain RLS/grant beneran jalan tanpa UI custom.
-- `general-ledger.md` — 6 transaksi Juli 2026 (seed data di `supabase/migrations/0005_seed_demo_journal_entries.sql`, lewat RPC `create_journal_entry`), tabel General Ledger `Kas di Bank` sebagai contoh, guide simulasi lewat `/journal-entries` + `/general-ledger`.
-- `accounts-receivable.md` — 3 customer (Warung Pak Budi/Bu Imas/Kang Ade, termin beda-beda), 3 skenario (lunas tepat waktu, cicil, telat bayar/aging lanjutan dari invoice 7 Juli di `general-ledger.md`), tabel saldo Piutang Usaha per 30 Juli 2026 (seed data di `supabase/migrations/0008_seed_demo_ar.sql`, lewat RPC `create_ar_invoice`/`record_ar_payment`). UI (`/customers`, `/ar-invoices`, `/ar-payments`) udah dibangun (client-side, langsung Supabase RPC, gak ada API route custom).
-- `accounts-payable.md` — 2 supplier (Toko Tepung Makmur net-14, Toko Gula Sejahtera net-7), 5 skenario (lunas, cicil, bayar gabungan, telat/aging lanjutan dari bill 10 Juli di `general-ledger.md`, bill dibatalkan), tabel saldo Utang Usaha per 30 Juli 2026 (sisa Rp800.000 dari Toko Tepung Makmur, telat 6 hari). Seed data di `supabase/migrations/0011_seed_demo_ap.sql`. UI (`/suppliers`, `/ap-bills`, `/ap-payments`) sudah dibangun.
-- `inventory.md` — Agustus 2026, item Tepung Terigu (FIFO) + Gula Pasir (Weighted Average) + Roti Tawar (barang jadi), resep 1 batch = 5kg tepung + 1kg gula → 50 buah roti. Alur PO→GRN+Bill (2 penerimaan tepung beda harga jadi 2 lot FIFO, 2 penerimaan gula jadi rata-rata bergerak), 1 production order, 1 goods issue (jual 30 roti, HPP Rp37.500, laba kotor Rp22.500). Tabel posisi akhir persediaan per 25 Agustus 2026. DDL final di `inventory-schema.md` (migration `0012_inventory_schema.sql`), seed data 7 tahap di `0013_seed_demo_inventory.sql` (nambah akun COA baru `1420` Persediaan Barang Jadi — belum ada di seed awal). Migration `0012`+`0013` sudah diapply ke instance Supabase. UI (`/items`, `/purchase-orders`, `/goods-receipts`, `/production-orders`, `/goods-issues`, `/bom`, `/inventory`) sudah dibangun.
-- `fixed-assets.md` — akuisisi Januari 2025, Oven Tambahan (straight-line, 12x posting bulanan sepanjang 2025) + Motor Antar (declining balance 40%/tahun, 1x posting tahunan — beda cadence sengaja buat nunjukin `period` fleksibel). Posisi akhir per 31 Desember 2025: Oven nilai buku Rp12jt, Motor nilai buku Rp14,4jt. DDL final di `fixed-assets-schema.md` (migration `0014_fixed_assets_schema.sql`), seed data 4 tahap di `0015_seed_demo_fixed_assets.sql` (nambah akun COA baru `1630`/`1640` Akumulasi Penyusutan + `5600`/`5610` Beban Penyusutan). Migration `0014`+`0015` sudah diapply ke instance Supabase. UI (`/fixed-assets` + detail page `/fixed-assets/[id]`) sudah dibangun dan dites.
-
-### scope-debt/
-Ledger keputusan desain yang sengaja ditunda, dikumpulin lintas modul biar gak keburu ilang di percakapan. 1 file = 1 konsep, isinya: kasus, kenapa ditunda, kapan perlu digarap, referensi balik ke domain/schema doc terkait.
-- `ar-retur-barang.md`, `ar-uang-muka-dp.md`, `ar-overpayment-saldo-kredit.md` — 3 gap AR yang udah ditandain dari awal (`ar-schema.md` bagian "Belum termasuk").
-- `ar-credit-hold.md`, `ar-piutang-tak-tertagih.md` — 2 dari 4 tindakan penjual ke piutang telat (level 2 & 4) yang belum diimplementasi, dari diskusi kasus Warung Pak Budi.
-- `ap-retur-barang.md`, `ap-diskon-bayar-cepat.md`, `ap-uang-muka-dp.md`, `ap-bill-compound.md` — 4 kasus AP (Fase 4, masih tahap desain konsep, `ap-schema.md` belum ditulis) yang sengaja ditunda biar bentuk pertama AP simetris sama AR.
-- `period-closing.md`, `trial-balance-rollup.md` — dependency GL ke Fase 7 (Financial Reports).
-- `fixed-assets-akun-kontra-asset.md` — gap `normal_balance` generated column buat akun kontra-asset, dependency ke Fase 6 (Fixed Assets).
-- `user-role-admin-assignment.md` — policy admin assign role user lain, butuh `security definer` function.
+- `chart-of-accounts.md` — COA nyata Bu Nur + guide simulasi interface (Supabase Studio + curl REST).
+- `general-ledger.md` — 6 transaksi Juli 2026, tabel General Ledger `Kas di Bank` sebagai contoh, guide simulasi lewat `/journal-entries` + `/general-ledger`.
+- `accounts-receivable.md` — 3 customer (Warung Pak Budi/Bu Imas/Kang Ade, termin beda-beda), 3 skenario (lunas tepat waktu, cicil, telat bayar/aging), tabel saldo Piutang Usaha per 30 Juli 2026.
+- `accounts-payable.md` — 2 supplier (Toko Tepung Makmur net-14, Toko Gula Sejahtera net-7), 5 skenario (lunas, cicil, bayar gabungan, telat/aging, bill dibatalkan), tabel saldo Utang Usaha per 30 Juli 2026.
+- `inventory.md` — Agustus 2026, item Tepung Terigu (FIFO) + Gula Pasir (Weighted Average) + Roti Tawar (barang jadi), alur PO→GRN+Bill, 1 production order, 1 goods issue (jual 30 roti, HPP Rp37.500, laba kotor Rp22.500). Tabel posisi akhir persediaan per 25 Agustus 2026.
+- `fixed-assets.md` — akuisisi Januari 2025, Oven Tambahan (straight-line, 12x posting bulanan) + Motor Antar (declining balance 40%/tahun, 1x posting tahunan). Posisi akhir per 31 Desember 2025.
+- `financial-reports.md` — pertama kalinya story menggabungkan seluruh fase 1-6 jadi 1 set laporan, angka riil (bukan ilustrasi) hasil agregasi seed data lintas migration. Bagian 1-4: snapshot SEBELUM tutup buku per 25 Agustus 2026, tervalidasi konsisten (TB 66.110.000, BS 38.722.500, CF reconcile 7.180.000), Laba Bersih kumulatif minus (dijelaskan kenapa). Bagian 5: tutup buku SUNGGUHAN (`0017_seed_demo_period_closing.sql`) — 2025 rugi 12.600.000 (wajar, tahun investasi) + Jan-Agu 2026 untung 972.500 (operasional sehat), totalnya sama persis. Juga nemuin & benerin gap: Income Statement sempat gak bisa di-re-query buat periode yang udah ditutup (closing entry-nya sendiri ikut kehitung), sekarang di-exclude otomatis.
 
 ---
 

@@ -19,50 +19,57 @@ Jangan lompat ke step 3 tanpa 1-2. Kalau ditanya "kenapa", jawab dari sisi bisni
 Asumsi: paham dasar programming, pemula akuntansi/bisnis. Jelasin istilah akuntansi tiap pertama kali muncul, masukin ke glossary AI doc terkait.
 
 ## Docs Structure Overview
+
+Ada 2 folder dokumentasi terpisah, buat 2 pembaca berbeda — jangan tercampur:
+
 ```
-/docs
-  brief.md               <- entry point, peta seluruh /docs
-  /domain
-    /human                <- knowledge bisnis/akuntansi, versi manusia
-    /ai                   <- knowledge bisnis/akuntansi, versi compact context
-  /rules                  <- mental model wajib agent SEBELUM bangun fitur
+/memory                   <- context buat AGENT (Claude), compact & teknis, boleh nyebut RPC/trigger/DDL
+  brief.md                <- entry point, peta seluruh /memory. BACA INI DULUAN tiap orientasi ulang.
+  /domain                 <- knowledge bisnis/akuntansi, versi compact context
   /architecture
     /app                  <- keputusan level aplikasi (stack, konvensi kode)
-    /data                 <- ERD, skema, DDL — level data
+    /data                 <- ERD, skema, DDL, RPC, trigger — versi teknis penuh
   /preferences
     /system               <- preferensi level sistem (naming, konvensi non-UI)
     /ui                    <- preferensi UI/UX & behavior design
+  /rules                  <- mental model wajib agent SEBELUM bangun fitur
+  /scope-debt             <- keputusan desain yang sengaja ditunda, 1 file per konsep
+
+/docs                      <- knowledge base buat USER, naratif & non-teknis
+  brief.md                <- entry point, peta seluruh /docs
+  /domain                 <- knowledge bisnis/akuntansi, versi naratif (padanan: memory/domain)
+  /architecture
+    /data                 <- ERD & struktur data tiap modul, dijelasin non-teknis (tabel, bukan DDL/RPC/trigger)
+  /story                  <- skenario bisnis riil (1 perusahaan fiktif), dipakai berkelanjutan lintas fase roadmap
 ```
 
-`/docs/brief.md` — entry point, ringkasan cara memahami seluruh folder `/docs`. Baca duluan tiap orientasi ulang.
+`memory/brief.md` dan `docs/brief.md` masing-masing adalah peta lengkap foldernya sendiri — baca yang relevan tiap orientasi ulang. Detail isi tiap folder ada di kedua file itu, gak diduplikat di sini.
 
-`/docs/domain/` — knowledge bisnis & keuangan (cara bisnis/akuntansi bekerja):
-- `human/` — naratif, buat user belajar
-- `ai/` — compact context, buat agent serap cepat
+**Kenapa dipisah:** `/memory` adalah working memory agent — padat, boleh nyebut nama tabel/kolom/fungsi SQL langsung, gak perlu enak dibaca manusia. `/docs` adalah knowledge base milik user — naratif, dihindari istilah kode mentah, karena ini media belajar & jejak keputusan bisnis buat manusia baca ulang. Konten sering membahas topik yang sama (misal `coa-schema.md` ada di kedua folder), tapi levelnya beda: `memory/architecture/data/*.md` = DDL+RPC+trigger, `docs/architecture/*.md` = ERD dalam tabel + penjelasan aturan pakai bahasa natural.
 
-`/docs/rules/` — mental model yang WAJIB dipatuhi agent sebelum bangun fitur apapun. Proses berpikir, bukan hasil.
+Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor (lihat `memory/preferences/system/md-file-naming.md`). Nama file sama antara `memory/domain/*.md` dan `docs/domain/*.md`.
 
-`/docs/architecture/` — AI context memory, nangkep wawasan sistem/teknis project existing (alur data antar modul, keputusan teknis kenapa dipilih X). Beda dari `/rules`: `rules` = PROSES BERPIKIR, `architecture` = HASIL WAWASAN sistem yang sudah dibangun.
-- `app/` — level aplikasi: stack, konvensi kode, keputusan non-data
-- `data/` — level data: ERD, skema, DDL
+Jangan generate ulang logic yang sudah tercatat di `memory/domain/*.md` atau `memory/architecture/*.md` — load sebagai context dulu sebelum implement ulang.
 
-`/docs/preferences/` — preferensi user, dipecah per level:
-- `system/` — konvensi level sistem (naming, aturan non-UI)
-- `ui/` — UI/UX: pola interaksi, style komponen, behavior yang disukai/dihindari
+### Aturan siklus hidup: scope-debt
 
-Semua folder di atas TIDAK di-scaffold sekaligus — tumbuh organik seiring modul/fitur baru dibangun. `brief.md` diupdate tiap ada folder/file baru ditambahkan, biar tetap jadi peta akurat.
+1. **Item scope-debt yang statusnya berubah jadi "Selesai" → filenya dihapus dari `memory/scope-debt/`.** Jangan dibiarin numpuk sebagai arsip — riwayat keputusan sudah cukup terjejak di git history + migration file.
+2. **Referensi ke file scope-debt yang baru dihapus wajib dibersihkan** di `memory/domain/*.md`, `docs/domain/*.md`, dan `memory/architecture/data/*.md` yang nyebut nama filenya — hapus link matinya, ringkasan keputusan cukup tetap ada inline (biasanya sudah ada di prosa sekitarnya).
 
-Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor (lihat `docs/preferences/system/md-file-naming.md`), sama nama antara `human/` dan `ai/`.
+### Rencana ke depan (belum dibangun)
 
-Jangan generate ulang logic yang sudah tercatat di `domain/ai/*.md` atau `architecture/*.md` — load sebagai context dulu sebelum implement ulang.
+Isi `/docs` rencananya bakal direpresentasikan di web app-nya sendiri, di routing `/docs` — semacam halaman dokumentasi produk buat user, biar gak perlu buka file `.md` manual. Dicatat di sini biar gak ilang dari radar; belum ada implementasi.
 
 ## Rules (proses wajib sebelum fitur baru)
-1. Business/domain context — masalah apa yang diselesaikan (rujuk/tulis di `domain/`)
+
+1. **Business/domain context** — jalankan siklus penuh "Cara Mengajar" di atas secara interaktif (business context → accounting logic → common mistake), bukan sekali jelas lalu lanjut. Terus gali & cek pemahaman user (tanya balik, kasih contoh angka, jawab "kenapa" dari sisi bisnis dulu) **sampai user beneran paham** konsepnya — jangan buru-buru ke dokumentasi apalagi kode.
+   - **Baru setelah user paham** (bukan sebelum atau bersamaan): tulis knowledge yang udah dibangun ke `docs/domain/<nama-modul>.md` (naratif) + `memory/domain/<nama-modul>.md` (compact). Dokumen ini adalah HASIL dari pemahaman yang udah tercapai lewat diskusi, bukan draft yang ditulis duluan terus "dijelasin" belakangan.
+   - Setelah domain doc selesai, bangun `docs/story/<nama-modul>.md` — skenario bisnis konkret, lanjutan dari cerita perusahaan fiktif yang udah berjalan (`docs/story/company-profile.md` dan file story fase-fase sebelumnya) — sebelum lanjut ke tahap desain data.
 2. Rancang ERD — entity, relasi, FK, cardinality
 3. Cek kausalitas — dampak ke ERD/modul existing, apakah break sesuatu
 4. Baru lanjut: schema -> API -> UI
 
-Detail rule granular ditulis di `/docs/rules/feature-development-flow.md` saat pertama kali dibutuhkan.
+Detail rule granular ditulis di `memory/rules/feature-development-flow.md` saat pertama kali dibutuhkan.
 
 ## Domain Roadmap (fase pembangunan)
 1. Chart of Accounts (COA)
@@ -94,4 +101,4 @@ Detail rule granular ditulis di `/docs/rules/feature-development-flow.md` saat p
 - Server Actions ok buat form, tapi validasi/balance check tetap di server
 - Role check: RLS policy di tiap tabel, jangan andalkan app-level check doang
 
-Detail keputusan & alasan: `docs/architecture/app/tech-stack-decisions.md`.
+Detail keputusan & alasan: `memory/architecture/app/tech-stack-decisions.md`.

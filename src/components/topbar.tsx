@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { Bell, ChevronDown } from "lucide-react";
+import { Bell, BookOpen, ChevronDown } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
 const routeLabels: Record<string, string> = {
@@ -68,6 +69,9 @@ export function Topbar() {
         ))}
       </nav>
       <div className="relative flex items-center gap-4">
+        <Link href="/docs" title="Documentation" className="flex items-center text-slate-400 hover:text-slate-600">
+          <BookOpen className="h-4.5 w-4.5" />
+        </Link>
         <Bell className="h-4.5 w-4.5 text-slate-400" />
         <button
           onClick={() => setMenuOpen((v) => !v)}

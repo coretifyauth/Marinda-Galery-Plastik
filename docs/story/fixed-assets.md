@@ -1,6 +1,6 @@
 # Story — Fixed Assets: CV Roti Barokah
 
-Fase 6. Konteks bisnis: `docs/story/company-profile.md` (poin 6: "oven + motor disusutkan, bukan langsung jadi beban semua di tahun beli"). Konsep: `docs/domain/human/fixed-assets.md`. ERD & DDL: `docs/architecture/data/fixed-assets-schema.md`. Lanjutan dari `docs/story/inventory.md` — 2 aset ini (oven, motor) udah disebut sejak `company-profile.md` (dibeli 2025 pakai pinjaman KUR), baru sekarang penyusutannya beneran dihitung & dicatat.
+Fase 6. Konteks bisnis: `docs/story/company-profile.md` (poin 6: "oven + motor disusutkan, bukan langsung jadi beban semua di tahun beli"). Konsep: `docs/domain/fixed-assets.md`. ERD & DDL: `docs/architecture/fixed-assets-schema.md`. Lanjutan dari `docs/story/inventory.md` — 2 aset ini (oven, motor) udah disebut sejak `company-profile.md` (dibeli 2025 pakai pinjaman KUR), baru sekarang penyusutannya beneran dihitung & dicatat.
 
 Timeline cerita ini: **akuisisi Januari 2025**, penyusutan diposting sampai **31 Desember 2025** (posisi akhir tahun pertama).
 
@@ -13,7 +13,7 @@ Timeline cerita ini: **akuisisi Januari 2025**, penyusutan diposting sampai **31
 
 `1610`/`1620` udah ada sejak seed COA (`0003_seed_demo_coa.sql`, sebagai child dari `1600 Aset Tetap`). 4 akun baru (`1630`, `1640`, `5600`, `5610`) ditambah di seed ini — 2 akun kontra (`is_contra=true`, kategori asset tapi normal kredit) + 2 akun beban.
 
-Dua metode beda disengaja dipilih buat 2 aset yang beda karakter (`docs/domain/human/fixed-assets.md` bagian "Metode Penyusutan"): oven manfaatnya rata tiap tahun (straight-line cocok), motor cepat kehilangan nilai di tahun-tahun awal (declining balance cocok).
+Dua metode beda disengaja dipilih buat 2 aset yang beda karakter (`docs/domain/fixed-assets.md` bagian "Metode Penyusutan"): oven manfaatnya rata tiap tahun (straight-line cocok), motor cepat kehilangan nilai di tahun-tahun awal (declining balance cocok).
 
 ## Tahap 1 — Akuisisi Oven (10 Januari 2025)
 
@@ -48,11 +48,11 @@ Debit  Beban Penyusutan Oven (5600)          250.000
 Kredit Akumulasi Penyusutan Oven (1630)               250.000
 ```
 
-Setelah 12x posting: **Akumulasi Penyusutan Oven = Rp3.000.000**, **Nilai Buku Oven = Rp12.000.000** — persis contoh angka di `docs/domain/human/fixed-assets.md`.
+Setelah 12x posting: **Akumulasi Penyusutan Oven = Rp3.000.000**, **Nilai Buku Oven = Rp12.000.000** — persis contoh angka di `docs/domain/fixed-assets.md`.
 
 ## Tahap 4 — Penyusutan Motor (Declining Balance, 1x posting tahunan)
 
-Beda cadence dari oven — motor diposting **tahunan** (bukan bulanan), buat nunjukin `period` fleksibel (satuan waktu apa aja, gak dihardcode bulan) selama `depreciation_rate` konsisten sama periode postingnya (`docs/architecture/data/fixed-assets-schema.md`: "`depreciation_rate` mewakili tarif PER PERIODE POSTING").
+Beda cadence dari oven — motor diposting **tahunan** (bukan bulanan), buat nunjukin `period` fleksibel (satuan waktu apa aja, gak dihardcode bulan) selama `depreciation_rate` konsisten sama periode postingnya (`docs/architecture/fixed-assets-schema.md`: "`depreciation_rate` mewakili tarif PER PERIODE POSTING").
 
 Formula tahun 1: `Nilai Buku Awal (24.000.000) × 40% = Rp9.600.000`.
 

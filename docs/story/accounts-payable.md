@@ -1,6 +1,6 @@
 # Story — Accounts Payable: CV Roti Barokah
 
-Fase 4. Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/human/accounts-payable.md`. Schema: `docs/architecture/data/ap-schema.md` (menyusul). Lanjutan langsung dari `docs/story/general-ledger.md` — entry 10 Juli (Utang Usaha ke supplier tepung & gula) sekarang dapet identitas supplier & jadwal pelunasan, sama kayak Warung Pak Budi di sisi AR.
+Fase 4. Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/accounts-payable.md`. Schema: `docs/architecture/ap-schema.md` (menyusul). Lanjutan langsung dari `docs/story/general-ledger.md` — entry 10 Juli (Utang Usaha ke supplier tepung & gula) sekarang dapet identitas supplier & jadwal pelunasan, sama kayak Warung Pak Budi di sisi AR.
 
 ## Supplier (master data)
 

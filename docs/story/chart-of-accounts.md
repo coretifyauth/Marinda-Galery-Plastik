@@ -1,6 +1,6 @@
 # Story — Chart of Accounts: CV Roti Barokah
 
-Fase 1. Konteks bisnis lengkap: `docs/story/company-profile.md`. Konsep COA: `docs/domain/human/chart-of-accounts.md`. Schema: `docs/architecture/data/coa-schema.md`.
+Fase 1. Konteks bisnis lengkap: `docs/story/company-profile.md`. Konsep COA: `docs/domain/chart-of-accounts.md`. Schema: `docs/architecture/coa-schema.md`.
 
 ## Daftar Akun Bu Nur
 
@@ -35,7 +35,7 @@ Ini COA nyata yang dipakai buat CV Roti Barokah, disusun dari kebutuhan bisnisny
 **Kenapa dipisah gini:**
 - `1000 Kas` jadi header karena Bu Nur butuh 2 kebutuhan beda: tau kas fisik di laci kios (buat rekonsiliasi harian sama kasir) vs saldo bank (buat transfer/cek pinjaman) — tapi direksi/Bu Nur sendiri kadang cuma mau tau "kas total berapa", makanya di-rollup ke `1000`.
 - `4100` vs `4200` dipisah karena marginnya beda — jual di kios harga normal, jual grosir ke warung ada potongan harga. Bu Nur perlu tau mana yang lebih untung.
-- **Sengaja gak** dibikin akun kas per-cabang atau per-hari — itu common mistake over-granular yang disebut di `domain/human/chart-of-accounts.md`. Kalau nanti kios nambah, cukup tambah dimensi lain (bukan akun baru).
+- **Sengaja gak** dibikin akun kas per-cabang atau per-hari — itu common mistake over-granular yang disebut di `docs/domain/chart-of-accounts.md`. Kalau nanti kios nambah, cukup tambah dimensi lain (bukan akun baru).
 - **Belum ada** akun "Akumulasi Penyusutan" untuk oven/motor — itu bagian modul Fixed Assets (fase 6), sengaja ditunda karena butuh desain contra-asset yang belum dicover di schema `normal_balance` generated column sekarang (asset selalu debit; akun kontra-asset butuh perlakuan khusus, bukan celah yang perlu ditutup di fase 1).
 
 Data ini beneran diinsert ke Supabase project kamu lewat `supabase/migrations/0003_seed_demo_coa.sql` — bukan cuma cerita di atas kertas, tapi data yang nempel di database asli dan bakal dipakai lagi pas fase Journal Entry (transaksi jual-beli roti bakal posting ke akun-akun ini).

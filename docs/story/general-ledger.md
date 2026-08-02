@@ -1,6 +1,6 @@
 # Story — General Ledger & Journal Entry: CV Roti Barokah
 
-Fase 2. Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/human/general-ledger.md`. Schema: `docs/architecture/data/journal-entry-schema.md`. Akun yang dipakai: `docs/story/chart-of-accounts.md`.
+Fase 2. Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/general-ledger.md`. Schema: `docs/architecture/journal-entry-schema.md`. Akun yang dipakai: `docs/story/chart-of-accounts.md`.
 
 ## Transaksi Juli 2026 (seed data nyata)
 

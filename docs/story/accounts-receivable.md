@@ -1,6 +1,6 @@
 # Story — Accounts Receivable: CV Roti Barokah
 
-Fase 3. Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/human/accounts-receivable.md`. Schema: `docs/architecture/data/ar-schema.md`. Lanjutan langsung dari `docs/story/general-ledger.md` — entry 7 Juli (Piutang Usaha ke Warung Pak Budi) sekarang dapet identitas customer & jadwal pelunasan.
+Fase 3. Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/accounts-receivable.md`. Schema: `docs/architecture/ar-schema.md`. Lanjutan langsung dari `docs/story/general-ledger.md` — entry 7 Juli (Piutang Usaha ke Warung Pak Budi) sekarang dapet identitas customer & jadwal pelunasan.
 
 ## Customer (master data)
 
