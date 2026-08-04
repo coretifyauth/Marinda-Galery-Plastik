@@ -12,6 +12,14 @@ Fase 3. Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/ac
 | Warung Bu Imas | 0812-xxxx-0002 | 7 (net-7) |
 | Warung Kang Ade | 0812-xxxx-0003 | 7 (net-7) |
 
+Tiap customer juga punya `credit_limit` dan `overdue_threshold_days` (prefill = `payment_term_days` pas dibuat, Bu Nur boleh sesuaikan manual):
+
+| Customer | `credit_limit` | `overdue_threshold_days` |
+|---|---|---|
+| Warung Pak Budi | Rp1.000.000 (udah pernah telat, Bu Nur ketatin) | 7 (diketatin dari default 14, gara-gara riwayat telat) |
+| Warung Bu Imas | Rp2.000.000 | 7 (default) |
+| Warung Kang Ade | NULL (belum pernah macet, gak dibatasi) | 7 (default) |
+
 ## Skenario 1 — Invoice awal + lunas tepat waktu (Warung Bu Imas)
 
 10 Juli 2026: kirim roti ke Warung Bu Imas, invoice Rp500.000, `due_date` = 10+7 = **17 Juli 2026**.
@@ -40,6 +48,19 @@ Jurnal (sudah ada): Piutang Usaha (D) 1.200.000 | Pendapatan Penjualan Grosir (K
 
 Hari ini (30 Juli 2026): **belum ada pembayaran sama sekali**. `due_date` 21 Juli udah lewat 9 hari.
 Query aging: `due_date < 2026-07-30 and status != lunas` → invoice ini muncul, **telat 9 hari**, outstanding Rp1.200.000 — kandidat pertama buat ditagih.
+
+## Skenario 4 — Credit hold (Warung Pak Budi, lanjutan Skenario 3)
+
+30 Juli 2026: Warung Pak Budi mau pesan roti lagi, invoice baru Rp300.000 direncanain.
+
+Cek `create_ar_invoice`:
+- Outstanding sekarang: Rp1.200.000 (invoice 7 Juli, belum dibayar sepeser pun).
+- `credit_limit` Warung Pak Budi = Rp1.000.000 → **Rp1.200.000 > Rp1.000.000, kelampaui.**
+- `due_date` invoice 7 Juli = 21 Juli, udah lewat 9 hari. `overdue_threshold_days` = 7 → **9 hari > 7 hari, juga kelampaui.**
+
+Dua kondisi kepenuhi sekaligus (walau cukup salah satu) → RPC nolak, invoice Rp300.000 gak jadi dibuat lewat jalur AR. Bu Nur tetap mau kirim roti hari itu, tapi minta Pak Budi bayar cash di tempat — dicatat sebagai penjualan tunai biasa (Debit Kas Rp300.000, Kredit Pendapatan Rp300.000), gak lewat `ar_invoices`, gak nambah piutang.
+
+Bandingin sama Toko Melati (hipotetis, `credit_limit` Rp5.000.000 tapi ada 1 invoice telat 25 hari sementara `overdue_threshold_days`-nya 14) — outstanding-nya kecil dan jauh di bawah limit, tapi tetap kena hold karena syarat **waktu** aja udah cukup jadi trigger.
 
 ## Efek ke saldo Piutang Usaha per 30 Juli 2026
 

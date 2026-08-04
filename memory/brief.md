@@ -65,12 +65,12 @@ Ledger keputusan desain yang sengaja ditunda. 1 file = 1 konsep: kasus, kenapa d
 
 Status saat ini — semua di bawah ini masih **Ditunda**:
 - `ar-retur-barang.md`, `ar-uang-muka-dp.md`, `ar-overpayment-saldo-kredit.md` — 3 gap AR.
-- `ar-credit-hold.md`, `ar-piutang-tak-tertagih.md` — 2 dari 4 tindakan penjual ke piutang telat.
+- `ar-piutang-tak-tertagih.md` — 1 dari 4 tindakan penjual ke piutang telat (credit hold, tindakan ke-2, sudah selesai — lihat catatan di bawah).
 - `ap-retur-barang.md`, `ap-diskon-bayar-cepat.md`, `ap-uang-muka-dp.md`, `ap-bill-compound.md` — 4 kasus AP (Fase 4).
 - `trial-balance-rollup.md` — dependency GL ke Fase 7.
 - `user-role-admin-assignment.md` — policy admin assign role, butuh `security definer` function.
 
-(Item `fixed-assets-akun-kontra-asset.md` sudah **Selesai** — diapply di migration `0014_fixed_assets_schema.sql`. Item `period-closing.md` sudah **Selesai** — diapply di migration `0016_period_closing.sql`. Item `income-statement-closing-entry-self-cancel.md` sudah **Selesai** — `getIncomeStatement` sekarang exclude baris closing entry lewat `fetchClosingJournalEntryIds()` (`src/lib/reports/period-closing.ts`). Ketiganya sudah dihapus dari folder ini per aturan siklus hidup di atas.)
+(Item `fixed-assets-akun-kontra-asset.md` sudah **Selesai** — diapply di migration `0014_fixed_assets_schema.sql`. Item `period-closing.md` sudah **Selesai** — diapply di migration `0016_period_closing.sql`. Item `income-statement-closing-entry-self-cancel.md` sudah **Selesai** — `getIncomeStatement` sekarang exclude baris closing entry lewat `fetchClosingJournalEntryIds()` (`src/lib/reports/period-closing.ts`). Item `ar-credit-hold.md` sudah **Selesai** — diapply di migration `0020_ar_credit_hold.sql` (`customers.credit_limit`/`overdue_threshold_days` + validasi di `create_ar_invoice`). Keempatnya sudah dihapus dari folder ini per aturan siklus hidup di atas.)
 
 ---
 

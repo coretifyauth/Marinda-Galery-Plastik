@@ -13,7 +13,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 
 ## Konsep Inti
 
-- **Customer** — master data, entitas yang berutang ke CV Barokah (warung langganan). Punya `payment_term_days` default (misal net-7, net-14) yang dipakai buat ngitung jatuh tempo tiap invoice baru. Bukan data transaksional — kalau terminnya berubah, di-`UPDATE` di baris yang sama, gak bikin row baru (lihat "Kenapa payment_term_days aman diubah" di bawah).
+- **Customer** — master data, entitas yang berutang ke CV Barokah (warung langganan). Punya `payment_term_days` default (misal net-7, net-14) yang dipakai buat ngitung jatuh tempo tiap invoice baru. Juga punya `credit_limit` (nullable, batas nominal piutang boleh nyangkut bersamaan) dan `overdue_threshold_days` (nullable, toleransi hari telat sebelum kena credit hold) — lihat "Credit Hold" di bawah. Bukan data transaksional — kalau terminnya berubah, di-`UPDATE` di baris yang sama, gak bikin row baru (lihat "Kenapa payment_term_days aman diubah" di bawah).
 - **AR Invoice** — piutang timbul. 1 kejadian "kirim barang, belum dibayar" = 1 invoice. Tiap invoice bikin 1 journal entry: **Debit Piutang Usaha, Kredit Pendapatan**. `due_date` dihitung otomatis (`invoice_date + payment_term_days` milik customer itu) **pas invoice dibuat**, lalu disimpan permanen — gak dihitung ulang tiap kali dibaca.
 - **AR Payment** — piutang berkurang, kejadian bayar beneran (bukan jadwal). 1 payment bikin 1 journal entry: **Debit Kas/Bank, Kredit Piutang Usaha**, sejumlah **total** yang dibayar — gak peduli itu nutup 1 atau banyak invoice.
 - **AR Payment Allocation** — jembatan many-to-many antara payment dan invoice, nyimpen "payment ini nutup invoice mana, sejumlah berapa". Dibutuhin karena hubungan pembayaran-ke-invoice di dunia nyata jarang 1:1 (lihat Skenario di bawah).
@@ -50,6 +50,21 @@ Beda dari `accounts.normal_balance` (generated always as, dihitung ulang tiap ba
 **5. Invoice salah input cuma boleh dibatalkan kalau BELUM ada payment/alokasi masuk**
 Koreksi "salah input" pakai reversing entry (constraint #2), tapi ada syarat tambahan: begitu ada `ar_payment_allocations` yang nunjuk ke invoice itu (walau baru sebagian/cicilan pertama), pembatalan via jalur ini **ditolak**. Alasannya: piutang itu udah "kesentuh" transaksi lain — udah ada duit customer beneran masuk dan teralokasi ke situ, jadi gak bisa dianggap "invoice ini gak pernah terjadi" lagi tanpa mikirin nasib pembayaran yang udah diterima (refund? realokasi ke invoice lain? itu keputusan bisnis terpisah, belum di-scope). Invoice yang berhasil dibatalkan otomatis keluar dari daftar outstanding/aging — statusnya derived dari cek "apakah journal entry-nya punya reversal", bukan kolom manual (konsisten sama prinsip status lunas/sebagian/belum).
 
+## Credit Hold (Tahan Kredit Customer Telat Bayar)
+
+Kalau piutang customer ke CV Barokah udah kelewat batas wajar — nominal kegedean atau kelamaan nunggak — sales berhenti kasih termin baru ke customer itu sampai piutang lama beres. Ini tindakan standar level ke-2 dari 4 tindakan penjual ke piutang telat (reminder → **credit hold** → renegosiasi cicilan → write-off).
+
+Dua kondisi independen, **salah satu** kepenuhi langsung trigger hold (OR, bukan AND):
+
+- **Nominal**: total piutang belum lunas customer (semua invoice open, bukan cuma yang overdue) > `customers.credit_limit`. NULL = gak ada batas nominal.
+- **Waktu**: ada invoice open yang `due_date`-nya udah lewat lebih dari `customers.overdue_threshold_days` hari. NULL = gak ada batas waktu (customer itu gak pernah kena hold dari sisi ini).
+
+Status hold **gak disimpan** — derived, dihitung ulang tiap kali `create_ar_invoice` dipanggil (query outstanding + cek overdue terlama), sama pola kayak status lunas/sebagian/belum. Kalau kena hold, `create_ar_invoice` nolak keras (invoice baru gak bisa dibuat via jalur AR).
+
+Customer on-hold yang tetap mau dilayani **cash** (bukan termin) gak butuh perubahan apa pun di modul ini — itu jalan sebagai penjualan tunai biasa (Debit Kas, Kredit Pendapatan langsung), gak pernah masuk `ar_invoices` sama sekali karena gak ada piutang yang timbul.
+
+`overdue_threshold_days` default di-prefill sama dengan `payment_term_days` customer itu pas dibuat (di form/UI, bukan hardcode di DB) — supaya tiap customer otomatis punya toleransi masuk akal, tapi tetap bisa diubah manual per customer sesuai profil risikonya.
+
 ## Skenario (lihat detail angka lengkap di `docs/story/accounts-receivable.md`)
 
 1. Invoice lunas tepat waktu — kasus paling sederhana, 1 payment = 1 invoice, alokasi penuh.
@@ -57,6 +72,7 @@ Koreksi "salah input" pakai reversing entry (constraint #2), tapi ada syarat tam
 3. 1 payment nutup banyak invoice sekaligus — 1 payment, alokasi pecah ke beberapa invoice, tapi tetap cuma 1 journal entry (GL gak peduli breakdown per-invoice).
 4. Telat bayar — query aging (`due_date < now()` dan belum lunas), read-side doang, gak butuh kolom/job tambahan.
 5. Invoice dibatalkan (salah input, belum ada payment) — reversing entry via RPC `cancel_ar_invoice`, bukan hapus, sama kayak koreksi journal entry biasa. Ditolak kalau invoice udah punya alokasi payment (constraint #5).
+6. Invoice baru ditolak karena credit hold — customer kelampaui `credit_limit` ATAU ada invoice overdue lebih dari `overdue_threshold_days`-nya, `create_ar_invoice` nolak sebelum sempat bikin journal entry.
 
 ## Common Mistakes
 
@@ -66,6 +82,8 @@ Koreksi "salah input" pakai reversing entry (constraint #2), tapi ada syarat tam
 - Invoice/payment insert langsung ke tabel AR tanpa lewat RPC yang juga bikin journal entry — piutang tercatat di AR tapi GL gak ke-update, dua sumber angka jadi gak sinkron.
 - Alokasi ngelebihin amount invoice atau amount payment — duit "nutup" lebih dari yang sebenarnya ada.
 - Batalin invoice yang udah ada payment/alokasi tanpa mikirin nasib pembayarannya — reversing entry doang bikin GL balance, tapi duit customer yang udah masuk jadi "nyantol" gak jelas. Harus ditolak di level RPC, bukan cuma diingetin di UI.
+- Cek credit hold cuma di UI (warning yang bisa di-skip) — harus hard-reject di RPC `create_ar_invoice`, gak boleh bergantung ke frontend buat invariant bisnis ini.
+- Nyimpen status "on hold" sebagai kolom manual di `customers` — harus derived tiap invoice baru dicek, biar gak ada resiko status basi (customer udah bayar tapi kolom belum di-update).
 
 ## Belum Termasuk (di luar scope fase ini)
 

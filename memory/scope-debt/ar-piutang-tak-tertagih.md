@@ -20,5 +20,4 @@ Begitu ada skenario customer yang piutangnya dianggap gak akan pernah tertagih d
 
 ## Referensi
 
-- Percakapan desain AR (konteks bisnis piutang telat, 4 tindakan penjual)
-- [ar-credit-hold.md](ar-credit-hold.md)
+- Percakapan desain AR (konteks bisnis piutang telat, 4 tindakan penjual — credit hold, tindakan ke-2, sudah **Selesai**, diapply di `0020_ar_credit_hold.sql`)

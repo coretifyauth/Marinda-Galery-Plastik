@@ -19,6 +19,9 @@ export default function CustomersPage() {
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
   const [paymentTermDays, setPaymentTermDays] = useState("7");
+  const [creditLimit, setCreditLimit] = useState("");
+  const [overdueThresholdDays, setOverdueThresholdDays] = useState("7");
+  const [overdueThresholdTouched, setOverdueThresholdTouched] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -26,7 +29,7 @@ export default function CustomersPage() {
   const loadCustomers = useCallback(async () => {
     const { data, error } = await supabase
       .from("customers")
-      .select("id, name, contact, payment_term_days, archived_at")
+      .select("id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at")
       .order("name");
     if (error) {
       setLoadError(error.message);
@@ -64,6 +67,8 @@ export default function CustomersPage() {
       name,
       contact: contact || undefined,
       payment_term_days: paymentTermDays,
+      credit_limit: creditLimit || undefined,
+      overdue_threshold_days: overdueThresholdDays || undefined,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -79,6 +84,9 @@ export default function CustomersPage() {
     setName("");
     setContact("");
     setPaymentTermDays("7");
+    setCreditLimit("");
+    setOverdueThresholdDays("7");
+    setOverdueThresholdTouched(false);
     setShowForm(false);
     await loadCustomers();
   }
@@ -126,6 +134,8 @@ export default function CustomersPage() {
               <th className="px-4 py-2">Nama</th>
               <th className="px-4 py-2">Kontak</th>
               <th className="px-4 py-2">Termin (hari)</th>
+              <th className="px-4 py-2">Credit Limit</th>
+              <th className="px-4 py-2">Toleransi Telat (hari)</th>
             </tr>
           </thead>
           <tbody>
@@ -138,11 +148,15 @@ export default function CustomersPage() {
                 <td className="px-4 py-2 font-medium text-black">{c.name}</td>
                 <td className="px-4 py-2">{c.contact ?? "-"}</td>
                 <td className="px-4 py-2">{c.payment_term_days}</td>
+                <td className="px-4 py-2">
+                  {c.credit_limit != null ? c.credit_limit.toLocaleString("id-ID") : "Tanpa batas"}
+                </td>
+                <td className="px-4 py-2">{c.overdue_threshold_days ?? "Tanpa batas"}</td>
               </tr>
             ))}
             {customers.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
                   Belum ada customer.
                 </td>
               </tr>
@@ -186,7 +200,34 @@ export default function CustomersPage() {
                 type="number"
                 min="1"
                 value={paymentTermDays}
-                onChange={(e) => setPaymentTermDays(e.target.value)}
+                onChange={(e) => {
+                  setPaymentTermDays(e.target.value);
+                  if (!overdueThresholdTouched) setOverdueThresholdDays(e.target.value);
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="credit_limit">Credit Limit (kosongkan = tanpa batas)</Label>
+              <Input
+                id="credit_limit"
+                type="number"
+                min="0"
+                placeholder="mis. 1000000"
+                value={creditLimit}
+                onChange={(e) => setCreditLimit(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="overdue_threshold_days">Toleransi Telat (hari)</Label>
+              <Input
+                id="overdue_threshold_days"
+                type="number"
+                min="1"
+                value={overdueThresholdDays}
+                onChange={(e) => {
+                  setOverdueThresholdTouched(true);
+                  setOverdueThresholdDays(e.target.value);
+                }}
               />
             </div>
             <Button type="submit" disabled={submitting}>

@@ -20,6 +20,8 @@ Fase 3 roadmap. Ref konsep bisnis: `docs/domain/accounts-receivable.md` + `memor
 
 Tiap baris = 1 customer (warung langganan). Yang perlu diperhatiin:
 - `payment_term_days` — default termin (hari) dipakai buat ngitung `due_date` invoice baru. Bukan kolom terkunci — boleh diubah kapan pun, cuma ngaruh ke invoice baru ke depan (`due_date` invoice lama udah ke-snapshot, gak ikut berubah).
+- `credit_limit` — nullable, batas nominal total piutang open (belum lunas) yang boleh nyangkut bersamaan buat customer ini. `NULL` = gak ada batas (unlimited), dipilih biar customer existing gak otomatis kena hold begitu migration ini di-apply. Dicek di `create_ar_invoice` (lihat "Credit Hold" di bawah), bukan constraint DB — perlu bandingin sama data dari tabel lain (`ar_invoices`/`ar_payment_allocations`), gak bisa jadi `CHECK` di level kolom.
+- `overdue_threshold_days` — nullable, toleransi hari keterlambatan sebelum kena hold. `NULL` = gak ada batas waktu buat customer ini. UI prefill nilainya = `payment_term_days` pas customer baru dibuat (keputusan produk, bukan default DB), tapi keduanya kolom independen — bisa diubah manual per customer sesuai profil risiko (lihat `docs/domain/accounts-receivable.md` bagian "Credit Hold").
 - `archived_at` — pola sama kayak `accounts` (`memory/preferences/system/state-naming-convention.md`): satu-satunya penanda lifecycle, gak ada `is_active` terpisah.
 
 ```sql
@@ -28,6 +30,8 @@ create table customers (
   name text not null,
   contact text,
   payment_term_days int not null default 7 check (payment_term_days > 0),
+  credit_limit numeric(14,2) check (credit_limit is null or credit_limit > 0),
+  overdue_threshold_days int check (overdue_threshold_days is null or overdue_threshold_days > 0),
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -37,6 +41,8 @@ create trigger customers_set_updated_at
   before update on customers
   for each row execute function set_updated_at();
 ```
+
+`credit_limit`/`overdue_threshold_days` ditambah belakangan lewat `0020_ar_credit_hold.sql` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel, bukan riwayat migration per migration (lihat migration file buat riwayat perubahannya).
 
 `set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang.
 
@@ -174,8 +180,16 @@ Dua-duanya `security invoker`, pola sama `journal-entry-schema.md`. Kunci desain
 
 ### `create_ar_invoice` — bikin invoice + journal entry-nya sekaligus
 
+**Credit Hold** (`0020_ar_credit_hold.sql`) — sebelum bikin apa pun, RPC ini cek 2 kondisi independen (OR, salah satu kepenuhi udah cukup nolak):
+- **Nominal prospektif**: `(outstanding sekarang + amount invoice baru) > credit_limit` — sengaja prospektif (nambahin amount invoice yang mau dibuat), bukan cuma cek "udah lewat limit apa belum", karena tujuan limit itu nyegah exposure nambah lewat batas, bukan cuma ngasih tau udah lewat.
+- **Waktu**: ada invoice open (belum lunas & belum dibatalkan) yang `p_invoice_date - due_date` (hari overdue-nya) > `overdue_threshold_days`.
+
+Outstanding dihitung inline (bukan manggil fungsi terpisah) — `sum(amount - alokasi)` per invoice customer itu, exclude invoice yang punya reversal (`journal_entries.reverses_entry_id`), sama pola derived status lunas/sebagian/belum yang udah dipakai di tempat lain. `NULL` di `credit_limit`/`overdue_threshold_days` bikin kondisi itu di-skip (gak pernah nolak dari sisi itu).
+
+Kalau salah satu kepenuhi, RPC `raise exception` sebelum sempat manggil `create_journal_entry` — invoice gak jadi dibuat, gak ada jejak apa pun di GL (gagal bersih, bukan partial write).
+
 ```sql
-create function create_ar_invoice(
+create or replace function create_ar_invoice(
   p_customer_id uuid,
   p_invoice_date date,
   p_description text,
@@ -192,9 +206,40 @@ declare
   v_due_date date;
   v_entry_id uuid;
   v_invoice_id uuid;
+  v_credit_limit numeric;
+  v_overdue_threshold_days int;
+  v_outstanding numeric;
+  v_max_overdue_days int;
 begin
-  select payment_term_days into v_term_days from customers where id = p_customer_id;
+  select payment_term_days, credit_limit, overdue_threshold_days
+    into v_term_days, v_credit_limit, v_overdue_threshold_days
+    from customers where id = p_customer_id;
   v_due_date := p_invoice_date + v_term_days;
+
+  select coalesce(sum(ai.amount - coalesce(alloc.paid, 0)), 0),
+         coalesce(max(p_invoice_date - ai.due_date), 0)
+    into v_outstanding, v_max_overdue_days
+    from ar_invoices ai
+    left join (
+      select invoice_id, sum(amount) as paid
+      from ar_payment_allocations
+      group by invoice_id
+    ) alloc on alloc.invoice_id = ai.id
+    where ai.customer_id = p_customer_id
+      and not exists (
+        select 1 from journal_entries je where je.reverses_entry_id = ai.journal_entry_id
+      )
+      and ai.amount - coalesce(alloc.paid, 0) > 0;
+
+  if v_credit_limit is not null and (v_outstanding + p_amount) > v_credit_limit then
+    raise exception 'Customer kena credit hold: piutang outstanding % + invoice baru % ngelewatin credit_limit %',
+      v_outstanding, p_amount, v_credit_limit;
+  end if;
+
+  if v_overdue_threshold_days is not null and v_max_overdue_days > v_overdue_threshold_days then
+    raise exception 'Customer kena credit hold: ada piutang telat % hari (toleransi % hari)',
+      v_max_overdue_days, v_overdue_threshold_days;
+  end if;
 
   v_entry_id := create_journal_entry(
     p_invoice_date, p_description, p_source_ref,

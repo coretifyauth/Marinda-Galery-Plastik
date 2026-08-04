@@ -6,7 +6,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario n
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `customers` | Master data pelanggan (nama, kontak, termin pembayaran) | — |
+| `customers` | Master data pelanggan (nama, kontak, termin pembayaran, batas kredit, toleransi telat) | — |
 | `ar_invoices` | Tagihan yang diterbitkan ke pelanggan | `customers`, dan ke transaksi jurnal yang otomatis dibuat |
 | `ar_payments` | Pembayaran yang diterima dari pelanggan | `customers`, dan ke transaksi jurnal yang otomatis dibuat |
 | `ar_payment_allocations` | Jembatan: "pembayaran X melunasi invoice Y sejumlah Z" | Menghubungkan `ar_payments` ↔ `ar_invoices` |
@@ -28,6 +28,7 @@ Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invo
 2. **Invoice dan pembayaran tidak pernah bisa diedit atau dihapus** — sama seperti transaksi jurnal biasa (dua lapis pengamanan). Data pelanggan sendiri (nama, kontak, termin) boleh diubah kapan saja karena itu bukan catatan transaksi, cuma master data.
 3. **Invoice hanya bisa dibatalkan kalau belum ada pembayaran yang mengalokasikan ke situ.** Kalau sudah ada pelunasan (meski sebagian), pembatalan lewat jalur biasa ditolak — harus ditangani lewat proses yang lebih hati-hati (di luar cakupan saat ini).
 4. **Setiap invoice dan pembayaran otomatis membuat transaksi jurnal yang sepadan** — tidak mungkin ada invoice tanpa jurnal Piutang/Pendapatan, atau pembayaran tanpa jurnal Kas/Piutang. Ini dijamin karena satu-satunya cara membuat invoice/pembayaran adalah lewat proses gabungan yang disebut di bawah.
+5. **Invoice baru ditolak kalau pelanggan kena "credit hold".** Dicek dua hal, cukup salah satu terpenuhi: total piutang belum lunas pelanggan (ditambah invoice baru ini) melebihi batas kreditnya, atau ada piutang lama yang telatnya sudah melebihi toleransi hari yang diizinkan buat pelanggan itu. Kalau batas kredit atau toleransi telatnya tidak diisi (kosong), pelanggan itu tidak pernah kena hold dari sisi itu. Pelanggan yang kena hold tetap bisa dilayani asal bayar tunai langsung — itu dicatat sebagai penjualan tunai biasa, bukan lewat invoice.
 
 ## Cara Kerja "Buat Invoice", "Catat Pembayaran", dan "Batalkan Invoice"
 

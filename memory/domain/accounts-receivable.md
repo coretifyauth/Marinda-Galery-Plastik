@@ -4,7 +4,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 
 ## Entitas
 
-- **customer** — master data (bukan transaksional). Kolom kunci: `payment_term_days` (default termin, dipakai ngitung `due_date` invoice baru). Boleh di-`UPDATE` di tempat kalau termin berubah — gak ngaruh ke invoice lama karena `due_date` udah di-snapshot.
+- **customer** — master data (bukan transaksional). Kolom kunci: `payment_term_days` (default termin, dipakai ngitung `due_date` invoice baru), `credit_limit` (nullable, batas nominal piutang open sebelum hold), `overdue_threshold_days` (nullable, toleransi hari telat sebelum hold — default di-prefill = `payment_term_days` pas customer dibuat, tapi kolom independen). Boleh di-`UPDATE` di tempat kalau termin/limit berubah — gak ngaruh ke invoice lama karena `due_date` udah di-snapshot.
 - **ar_invoice** — piutang timbul. Jurnal: Debit Piutang Usaha, Kredit Pendapatan. `due_date = invoice_date + customer.payment_term_days`, dihitung & disimpan **sekali** pas insert (bukan generated column dinamis).
 - **ar_payment** — piutang berkurang, kejadian bayar nyata (bukan jadwal terjadwal). Jurnal: Debit Kas/Bank, Kredit Piutang Usaha, sejumlah **total** payment (gak peduli itu nutup berapa invoice).
 - **ar_payment_allocation** — jembatan many-to-many payment↔invoice, `(payment_id, invoice_id, amount)`. Wajib ada karena hubungan payment-invoice gak selalu 1:1 (lihat Skenario).
@@ -17,6 +17,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **No over-allocation**: `SUM(allocation.amount)` per payment ≤ `ar_payment.amount`; `SUM(allocation.amount)` per invoice ≤ `ar_invoice.amount`.
 - **`due_date` snapshot**: dihitung dari `payment_term_days` customer **pas invoice insert**, disimpan permanen. Perubahan `payment_term_days` customer setelahnya TIDAK boleh retroaktif ngubah `due_date` invoice lama.
 - **Cancellation guard**: invoice cuma boleh dibatalkan (reversing entry via `cancel_ar_invoice`) kalau `ar_payment_allocations` buat invoice itu masih 0 baris. Begitu ada 1 alokasi (walau partial), pembatalan ditolak — piutang udah kesentuh transaksi lain, nasib pembayarannya jadi keputusan bisnis terpisah (belum di-scope).
+- **Credit hold**: `create_ar_invoice` hard-reject kalau customer kelampaui `credit_limit` (total outstanding open) ATAU ada invoice open yang overdue lebih dari `overdue_threshold_days`-nya (OR, bukan AND). Status hold gak disimpan, derived tiap kali RPC dipanggil. NULL di salah satu kolom = batas itu gak berlaku buat customer itu. Cash sale ke customer on-hold gak lewat `ar_invoices` sama sekali (langsung jurnal Debit Kas/Kredit Pendapatan, di luar scope AR).
 
 ## Skenario referensi (detail angka: `docs/story/accounts-receivable.md`)
 
@@ -27,6 +28,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 3 | Bayar gabungan | 1 payment → banyak invoice, tapi tetap 1 journal entry |
 | 4 | Telat bayar (aging) | Query read-side: `due_date < now()` dan belum lunas — gak butuh kolom/job baru |
 | 5 | Invoice dibatalkan (belum ada payment) | Reversing entry via `cancel_ar_invoice`, invoice asli tetap ada di histori |
+| 6 | Credit hold | `create_ar_invoice` ditolak: outstanding > `credit_limit` ATAU overdue terlama > `overdue_threshold_days` |
 
 ## Common mistakes to guard against
 
@@ -36,6 +38,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - Insert AR tanpa lewat RPC yang juga bikin journal entry — AR dan GL jadi dua sumber angka gak sinkron.
 - Alokasi ngelebihin amount invoice atau amount payment.
 - Batalin invoice yang udah ada alokasi payment tanpa guard — GL balance tapi duit customer yang udah masuk jadi nyantol gak jelas.
+- Cek credit hold cuma di UI (skippable) — harus hard-reject di RPC.
+- Simpen status "on hold" sebagai kolom manual — harus derived tiap invoice baru dicek.
 
 ## Belum termasuk (di luar scope fase ini)
 
@@ -49,6 +53,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **AR Invoice**: piutang timbul dari 1 kejadian kirim barang/jasa dengan termin.
 - **AR Payment**: 1 kejadian bayar nyata dari customer.
 - **AR Payment Allocation**: pemetaan payment ke invoice yang dia lunasi, sejumlah tertentu.
+- **Credit Hold**: kondisi derived, customer ditolak bikin invoice baru karena outstanding/keterlambatan kelampaui batasnya.
 - **Aging**: invoice yang `due_date`-nya udah lewat dan belum lunas.
 
 Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`.
