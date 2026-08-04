@@ -5,37 +5,41 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Customer } from "@/lib/customers/schema";
-import { createArInvoiceSchema, invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
+import { createArDepositSchema, depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 
-const statusStyle: Record<string, string> = {
-  lunas: "bg-emerald-50 text-emerald-700",
-  sebagian: "bg-amber-50 text-amber-700",
-  belum: "bg-slate-100 text-slate-600",
-  dibatalkan: "bg-slate-100 text-slate-400 line-through",
+const statusLabel: Record<string, string> = {
+  belum_dipakai: "Belum Dipakai",
+  diterapkan: "Diterapkan",
+  hangus: "Hangus",
 };
 
-export default function ArInvoicesPage() {
+const statusStyle: Record<string, string> = {
+  belum_dipakai: "bg-slate-100 text-slate-600",
+  diterapkan: "bg-emerald-50 text-emerald-700",
+  hangus: "bg-red-50 text-red-700",
+};
+
+export default function ArDepositsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [invoices, setInvoices] = useState<ArInvoice[]>([]);
+  const [deposits, setDeposits] = useState<ArDeposit[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [customerId, setCustomerId] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState("");
-  const [description, setDescription] = useState("");
+  const [depositDate, setDepositDate] = useState("");
   const [sourceRef, setSourceRef] = useState("");
   const [amount, setAmount] = useState("");
-  const [receivableAccountId, setReceivableAccountId] = useState("");
-  const [revenueAccountId, setRevenueAccountId] = useState("");
+  const [cashAccountId, setCashAccountId] = useState("");
+  const [depositLiabilityAccountId, setDepositLiabilityAccountId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -52,19 +56,19 @@ export default function ArInvoicesPage() {
     );
   }, []);
 
-  const loadInvoices = useCallback(async () => {
+  const loadDeposits = useCallback(async () => {
     const { data, error } = await supabase
-      .from("ar_invoices")
+      .from("ar_deposits")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount)"
+        "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_forfeitures(id, forfeiture_date, source_ref, journal_entry_id)"
       )
-      .order("invoice_date", { ascending: false });
+      .order("deposit_date", { ascending: false });
     if (error) {
       setLoadError(error.message);
       return;
     }
     setLoadError(null);
-    setInvoices((data ?? []) as unknown as ArInvoice[]);
+    setDeposits((data ?? []) as unknown as ArDeposit[]);
   }, []);
 
   const loadCustomers = useCallback(async () => {
@@ -96,26 +100,25 @@ export default function ArInvoicesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadCustomers(), loadAccounts(), loadInvoices(), loadReversedEntryIds()]);
+      await Promise.all([loadCustomers(), loadAccounts(), loadDeposits(), loadReversedEntryIds()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadAccounts, loadInvoices, loadReversedEntryIds]);
+  }, [router, loadCustomers, loadAccounts, loadDeposits, loadReversedEntryIds]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
-    const parsed = createArInvoiceSchema.safeParse({
+    const parsed = createArDepositSchema.safeParse({
       customer_id: customerId,
-      invoice_date: invoiceDate,
-      description,
+      deposit_date: depositDate,
       source_ref: sourceRef,
       amount,
-      receivable_account_id: receivableAccountId,
-      revenue_account_id: revenueAccountId,
+      cash_account_id: cashAccountId,
+      deposit_liability_account_id: depositLiabilityAccountId,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -123,14 +126,13 @@ export default function ArInvoicesPage() {
     }
 
     setSubmitting(true);
-    const { error } = await supabase.rpc("create_ar_invoice", {
+    const { error } = await supabase.rpc("create_ar_deposit", {
       p_customer_id: parsed.data.customer_id,
-      p_invoice_date: parsed.data.invoice_date,
-      p_description: parsed.data.description || null,
+      p_deposit_date: parsed.data.deposit_date,
       p_source_ref: parsed.data.source_ref,
       p_amount: parsed.data.amount,
-      p_receivable_account_id: parsed.data.receivable_account_id,
-      p_revenue_account_id: parsed.data.revenue_account_id,
+      p_cash_account_id: parsed.data.cash_account_id,
+      p_deposit_liability_account_id: parsed.data.deposit_liability_account_id,
     });
     setSubmitting(false);
     if (error) {
@@ -139,14 +141,13 @@ export default function ArInvoicesPage() {
     }
 
     setCustomerId("");
-    setInvoiceDate("");
-    setDescription("");
+    setDepositDate("");
     setSourceRef("");
     setAmount("");
-    setReceivableAccountId("");
-    setRevenueAccountId("");
+    setCashAccountId("");
+    setDepositLiabilityAccountId("");
     setShowForm(false);
-    await loadInvoices();
+    await loadDeposits();
   }
 
   if (checkingSession) {
@@ -158,7 +159,7 @@ export default function ArInvoicesPage() {
   return (
     <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">AR Invoices — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">AR Deposits (Uang Muka) — CV Roti Barokah</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -170,13 +171,13 @@ export default function ArInvoicesPage() {
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-black">AR Invoices</span>
+            <span className="text-sm font-medium text-black">AR Deposits</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {invoices.length}
+              {deposits.length}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => loadInvoices()}>
+            <Button variant="toolbar" onClick={() => loadDeposits()}>
               Refresh
             </Button>
             {canWrite && (
@@ -191,59 +192,55 @@ export default function ArInvoicesPage() {
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Customer</th>
               <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Jatuh Tempo</th>
               <th className="px-4 py-2">Source Ref</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
-              <th className="px-4 py-2 text-right">Outstanding</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Diterapkan ke</th>
             </tr>
           </thead>
           <tbody>
-            {invoices.map((inv) => {
-              const isCancelled = reversedEntryIds.has(inv.journal_entry_id);
-              const { status, outstanding, returned } = invoiceStatus(inv, isCancelled);
-              const overdue =
-                status !== "lunas" && status !== "dibatalkan" && inv.due_date < new Date().toISOString().slice(0, 10);
+            {deposits.map((dep) => {
+              const { status } = depositStatus(dep, reversedEntryIds);
+              const activeApplications = dep.ar_deposit_applications.filter(
+                (a) => !reversedEntryIds.has(a.journal_entry_id)
+              );
               return (
                 <tr
-                  key={inv.id}
+                  key={dep.id}
                   className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
-                  onClick={() => router.push(`/ar-invoices/${inv.id}`)}
+                  onClick={() => router.push(`/ar-deposits/${dep.id}`)}
                 >
-                  <td className="px-4 py-2 font-medium text-black">{inv.customers.name}</td>
-                  <td className="whitespace-nowrap px-4 py-2">{inv.invoice_date}</td>
-                  <td className="whitespace-nowrap px-4 py-2">
-                    {inv.due_date}
-                    {overdue && (
-                      <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">
-                        Telat
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">{inv.source_ref}</td>
+                  <td className="px-4 py-2 font-medium text-black">{dep.customers.name}</td>
+                  <td className="whitespace-nowrap px-4 py-2">{dep.deposit_date}</td>
+                  <td className="px-4 py-2">{dep.source_ref}</td>
                   <td className="px-4 py-2 text-right font-mono">
-                    {inv.amount.toLocaleString("id-ID")}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono">
-                    {outstanding.toLocaleString("id-ID")}
-                    {returned > 0 && (
-                      <span className="ml-1 block text-xs font-normal text-amber-600">
-                        retur {returned.toLocaleString("id-ID")}
-                      </span>
-                    )}
+                    {dep.amount.toLocaleString("id-ID")}
                   </td>
                   <td className="px-4 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
-                      {status}
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>
+                      {statusLabel[status]}
                     </span>
+                  </td>
+                  <td className="px-4 py-2">
+                    {activeApplications.length > 0 ? (
+                      <ul className="space-y-0.5">
+                        {activeApplications.map((a) => (
+                          <li key={a.id}>
+                            {a.ar_invoices.source_ref} — {a.amount.toLocaleString("id-ID")}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                 </tr>
               );
             })}
-            {invoices.length === 0 && (
+            {deposits.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada invoice.
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                  Belum ada deposit.
                 </td>
               </tr>
             )}
@@ -253,7 +250,7 @@ export default function ArInvoicesPage() {
 
       {showForm && (
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tambah AR Invoice</h2>
+          <h2 className="mb-4 font-semibold text-black">Terima Uang Muka</h2>
           {!canWrite && (
             <p className="mb-4 text-sm text-amber-600">
               Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
@@ -268,36 +265,27 @@ export default function ArInvoicesPage() {
                   <option value="">Pilih customer...</option>
                   {customers.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name} (net-{c.payment_term_days})
+                      {c.name}
                     </option>
                   ))}
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="invoice_date">Tanggal</Label>
+                <Label htmlFor="deposit_date">Tanggal</Label>
                 <Input
-                  id="invoice_date"
+                  id="deposit_date"
                   type="date"
-                  value={invoiceDate}
-                  onChange={(e) => setInvoiceDate(e.target.value)}
+                  value={depositDate}
+                  onChange={(e) => setDepositDate(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
                 <Input
                   id="source_ref"
-                  placeholder="mis. Nota grosir #005"
+                  placeholder="mis. DP Kue Ultah Ibu Dewi"
                   value={sourceRef}
                   onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="description">Deskripsi</Label>
-                <Input
-                  id="description"
-                  placeholder="mis. Kirim roti ke Warung Bu Imas"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -312,12 +300,8 @@ export default function ArInvoicesPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="receivable_account">Akun Piutang Usaha (debit)</Label>
-                <Select
-                  id="receivable_account"
-                  value={receivableAccountId}
-                  onChange={(e) => setReceivableAccountId(e.target.value)}
-                >
+                <Label htmlFor="cash_account">Akun Kas/Bank (debit)</Label>
+                <Select id="cash_account" value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value)}>
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -327,11 +311,11 @@ export default function ArInvoicesPage() {
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="revenue_account">Akun Pendapatan (kredit)</Label>
+                <Label htmlFor="deposit_liability_account">Akun Uang Muka Penjualan (kredit)</Label>
                 <Select
-                  id="revenue_account"
-                  value={revenueAccountId}
-                  onChange={(e) => setRevenueAccountId(e.target.value)}
+                  id="deposit_liability_account"
+                  value={depositLiabilityAccountId}
+                  onChange={(e) => setDepositLiabilityAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (
@@ -346,7 +330,7 @@ export default function ArInvoicesPage() {
             {formError && <FormError>{formError}</FormError>}
 
             <Button type="submit" disabled={submitting} className="w-fit">
-              {submitting ? "Menyimpan..." : "Simpan Invoice"}
+              {submitting ? "Menyimpan..." : "Simpan Deposit"}
             </Button>
           </form>
         </div>

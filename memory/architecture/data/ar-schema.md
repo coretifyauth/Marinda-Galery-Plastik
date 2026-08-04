@@ -501,9 +501,94 @@ Full body (bentuk final, setelah bugfix): `supabase/migrations/0022_fix_ar_credi
 
 Pola identik AR/Inventory lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`, 3 tabel ini transaksional). Detail: migration file.
 
+## AR Deposit (Uang Muka/DP) — migration `0024_ar_deposits_schema.sql` + `0025_seed_demo_ar_deposits.sql`
+
+Customer bayar duluan sebelum invoice ada (misal DP pesanan custom). **Bukan** `ar_payment` — jurnalnya gak nyentuh Piutang Usaha sama sekali pas diterima (piutangnya belum ada), dicatat ke akun liability baru `Uang Muka Penjualan` (`2300`, insert di migration seed 0025, pola sama `4900 Retur & Potongan Penjualan`). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Uang Muka / DP".
+
+### `ar_deposits` — DP diterima (selalu dibuat)
+
+Satu baris = satu kejadian terima uang muka. `journal_entry_id` nunjuk jurnal Debit Kas/Bank / Kredit Uang Muka Penjualan (`create_journal_entry`, reuse). Immutable, pola sama `ar_invoices`/`ar_payments`.
+
+```sql
+create table ar_deposits (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid not null references customers(id),
+  deposit_date date not null,
+  source_ref text not null,
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### `ar_deposit_applications` — DP diterapkan ke invoice
+
+Satu baris = satu kejadian "deposit X dipakai nutup invoice Y sejumlah Z". Jurnal: Debit Uang Muka Penjualan / Kredit Piutang Usaha (reklasifikasi, bukan pembayaran baru). Punya `source_ref` sendiri (bukan cuma lewat join `journal_entries`) — konsisten sama `ar_credit_notes`/`inventory_returns` yang juga nyimpen `source_ref` langsung walau punya `journal_entry_id`.
+
+Trigger `ar_deposit_applications_guard` (before insert, 5 pengecekan berurutan):
+1. Deposit belum pernah dihanguskan.
+2. Gak over-apply terhadap sisa deposit — exclude application yang udah di-reverse (`not exists (select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id)`), biar deposit yang application-nya kena unwind lewat `cancel_ar_invoice` beneran keitung "belum dipakai" lagi.
+3. Deposit & invoice harus customer yang sama — cegah salah pencet nyampur saldo antar-customer (ketauan pas review, gak ada FK yang natural nyegah ini karena `ar_deposits.customer_id` dan `ar_invoices.customer_id` independen).
+4. Invoice targetnya belum dibatalkan (gak punya reversal) — pola exclude yang sama kayak dipakai `create_ar_invoice` (0020) buat outstanding calc. Tanpa ini, DP bisa diterapkan ke invoice yang udah dibatalkan, piutang nyasar minus tanpa sebab bisnis.
+5. Gak over-apply terhadap nilai invoice, **digabung** sama `ar_payment_allocations` yang udah ada — bukan dicek sendiri-sendiri. Ketauan pas review: sebelum ini, `ar_payment_allocations_no_over_allocation` (0007) dan guard ini masing-masing cuma liat tabelnya sendiri, jadi 2 jalur independen ke piutang yang sama bisa over-collect gabungan (invoice 2jt bisa "abis" 500rb DP + 2jt payment = 2.5jt, gak ada yang nolak). Fix-nya dua arah — poin ini DAN `ar_payment_allocations_no_over_allocation` sama-sama diperluas jumlahin kedua tabel (lihat di bawah).
+
+```sql
+create table ar_deposit_applications (
+  id uuid primary key default gen_random_uuid(),
+  deposit_id uuid not null references ar_deposits(id),
+  invoice_id uuid not null references ar_invoices(id),
+  amount numeric(14,2) not null check (amount > 0),
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### 2 fungsi existing yang ikut diperluas (`create or replace` di `0024`, bukan tabel baru)
+
+- **`ar_payment_allocations_no_over_allocation`** (aslinya 0007) — sisi cek "over-apply ke invoice" sekarang jumlahin `ar_payment_allocations` + `ar_deposit_applications` aktif, bukan cuma `ar_payment_allocations` doang. Simetris sama poin 5 di atas.
+- **`create_ar_invoice`** (aslinya 0007, di-extend 0020 buat credit hold) — outstanding calc buat credit hold sekarang ikut ngurangin `ar_deposit_applications` aktif per invoice (union sama `ar_payment_allocations` di subquery `alloc`), gak cuma payment doang. Tanpa ini, customer yang udah nitip DP tetep keitung "outstanding penuh" dan bisa kena credit hold yang gak seharusnya (overly conservative, ketauan pas review — bukan celah duit, tapi tetap salah).
+
+### `ar_deposit_forfeitures` — DP hangus
+
+Satu baris = satu kejadian DP hangus (order dibatalin **sebelum** invoice ada — beda dari `ar_credit_note` yang buat barang yang udah diinvoice). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (`4300`, akun baru — **bukan** `Pendapatan Penjualan`, karena bukan hasil jualan, biar Laba Rugi gak nyampur). Trigger `ar_deposit_forfeitures_guard` (before insert): deposit belum pernah dihanguskan DAN gak lagi punya application aktif (belum di-reverse) — 1 deposit cuma boleh 1 disposisi aktif (diterapkan ATAU hangus).
+
+```sql
+create table ar_deposit_forfeitures (
+  id uuid primary key default gen_random_uuid(),
+  deposit_id uuid not null references ar_deposits(id),
+  forfeiture_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+Status 1 deposit (belum dipakai / diterapkan / hangus) **derived** dari 2 tabel anak di atas, bukan kolom — konsisten sama pola status invoice/status "dibatalkan" (cek reversal).
+
+### RPC: `create_ar_deposit`, `apply_ar_deposit`, `forfeit_ar_deposit`
+
+`security invoker`, pola sama RPC AR lain — semua reuse `create_journal_entry`, gak pernah insert manual ke `journal_entries`/`journal_lines`. `create_ar_deposit` insert `ar_deposits`. `apply_ar_deposit` insert `ar_deposit_applications` (nominal diinput eksplisit dari caller, bukan dihitung RPC — konsisten sama pola RPC AR lain). `forfeit_ar_deposit` ngambil `amount` dari `ar_deposits.amount` (deposit yang hangus selalu hangus **penuh**, gak ada forfeiture parsial), insert `ar_deposit_forfeitures`.
+
+Full body: `supabase/migrations/0024_ar_deposits_schema.sql`.
+
+### `cancel_ar_invoice` diperluas — auto-unwind `ar_deposit_applications`
+
+**Keputusan desain paling penting di fitur ini.** Sebelum ini, `cancel_ar_invoice` (`0009_ar_invoice_cancellation.sql`) cuma reverse jurnal invoice-nya sendiri. Kalau invoice itu udah punya `ar_deposit_applications`, itu bakal bikin Piutang Usaha nyasar minus (jurnal application gak ikut ke-reverse) dan DP-nya nyangkut gak jelas statusnya — dianalisa lewat contoh angka konkret bareng user, lihat `docs/story/accounts-receivable.md` Skenario 9.
+
+Fix-nya **`create or replace function`** di `0024_ar_deposits_schema.sql` (bukan edit `0009`, migration lama tetep gak disentuh) — RPC ini sekarang, setelah reverse jurnal invoice, loop semua `ar_deposit_applications` invoice itu yang masih aktif (belum di-reverse) dan ikut manggil `reverse_journal_entry` buat tiap satu. Signature (nama param, urutan, return type) identik persis versi 0009 — caller existing (`src/app/(app)/ar-invoices/[id]/view.tsx`, manggil pakai named-parameter object) gak perlu berubah.
+
+**Kenapa auto-unwind, bukan cuma nolak** (beda dari guard `ar_payment_allocations` di RPC yang sama, yang tetep nolak keras, gak diubah): nolak doang gak nyelesain masalah duitnya — deposit yang udah "kepake" ke invoice yang ternyata salah input butuh jalan keluar, bukan jalan buntu. Guard `ar_payment_allocations` sengaja tetep beda perlakuan karena itu duit customer yang beneran udah "nyantol" ke pelunasan (nasibnya lebih kompleks, `docs/domain/accounts-receivable.md` udah nandain "keputusan bisnis terpisah, belum di-scope") — sementara DP-application gampang di-unwind bersih karena cuma 1 jurnal reklasifikasi sederhana.
+
+### RLS & Grant
+
+Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
-- **Uang muka/DP sebelum invoice ada** — asumsi sekarang: `record_ar_payment` selalu butuh minimal 1 alokasi ke invoice yang udah ada (gak ada payment "nganggur"). Kalau nanti perlu DP di depan, butuh keputusan desain terpisah (payment boleh 0 alokasi dulu).
-- **Overpayment jadi saldo kredit customer** — trigger sekarang nolak keras alokasi yang ngelebihin. Retur juga bisa bikin outstanding negatif (lihat "AR Credit Note" di atas). Kasus "kelebihan bayar dianggap kredit buat invoice berikutnya / refund" belum di-scope.
+- **Overpayment jadi saldo kredit customer** — trigger sekarang nolak keras alokasi yang ngelebihin. Retur juga bisa bikin outstanding negatif (lihat "AR Credit Note" di atas). Kasus "kelebihan bayar dianggap kredit buat invoice berikutnya / refund" belum di-scope. **Beda mekanisme** dari `ar_deposit` — itu solve "bayar sebelum invoice ada", ini "bayar lebih dari invoice yang udah ada", masih 2 masalah terpisah.
 - **Penggantian barang gratis pasca-retur** — butuh RPC baru (keluar stok+HPP tanpa invoice baru), `memory/scope-debt/ar-penggantian-barang-retur.md`.
 - **Aging report / dashboard piutang jatuh tempo** — query read-side (`due_date` vs `now()`, join alokasi buat status), digarap pas UI dibangun, gak butuh kolom/tabel tambahan.

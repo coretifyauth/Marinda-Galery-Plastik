@@ -13,6 +13,7 @@ const routeLabels: Record<string, string> = {
   "/customers": "Customers",
   "/ar-invoices": "AR Invoices",
   "/ar-payments": "AR Payments",
+  "/ar-deposits": "AR Deposits",
   "/suppliers": "Suppliers",
   "/ap-bills": "AP Bills",
   "/ap-payments": "AP Payments",

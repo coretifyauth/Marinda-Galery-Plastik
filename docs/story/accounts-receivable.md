@@ -105,9 +105,63 @@ Debit Persediaan Barang Jadi       3.750
 
 3 buah Roti Tawar masuk lot baru (`source_type = SALES_RETURN`, `unit_cost = 1.250`). Piutang Usaha Pak Budi: 60.000 (invoice, belum dibayar) − 6.000 (retur) = **54.000 outstanding**. Persediaan Roti Tawar: 20 (sisa Tahap 7) + 3 (retur) = **23 buah**.
 
+## Uang Muka / DP — customer baru (pesanan custom, bukan warung langganan)
+
+Selain 3 warung langganan di atas (kirim rutin, termin), CV Roti Barokah kadang terima **pesanan custom** (kue ulang tahun/pernikahan) dari perorangan — beda pola dari warung: bayar DP di muka pas pesan, sisanya dilunasin pas ambil.
+
+| Customer | Kontak | `payment_term_days` | `credit_limit` | `overdue_threshold_days` |
+|---|---|---|---|---|
+| Ibu Dewi | 0812-xxxx-0004 | 7 (default, jarang kepake — pelunasan biasanya langsung pas ambil) | NULL | NULL |
+| Pak Joko | 0812-xxxx-0005 | 7 (default) | NULL | NULL |
+
+## Skenario 7 — DP diterima & diterapkan penuh ke invoice (Ibu Dewi, kue ulang tahun custom)
+
+28 Desember 2026: Ibu Dewi pesan kue ulang tahun custom Rp2.000.000, rencana ambil 10 Januari 2027. Bayar DP Rp500.000 di muka.
+Jurnal: Kas di Bank (D) 500.000 | Uang Muka Penjualan (K) 500.000. Piutang Usaha & Pendapatan belum kesentuh.
+
+10 Januari 2027: kue jadi & diambil. Invoice diterbitkan **penuh** Rp2.000.000.
+Jurnal: Piutang Usaha (D) 2.000.000 | Pendapatan Penjualan Toko (K) 2.000.000
+
+DP langsung diterapkan ke invoice ini:
+Jurnal: Uang Muka Penjualan (D) 500.000 | Piutang Usaha (K) 500.000
+Outstanding: 2.000.000 − 500.000 = **1.500.000**.
+
+15 Januari 2027: Ibu Dewi lunasin sisa Rp1.500.000 (`record_ar_payment` biasa, gak ada yang beda).
+Jurnal: Kas di Bank (D) 1.500.000 | Piutang Usaha (K) 1.500.000. Status invoice: **lunas**.
+
+## Skenario 8 — DP hangus, order dibatalin sebelum invoice ada (Pak Joko, kue pernikahan custom)
+
+2 Januari 2027: Pak Joko pesan kue pernikahan custom Rp3.000.000, bayar DP Rp1.000.000 di muka. Bahan khusus (fondant custom) langsung dibeli Bu Nur hari itu juga.
+Jurnal: Kas di Bank (D) 1.000.000 | Uang Muka Penjualan (K) 1.000.000
+
+5 Januari 2027: acara pernikahannya batal, Pak Joko batalin pesanan. Belum ada invoice yang pernah dibuat sama sekali (kuenya belum jadi). Sesuai kebijakan Bu Nur, DP gak direfund (bahan udah kadung dibeli) — dicatat hangus.
+Jurnal: Uang Muka Penjualan (D) 1.000.000 | **Pendapatan Lain-lain** (K) 1.000.000
+
+Catatan: ini **bukan** Pendapatan Penjualan Toko — gak ada roti/kue yang kejual, ini kompensasi pembatalan.
+
+## Skenario 9 — Invoice dengan DP-application ternyata salah input, dibatalkan (Ibu Dewi, pesanan kedua)
+
+20 Januari 2027: Ibu Dewi pesan kue custom kedua, harga seharusnya Rp1.000.000. Bayar DP Rp300.000 di muka.
+Jurnal: Kas di Bank (D) 300.000 | Uang Muka Penjualan (K) 300.000
+
+25 Januari 2027: kue jadi. Staff yang input invoice **salah ketik nominal** — kepencet Rp1.800.000, bukan Rp1.000.000.
+Jurnal (salah): Piutang Usaha (D) 1.800.000 | Pendapatan Penjualan Toko (K) 1.800.000
+
+DP Rp300.000 langsung diterapkan ke invoice yang salah ini:
+Jurnal: Uang Muka Penjualan (D) 300.000 | Piutang Usaha (K) 300.000. Outstanding (masih salah): 1.500.000.
+
+Bu Nur cek ulang nota, ketauan invoice-nya keliru. `cancel_ar_invoice` dipanggil — RPC ini **otomatis membalikkan 2 jurnal sekaligus**:
+```
+Reversal invoice:            Pendapatan Penjualan Toko (D) 1.800.000 | Piutang Usaha (K) 1.800.000
+Reversal DP-application:     Piutang Usaha (D) 300.000              | Uang Muka Penjualan (K) 300.000
+```
+Hasil akhir: Piutang Usaha customer ini balik ke **0**, Uang Muka Penjualan balik ke **300.000** (DP-nya otomatis kebuka lagi, status "belum dipakai") — persis kondisi sebelum invoice yang salah itu dibuat, gak ada yang nyangkut.
+
+Invoice yang benar (Rp1.000.000) diterbitkan ulang, DP Rp300.000 yang sama diterapkan lagi ke invoice baru ini. Outstanding: 700.000.
+
 ## Simulasi Interface (rencana)
 
-Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), dan `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate). Detail flow menyusul pas fase UI dikerjakan.
+Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

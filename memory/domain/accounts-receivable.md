@@ -13,6 +13,11 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
   - **Financial-only** (invoice gak lewat `create_goods_issue`): 1 jurnal, Debit `Retur & Potongan Penjualan` (akun kontra-revenue baru, `is_contra=true`) / Kredit Piutang Usaha.
   - **Full** (invoice lewat `create_goods_issue`): 2 jurnal — kontra-revenue di atas + Debit Persediaan Barang Jadi / Kredit HPP sejumlah cost proporsional dari `goods_issue_lines.total_cost` snapshot asli (bukan harga sekarang). Barang balik masuk lot baru (`source_type = SALES_RETURN`, FIFO) atau nambah `inventory_balances` (Weighted Average).
   - Independen dari status bayar invoice — kalau invoice udah lunas, retur bikin outstanding negatif (saldo kredit customer, penanganannya di luar scope, lihat "Belum termasuk").
+- **ar_deposit** — uang muka/DP diterima sebelum invoice ada. **Bukan** `ar_payment` — jurnalnya Debit Kas / Kredit `Uang Muka Penjualan` (liability baru, akun `2300`), gak nyentuh Piutang Usaha sama sekali (piutangnya belum ada). 3 kejadian turunan, masing-masing tabel anak sendiri (immutable, status deposit derived dari situ, bukan kolom):
+  - **ar_deposit_application** — DP diterapkan ke invoice yang udah diterbitkan penuh. Jurnal: Debit Uang Muka Penjualan / Kredit Piutang Usaha (reklasifikasi, ngurangin outstanding invoice).
+  - **ar_deposit_forfeiture** — DP hangus, order dibatalin SEBELUM invoice ada (kebijakan: DP gak direfund). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (akun `4300`, baru — BUKAN `Pendapatan Penjualan`, biar gak nyampur sama hasil jualan beneran).
+  - 1 deposit cuma boleh punya **1 disposisi aktif** (diterapkan ATAU hangus, gak dua-duanya) — trigger jaga ini, sama pola no-over-allocation.
+  - **`cancel_ar_invoice` diperluas**: kalau invoice yang dibatalin punya `ar_deposit_applications`, RPC ikut manggil `reverse_journal_entry` buat jurnal application-nya juga (bukan cuma jurnal invoice) — DP-nya otomatis balik status "belum dipakai". Ini beda dari guard `ar_payment_allocations` (yang cuma nolak keras) — dipilih auto-unwind karena nolak doang gak nyelesaiin apa-apa buat kasus DP (duitnya nyangkut gak jelas kalau cuma diblok).
 
 ## Constraints (wajib ditegakkan di implementasi)
 
@@ -38,6 +43,9 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 6 | Credit hold | `create_ar_invoice` ditolak: outstanding > `credit_limit` ATAU overdue terlama > `overdue_threshold_days` |
 | 7 | Retur, financial-only | 1 jurnal kontra-revenue, outstanding turun |
 | 8 | Retur, full (via goods_issue), udah lunas | 2 jurnal (kontra-revenue + reversal HPP), stok balik, outstanding jadi negatif |
+| 9 | DP diterima lalu diterapkan penuh ke invoice | 3 jurnal terpisah (terima DP, terbitkan invoice, terapkan DP) |
+| 10 | DP hangus (order dibatalin sebelum invoice ada) | 1 jurnal, Uang Muka Penjualan → Pendapatan Lain-lain, gak pernah ada invoice |
+| 11 | Invoice dengan DP-application dibatalkan | `cancel_ar_invoice` reverse jurnal invoice + jurnal application, DP balik "belum dipakai" |
 
 ## Common mistakes to guard against
 
@@ -49,21 +57,24 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - Batalin invoice yang udah ada alokasi payment tanpa guard — GL balance tapi duit customer yang udah masuk jadi nyantol gak jelas.
 - Cek credit hold cuma di UI (skippable) — harus hard-reject di RPC.
 - Simpen status "on hold" sebagai kolom manual — harus derived tiap invoice baru dicek.
+- DP diterima langsung dicatat ngurangin Piutang Usaha atau jadi Pendapatan — piutangnya belum ada, barang/jasanya belum diserahkan. Harus lewat `Uang Muka Penjualan` (liability) dulu.
+- DP hangus dicatat ke `Pendapatan Penjualan` — harus ke `Pendapatan Lain-lain`, biar gak nyampur sama pendapatan jualan beneran.
+- `cancel_ar_invoice` cuma reverse jurnal invoice-nya doang tanpa ikut reverse jurnal `ar_deposit_applications` — Piutang Usaha customer itu nyasar jadi minus, DP-nya nyangkut gak jelas status.
 
 ## Belum termasuk (di luar scope fase ini)
 
-- Uang muka/DP sebelum ada invoice (payment belum teralokasi penuh) — asumsi sekarang: payment selalu dialokasikan penuh ke invoice yang udah ada.
-- Overpayment jadi saldo kredit customer (termasuk hasil retur yang bikin outstanding negatif) — refund/pemakaian saldo kredit belum didesain.
+- Overpayment jadi saldo kredit customer (termasuk hasil retur yang bikin outstanding negatif) — refund/pemakaian saldo kredit belum didesain. **Beda mekanisme** dari `ar_deposit` (yang solve "bayar sebelum invoice ada") — overpayment itu "bayar lebih dari invoice yang udah ada", masih 2 masalah terpisah.
 - Penggantian barang gratis pasca-retur (`memory/scope-debt/ar-penggantian-barang-retur.md`) — butuh RPC keluar stok+HPP tanpa invoice baru.
 
 ## Glossary
 
 - **Customer**: master data pihak yang berutang (warung langganan).
 - **AR Invoice**: piutang timbul dari 1 kejadian kirim barang/jasa dengan termin.
-- **AR Payment**: 1 kejadian bayar nyata dari customer.
+- **AR Payment**: 1 kejadian bayar nyata dari customer, terhadap invoice yang udah ada.
 - **AR Payment Allocation**: pemetaan payment ke invoice yang dia lunasi, sejumlah tertentu.
 - **Credit Hold**: kondisi derived, customer ditolak bikin invoice baru karena outstanding/keterlambatan kelampaui batasnya.
 - **Aging**: invoice yang `due_date`-nya udah lewat dan belum lunas.
 - **AR Credit Note**: retur barang yang udah diinvoice — ngurangin outstanding invoice tanpa ubah `amount` asli, beda dari `cancel_ar_invoice`.
+- **AR Deposit**: uang muka diterima sebelum invoice ada, dicatat ke liability `Uang Muka Penjualan` — beda dari `AR Payment` yang selalu terhadap invoice existing.
 
 Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`.

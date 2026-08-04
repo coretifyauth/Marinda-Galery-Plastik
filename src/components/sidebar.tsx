@@ -32,6 +32,7 @@ import {
   Landmark,
   Waves,
   Lock,
+  PiggyBank,
 } from "lucide-react";
 
 const navGroups = [
@@ -51,6 +52,7 @@ const navGroups = [
       { href: "/customers", label: "Customers", icon: Users },
       { href: "/ar-invoices", label: "AR Invoices", icon: FileText },
       { href: "/ar-payments", label: "AR Payments", icon: HandCoins },
+      { href: "/ar-deposits", label: "AR Deposits", icon: PiggyBank },
     ],
   },
   {

@@ -19,6 +19,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - **AR Payment Allocation** — jembatan many-to-many antara payment dan invoice, nyimpen "payment ini nutup invoice mana, sejumlah berapa". Dibutuhin karena hubungan pembayaran-ke-invoice di dunia nyata jarang 1:1 (lihat Skenario di bawah).
 - **Status invoice (lunas/sebagian/belum)** — **derived**, dihitung dari `SUM(allocations.amount)` invoice itu dibanding `invoice.amount`, bukan kolom manual. Konsisten sama pola `archived_at`/"published" yang udah dipakai di COA & Journal Entry (`memory/preferences/system/state-naming-convention.md`).
 - **AR Credit Note (retur barang)** — barang yang udah diinvoice beneran dibalikin customer (rusak/gak laku/salah kirim), **bukan** koreksi salah input. Beda dari `cancel_ar_invoice` di 3 hal: (1) bisa **partial** (retur sebagian qty/nominal dari invoice, bukan all-or-nothing), (2) tetap bisa dibuat walau invoice udah ada payment/alokasi masuk (`cancel_ar_invoice` nolak keras di kondisi ini), (3) invoice asli **gak diedit/dibatalkan** — nilai `ar_invoices.amount` tetap penuh, retur dicatat sebagai baris/jurnal terpisah yang ngurangin outstanding-nya. Detail lengkap di bawah ("Retur Barang").
+- **AR Deposit (uang muka/DP)** — customer bayar duluan sebelum invoice ada (misal pesanan custom). **Bukan** `AR Payment` — gak nyentuh Piutang Usaha sama sekali pas diterima, dicatat ke akun liability `Uang Muka Penjualan` dulu, baru direklasifikasi jadi pengurang Piutang Usaha begitu invoice-nya kebentuk (atau jadi Pendapatan Lain-lain kalau order-nya batal & DP-nya hangus). Detail lengkap di bawah ("Uang Muka / DP").
 
 ## Kenapa payment_term_days aman diubah di tempat (bukan versioned)
 
@@ -99,6 +100,22 @@ Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang 
 
 **Bukan penggantian barang** — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penggantian barang gratis (tukar barang rusak dengan barang baru tanpa nagih ulang) butuh RPC beda (keluar stok + HPP tanpa invoice/piutang baru) — di luar scope fitur ini, lihat "Belum Termasuk".
 
+## Uang Muka / DP (Deposit)
+
+Customer bayar duluan sebelum ada invoice — biasanya buat pesanan custom (misal kue ulang tahun) yang belum dikerjain. Ini beda dari `ar_payment` biasa: `ar_payment` selalu mengasumsikan ada piutang yang mau dilunasin (invoice-nya udah ada), sementara DP diterima **sebelum** piutang itu ada sama sekali.
+
+**Kenapa gak langsung dicatat sebagai pengurang Piutang Usaha** kayak pembayaran biasa: karena piutangnya belum ada. Prinsip pengakuan pendapatan (matching principle) bilang pendapatan diakui pas barang/jasa diserahkan, bukan pas duit diterima — jadi DP itu bukan pendapatan Bu Nur, itu **kewajiban** (Bu Nur "berutang" kue atau uang balik ke customer sampai kuenya jadi). Dicatat ke akun liability baru: **Uang Muka Penjualan**.
+
+**Tiga kejadian, tiga jurnal berbeda:**
+
+1. **DP diterima** — Debit Kas/Bank, Kredit Uang Muka Penjualan. Belum nyentuh Piutang Usaha atau Pendapatan sama sekali.
+2. **DP diterapkan ke invoice** (begitu barang jadi & invoice diterbitkan penuh) — Debit Uang Muka Penjualan, Kredit Piutang Usaha. Ini reklasifikasi, bukan pembayaran baru — ngurangin outstanding invoice itu.
+3. **DP hangus** (order dibatalin SEBELUM invoice ada, kebijakan Bu Nur: DP gak dikembaliin karena bahan khusus udah kadung dibeli) — Debit Uang Muka Penjualan, Kredit **Pendapatan Lain-lain** (BUKAN Pendapatan Penjualan — ini bukan hasil jual roti, jadi harus kepisah biar Laba Rugi gak nyampur "penjualan beneran" sama "DP hangus").
+
+Status 1 deposit (belum dipakai / diterapkan / hangus) **derived**, bukan kolom — sama pola kayak status invoice. Satu deposit cuma boleh punya **satu** disposisi aktif (diterapkan ATAU hangus), ditegakkan trigger.
+
+**Interaksi sama pembatalan invoice**: kalau invoice yang DP-nya udah diterapkan ternyata perlu dibatalin (misal salah input), `cancel_ar_invoice` **ikut membalikkan jurnal DP-application-nya juga** (reversing entry kedua, bukan cuma jurnal invoice-nya doang) — biar DP-nya otomatis balik jadi "belum dipakai" lagi (siap dipakai ulang/dihanguskan), bukan nyangkut jadi piutang minus yang gak jelas asalnya. Tanpa ini, cuma nolak pembatalan (kayak guard `ar_payment_allocations`) gak nyelesain apa-apa — orangnya cuma kejebak, DP-nya tetep nyangkut gak jelas statusnya.
+
 ## Skenario (lihat detail angka lengkap di `docs/story/accounts-receivable.md`)
 
 1. Invoice lunas tepat waktu — kasus paling sederhana, 1 payment = 1 invoice, alokasi penuh.
@@ -109,6 +126,9 @@ Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang 
 6. Invoice baru ditolak karena credit hold — customer kelampaui `credit_limit` ATAU ada invoice overdue lebih dari `overdue_threshold_days`-nya, `create_ar_invoice` nolak sebelum sempat bikin journal entry.
 7. Retur barang, invoice financial-only, belum lunas — outstanding turun langsung dari nominal retur.
 8. Retur barang, invoice via goods issue, udah lunas — 2 jurnal (kontra-revenue + reversal HPP), stok masuk lagi, outstanding jadi negatif (saldo kredit).
+9. DP diterima lalu diterapkan penuh ke invoice — 3 jurnal terpisah (terima DP, terbitkan invoice, terapkan DP), outstanding invoice berkurang sejumlah DP.
+10. DP hangus — order dibatalin sebelum invoice ada, DP jadi Pendapatan Lain-lain, gak ada invoice yang pernah dibuat sama sekali.
+11. Invoice yang DP-nya udah diterapkan ternyata dibatalin (salah input) — pembatalan otomatis ikut membalikkan jurnal DP-application, DP balik jadi belum dipakai.
 
 ## Common Mistakes
 
@@ -125,9 +145,11 @@ Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang 
 - Retur nolak invoice yang udah lunas/ada alokasi — retur harus tetap bisa jalan justru karena beda dari `cancel_ar_invoice`, hasilnya boleh aja bikin saldo kredit.
 - Batas waktu retur ditaro per customer atau global (bukan per item) — window retur soal sifat fisik barang, bukan hubungan dagang.
 - Bikin constraint baru buat "gak boleh retur ke periode tertutup" — udah otomatis kepegang trigger period-closing existing, jangan duplikat logic.
+- Mengakui DP sebagai Pendapatan (atau langsung ngurangin Piutang Usaha) pas diterima — piutangnya belum ada, dan barang/jasanya belum diserahkan. Harus lewat akun liability `Uang Muka Penjualan` dulu.
+- DP hangus dicatat ke `Pendapatan Penjualan` biasa — harus ke `Pendapatan Lain-lain`, biar gak nyampur sama hasil jualan beneran.
+- Batalin invoice yang DP-nya udah diterapkan tanpa ikut membalikkan jurnal DP-application-nya — Piutang Usaha customer itu bakal nyasar jadi minus, dan DP-nya nyangkut gak jelas statusnya.
 
 ## Belum Termasuk (di luar scope fase ini)
 
-- **Uang muka/DP sebelum invoice ada** — payment yang belum ada invoice buat dialokasikan (customer bayar duluan). Butuh keputusan desain terpisah (payment boleh "nganggur" belum teralokasi penuh), belum di-scope fase ini — asumsi awal: payment selalu dialokasikan penuh ke invoice yang udah ada saat itu juga.
 - **Overpayment jadi saldo kredit customer** — kalau `SUM(allocations)` mau ngelebihin amount invoice, constraint #3 nolak; retur juga bisa bikin outstanding negatif (lihat "Retur Barang"). Kasus "kelebihan bayar/saldo kredit dipakai/refund" jadi keputusan desain terpisah, belum di-scope.
 - **Penggantian barang gratis pasca-retur** — customer balikin barang rusak DAN minta barang pengganti tanpa nagih ulang. Butuh RPC baru (keluar stok + HPP tanpa invoice/piutang baru), beda dari `create_goods_issue` yang selalu bikin invoice. Belum di-scope, lihat `memory/scope-debt/ar-penggantian-barang-retur.md`.
