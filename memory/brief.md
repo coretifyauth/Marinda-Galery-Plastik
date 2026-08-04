@@ -40,7 +40,7 @@ Compact context version dari 7 modul (chart-of-accounts, general-ledger, account
 DDL final + trigger + RPC tiap modul, level teknis penuh:
 - `coa-schema.md` — `accounts`, `roles`, `user_roles` + RLS, `normal_balance` generated column, `is_contra` flag, published-lock & leaf-only-posting trigger.
 - `journal-entry-schema.md` — `journal_entries`+`journal_lines`, 5 trigger, RPC `create_journal_entry`+`reverse_journal_entry`.
-- `ar-schema.md` — `customers`+`ar_invoices`+`ar_payments`+`ar_payment_allocations`, RPC `create_ar_invoice`+`record_ar_payment`+`cancel_ar_invoice`.
+- `ar-schema.md` — `customers`+`ar_invoices`+`ar_payments`+`ar_payment_allocations`, RPC `create_ar_invoice`+`record_ar_payment`+`cancel_ar_invoice`. **AR Credit Note (retur, `0021_ar_credit_notes_schema.sql`)**: `ar_credit_notes` (selalu) + `inventory_returns`/`inventory_return_lines` (cuma kalau invoice lewat `create_goods_issue`), RPC `create_ar_credit_note` — auto-detect jalur financial-only vs full (stok+HPP balik). Nambah `items.return_window_days` (batas hari retur per item) + `inventory_lots.source_type` value baru `SALES_RETURN`.
 - `ap-schema.md` — `suppliers`+`ap_bills`+`ap_payments`+`ap_payment_allocations`, mirror AR arah kebalik.
 - `inventory-schema.md` — `items`+`inventory_balances`, `purchase_orders`+`goods_receipt_notes`, `inventory_lots`+`inventory_lot_consumptions` (FIFO), `bom_headers`+`production_orders`, `goods_issues`. RPC `create_purchase_order`, `create_goods_receipt`, `create_production_order`, `create_goods_issue`.
 - `fixed-assets-schema.md` — `accounts.is_contra`, `fixed_assets`+`depreciation_entries`. RPC `create_fixed_asset`, `post_depreciation`.
@@ -64,7 +64,7 @@ Padanan naratif non-teknis (ERD dalam tabel, tanpa DDL/RPC/trigger mentah): `doc
 Ledger keputusan desain yang sengaja ditunda. 1 file = 1 konsep: kasus, kenapa ditunda, kapan perlu digarap, referensi balik ke domain/schema doc terkait. **Dihapus begitu statusnya jadi Selesai** (lihat "Aturan siklus hidup dokumen" di atas).
 
 Status saat ini — semua di bawah ini masih **Ditunda**:
-- `ar-retur-barang.md`, `ar-uang-muka-dp.md`, `ar-overpayment-saldo-kredit.md` — 3 gap AR.
+- `ar-retur-barang.md` (schema+RPC udah diimplementasi di `0021`/`0022`, API+UI belum — file dihapus begitu API+UI beres), `ar-uang-muka-dp.md`, `ar-overpayment-saldo-kredit.md`, `ar-penggantian-barang-retur.md` (baru, muncul pas desain retur) — 4 gap AR.
 - `ar-piutang-tak-tertagih.md` — 1 dari 4 tindakan penjual ke piutang telat (credit hold, tindakan ke-2, sudah selesai — lihat catatan di bawah).
 - `ap-retur-barang.md`, `ap-diskon-bayar-cepat.md`, `ap-uang-muka-dp.md`, `ap-bill-compound.md` — 4 kasus AP (Fase 4).
 - `trial-balance-rollup.md` — dependency GL ke Fase 7.

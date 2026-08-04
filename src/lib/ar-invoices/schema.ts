@@ -24,29 +24,34 @@ export type ArInvoice = {
   created_at: string;
   customers: { name: string };
   ar_payment_allocations: { amount: number }[];
+  ar_credit_notes?: { amount: number }[];
 };
 
 export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
 
 /**
- * Status derived dari SUM(allocations) vs amount, plus cek reversal — bukan kolom, ref ar-schema.md.
+ * Status derived dari SUM(allocations) - SUM(retur) vs amount, plus cek reversal — bukan
+ * kolom, ref ar-schema.md. Outstanding boleh negatif (saldo kredit) kalau retur kejadian
+ * setelah invoice lunas — ref docs/domain/accounts-receivable.md bagian "Retur Barang".
  * `isCancelled` dihitung caller dari query terpisah (journal_entries.reverses_entry_id
  * yang nunjuk ke invoice.journal_entry_id), karena bukan relasi langsung dari ar_invoices.
  */
 export function invoiceStatus(
-  invoice: Pick<ArInvoice, "amount" | "ar_payment_allocations">,
+  invoice: Pick<ArInvoice, "amount" | "ar_payment_allocations" | "ar_credit_notes">,
   isCancelled = false
 ): {
   status: ArInvoiceStatus;
   allocated: number;
+  returned: number;
   outstanding: number;
 } {
   const allocated = invoice.ar_payment_allocations.reduce((sum, a) => sum + a.amount, 0);
-  const outstanding = invoice.amount - allocated;
+  const returned = (invoice.ar_credit_notes ?? []).reduce((sum, c) => sum + c.amount, 0);
+  const outstanding = invoice.amount - allocated - returned;
   if (isCancelled) {
-    return { status: "dibatalkan", allocated, outstanding: 0 };
+    return { status: "dibatalkan", allocated, returned, outstanding: 0 };
   }
   const status: ArInvoiceStatus =
     outstanding <= 0.005 ? "lunas" : allocated > 0 ? "sebagian" : "belum";
-  return { status, allocated, outstanding };
+  return { status, allocated, returned, outstanding };
 }

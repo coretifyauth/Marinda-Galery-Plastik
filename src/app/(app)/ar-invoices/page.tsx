@@ -6,11 +6,17 @@ import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Customer } from "@/lib/customers/schema";
 import { createArInvoiceSchema, invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
+import {
+  createArCreditNoteSchema,
+  type GoodsIssueForInvoice,
+} from "@/lib/ar-credit-notes/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+
+type ReturnLineInput = { item_id: string; name: string; uom: string; qty_available: number; qty_returned: string };
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -30,6 +36,20 @@ export default function ArInvoicesPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  const [returInvoice, setReturInvoice] = useState<ArInvoice | null>(null);
+  const [returGoodsIssue, setReturGoodsIssue] = useState<GoodsIssueForInvoice | null>(null);
+  const [returChecking, setReturChecking] = useState(false);
+  const [returDate, setReturDate] = useState("");
+  const [returSourceRef, setReturSourceRef] = useState("");
+  const [returAmount, setReturAmount] = useState("");
+  const [returContraAccountId, setReturContraAccountId] = useState("");
+  const [returReceivableAccountId, setReturReceivableAccountId] = useState("");
+  const [returHppAccountId, setReturHppAccountId] = useState("");
+  const [returFinishedGoodAccountId, setReturFinishedGoodAccountId] = useState("");
+  const [returLines, setReturLines] = useState<ReturnLineInput[]>([]);
+  const [returError, setReturError] = useState<string | null>(null);
+  const [returSubmitting, setReturSubmitting] = useState(false);
 
   const [customerId, setCustomerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
@@ -58,7 +78,7 @@ export default function ArInvoicesPage() {
     const { data, error } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount)"
       )
       .order("invoice_date", { ascending: false });
     if (error) {
@@ -126,6 +146,97 @@ export default function ArInvoicesPage() {
       return;
     }
     await Promise.all([loadInvoices(), loadReversedEntryIds()]);
+  }
+
+  async function openRetur(invoice: ArInvoice) {
+    setReturError(null);
+    setReturInvoice(invoice);
+    setReturDate("");
+    setReturSourceRef("");
+    setReturAmount("");
+    setReturContraAccountId("");
+    setReturReceivableAccountId("");
+    setReturHppAccountId("");
+    setReturFinishedGoodAccountId("");
+    setReturGoodsIssue(null);
+    setReturLines([]);
+    setReturChecking(true);
+
+    const { data } = await supabase
+      .from("goods_issues")
+      .select("id, goods_issue_lines(item_id, qty_issued, items(name, uom))")
+      .eq("invoice_id", invoice.id)
+      .maybeSingle();
+
+    const gi = (data ?? null) as unknown as GoodsIssueForInvoice | null;
+    setReturGoodsIssue(gi);
+    setReturChecking(false);
+    if (gi) {
+      setReturLines(
+        gi.goods_issue_lines.map((l) => ({
+          item_id: l.item_id,
+          name: l.items.name,
+          uom: l.items.uom,
+          qty_available: l.qty_issued,
+          qty_returned: "",
+        }))
+      );
+    }
+  }
+
+  function updateReturLine(itemId: string, qty: string) {
+    setReturLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, qty_returned: qty } : l)));
+  }
+
+  async function handleReturSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!returInvoice) return;
+    setReturError(null);
+
+    const activeLines = returLines
+      .filter((l) => l.qty_returned.trim() !== "")
+      .map((l) => ({ item_id: l.item_id, qty_returned: l.qty_returned }));
+
+    const parsed = createArCreditNoteSchema.safeParse({
+      invoice_id: returInvoice.id,
+      credit_note_date: returDate,
+      source_ref: returSourceRef,
+      amount: returAmount,
+      contra_revenue_account_id: returContraAccountId,
+      receivable_account_id: returReceivableAccountId,
+      lines: activeLines,
+      hpp_account_id: returHppAccountId || undefined,
+      finished_good_account_id: returFinishedGoodAccountId || undefined,
+    });
+    if (!parsed.success) {
+      setReturError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+    if (returGoodsIssue && activeLines.length === 0) {
+      setReturError("Invoice ini lewat goods issue — isi minimal 1 baris qty retur");
+      return;
+    }
+
+    setReturSubmitting(true);
+    const { error } = await supabase.rpc("create_ar_credit_note", {
+      p_invoice_id: parsed.data.invoice_id,
+      p_credit_note_date: parsed.data.credit_note_date,
+      p_source_ref: parsed.data.source_ref,
+      p_amount: parsed.data.amount,
+      p_contra_revenue_account_id: parsed.data.contra_revenue_account_id,
+      p_receivable_account_id: parsed.data.receivable_account_id,
+      p_lines: parsed.data.lines.length > 0 ? parsed.data.lines : null,
+      p_hpp_account_id: parsed.data.hpp_account_id ?? null,
+      p_finished_good_account_id: parsed.data.finished_good_account_id ?? null,
+    });
+    setReturSubmitting(false);
+    if (error) {
+      setReturError(error.message);
+      return;
+    }
+
+    setReturInvoice(null);
+    await loadInvoices();
   }
 
   async function handleCreate(e: FormEvent) {
@@ -227,10 +338,13 @@ export default function ArInvoicesPage() {
           <tbody>
             {invoices.map((inv) => {
               const isCancelled = reversedEntryIds.has(inv.journal_entry_id);
-              const { status, outstanding, allocated } = invoiceStatus(inv, isCancelled);
+              const { status, outstanding, allocated, returned } = invoiceStatus(inv, isCancelled);
               const overdue =
                 status !== "lunas" && status !== "dibatalkan" && inv.due_date < new Date().toISOString().slice(0, 10);
               const canCancel = canWrite && !isCancelled && allocated === 0;
+              // Retur boleh jalan walau invoice udah lunas (outstanding 0/negatif) — DB trigger
+              // yang jaga no-over-return terhadap invoice.amount, bukan terhadap outstanding.
+              const canRetur = canWrite && !isCancelled;
               return (
                 <tr key={inv.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2 font-medium text-black">{inv.customers.name}</td>
@@ -249,6 +363,11 @@ export default function ArInvoicesPage() {
                   </td>
                   <td className="px-4 py-2 text-right font-mono">
                     {outstanding.toLocaleString("id-ID")}
+                    {returned > 0 && (
+                      <span className="ml-1 block text-xs font-normal text-amber-600">
+                        retur {returned.toLocaleString("id-ID")}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2">
                     <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
@@ -256,16 +375,27 @@ export default function ArInvoicesPage() {
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right">
-                    {canCancel && (
-                      <button
-                        type="button"
-                        onClick={() => handleCancel(inv)}
-                        disabled={cancellingId === inv.id}
-                        className="text-xs text-red-600 hover:underline disabled:opacity-40"
-                      >
-                        {cancellingId === inv.id ? "Membatalkan..." : "Batalkan"}
-                      </button>
-                    )}
+                    <div className="flex justify-end gap-3">
+                      {canRetur && (
+                        <button
+                          type="button"
+                          onClick={() => openRetur(inv)}
+                          className="text-xs text-amber-600 hover:underline"
+                        >
+                          Retur
+                        </button>
+                      )}
+                      {canCancel && (
+                        <button
+                          type="button"
+                          onClick={() => handleCancel(inv)}
+                          disabled={cancellingId === inv.id}
+                          className="text-xs text-red-600 hover:underline disabled:opacity-40"
+                        >
+                          {cancellingId === inv.id ? "Membatalkan..." : "Batalkan"}
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -280,6 +410,153 @@ export default function ArInvoicesPage() {
           </tbody>
         </table>
       </div>
+
+      {returInvoice && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-6 shadow-sm">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-semibold text-black">
+              Retur — {returInvoice.customers.name} ({returInvoice.source_ref})
+            </h2>
+            <button
+              type="button"
+              onClick={() => setReturInvoice(null)}
+              className="text-xs text-slate-500 hover:underline"
+            >
+              Batal
+            </button>
+          </div>
+          {returChecking ? (
+            <p className="mb-4 text-sm text-slate-500">Mengecek jalur retur...</p>
+          ) : (
+            <p className="mb-4 text-sm text-slate-600">
+              {returGoodsIssue
+                ? "Invoice ini lewat Goods Issue — isi qty per item yang balik, stok & HPP otomatis ke-reverse proporsional."
+                : "Invoice ini gak lewat Goods Issue — retur cuma ngurangin piutang (kontra-revenue), gak ada stok yang disentuh."}
+            </p>
+          )}
+          <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="retur_date">Tanggal Retur</Label>
+                <Input id="retur_date" type="date" value={returDate} onChange={(e) => setReturDate(e.target.value)} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="retur_source_ref">Rujukan dokumen</Label>
+                <Input
+                  id="retur_source_ref"
+                  placeholder="mis. Nota retur #001"
+                  value={returSourceRef}
+                  onChange={(e) => setReturSourceRef(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="retur_amount">Nominal Retur (kurangin piutang)</Label>
+                <Input
+                  id="retur_amount"
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  value={returAmount}
+                  onChange={(e) => setReturAmount(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="retur_contra_account">Akun Retur & Potongan Penjualan (debit)</Label>
+                <Select
+                  id="retur_contra_account"
+                  value={returContraAccountId}
+                  onChange={(e) => setReturContraAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="retur_receivable_account">Akun Piutang Usaha (kredit)</Label>
+                <Select
+                  id="retur_receivable_account"
+                  value={returReceivableAccountId}
+                  onChange={(e) => setReturReceivableAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              {returGoodsIssue && (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="retur_hpp_account">Akun HPP (kredit, jurnal reversal)</Label>
+                    <Select
+                      id="retur_hpp_account"
+                      value={returHppAccountId}
+                      onChange={(e) => setReturHppAccountId(e.target.value)}
+                    >
+                      <option value="">Pilih akun...</option>
+                      {leafAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code} — {a.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="retur_finished_good_account">Akun Persediaan Barang Jadi (debit)</Label>
+                    <Select
+                      id="retur_finished_good_account"
+                      value={returFinishedGoodAccountId}
+                      onChange={(e) => setReturFinishedGoodAccountId(e.target.value)}
+                    >
+                      <option value="">Pilih akun...</option>
+                      {leafAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code} — {a.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {returGoodsIssue && (
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+                  <span>Item Terjual (qty asli)</span>
+                  <span>Qty Retur</span>
+                </div>
+                {returLines.map((line) => (
+                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
+                    <span className="flex items-center text-sm text-slate-700">
+                      {line.name} ({line.qty_available} {line.uom})
+                    </span>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={line.qty_returned}
+                      onChange={(e) => updateReturLine(line.item_id, e.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {returError && <FormError>{returError}</FormError>}
+
+            <Button type="submit" disabled={returSubmitting} className="w-fit">
+              {returSubmitting ? "Menyimpan..." : "Simpan Retur"}
+            </Button>
+          </form>
+        </div>
+      )}
 
       {showForm && (
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">

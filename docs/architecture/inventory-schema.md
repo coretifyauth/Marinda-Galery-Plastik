@@ -90,6 +90,8 @@ Setiap produksi otomatis membuat transaksi jurnal: Debit Persediaan Barang Jadi,
 
 Setiap penjualan barang jadi menghasilkan **dua** transaksi jurnal sekaligus: satu untuk pendapatan (Debit Piutang, Kredit Pendapatan — dari modul Piutang Usaha), dan satu lagi khusus untuk mengakui Harga Pokok Penjualan (Debit HPP, Kredit Persediaan Barang Jadi) sebesar biaya barang yang keluar. Titik inilah HPP benar-benar diakui sebagai beban.
 
+**Catatan lintas modul (retur):** master data barang punya kolom batas hari maksimal boleh diretur customer (kosong = tidak dibatasi). Kalau barang yang terjual lewat Goods Issue ini diretur, sistem membalik sebagian stok+HPP secara proporsional — detail penuh ada di `docs/architecture/ar-schema.md`.
+
 ## Aturan Otomatis yang Dijaga Sistem (ringkasan)
 
 1. Penerimaan barang tidak boleh melebihi jumlah yang dipesan di Purchase Order.

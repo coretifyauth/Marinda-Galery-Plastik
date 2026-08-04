@@ -72,6 +72,39 @@ Bandingin sama Toko Melati (hipotetis, `credit_limit` Rp5.000.000 tapi ada 1 inv
 
 Total saldo akun `Piutang Usaha` di General Ledger per 30 Juli 2026: **Rp1.200.000** (cuma sisa Warung Pak Budi — dua yang lain udah lunas, ke-nol-in lewat jurnal pelunasan masing-masing).
 
+## Skenario 5 — Retur, financial-only (Warung Kang Ade, lanjutan Skenario 2)
+
+5 September 2026: sebagian roti dari invoice 12 Juli (Rp900.000, udah lunas sejak 26 Juli) ternyata rusak, nilai Rp50.000. Warung Kang Ade minta dikurangin.
+
+RPC retur dipanggil dengan `invoice_id` invoice 12 Juli. Cek: invoice ini gak punya baris `goods_issues` (dibuat sebelum modul Inventory ada) → **jalur financial-only**.
+
+Jurnal:
+```
+Debit Retur & Potongan Penjualan   50.000
+  Kredit Piutang Usaha                    50.000
+```
+
+Piutang Usaha Kang Ade: 900.000 (invoice) − 900.000 (bayar lunas) − 50.000 (retur) = **−50.000** (saldo kredit — Bu Nur "berutang" 50.000 ke Kang Ade, penanganannya belum di-scope, lihat `memory/scope-debt/ar-overpayment-saldo-kredit.md`).
+
+## Skenario 6 — Retur, full/stok+HPP (Warung Pak Budi, lanjutan `docs/story/inventory.md` Tahap 7)
+
+Basis: 25 Agustus 2026, Pak Budi beli 30 Roti Tawar @Rp2.000 = Rp60.000 lewat `create_goods_issue`, HPP 30×Rp1.250 = Rp37.500 dari Lot #P1 (`docs/story/inventory.md`).
+
+28 Agustus 2026: 3 dari 30 roti apek, Pak Budi balikin. RPC retur dipanggil, `qty_returned = 3`. Cek: invoice ini punya baris `goods_issues` → **jalur full**.
+
+Cost per unit asli = 37.500 / 30 = Rp1.250/buah (snapshot, bukan harga sekarang). Nominal retur = 3 × (60.000/30) = Rp6.000. Cost retur = 3 × 1.250 = Rp3.750.
+
+Jurnal:
+```
+Debit Retur & Potongan Penjualan   6.000
+  Kredit Piutang Usaha                    6.000
+
+Debit Persediaan Barang Jadi       3.750
+  Kredit Harga Pokok Penjualan            3.750
+```
+
+3 buah Roti Tawar masuk lot baru (`source_type = SALES_RETURN`, `unit_cost = 1.250`). Piutang Usaha Pak Budi: 60.000 (invoice, belum dibayar) − 6.000 (retur) = **54.000 outstanding**. Persediaan Roti Tawar: 20 (sisa Tahap 7) + 3 (retur) = **23 buah**.
+
 ## Simulasi Interface (rencana)
 
 Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), dan `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate). Detail flow menyusul pas fase UI dikerjakan.

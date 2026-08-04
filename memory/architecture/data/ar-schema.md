@@ -414,9 +414,94 @@ grant select, insert on ar_payment_allocations to authenticated;
 
 RPC (`create_ar_invoice`, `record_ar_payment`) otomatis kepakai `authenticated` selama grant `execute` default Postgres gak dicabut — konsisten sama perlakuan `create_journal_entry`/`reverse_journal_entry` di `journal-entry-schema.md` (grant RPC eksplisit ditambahin di migration terpisah kalau ternyata perlu, ref migration `0006_journal_entry_rpc_grants.sql`).
 
+## AR Credit Note (Retur Barang) — migration `0021_ar_credit_notes_schema.sql` + `0022_seed_demo_ar_credit_notes.sql`
+
+Barang yang udah diinvoice beneran dibalikin customer (rusak/gak laku/salah kirim) — beda dari `cancel_ar_invoice` (invoice salah dari awal). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Retur Barang".
+
+### `ar_credit_notes` — retur, sisi AR (selalu dibuat)
+
+Satu baris = satu kejadian retur terhadap 1 invoice. Yang perlu diperhatiin:
+- `invoice_id` — bukan unique, 1 invoice bisa punya banyak credit note (retur bertahap).
+- `journal_entry_id` — nunjuk jurnal kontra-revenue (Debit `Retur & Potongan Penjualan` / Kredit Piutang Usaha), dibuat via `create_journal_entry` (reuse, 0 perubahan).
+- **Gak ada `updated_at`/`archived_at`** — immutable, pola sama `ar_invoices`/`ar_payments`.
+- Invoice asli (`ar_invoices.amount`) **gak diedit** — retur murni nambah baris baru, sama filosofi immutability journal entry.
+
+```sql
+create table ar_credit_notes (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references ar_invoices(id),
+  credit_note_date date not null,
+  source_ref text not null,
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### Trigger `ar_credit_notes_no_over_return`
+
+Pola sama `ar_payment_allocations_no_over_allocation` — total `SUM(amount)` credit note per invoice gak boleh ngelebihin `ar_invoices.amount`. Beda dari over-allocation: di sini gak peduli status bayar invoice (bisa aja retur bikin outstanding jadi negatif kalau invoice-nya udah lunas — itu skenario sah, lihat domain doc).
+
+Full body trigger: lihat migration file.
+
+### `inventory_returns` + `inventory_return_lines` — retur, sisi Inventory (cuma jalur full)
+
+Dibuat **cuma kalau** invoice-nya lahir dari `create_goods_issue` (ada baris `goods_issues.invoice_id` yang match). Kebalikan `goods_issues`/`goods_issue_lines` — barang **masuk lagi** (bukan keluar), stok dan HPP di-reverse proporsional.
+- `credit_note_id` — 1:1 ke `ar_credit_notes` yang jadi pasangannya (tiap `inventory_returns` pasti punya 1 credit note, tapi gak sebaliknya — credit note financial-only gak punya `inventory_returns` sama sekali).
+- `goods_issue_id` — many:1, 1 goods_issue bisa diretur beberapa kali (retur bertahap dari 1 pengiriman).
+- `journal_entry_id` — jurnal reversal HPP (Debit Persediaan Barang Jadi / Kredit HPP), **terpisah** dari jurnal kontra-revenue di `ar_credit_notes` (2 jurnal independen, sama pola `create_goods_issue` yang juga bikin 2 jurnal).
+- `inventory_return_lines.total_cost` — dihitung dari **snapshot** `goods_issue_lines.total_cost` asli (unit cost pas barang itu keluar), bukan harga sekarang — biar konsisten sama biaya yang beneran diakui waktu itu.
+
+```sql
+create table inventory_returns (
+  id uuid primary key default gen_random_uuid(),
+  credit_note_id uuid not null references ar_credit_notes(id),
+  goods_issue_id uuid not null references goods_issues(id),
+  journal_entry_id uuid not null references journal_entries(id),
+  return_date date not null,
+  source_ref text not null,
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table inventory_return_lines (
+  id uuid primary key default gen_random_uuid(),
+  inventory_return_id uuid not null references inventory_returns(id) on delete cascade,
+  item_id uuid not null references items(id),
+  qty_returned numeric(14,3) not null check (qty_returned > 0),
+  total_cost numeric(14,2) not null check (total_cost > 0)
+);
+```
+
+Barang yang balik masuk sebagai lot baru (`inventory_lots.source_type = 'SALES_RETURN'`, nilai baru ditambah ke check constraint yang tadinya cuma `PURCHASE_RECEIPT`/`PRODUCTION_OUTPUT`) buat item FIFO, atau blend ke `inventory_balances.avg_cost` (formula sama persis weighted-average-receive di `create_goods_receipt`) buat item Weighted Average.
+
+### Trigger `inventory_return_lines_guard`
+
+Gabung 2 pengecekan dalam 1 trigger (dipasang `before insert on inventory_return_lines`):
+1. **No over-return (qty)** — akumulasi `qty_returned` per item per goods_issue gak boleh ngelebihin `goods_issue_lines.qty_issued`-nya. Pola sama `inventory_lot_consumptions_no_over_consumption`.
+2. **Batas waktu retur** — kalau `items.return_window_days` (kolom baru, nullable) gak NULL, `return_date - invoice_date` (invoice diambil lewat join `goods_issues` -> `ar_invoices`) gak boleh ngelewatin itu. Ditaro per item (bukan per customer/global) karena soal umur simpan fisik barang — lihat `memory/domain/inventory.md`. `NULL` = gak dibatasi (default, biar item existing gak ke-block retroaktif).
+
+Full body trigger: lihat migration file.
+
+### RPC `create_ar_credit_note`
+
+`security invoker`, pola sama RPC AR lain — reuse `create_journal_entry` (2x kalau jalur full, 1x kalau financial-only), gak pernah insert manual ke `journal_entries`/`journal_lines`.
+
+- `p_lines` (nullable/kosong) menentukan jalur: kosong = financial-only (1 jurnal, invoice yang gak lewat `create_goods_issue`). Terisi = full (2 jurnal + stok balik) — RPC `raise exception` kalau invoice yang dimaksud ternyata gak punya `goods_issues`.
+- Nominal jurnal kontra-revenue (`p_amount`) tetap **input eksplisit dari caller**, bukan dihitung RPC — konsisten sama `create_ar_invoice`/`record_ar_payment` yang juga gak pernah nebak nominal uang dari data lain (skema gak nyimpen harga per-unit di level invoice, cuma total).
+- Nominal reversal HPP **dihitung RPC dari snapshot** (`goods_issue_lines.total_cost / qty_issued × qty_returned`), bukan input caller — beda dari nominal revenue di atas, ini sengaja dikunci server-side biar gak ada celah caller masukin cost yang gak sesuai catatan asli.
+- Guard "item gak ketemu di goods_issue" dicek eksplisit di RPC (bukan cuma ngandelin trigger yang jalan belakangan pas insert `inventory_return_lines`) — biar gagalnya cepat & jelas, bukan nyusul jadi NULL yang baru ketauan pas constraint lain nolak.
+
+Full body: `supabase/migrations/0021_ar_credit_notes_schema.sql`.
+
+### RLS & Grant
+
+Pola identik AR/Inventory lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`, 3 tabel ini transaksional). Detail: migration file.
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
-- **Retur barang (credit note)** — invoice perlu dikurangi/dibatalkan sebagian karena barang dikembalikan. Butuh desain entitas baru, ditunda.
 - **Uang muka/DP sebelum invoice ada** — asumsi sekarang: `record_ar_payment` selalu butuh minimal 1 alokasi ke invoice yang udah ada (gak ada payment "nganggur"). Kalau nanti perlu DP di depan, butuh keputusan desain terpisah (payment boleh 0 alokasi dulu).
-- **Overpayment jadi saldo kredit customer** — trigger sekarang nolak keras alokasi yang ngelebihin. Kasus "kelebihan bayar dianggap kredit buat invoice berikutnya" belum di-scope.
+- **Overpayment jadi saldo kredit customer** — trigger sekarang nolak keras alokasi yang ngelebihin. Retur juga bisa bikin outstanding negatif (lihat "AR Credit Note" di atas). Kasus "kelebihan bayar dianggap kredit buat invoice berikutnya / refund" belum di-scope.
+- **Penggantian barang gratis pasca-retur** — butuh RPC baru (keluar stok+HPP tanpa invoice baru), `memory/scope-debt/ar-penggantian-barang-retur.md`.
 - **Aging report / dashboard piutang jatuh tempo** — query read-side (`due_date` vs `now()`, join alokasi buat status), digarap pas UI dibangun, gak butuh kolom/tabel tambahan.

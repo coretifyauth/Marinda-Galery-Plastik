@@ -18,6 +18,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - **AR Payment** — piutang berkurang, kejadian bayar beneran (bukan jadwal). 1 payment bikin 1 journal entry: **Debit Kas/Bank, Kredit Piutang Usaha**, sejumlah **total** yang dibayar — gak peduli itu nutup 1 atau banyak invoice.
 - **AR Payment Allocation** — jembatan many-to-many antara payment dan invoice, nyimpen "payment ini nutup invoice mana, sejumlah berapa". Dibutuhin karena hubungan pembayaran-ke-invoice di dunia nyata jarang 1:1 (lihat Skenario di bawah).
 - **Status invoice (lunas/sebagian/belum)** — **derived**, dihitung dari `SUM(allocations.amount)` invoice itu dibanding `invoice.amount`, bukan kolom manual. Konsisten sama pola `archived_at`/"published" yang udah dipakai di COA & Journal Entry (`memory/preferences/system/state-naming-convention.md`).
+- **AR Credit Note (retur barang)** — barang yang udah diinvoice beneran dibalikin customer (rusak/gak laku/salah kirim), **bukan** koreksi salah input. Beda dari `cancel_ar_invoice` di 3 hal: (1) bisa **partial** (retur sebagian qty/nominal dari invoice, bukan all-or-nothing), (2) tetap bisa dibuat walau invoice udah ada payment/alokasi masuk (`cancel_ar_invoice` nolak keras di kondisi ini), (3) invoice asli **gak diedit/dibatalkan** — nilai `ar_invoices.amount` tetap penuh, retur dicatat sebagai baris/jurnal terpisah yang ngurangin outstanding-nya. Detail lengkap di bawah ("Retur Barang").
 
 ## Kenapa payment_term_days aman diubah di tempat (bukan versioned)
 
@@ -65,6 +66,39 @@ Customer on-hold yang tetap mau dilayani **cash** (bukan termin) gak butuh perub
 
 `overdue_threshold_days` default di-prefill sama dengan `payment_term_days` customer itu pas dibuat (di form/UI, bukan hardcode di DB) — supaya tiap customer otomatis punya toleransi masuk akal, tapi tetap bisa diubah manual per customer sesuai profil risikonya.
 
+## Retur Barang (Credit Note)
+
+Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang beneran balik ke Bu Nur), bukan koreksi "invoice salah dari awal" — makanya gak lewat `cancel_ar_invoice`, tapi RPC terpisah yang bikin jurnal kontra-revenue.
+
+**Akun kontra baru**: `Retur & Potongan Penjualan` (`is_contra = true`, pasangan `Pendapatan Penjualan`, lihat `chart-of-accounts.md`). Dipakai biar "penjualan kotor" (nilai invoice asli) tetap keliatan utuh di histori, terpisah dari "berapa yang balik" — bukan langsung ngurangin `Pendapatan Penjualan`.
+
+**Dua jalur, otomatis terdeteksi dari RPC** (user gak perlu milih):
+
+1. **Financial-only** — invoice yang **gak** punya baris `goods_issues` nunjuk ke dia (dibuat lewat `create_ar_invoice` polos, misal invoice sebelum modul Inventory ada, atau item yang emang gak dilacak stoknya). Retur cuma bikin 1 jurnal:
+   ```
+   Debit Retur & Potongan Penjualan   [nominal retur]
+     Kredit Piutang Usaha                    [nominal retur]
+   ```
+2. **Full (stok + HPP)** — invoice yang lahir dari `create_goods_issue` (barang jadi yang qty & HPP-nya udah dilacak lewat FIFO/Weighted Average). Retur bikin **2 jurnal sekaligus**:
+   ```
+   Debit Retur & Potongan Penjualan   [nominal retur = qty_returned x (invoice.amount / qty_issued)]
+     Kredit Piutang Usaha                    [nominal retur]
+
+   Debit Persediaan Barang Jadi       [cost retur = qty_returned x (goods_issue_lines.total_cost / qty_issued)]
+     Kredit Harga Pokok Penjualan            [cost retur]
+   ```
+   Cost retur pakai **harga snapshot asli** dari `goods_issue_lines.total_cost` (harga pas barang itu keluar), bukan hitung ulang harga sekarang — biar konsisten sama biaya yang beneran diakui waktu itu. Barang yang balik masuk sebagai lot baru (FIFO, `source_type = SALES_RETURN`) atau nambah `inventory_balances` (Weighted Average).
+
+**Independen dari status bayar** — retur tetap bisa dibuat baik invoice-nya belum dibayar, sebagian, maupun udah lunas penuh. Kalau invoice udah lunas, retur bikin outstanding jadi **negatif** (saldo kredit customer, Bu Nur "berutang" ke warung) — penanganan refund/pemakaian saldo kredit ini **di luar scope** fitur ini, lihat "Belum Termasuk".
+
+**Guard "no over return"** — total retur (akumulasi) terhadap 1 invoice gak boleh ngelebihin `amount` invoice itu (jalur financial-only) atau `qty_issued` baris `goods_issue_lines`-nya (jalur full), pola sama `ar_payment_allocations_no_over_allocation`.
+
+**Batas waktu retur** — barang fisik (apalagi roti, gampang basi) gak masuk akal diretur bertahun-tahun kemudian. Dua lapis beda yang sengaja gak digabung:
+- **Kebijakan window retur** — `items.return_window_days` (nullable, default `NULL` = gak dibatasi). Ditaro **per item**, bukan per customer atau global, karena yang nentuin "boleh diretur sampai berapa lama" itu sifat fisik barangnya (roti tawar cepat basi vs kue kering awet), bukan hubungan dagang ke customer tertentu — beda axis dari `customers.credit_limit`/`overdue_threshold_days`. RPC `create_ar_credit_note` cek tiap baris: kalau item itu punya `return_window_days` dan `credit_note_date - invoice_date` ngelewatin itu → `raise exception`, tolak sebelum jurnal dibuat. Cuma berlaku buat jalur full (retur yang nunjuk `item_id` lewat `goods_issue_lines`) — jalur financial-only gak ada `item_id` buat dicek ke situ.
+- **Batasan period closing** — retur gak boleh dicatat ke periode yang udah ditutup (`period_closings`). Ini **udah otomatis kepegang** oleh trigger `journal_entries_block_retroactive_into_closed_period` yang di-reuse lewat `create_journal_entry`, gak butuh constraint baru. Beda dari window retur di atas: ini soal integritas pembukuan (gak boleh ubah periode yang udah dikunci), bukan kebijakan toko.
+
+**Bukan penggantian barang** — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penggantian barang gratis (tukar barang rusak dengan barang baru tanpa nagih ulang) butuh RPC beda (keluar stok + HPP tanpa invoice/piutang baru) — di luar scope fitur ini, lihat "Belum Termasuk".
+
 ## Skenario (lihat detail angka lengkap di `docs/story/accounts-receivable.md`)
 
 1. Invoice lunas tepat waktu — kasus paling sederhana, 1 payment = 1 invoice, alokasi penuh.
@@ -73,6 +107,8 @@ Customer on-hold yang tetap mau dilayani **cash** (bukan termin) gak butuh perub
 4. Telat bayar — query aging (`due_date < now()` dan belum lunas), read-side doang, gak butuh kolom/job tambahan.
 5. Invoice dibatalkan (salah input, belum ada payment) — reversing entry via RPC `cancel_ar_invoice`, bukan hapus, sama kayak koreksi journal entry biasa. Ditolak kalau invoice udah punya alokasi payment (constraint #5).
 6. Invoice baru ditolak karena credit hold — customer kelampaui `credit_limit` ATAU ada invoice overdue lebih dari `overdue_threshold_days`-nya, `create_ar_invoice` nolak sebelum sempat bikin journal entry.
+7. Retur barang, invoice financial-only, belum lunas — outstanding turun langsung dari nominal retur.
+8. Retur barang, invoice via goods issue, udah lunas — 2 jurnal (kontra-revenue + reversal HPP), stok masuk lagi, outstanding jadi negatif (saldo kredit).
 
 ## Common Mistakes
 
@@ -84,9 +120,14 @@ Customer on-hold yang tetap mau dilayani **cash** (bukan termin) gak butuh perub
 - Batalin invoice yang udah ada payment/alokasi tanpa mikirin nasib pembayarannya — reversing entry doang bikin GL balance, tapi duit customer yang udah masuk jadi "nyantol" gak jelas. Harus ditolak di level RPC, bukan cuma diingetin di UI.
 - Cek credit hold cuma di UI (warning yang bisa di-skip) — harus hard-reject di RPC `create_ar_invoice`, gak boleh bergantung ke frontend buat invariant bisnis ini.
 - Nyimpen status "on hold" sebagai kolom manual di `customers` — harus derived tiap invoice baru dicek, biar gak ada resiko status basi (customer udah bayar tapi kolom belum di-update).
+- Retur mereduksi `Pendapatan Penjualan` langsung (bukan lewat akun kontra `Retur & Potongan Penjualan`) — bikin nilai "penjualan kotor" asli gak keliatan lagi di histori.
+- Retur jalur full pakai harga **sekarang** buat reversal HPP/nilai stok balik (bukan `goods_issue_lines.total_cost` snapshot asli) — bikin nilai stok gak konsisten kalau harga bahan baku/produksi udah berubah sejak barang itu keluar.
+- Retur nolak invoice yang udah lunas/ada alokasi — retur harus tetap bisa jalan justru karena beda dari `cancel_ar_invoice`, hasilnya boleh aja bikin saldo kredit.
+- Batas waktu retur ditaro per customer atau global (bukan per item) — window retur soal sifat fisik barang, bukan hubungan dagang.
+- Bikin constraint baru buat "gak boleh retur ke periode tertutup" — udah otomatis kepegang trigger period-closing existing, jangan duplikat logic.
 
 ## Belum Termasuk (di luar scope fase ini)
 
-- **Retur barang** — warung ngembaliin roti, invoice perlu dikurangi/dibatalkan sebagian. Butuh desain terpisah (credit note), belum di-scope.
 - **Uang muka/DP sebelum invoice ada** — payment yang belum ada invoice buat dialokasikan (customer bayar duluan). Butuh keputusan desain terpisah (payment boleh "nganggur" belum teralokasi penuh), belum di-scope fase ini — asumsi awal: payment selalu dialokasikan penuh ke invoice yang udah ada saat itu juga.
-- **Overpayment jadi saldo kredit customer** — kalau `SUM(allocations)` mau ngelebihin amount invoice, constraint #3 nolak; kasus "kelebihan bayar" jadi saldo kredit belum di-desain.
+- **Overpayment jadi saldo kredit customer** — kalau `SUM(allocations)` mau ngelebihin amount invoice, constraint #3 nolak; retur juga bisa bikin outstanding negatif (lihat "Retur Barang"). Kasus "kelebihan bayar/saldo kredit dipakai/refund" jadi keputusan desain terpisah, belum di-scope.
+- **Penggantian barang gratis pasca-retur** — customer balikin barang rusak DAN minta barang pengganti tanpa nagih ulang. Butuh RPC baru (keluar stok + HPP tanpa invoice/piutang baru), beda dari `create_goods_issue` yang selalu bikin invoice. Belum di-scope, lihat `memory/scope-debt/ar-penggantian-barang-retur.md`.

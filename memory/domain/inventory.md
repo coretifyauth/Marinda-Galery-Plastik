@@ -64,6 +64,8 @@ Biaya pokok dihitung dari metode costing item itu (FIFO: consume lot terlama; We
 
 Detail: `memory/scope-debt/` — akun perantara "Barang Diterima Belum Ditagih" (kalau GRN & Bill perlu terpisah waktu), Sales Order (mirror PO di sisi jual, 3-way matching cuma di procurement), laporan price variance (PO vs GRN beda harga), tenaga kerja/overhead dalam biaya produksi.
 
+`items.return_window_days` (nullable) — batas hari maksimal item itu boleh diretur sejak invoice, dipakai AR Credit Note (`memory/domain/accounts-receivable.md` bagian "Retur Barang"). Ditaro di sini (bukan di `customers`) karena soal umur simpan fisik barang.
+
 ## Glossary
 
 - **Item**: master data barang (raw material atau finished good), punya metode costing sendiri.

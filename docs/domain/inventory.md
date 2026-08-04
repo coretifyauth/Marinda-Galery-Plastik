@@ -112,6 +112,8 @@ Bagian dari 3-way matching — mencegah penerimaan "siluman" yang gak pernah dip
 **6. Tiap pergerakan stok (masuk/keluar) harus tertelusur ke dokumen sumber**
 Sama invarian traceability yang berlaku di semua modul lain — Goods Receipt tertelusur ke PO+Bill, Goods Issue tertelusur ke Invoice, Production Order tertelusur ke resep (BOM) yang dipakai.
 
+**Catatan lintas modul:** master data item punya kolom `return_window_days` (nullable) — batas hari maksimal item itu boleh diretur customer, dipakai fitur AR Credit Note (`docs/domain/accounts-receivable.md` bagian "Retur Barang"). Ditaro di item (bukan di customer), karena soal umur simpan fisik barangnya, bukan soal hubungan dagang ke customer tertentu.
+
 ## Common Mistakes
 
 - Mencatat pembelian bahan baku langsung sebagai Beban/HPP — padahal itu masih aset sampai barangnya terjual.

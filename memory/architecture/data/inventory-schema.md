@@ -449,6 +449,10 @@ grant select, insert on goods_issues to authenticated;
 grant select, insert on goods_issue_lines to authenticated;
 ```
 
+## Catatan lintas modul: AR Credit Note (retur, migration `0021_ar_credit_notes_schema.sql`)
+
+`items.return_window_days` (kolom baru, nullable int) dan `inventory_lots.source_type` (check constraint nambah value `'SALES_RETURN'`) ditambah buat fitur retur AR. Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration itu, bukan di sini — 0 perubahan struktural ke tabel modul ini selain 2 hal di atas. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
+
 ## Belum Termasuk (dependency / di luar scope fase ini)
 
 Detail lengkap tiap item: `memory/scope-debt/`.
