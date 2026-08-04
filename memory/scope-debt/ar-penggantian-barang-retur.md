@@ -4,7 +4,7 @@
 
 ## Kasus
 
-Customer balikin barang rusak (lihat `ar-retur-barang.md` / `memory/domain/accounts-receivable.md` bagian "Retur Barang") DAN minta barang pengganti — **tanpa nagih ulang**, karena ini garansi kualitas, bukan penjualan baru.
+Customer balikin barang rusak (retur AR Credit Note sudah diimplementasi — lihat `memory/domain/accounts-receivable.md` bagian "Retur Barang") DAN minta barang pengganti — **tanpa nagih ulang**, karena ini garansi kualitas, bukan penjualan baru.
 
 ## Kenapa beda dari `create_goods_issue`
 

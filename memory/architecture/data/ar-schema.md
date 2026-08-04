@@ -414,7 +414,9 @@ grant select, insert on ar_payment_allocations to authenticated;
 
 RPC (`create_ar_invoice`, `record_ar_payment`) otomatis kepakai `authenticated` selama grant `execute` default Postgres gak dicabut — konsisten sama perlakuan `create_journal_entry`/`reverse_journal_entry` di `journal-entry-schema.md` (grant RPC eksplisit ditambahin di migration terpisah kalau ternyata perlu, ref migration `0006_journal_entry_rpc_grants.sql`).
 
-## AR Credit Note (Retur Barang) — migration `0021_ar_credit_notes_schema.sql` + `0022_seed_demo_ar_credit_notes.sql`
+## AR Credit Note (Retur Barang) — migration `0021_ar_credit_notes_schema.sql` + `0022_fix_ar_credit_note_lot_source_ref.sql` + `0023_seed_demo_ar_credit_notes.sql`
+
+`0022` adalah bugfix (`create or replace function`) ke RPC `create_ar_credit_note` dari `0021` — insert ke `inventory_lots.source_ref` (kolom uuid, nunjuk id baris dokumen sumber, pola sama `create_goods_receipt`/`create_production_order`) salah pasang `p_source_ref` (parameter text) di `0021`, ketauan pas jalur FIFO retur dieksekusi. Fix pakai `v_credit_note_id`. Nomor migration `0022`/`0023` sengaja ditukar dari draft awal (`0022` seed / `0023` fix) supaya fix ke-apply sebelum seed yang butuh RPC-nya udah bener.
 
 Barang yang udah diinvoice beneran dibalikin customer (rusak/gak laku/salah kirim) — beda dari `cancel_ar_invoice` (invoice salah dari awal). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Retur Barang".
 
@@ -493,7 +495,7 @@ Full body trigger: lihat migration file.
 - Nominal reversal HPP **dihitung RPC dari snapshot** (`goods_issue_lines.total_cost / qty_issued × qty_returned`), bukan input caller — beda dari nominal revenue di atas, ini sengaja dikunci server-side biar gak ada celah caller masukin cost yang gak sesuai catatan asli.
 - Guard "item gak ketemu di goods_issue" dicek eksplisit di RPC (bukan cuma ngandelin trigger yang jalan belakangan pas insert `inventory_return_lines`) — biar gagalnya cepat & jelas, bukan nyusul jadi NULL yang baru ketauan pas constraint lain nolak.
 
-Full body: `supabase/migrations/0021_ar_credit_notes_schema.sql`.
+Full body (bentuk final, setelah bugfix): `supabase/migrations/0022_fix_ar_credit_note_lot_source_ref.sql` — versi awal ada di `0021_ar_credit_notes_schema.sql`.
 
 ### RLS & Grant
 

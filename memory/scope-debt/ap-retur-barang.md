@@ -8,13 +8,13 @@ Bahan baku yang diterima dari supplier (misal tepung apek/rusak) dikembalikan. U
 
 ## Kenapa ditunda
 
-Padanan langsung dari [ar-retur-barang.md](ar-retur-barang.md), cuma arah kebalik (kita yang nerima retur di AR, kita yang ngajuin retur di AP). Sama-sama butuh desain "credit note" yang bisa **partial** dan bisa kejadian **setelah** ada payment sebagian — beda dari guard `cancel_ap_bill` (rencana: sama pola `cancel_ar_invoice`, cuma boleh kalau belum ada alokasi payment sama sekali).
+Padanan langsung dari AR Credit Note (retur barang, sudah diimplementasi — `memory/domain/accounts-receivable.md` bagian "Retur Barang"), cuma arah kebalik (kita yang nerima retur di AR, kita yang ngajuin retur di AP). Sama-sama butuh desain "credit note" yang bisa **partial** dan bisa kejadian **setelah** ada payment sebagian — beda dari guard `cancel_ap_bill` (rencana: sama pola `cancel_ar_invoice`, cuma boleh kalau belum ada alokasi payment sama sekali).
 
 ## Kapan perlu digarap
 
-Bareng `ar-retur-barang.md` kalau desainnya mau disatuin (kemungkinan besar solusinya sama, cuma beda arah tabel), atau begitu ada kejadian retur nyata di cerita CV Roti Barokah dari sisi supplier.
+Desainnya bisa nyontek langsung pola AR Credit Note (kemungkinan besar solusinya sama, cuma beda arah tabel), begitu ada kejadian retur nyata di cerita CV Roti Barokah dari sisi supplier.
 
 ## Referensi
 
-- [ar-retur-barang.md](ar-retur-barang.md)
+- `memory/domain/accounts-receivable.md` (bagian "Retur Barang") — pola AR Credit Note yang jadi rujukan
 - Percakapan desain AP (kasus 5)

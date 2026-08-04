@@ -5,8 +5,9 @@
 insert into accounts (code, name, category, is_contra) values
   ('4900', 'Retur & Potongan Penjualan', 'revenue', true);
 
--- Roti Tawar gampang basi — window retur pendek, 2 hari sejak invoice.
-update items set return_window_days = 2 where name = 'Roti Tawar';
+-- Roti Tawar gampang basi — window retur pendek, 3 hari sejak invoice (Skenario 6 di
+-- bawah retur persis di H+3, sengaja pas biar nunjukin batas atas window masih diterima).
+update items set return_window_days = 3 where name = 'Roti Tawar';
 
 -- Skenario 5: retur financial-only, Warung Kang Ade. Invoice 12 Juli (900.000, lunas 26 Juli)
 -- gak lewat create_goods_issue (predates modul Inventory) -> p_lines null, 1 jurnal.
