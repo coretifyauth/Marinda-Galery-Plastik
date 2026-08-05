@@ -24,6 +24,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
   - **ar_customer_credit_refund** — kredit direfund tunai. Jurnal: Debit Saldo Kredit Customer / Kredit Kas/Bank.
   - Beda dari `ar_deposit` (1 disposisi aktif doang): kredit ini bisa dipakai **sebagian-sebagian, berkali-kali** (application + refund berulang) sampai habis — pola lebih mirip `ar_payment_allocations` (partial-capable) daripada disposisi tunggal DP. Guard: `SUM(applications.amount) + SUM(refunds.amount)` per credit ≤ `ar_customer_credits.amount`.
 - **ar_bad_debt_writeoff** — piutang yang benar-benar gak akan tertagih (customer menghilang/tutup usaha), dihapusbukukan. **Metode direct write-off** (bukan allowance/provisi — gak ada data historis buat estimasi kredibel, gak diakui fiskus buat badan usaha umum di Indonesia, gak konsisten sama pola RPC AR lain yang reaktif per-kejadian). Beda dari `cancel_ar_invoice`: Pendapatan asli **gak dibalik** (penjualannya valid), cuma Piutang Usaha yang dihapus lewat beban baru **di periode sekarang** (bukan periode penjualan lama, walau periode itu udah ditutup — `Piutang Usaha` akun permanen, gak ikut di-reset closing). Jurnal: Debit `Beban Piutang Tak Tertagih` (expense biasa, **bukan** kontra) / Kredit Piutang Usaha. Partial-capable, dibatasi sisa outstanding riil (bukan cuma `amount` mentah kayak credit note — write-off ikut ngitung SEMUA reducer lain: payment, retur, DP, customer-credit). Recovery (piutang yang di-write-off ternyata kebayar lagi) **di luar scope**.
+- **ar_return_credit** — retur yang kejadian SETELAH invoice lunas bikin outstanding negatif (lihat "Retur Barang"). Excess-nya otomatis dicairkan jadi saldo resmi lewat `create_ar_credit_note` (deteksi otomatis, bukan RPC terpisah buat "bikin" saldonya) — pola sama `ar_customer_credit` (overpayment) tapi akun beda (`Saldo Kredit Retur Customer`, bukan `Saldo Kredit Customer`) karena beda asal jurnal. Jurnal reklasifikasi: Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer, sejumlah `excess = greatest(0, nominal_retur - greatest(0, sisa_outstanding_sebelum_retur_ini))`. 2 disposisi partial-capable & berulang (apply/refund), sama persis pola `ar_customer_credit`. `cancel_ar_invoice` auto-unwind application-nya (bukan ditolak keras) — reklasifikasi sederhana, aman dibalik.
+- **ar_invoice_remaining(invoice_id)** — fungsi SQL terpusat, satu-satunya sumber kebenaran buat "sisa outstanding riil 1 invoice" (amount dikurangi 6 reducer: payment allocation, retur, DP application aktif, customer credit application aktif, write-off aktif, return credit application aktif). Menggantikan pola lama di mana 5 fungsi beda-beda ngitung ulang sendiri-sendiri (duplikasi yang udah 2x kebukti jadi sumber bug — reducer baru gampang kelewat gak ditambahin ke salah satu tempat, lihat riwayat `0024`/`0027`). Semua guard/RPC yang butuh tau "sisa piutang invoice ini" sekarang manggil fungsi ini, bukan hitung ulang.
 
 ## Constraints (wajib ditegakkan di implementasi)
 
@@ -40,8 +42,9 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **No over-replace**: `SUM(qty)` `warranty_replacement_lines` (akumulasi, per item, per credit note) ≤ `SUM(qty_returned)` `inventory_return_lines` item itu di credit note yang sama.
 - **Overpayment split dalam 1 journal entry**: `record_ar_payment` gak boleh split excess jadi payment/entry terpisah — 1 bukti transfer = 1 entry (3 baris kalau ada excess: Kas, Piutang Usaha, Saldo Kredit Customer).
 - **No over-use saldo kredit**: `SUM(ar_customer_credit_applications.amount) + SUM(ar_customer_credit_refunds.amount)` per `ar_customer_credits` ≤ `ar_customer_credits.amount`.
-- **No over-writeoff**: `SUM(ar_bad_debt_writeoffs.amount)` per invoice ≤ sisa outstanding riil (`amount − allocated − returned − depositApplied − creditApplied`), bukan cuma `amount` mentah.
-- **3 guard reducer existing diperluas**: `ar_payment_allocations_no_over_allocation`, `ar_deposit_applications_guard`, `ar_customer_credit_applications_guard` masing-masing ikut ngurangin write-off aktif dari sisa ruang invoice. `create_ar_invoice` (credit hold) & `cancel_ar_invoice` (guard baru: tolak kalau udah ada write-off) ikut diperluas — pola sama tiap kali reducer baru ditambah ke AR.
+- **No over-writeoff**: `SUM(ar_bad_debt_writeoffs.amount)` per invoice ≤ `ar_invoice_remaining(invoice_id)` (fungsi terpusat, lihat di atas).
+- **No over-use saldo kredit retur**: `SUM(ar_return_credit_applications.amount) + SUM(ar_return_credit_refunds.amount)` per `ar_return_credits` ≤ `ar_return_credits.amount`, pola sama saldo kredit overpayment.
+- **Semua guard reducer sekarang manggil `ar_invoice_remaining()`** — bukan ngitung ulang manual per fungsi. Nambah reducer baru ke depan cuma perlu ubah 1 fungsi ini, bukan nyisir semua guard satu-satu.
 
 ## Skenario referensi (detail angka: `docs/story/accounts-receivable.md`)
 
@@ -63,6 +66,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 14 | Saldo kredit dipakai motong invoice lain | Debit Saldo Kredit Customer / Kredit Piutang Usaha, partial-capable |
 | 15 | Saldo kredit direfund tunai | Debit Saldo Kredit Customer / Kredit Kas |
 | 16 | Piutang tak tertagih (write-off) | 1 jurnal, Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik |
+| 17 | Saldo kredit dari retur | Retur setelah lunas bikin outstanding negatif, excess-nya otomatis jurnal Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer |
 
 ## Common mistakes to guard against
 
@@ -86,10 +90,12 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - Write-off lewat `cancel_ar_invoice` — membalikkan Pendapatan yang valid, harusnya RPC terpisah yang cuma ngurangin Piutang Usaha.
 - Write-off gak ngitung reducer lain (payment/retur/DP/customer-credit) — bisa "menghapus" uang yang udah lunas/diretur/dikreditkan duluan.
 - Allowance/provisi method buat UMKM tanpa data historis — estimasi jadi tebakan, gak diakui fiskus buat badan usaha umum.
+- Excess dari retur negatif dicatat ke akun overpayment (`Saldo Kredit Customer`) — harus akun terpisah, beda asal jurnal.
+- Excess dari retur dihitung dari seluruh nominal retur, bukan cuma bagian yang ngelebihin sisa outstanding — dobel hitung.
+- Nambah reducer baru ke `ar_invoices` tanpa nge-extend `ar_invoice_remaining()` (dan lewat situ otomatis semua guard yang manggilnya) — kelas bug yang udah kejadian berulang sebelum fungsi ini disentralisasi.
 
 ## Belum termasuk (di luar scope fase ini)
 
-- **Retur yang bikin outstanding invoice negatif** — beda mekanisme dari overpayment payment (yang di atas udah di-scope): retur ngurangin `amount` piutang lewat kontra-revenue, bukan lewat kelebihan kas. Penanganan saldo kreditnya masih belum didesain.
 - **Recovery piutang yang udah di-write-off** — direct write-off gak punya akun cadangan penyangga, belum didesain.
 
 ## Glossary
@@ -105,5 +111,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **Warranty Replacement**: penggantian barang gratis pasca-retur — keluar stok+HPP tanpa invoice/piutang baru, wajib referensi credit note jalur full.
 - **AR Customer Credit**: kelebihan bayar 1 payment event di atas invoice yang ditutup — liability `Saldo Kredit Customer`, beda asal dari `AR Deposit`, bisa dipakai/refund parsial berkali-kali.
 - **AR Bad Debt Write-off**: piutang yang beneran gak akan tertagih, dihapusbukukan lewat beban baru (direct write-off, bukan allowance) — Pendapatan asli gak dibalik, beda dari `cancel_ar_invoice`.
+- **AR Return Credit**: excess dari retur setelah invoice lunas, dicairkan otomatis jadi saldo resmi (liability `Saldo Kredit Retur Customer`) — bisa dipakai/direfund kayak overpayment, beda akun karena beda asal jurnal.
+- **`ar_invoice_remaining()`**: fungsi terpusat, satu-satunya sumber kebenaran buat sisa outstanding riil 1 invoice — dipanggil semua guard/RPC AR yang butuh tau itu.
 
 Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`.

@@ -15,6 +15,7 @@ export const createArCreditNoteSchema = z.object({
   lines: z.array(creditNoteLineSchema).default([]),
   hpp_account_id: z.string().uuid().optional(),
   finished_good_account_id: z.string().uuid().optional(),
+  return_credit_liability_account_id: z.string().uuid().optional(),
 });
 
 export type CreateArCreditNoteInput = z.infer<typeof createArCreditNoteSchema>;

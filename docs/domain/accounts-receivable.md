@@ -22,6 +22,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - **AR Deposit (uang muka/DP)** — customer bayar duluan sebelum invoice ada (misal pesanan custom). **Bukan** `AR Payment` — gak nyentuh Piutang Usaha sama sekali pas diterima, dicatat ke akun liability `Uang Muka Penjualan` dulu, baru direklasifikasi jadi pengurang Piutang Usaha begitu invoice-nya kebentuk (atau jadi Pendapatan Lain-lain kalau order-nya batal & DP-nya hangus). Detail lengkap di bawah ("Uang Muka / DP").
 - **AR Customer Credit (kelebihan bayar)** — customer transfer lebih dari total invoice yang lagi dilunasin dalam 1 payment. Beda dari DP: piutangnya **udah ada** dan **udah kesentuh** (invoice ternutup penuh lewat alokasi normal), sisa lebihnya baru "jatuh" ke saldo kredit. Dicatat ke akun liability `Saldo Kredit Customer` (beda dari `Uang Muka Penjualan` walau sama-sama liability — asal jurnalnya beda, lihat "Kelebihan Bayar" di bawah).
 - **AR Bad Debt Write-off (piutang tak tertagih)** — piutang yang **benar-benar** gak akan pernah tertagih (customer menghilang/tutup usaha), diakui sebagai kerugian. Beda dari `cancel_ar_invoice`: transaksinya valid, Pendapatan yang udah diakui **gak dibalik** — cuma piutangnya yang dihapusbukukan lewat beban baru di periode saat ketauan macetnya. Metode **direct write-off** (bukan allowance/provisi) — lihat "Piutang Tak Tertagih" di bawah buat rasional lengkap.
+- **AR Return Credit (saldo kredit dari retur)** — retur barang yang kejadian **setelah** invoice-nya udah lunas bikin outstanding jadi negatif (lihat "Retur Barang"). Sisa negatifnya otomatis "dicairkan" jadi saldo resmi milik customer — pola sama persis AR Customer Credit (overpayment), tapi dicatat ke akun liability terpisah (`Saldo Kredit Retur Customer`) karena beda asal jurnal (retur, bukan kelebihan kas). Lihat "Saldo Kredit dari Retur" di bawah.
 
 ## Kenapa payment_term_days aman diubah di tempat (bukan versioned)
 
@@ -188,6 +189,25 @@ Debit Beban Piutang Tak Tertagih   [nominal write-off]
 
 **Di luar scope fitur ini — recovery** (piutang yang udah di-write-off ternyata akhirnya kebayar juga). Direct write-off gak punya akun "cadangan" penyangga buat nampung kasus ini dengan mulus (beda dari allowance method) — kalau nanti beneran kejadian di cerita, butuh desain terpisah (kandidat: `Debit Kas / Kredit Pendapatan Lain-lain`, gak reinstate `Piutang Usaha` lagi, biar gak perlu "membuka" balik histori invoice lama).
 
+## Saldo Kredit dari Retur (AR Return Credit)
+
+Retur barang (lihat "Retur Barang" di atas) sengaja **independen** dari status bayar invoice — boleh tetap dibuat walau invoice-nya udah lunas penuh, dan itu bikin outstanding invoice itu jadi **negatif**. Secara bisnis, angka negatif itu artinya: CV Roti Barokah sekarang "berutang" ke customer sejumlah itu (customer udah kadung bayar lebih dari yang seharusnya, karena sebagian barangnya cacat).
+
+**Kenapa butuh mekanisme sendiri, bukan cuma dibiarkan sebagai angka minus**: tanpa ini, gak ada cara resmi buat customer mencairkan haknya — gak ada tombol "pakai buat motong tagihan berikutnya" atau "refund tunai", padahal secara bisnis dia berhak dapat salah satunya. Ini persis masalah yang sudah diselesaikan buat kelebihan bayar (`AR Customer Credit`) — bedanya cuma **asal kejadian**: satu dari kelebihan transfer kas, satu dari barang yang balik setelah lunas. Karena beda asal jurnal, dicatat ke akun liability terpisah: `Saldo Kredit Retur Customer` (bukan `Saldo Kredit Customer` yang dipakai overpayment) — biar riwayatnya tetap bisa ditelusuri balik ke retur mana yang jadi sumbernya, konsisten sama prinsip "beda asal jurnal → beda akun" yang udah dipegang sepanjang modul ini (DP vs Customer Credit vs Write-off).
+
+**Kapan ini terjadi**: dideteksi otomatis oleh `create_ar_credit_note` — begitu 1 retur bikin outstanding invoice itu turun di bawah nol, bagian yang "kelebihan" (bukan seluruh nominal retur, cuma porsi yang gak ketampung sisa outstanding yang ada) langsung dicairkan jadi saldo resmi lewat jurnal reklasifikasi:
+```
+Debit Piutang Usaha              [excess]
+  Kredit Saldo Kredit Retur Customer   [excess]
+```
+Nominal `excess` = nominal retur dikurangi sisa outstanding yang masih ada sebelum retur ini (kalau sisanya udah negatif dari retur sebelumnya, seluruh nominal retur baru ini jadi excess).
+
+**Dua disposisi, partial-capable & berulang** (pola sama `AR Customer Credit`, bukan disposisi tunggal kayak DP):
+1. **Dipakai** motong invoice lain customer yang sama, kapan aja — Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha.
+2. **Direfund tunai** — Debit Saldo Kredit Retur Customer / Kredit Kas/Bank.
+
+**Interaksi sama `cancel_ar_invoice`**: kalau invoice yang udah dipotong saldo kredit retur ternyata dibatalkan, RPC ikut membalikkan jurnal penerapannya juga (auto-unwind, pola sama DP & Customer Credit — bukan ditolak keras kayak write-off, karena ini reklasifikasi sederhana yang aman dibalik).
+
 ## Skenario (lihat detail angka lengkap di `docs/story/accounts-receivable.md`)
 
 1. Invoice lunas tepat waktu — kasus paling sederhana, 1 payment = 1 invoice, alokasi penuh.
@@ -206,6 +226,7 @@ Debit Beban Piutang Tak Tertagih   [nominal write-off]
 14. Saldo kredit dipakai motong invoice lain — Debit Saldo Kredit Customer, Kredit Piutang Usaha, partial-capable.
 15. Saldo kredit direfund tunai — Debit Saldo Kredit Customer, Kredit Kas.
 16. Piutang tak tertagih (write-off) — pesanan custom yang customernya menghilang, Debit Beban Piutang Tak Tertagih, Kredit Piutang Usaha, Pendapatan asli gak dibalik.
+17. Saldo kredit dari retur — retur setelah invoice lunas bikin outstanding negatif, excess-nya otomatis dicairkan jadi saldo resmi (Debit Piutang Usaha, Kredit Saldo Kredit Retur Customer), bisa dipakai/direfund kayak overpayment.
 
 ## Common Mistakes
 
@@ -234,8 +255,9 @@ Debit Beban Piutang Tak Tertagih   [nominal write-off]
 - Write-off lewat `cancel_ar_invoice` (membalikkan Pendapatan) — penjualannya beneran kejadian, gak boleh dianggap "gak pernah ada". Harus RPC terpisah yang cuma ngurangin Piutang Usaha lewat beban baru.
 - Write-off ngelebihin sisa outstanding riil invoice (gak ngitung reducer lain kayak payment/retur/DP/customer-credit yang udah ada) — bisa "menghapus" uang yang sebenarnya udah lunas/diretur/dikreditkan duluan.
 - Pakai allowance/provisi method buat CV skala UMKM tanpa data historis kerugian — estimasinya cuma tebakan, dan gak diakui fiskus buat badan usaha umum di Indonesia.
+- Excess dari retur negatif dicatat ke `Saldo Kredit Customer` (akun overpayment) — harus akun terpisah (`Saldo Kredit Retur Customer`), beda asal jurnal.
+- Excess dari retur dihitung dari seluruh nominal retur (bukan cuma bagian yang ngelebihin sisa outstanding) — bikin dobel hitung kalau sisa outstanding-nya masih ada sebagian.
 
 ## Belum Termasuk (di luar scope fase ini)
 
-- **Retur yang bikin outstanding invoice negatif** (lihat "Retur Barang") — beda mekanisme dari overpayment payment (yang sekarang udah di-scope di atas): retur ngurangin `amount` piutang lewat kontra-revenue, bukan lewat kelebihan pembayaran kas. Penanganan saldo kredit dari retur-negatif ini masih belum didesain.
 - **Recovery piutang yang udah di-write-off** (lihat "Piutang Tak Tertagih") — direct write-off gak punya akun cadangan penyangga, penanganannya kalau ternyata kebayar lagi belum didesain.

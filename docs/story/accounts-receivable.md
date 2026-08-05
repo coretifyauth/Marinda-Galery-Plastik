@@ -220,9 +220,29 @@ Debit Beban Piutang Tak Tertagih   1.500.000
 
 Piutang Usaha Bu Rina: 1.500.000 (invoice) − 1.500.000 (write-off) = **0 outstanding**. Status invoice berubah dari **belum** jadi **dihapusbukukan** — beda dari **lunas** (piutang ini gak pernah beneran dibayar, cuma diakui hilang). Pendapatan Penjualan Toko 1.500.000 dari 1 Februari **tetap berdiri** gak dibalik — penjualannya beneran kejadian, cuma piutangnya yang gak bisa dicairkan. Laba Rugi periode Juni 2027 kena beban baru Rp1.500.000 (bukan periode Februari saat penjualan awal terjadi).
 
+## Skenario 13 — Saldo kredit dari retur (Warung Kang Ade, lanjutan Skenario 5)
+
+5 September 2026 (Skenario 5): retur Rp50.000 dari Warung Kang Ade, invoice 12 Juli (Rp900.000) udah lunas penuh sejak 26 Juli. Waktu itu, outstanding invoice-nya jadi **-50.000** — Bu Nur "berutang" ke Kang Ade, tapi belum ada mekanisme resmi buat mencairkannya (gap yang baru ditutup fitur ini).
+
+Begitu fitur ini ada, `create_ar_credit_note` otomatis mendeteksi: sisa outstanding sebelum retur ini = 0 (invoice udah lunas penuh), nominal retur 50.000 — semuanya jadi excess. Jurnal reklasifikasi otomatis kebentuk:
+```
+Debit Piutang Usaha                50.000
+  Kredit Saldo Kredit Retur Customer      50.000
+```
+1 baris `ar_return_credits` lahir: Kang Ade punya saldo Rp50.000, siap dipakai/direfund.
+
+10 September 2026: Kang Ade gak ada rencana order lagi dalam waktu dekat, minta uangnya balik langsung daripada nunggu dipakai motong tagihan berikutnya. RPC `refund_ar_return_credit` dipanggil:
+```
+Debit Saldo Kredit Retur Customer  50.000
+  Kredit Kas di Bank                      50.000
+```
+Saldo kredit retur Kang Ade: **Rp0** (habis, direfund tunai).
+
+*(Catatan implementasi: karena retur Kang Ade ini sendiri terjadi SEBELUM fitur AR Return Credit dibangun — tercatat pas fitur retur pertama kali dibuat, jauh sebelum gap ini disadari — jurnal reklasifikasi & baris `ar_return_credits` di atas di-backfill manual lewat migration seed, bukan otomatis dari `create_ar_credit_note` versi lama. Kejadian bisnisnya tetap sama: excess Rp50.000, tanggal yang sama, cuma jalur teknisnya beda dari retur yang terjadi SETELAH fitur ini ada.)*
+
 ## Simulasi Interface (rencana)
 
-Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate — plus tampilin sisa Rp yang jadi saldo kredit kalau ada excess), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Saldo kredit customer (pakai/refund) menyusul di halaman customer detail atau inline di `/ar-invoices`, pola sama tombol "Terapkan DP". Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Detail flow menyusul pas fase UI dikerjakan.
+Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate — plus tampilin sisa Rp yang jadi saldo kredit kalau ada excess), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Saldo kredit customer (pakai/refund) menyusul di halaman customer detail atau inline di `/ar-invoices`, pola sama tombol "Terapkan DP". Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Halaman `/ar-return-credits` (list+detail, pola sama `/ar-customer-credits`) buat saldo kredit yang lahir dari retur negatif — lahir otomatis, gak ada form "bikin baru". Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

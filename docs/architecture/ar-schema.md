@@ -20,6 +20,9 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario n
 | `ar_customer_credit_applications` | Saldo kredit dipakai memotong invoice lain | Menghubungkan `ar_customer_credits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
 | `ar_customer_credit_refunds` | Saldo kredit dikembalikan tunai ke pelanggan | `ar_customer_credits`, dan ke transaksi jurnal (Saldo Kredit Customer → Kas) |
 | `ar_bad_debt_writeoffs` | Piutang yang benar-benar tidak akan tertagih, dihapusbukukan | `ar_invoices` (1 invoice bisa punya lebih dari satu write-off parsial), dan ke transaksi jurnal (Beban Piutang Tak Tertagih → Piutang Usaha) |
+| `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi (Piutang Usaha → Saldo Kredit Retur Customer) |
+| `ar_return_credit_applications` | Saldo kredit retur dipakai memotong invoice lain | Menghubungkan `ar_return_credits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
+| `ar_return_credit_refunds` | Saldo kredit retur dikembalikan tunai ke pelanggan | `ar_return_credits`, dan ke transaksi jurnal (Saldo Kredit Retur Customer → Kas) |
 
 Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invoice satu pembayaran: satu pembayaran bisa melunasi beberapa invoice sekaligus (bayar gabungan), dan satu invoice bisa dilunasi lewat beberapa pembayaran (dicicil). Hubungannya banyak-ke-banyak, jadi butuh tabel sendiri yang mencatat tiap pasangan pembayaran-invoice beserta jumlahnya.
 
@@ -45,6 +48,7 @@ Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invo
 9. **Kelebihan bayar otomatis jadi saldo kredit, dalam pembayaran yang sama.** Kalau nominal yang dibayar melebihi total yang dialokasikan ke invoice, selisihnya langsung tercatat sebagai saldo kredit pelanggan — bukan pembayaran terpisah, tapi bagian dari transaksi jurnal pembayaran itu juga (satu bukti transfer, satu transaksi).
 10. **Saldo kredit boleh dipakai atau dikembalikan sebagian-sebagian, berkali-kali** — beda dari uang muka yang cuma boleh punya satu nasib akhir. Total yang dipakai + dikembalikan tidak boleh melebihi nominal saldo kredit awalnya, dan pemakaiannya ikut dihitung bareng alokasi pembayaran + penerapan uang muka supaya satu invoice tidak bisa "kelunasan" dari gabungan tiga jalur itu.
 11. **Write-off tidak boleh melebihi sisa piutang yang benar-benar masih outstanding.** Beda dari retur (yang boleh bikin saldo negatif) — write-off ikut menghitung SEMUA pengurang lain yang sudah ada buat invoice itu (pembayaran, retur, uang muka, saldo kredit), supaya tidak "menghapus" uang yang sebenarnya sudah lunas/diretur/dikreditkan lewat jalur lain. Invoice yang sudah punya write-off tidak bisa dibatalkan lewat jalur biasa — sama seperti invoice yang sudah ada pembayarannya.
+12. **Retur yang membuat saldo invoice jadi negatif otomatis "dicairkan" jadi saldo kredit resmi.** Bagian yang melebihi sisa outstanding (bukan seluruh nilai retur) dicatat sebagai saldo kredit terpisah milik pelanggan itu — bisa dipakai memotong invoice lain atau dikembalikan tunai, sama pola kelebihan bayar tapi beda akun (biar riwayatnya tetap bisa ditelusuri balik ke retur yang jadi sumbernya).
 
 ## Cara Kerja "Buat Invoice", "Catat Pembayaran", dan "Batalkan Invoice"
 
@@ -93,18 +97,24 @@ Write-off boleh sebagian (tidak wajib menghapus penuh nilai outstanding invoice)
 
 **Belum termasuk**: kalau piutang yang sudah di-write-off ternyata akhirnya kebayar juga (pemulihan) — metode langsung dihapuskan tidak punya akun cadangan penyangga buat menangani ini dengan mulus, penanganannya belum dirancang.
 
+## Saldo Kredit dari Retur
+
+Retur boleh dibuat kapan pun terlepas status bayar invoice (lihat "Cara Kerja" di atas) — kalau invoicenya sudah lunas, retur membuat saldo invoice itu jadi **negatif**. Secara bisnis, itu artinya CV Barokah "berutang" ke pelanggan sejumlah itu, sama persis situasinya dengan kelebihan bayar — bedanya cuma asal kejadian (barang balik, bukan kelebihan transfer).
+
+Sistem sekarang otomatis mendeteksi ini tiap kali retur dicatat: bagian yang melebihi sisa outstanding sebelum retur itu (bukan seluruh nilai returnya) langsung dicatat sebagai saldo kredit terpisah — akunnya beda dari kelebihan bayar biasa ("Saldo Kredit Retur Customer", bukan "Saldo Kredit Customer"), supaya riwayatnya tetap jelas ketelusur balik ke retur mana yang jadi sumbernya. Sama seperti kelebihan bayar, saldo ini bisa dipakai memotong invoice lain atau dikembalikan tunai, boleh sebagian-sebagian dan berkali-kali. Kalau invoice yang sudah dipotong saldo kredit retur ternyata dibatalkan, transaksi jurnal pemakaiannya ikut dibalik otomatis — sama pola kelebihan bayar.
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat pelanggan, invoice, pembayaran, uang muka | Semua user yang sudah login |
 | Menambah pelanggan baru, mengubah data pelanggan | Role `admin` atau `accountant` |
-| Membuat invoice, mencatat pembayaran, mencatat/menerapkan/menghanguskan uang muka, mencatat write-off | Role `admin` atau `accountant` |
-| Mengedit atau menghapus invoice/pembayaran/retur/uang muka/write-off | **Tidak ada seorang pun** — hanya pembatalan/retur lewat jalur resmi yang diizinkan |
+| Membuat invoice, mencatat pembayaran, mencatat/menerapkan/menghanguskan uang muka, mencatat write-off, memakai/refund saldo kredit retur | Role `admin` atau `accountant` |
+| Mengedit atau menghapus invoice/pembayaran/retur/uang muka/write-off/saldo kredit retur | **Tidak ada seorang pun** — hanya pembatalan/retur lewat jalur resmi yang diizinkan |
 | Menghapus data pelanggan secara permanen | **Tidak ada seorang pun** — hanya bisa diarsipkan |
 
 ## Belum Termasuk
 
-- **Retur yang membuat saldo invoice negatif** — beda mekanisme dari kelebihan bayar pembayaran (yang sudah di atas): retur mengurangi nilai invoice lewat akun kontra-pendapatan, bukan lewat kelebihan kas pembayaran. Penanganan saldo kreditnya masih belum dirancang.
 - **Laporan umur piutang (aging) / dashboard invoice jatuh tempo** — ini laporan baca-saja dari data yang sudah ada, akan dibangun bersama tampilan UI-nya, tidak butuh perubahan struktur data.
 - **Pemulihan piutang yang sudah di-write-off** — lihat "Piutang Tak Tertagih" di atas, belum dirancang.
+- **Toleransi/batas akumulasi saldo kredit retur lintas waktu untuk 1 pelanggan** — per invoice sudah ada batas alami (retur maksimal sejumlah nilai invoice itu sendiri), tapi belum ada batas gabungan kalau pola retur berulang jadi masalah nyata — sengaja belum dirancang karena belum ada bukti kebutuhan ini di cerita CV Roti Barokah.

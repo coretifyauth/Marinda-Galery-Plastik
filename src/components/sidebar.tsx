@@ -34,6 +34,7 @@ import {
   Lock,
   PiggyBank,
   Coins,
+  RotateCcw,
 } from "lucide-react";
 
 const navGroups = [
@@ -55,6 +56,7 @@ const navGroups = [
       { href: "/ar-payments", label: "AR Payments", icon: HandCoins },
       { href: "/ar-deposits", label: "AR Deposits", icon: PiggyBank },
       { href: "/ar-customer-credits", label: "AR Customer Credit", icon: Coins },
+      { href: "/ar-return-credits", label: "AR Return Credit", icon: RotateCcw },
     ],
   },
   {

@@ -28,6 +28,7 @@ export type ArInvoice = {
   ar_deposit_applications?: { amount: number }[];
   ar_customer_credit_applications?: { amount: number }[];
   ar_bad_debt_writeoffs?: { amount: number }[];
+  ar_return_credit_applications?: { amount: number }[];
 };
 
 export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "dihapusbukukan";
@@ -38,12 +39,15 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "d
  * bukan kolom, ref ar-schema.md. Outstanding boleh negatif (saldo kredit) kalau retur
  * kejadian setelah invoice lunas — ref docs/domain/accounts-receivable.md bagian "Retur
  * Barang".
- * `ar_deposit_applications`, `ar_customer_credit_applications`, dan `ar_bad_debt_writeoffs`
- * selalu aktif kalau invoice-nya masih hidup (belum dibatalkan) — begitu invoice
- * dibatalkan, `cancel_ar_invoice` nolak keras kalau udah ada write-off (gak bisa
- * dibatalkan lewat jalur itu), jadi gak perlu exclude yang di-reverse buat write-off di
- * sini (beda dari deposit/customer-credit application yang auto-unwind, lihat "Uang Muka
- * / DP" dan "Kelebihan Bayar (Overpayment)" di ar-schema.md).
+ * `ar_deposit_applications`, `ar_customer_credit_applications`, `ar_return_credit_applications`,
+ * dan `ar_bad_debt_writeoffs` selalu aktif kalau invoice-nya masih hidup (belum
+ * dibatalkan) — begitu invoice dibatalkan, `cancel_ar_invoice` nolak keras kalau udah ada
+ * write-off (gak bisa dibatalkan lewat jalur itu), jadi gak perlu exclude yang di-reverse
+ * buat write-off di sini (beda dari deposit/customer-credit/return-credit application
+ * yang auto-unwind, lihat "Uang Muka / DP", "Kelebihan Bayar (Overpayment)", dan "Saldo
+ * Kredit dari Retur" di ar-schema.md).
+ * Nilai-nilai reducer ini (dan rumus outstanding) sekarang mirror `ar_invoice_remaining()`
+ * di database — kalau ada reducer baru ditambah server-side, tambahin di sini juga.
  * `isCancelled` dihitung caller dari query terpisah (journal_entries.reverses_entry_id
  * yang nunjuk ke invoice.journal_entry_id), karena bukan relasi langsung dari ar_invoices.
  * Status `dihapusbukukan` beda dari `lunas` — piutang ini gak pernah beneran dibayar,
@@ -59,6 +63,7 @@ export function invoiceStatus(
     | "ar_deposit_applications"
     | "ar_customer_credit_applications"
     | "ar_bad_debt_writeoffs"
+    | "ar_return_credit_applications"
   >,
   isCancelled = false
 ): {
@@ -68,6 +73,7 @@ export function invoiceStatus(
   depositApplied: number;
   creditApplied: number;
   writtenOff: number;
+  returnCreditApplied: number;
   outstanding: number;
 } {
   const allocated = invoice.ar_payment_allocations.reduce((sum, a) => sum + a.amount, 0);
@@ -75,17 +81,28 @@ export function invoiceStatus(
   const depositApplied = (invoice.ar_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
   const creditApplied = (invoice.ar_customer_credit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
   const writtenOff = (invoice.ar_bad_debt_writeoffs ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const outstanding = invoice.amount - allocated - returned - depositApplied - creditApplied - writtenOff;
+  const returnCreditApplied = (invoice.ar_return_credit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
+  const outstanding =
+    invoice.amount - allocated - returned - depositApplied - creditApplied - writtenOff - returnCreditApplied;
   if (isCancelled) {
-    return { status: "dibatalkan", allocated, returned, depositApplied, creditApplied, writtenOff, outstanding: 0 };
+    return {
+      status: "dibatalkan",
+      allocated,
+      returned,
+      depositApplied,
+      creditApplied,
+      writtenOff,
+      returnCreditApplied,
+      outstanding: 0,
+    };
   }
   const status: ArInvoiceStatus =
     writtenOff > 0 && outstanding <= 0.005
       ? "dihapusbukukan"
       : outstanding <= 0.005
         ? "lunas"
-        : allocated > 0 || depositApplied > 0 || creditApplied > 0
+        : allocated > 0 || depositApplied > 0 || creditApplied > 0 || returnCreditApplied > 0
           ? "sebagian"
           : "belum";
-  return { status, allocated, returned, depositApplied, creditApplied, writtenOff, outstanding };
+  return { status, allocated, returned, depositApplied, creditApplied, writtenOff, returnCreditApplied, outstanding };
 }

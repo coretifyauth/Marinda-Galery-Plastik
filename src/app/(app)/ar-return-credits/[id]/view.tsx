@@ -6,11 +6,11 @@ import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
 import {
-  applyArCustomerCreditSchema,
-  refundArCustomerCreditSchema,
-  customerCreditRemaining,
-  type ArCustomerCredit,
-} from "@/lib/ar-customer-credits/schema";
+  applyArReturnCreditSchema,
+  refundArReturnCreditSchema,
+  returnCreditRemaining,
+  type ArReturnCredit,
+} from "@/lib/ar-return-credits/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -27,10 +27,10 @@ type JournalEntryDetail = {
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
 };
 
-export function ArCustomerCreditDetailView({ id }: { id: string }) {
+export function ArReturnCreditDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [credit, setCredit] = useState<ArCustomerCredit | null>(null);
+  const [credit, setCredit] = useState<ArReturnCredit | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
@@ -43,7 +43,7 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
   const [applyAmount, setApplyAmount] = useState("");
   const [applyDate, setApplyDate] = useState("");
   const [applySourceRef, setApplySourceRef] = useState("");
-  const [applyCustomerCreditAccountId, setApplyCustomerCreditAccountId] = useState("");
+  const [applyReturnCreditAccountId, setApplyReturnCreditAccountId] = useState("");
   const [applyReceivableAccountId, setApplyReceivableAccountId] = useState("");
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applySubmitting, setApplySubmitting] = useState(false);
@@ -52,7 +52,7 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
   const [refundAmount, setRefundAmount] = useState("");
   const [refundDate, setRefundDate] = useState("");
   const [refundSourceRef, setRefundSourceRef] = useState("");
-  const [refundCustomerCreditAccountId, setRefundCustomerCreditAccountId] = useState("");
+  const [refundReturnCreditAccountId, setRefundReturnCreditAccountId] = useState("");
   const [refundCashAccountId, setRefundCashAccountId] = useState("");
   const [refundError, setRefundError] = useState<string | null>(null);
   const [refundSubmitting, setRefundSubmitting] = useState(false);
@@ -61,17 +61,17 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: cred, error: credErr } = await supabase
-      .from("ar_customer_credits")
+      .from("ar_return_credits")
       .select(
-        "id, customer_id, payment_id, amount, journal_entry_id, created_at, customers(name), ar_payments(source_ref, payment_date), ar_customer_credit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_customer_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+        "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, customers(name), ar_credit_notes(source_ref, credit_note_date), ar_return_credit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
       )
       .eq("id", id)
       .single();
     if (credErr || !cred) {
-      setLoadError(credErr?.message ?? "Saldo kredit gak ditemukan.");
+      setLoadError(credErr?.message ?? "Saldo kredit retur gak ditemukan.");
       return;
     }
-    const loadedCredit = cred as unknown as ArCustomerCredit;
+    const loadedCredit = cred as unknown as ArReturnCredit;
     setCredit(loadedCredit);
 
     const [
@@ -140,7 +140,7 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
     setApplyAmount("");
     setApplyDate("");
     setApplySourceRef("");
-    setApplyCustomerCreditAccountId("");
+    setApplyReturnCreditAccountId("");
     setApplyReceivableAccountId("");
     setShowApplyForm(true);
   }
@@ -150,13 +150,13 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
     if (!credit) return;
     setApplyError(null);
 
-    const parsed = applyArCustomerCreditSchema.safeParse({
+    const parsed = applyArReturnCreditSchema.safeParse({
       credit_id: credit.id,
       invoice_id: applyInvoiceId,
       amount: applyAmount,
       entry_date: applyDate,
       source_ref: applySourceRef,
-      customer_credit_account_id: applyCustomerCreditAccountId,
+      return_credit_liability_account_id: applyReturnCreditAccountId,
       receivable_account_id: applyReceivableAccountId,
     });
     if (!parsed.success) {
@@ -165,13 +165,13 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
     }
 
     setApplySubmitting(true);
-    const { error } = await supabase.rpc("apply_ar_customer_credit", {
+    const { error } = await supabase.rpc("apply_ar_return_credit", {
       p_credit_id: parsed.data.credit_id,
       p_invoice_id: parsed.data.invoice_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
       p_source_ref: parsed.data.source_ref,
-      p_customer_credit_account_id: parsed.data.customer_credit_account_id,
+      p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id,
       p_receivable_account_id: parsed.data.receivable_account_id,
     });
     setApplySubmitting(false);
@@ -189,7 +189,7 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
     setRefundAmount("");
     setRefundDate("");
     setRefundSourceRef("");
-    setRefundCustomerCreditAccountId("");
+    setRefundReturnCreditAccountId("");
     setRefundCashAccountId("");
     setShowRefundForm(true);
   }
@@ -199,12 +199,12 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
     if (!credit) return;
     setRefundError(null);
 
-    const parsed = refundArCustomerCreditSchema.safeParse({
+    const parsed = refundArReturnCreditSchema.safeParse({
       credit_id: credit.id,
       amount: refundAmount,
       entry_date: refundDate,
       source_ref: refundSourceRef,
-      customer_credit_account_id: refundCustomerCreditAccountId,
+      return_credit_liability_account_id: refundReturnCreditAccountId,
       cash_account_id: refundCashAccountId,
     });
     if (!parsed.success) {
@@ -213,12 +213,12 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
     }
 
     setRefundSubmitting(true);
-    const { error } = await supabase.rpc("refund_ar_customer_credit", {
+    const { error } = await supabase.rpc("refund_ar_return_credit", {
       p_credit_id: parsed.data.credit_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
       p_source_ref: parsed.data.source_ref,
-      p_customer_credit_account_id: parsed.data.customer_credit_account_id,
+      p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
     });
     setRefundSubmitting(false);
@@ -236,10 +236,10 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
   }
 
   if (!credit) {
-    return <FormError>{loadError ?? "Saldo kredit gak ditemukan."}</FormError>;
+    return <FormError>{loadError ?? "Saldo kredit retur gak ditemukan."}</FormError>;
   }
 
-  const { used, remaining } = customerCreditRemaining(credit, reversedEntryIds);
+  const { used, remaining } = returnCreditRemaining(credit, reversedEntryIds);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canSpend = canWrite && remaining > 0.005;
 
@@ -250,26 +250,26 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
     }))
     .filter((x) => x.status !== "lunas" && x.status !== "dibatalkan");
 
-  const activeApplications = credit.ar_customer_credit_applications.filter(
+  const activeApplications = credit.ar_return_credit_applications.filter(
     (a) => !reversedEntryIds.has(a.journal_entry_id)
   );
-  const reversedApplications = credit.ar_customer_credit_applications.filter((a) =>
+  const reversedApplications = credit.ar_return_credit_applications.filter((a) =>
     reversedEntryIds.has(a.journal_entry_id)
   );
 
   return (
     <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
-      <BackLink href="/ar-customer-credits" label="Kembali ke AR Customer Credit" />
+      <BackLink href="/ar-return-credits" label="Kembali ke AR Return Credit" />
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-xl font-semibold text-black">
-            {credit.customers.name} — {credit.ar_payments.source_ref}
+            {credit.customers.name} — {credit.ar_credit_notes.source_ref}
           </h1>
-          <p className="text-sm text-slate-500">{credit.ar_payments.payment_date}</p>
+          <p className="text-sm text-slate-500">{credit.ar_credit_notes.credit_note_date}</p>
         </div>
         <div className="flex items-start gap-4">
           <div className="text-right">
-            <div className="text-xs uppercase text-slate-400">Sisa Saldo Kredit</div>
+            <div className="text-xs uppercase text-slate-400">Sisa Saldo Kredit Retur</div>
             <div className="font-mono text-lg font-medium text-black">{remaining.toLocaleString("id-ID")}</div>
           </div>
           {canSpend && (
@@ -368,7 +368,7 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
         <div className="border-b border-slate-100 px-4 py-2">
           <span className="text-sm font-medium text-black">Diterapkan ke Invoice</span>
           <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {credit.ar_customer_credit_applications.length}
+            {credit.ar_return_credit_applications.length}
           </span>
         </div>
         <table className="w-full text-left text-sm">
@@ -405,7 +405,7 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
                 </td>
               </tr>
             ))}
-            {credit.ar_customer_credit_applications.length === 0 && (
+            {credit.ar_return_credit_applications.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
                   Belum pernah diterapkan ke invoice.
@@ -420,7 +420,7 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
         <div className="border-b border-slate-100 px-4 py-2">
           <span className="text-sm font-medium text-black">Refund Tunai</span>
           <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {credit.ar_customer_credit_refunds.length}
+            {credit.ar_return_credit_refunds.length}
           </span>
         </div>
         <table className="w-full text-left text-sm">
@@ -432,14 +432,14 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
             </tr>
           </thead>
           <tbody>
-            {credit.ar_customer_credit_refunds.map((r) => (
+            {credit.ar_return_credit_refunds.map((r) => (
               <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="whitespace-nowrap px-4 py-2">{r.created_at.slice(0, 10)}</td>
                 <td className="px-4 py-2">{r.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">{r.amount.toLocaleString("id-ID")}</td>
               </tr>
             ))}
-            {credit.ar_customer_credit_refunds.length === 0 && (
+            {credit.ar_return_credit_refunds.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
                   Belum pernah direfund.
@@ -452,10 +452,10 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
 
       {showApplyForm && (
         <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Pakai Saldo Kredit ke Invoice Lain</h2>
+          <h2 className="mb-4 font-semibold text-black">Pakai Saldo Kredit Retur ke Invoice Lain</h2>
           <p className="mb-4 text-sm text-slate-600">
-            Motong outstanding invoice lain milik customer yang sama pakai sisa saldo kredit ini —
-            bukan pembayaran baru.
+            Motong outstanding invoice lain milik customer yang sama pakai sisa saldo kredit retur
+            ini — bukan pembayaran baru.
           </p>
           <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -505,11 +505,11 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_customer_credit_account">Akun Saldo Kredit Customer (debit)</Label>
+                <Label htmlFor="apply_return_credit_account">Akun Saldo Kredit Retur Customer (debit)</Label>
                 <Select
-                  id="apply_customer_credit_account"
-                  value={applyCustomerCreditAccountId}
-                  onChange={(e) => setApplyCustomerCreditAccountId(e.target.value)}
+                  id="apply_return_credit_account"
+                  value={applyReturnCreditAccountId}
+                  onChange={(e) => setApplyReturnCreditAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (
@@ -547,9 +547,9 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
 
       {showRefundForm && (
         <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Refund Tunai Saldo Kredit</h2>
+          <h2 className="mb-4 font-semibold text-black">Refund Tunai Saldo Kredit Retur</h2>
           <p className="mb-4 text-sm text-slate-600">
-            Kembalikan sisa saldo kredit ini ke customer dalam bentuk kas/bank.
+            Kembalikan sisa saldo kredit retur ini ke customer dalam bentuk kas/bank.
           </p>
           <form onSubmit={handleRefundSubmit} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -583,11 +583,11 @@ export function ArCustomerCreditDetailView({ id }: { id: string }) {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_customer_credit_account">Akun Saldo Kredit Customer (debit)</Label>
+                <Label htmlFor="refund_return_credit_account">Akun Saldo Kredit Retur Customer (debit)</Label>
                 <Select
-                  id="refund_customer_credit_account"
-                  value={refundCustomerCreditAccountId}
-                  onChange={(e) => setRefundCustomerCreditAccountId(e.target.value)}
+                  id="refund_return_credit_account"
+                  value={refundReturnCreditAccountId}
+                  onChange={(e) => setRefundReturnCreditAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (

@@ -762,8 +762,62 @@ Direview `schema-reviewer` sebelum apply — gak ada temuan blocker/warning, ter
 
 Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
 
+## `ar_invoice_remaining(invoice_id)` — Sentralisasi "Sisa Outstanding Riil" — migration `0031_ar_return_credits_and_remaining_refactor.sql`
+
+Sebelum migration ini, 5 fungsi beda (`ar_payment_allocations_no_over_allocation`, `ar_deposit_applications_guard`, `ar_customer_credit_applications_guard`, `ar_bad_debt_writeoffs_no_over_writeoff`, `create_ar_invoice`) masing-masing **menghitung ulang sendiri** jumlah reducer invoice (payment allocation + retur + DP application + customer credit application + write-off) buat nentuin "berapa sisa yang boleh dipakai". Duplikasi ini terbukti jadi sumber bug **2x** (0024 lupa extend 1 fungsi buat DP, 0027 lupa extend `cancel_ar_invoice` buat customer credit) — tiap kali reducer baru ditambah, N tempat harus diinget diperluas bareng.
+
+**Fix**: 1 fungsi SQL `stable` — `ar_invoice_remaining(p_invoice_id uuid) returns numeric` — jadi satu-satunya sumber kebenaran, menjumlahkan SEMUA 6 reducer (5 lama + `ar_return_credit_applications` yang baru ditambah migration ini) dengan exclude-reversed filter yang konsisten (`ar_payment_allocations`/`ar_credit_notes` gak pernah punya reversal, 4 lainnya exclude `not exists (... reverses_entry_id ...)`). Ke-5 fungsi existing di atas di-`create or replace` buat manggil ini alih-alih ngitung ulang — badan fungsinya jauh lebih pendek sekarang (`create_ar_invoice` khususnya: query union 4-cabang lama diganti `cross join lateral (select ar_invoice_remaining(ai.id) as remaining) r`).
+
+**Reducer baru ke depan** cuma perlu ubah 1 tempat (`ar_invoice_remaining`), otomatis kepakai semua guard yang manggilnya — gak perlu nyisir N fungsi satu-satu lagi.
+
+## AR Return Credit (Saldo Kredit dari Retur) — migration `0031_ar_return_credits_and_remaining_refactor.sql` + `0032_seed_demo_ar_return_credits.sql`
+
+Retur yang kejadian **setelah** invoice lunas bikin outstanding negatif (lihat "AR Credit Note" — `ar_credit_notes_no_over_return` sengaja independen, cuma cek terhadap `amount` invoice, gak peduli status bayar). Excess-nya sekarang otomatis "dicairkan" jadi saldo resmi — pola sama `ar_customer_credits` (overpayment), akun beda karena beda asal jurnal (`Saldo Kredit Retur Customer`, kode `2500`, bukan `Saldo Kredit Customer` `2400`). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Saldo Kredit dari Retur".
+
+### `ar_return_credits` — saldo kredit lahir (selalu dari `ar_credit_notes` yang bikin invoice minus)
+
+Satu baris = satu kejadian excess dari 1 credit note. `credit_note_id` nunjuk `ar_credit_notes` sumbernya, `journal_entry_id` nunjuk entry reklasifikasi **terpisah** dari jurnal kontra-revenue credit note-nya sendiri (2 jurnal independen — pola sama retur jalur full yang juga bikin 2 jurnal).
+
+```sql
+create table ar_return_credits (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid not null references customers(id),
+  credit_note_id uuid not null references ar_credit_notes(id),
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### `ar_return_credit_applications` + `ar_return_credit_refunds` — 2 disposisi, partial-capable & berulang
+
+Pola identik `ar_customer_credit_applications`/`ar_customer_credit_refunds` (0027) — bukan disposisi tunggal kayak DP. `ar_return_credit_remaining(credit_id)` (fungsi `stable`, pola sama `ar_customer_credit_remaining`) ngitung sisa: `amount - SUM(applications aktif) - SUM(refunds)`.
+
+### RPC `create_ar_credit_note` diperluas (bugfix 0022 jadi baseline)
+
+Ini keputusan desain paling penting di fitur ini. Sebelum insert baris `ar_credit_notes`, RPC nangkep `v_remaining_before := ar_invoice_remaining(p_invoice_id)` (state SEBELUM retur ini masuk). Setelah insert, hitung `v_excess := greatest(0, p_amount - greatest(0, v_remaining_before))` — cuma bagian retur yang beneran "kelebihan" dari sisa yang ada (bukan seluruh nominal retur), dan kalau invoice udah negatif dari retur sebelumnya (`v_remaining_before < 0`), seluruh retur baru ini jadi excess. Kalau `v_excess > 0`, bikin jurnal reklasifikasi (`Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer`) + insert `ar_return_credits`.
+
+Parameter baru `p_return_credit_liability_account_id` ditaro **paling akhir dengan default `null`** (wajib diisi caller cuma kalau beneran ada excess, `raise exception` kalau NULL pas dibutuhkan) — signature call existing (0023 seed) yang gak isi param ini tetep jalan. `drop function if exists create_ar_credit_note(<signature 9-param lama>)` ditambahin duluan — pelajaran dari bug `record_ar_payment` di 0027 (nambah parameter lewat `create or replace` bikin overload baru kalau gak di-drop eksplisit signature lama).
+
+### RPC: `apply_ar_return_credit`, `refund_ar_return_credit`
+
+Pola identik `apply_ar_customer_credit`/`refund_ar_customer_credit` (0027) — reuse `create_journal_entry`, nominal input eksplisit dari caller.
+
+### `cancel_ar_invoice` diperluas lagi
+
+Loop ketiga ditambahin (setelah unwind `ar_deposit_applications` dan `ar_customer_credit_applications`, urutan gak berubah): reverse jurnal `ar_return_credit_applications` aktif buat invoice yang dibatalin — auto-unwind (bukan ditolak keras kayak `ar_bad_debt_writeoffs`), karena ini reklasifikasi sederhana yang aman dibalik, sama alasan DP & customer credit.
+
+### Backfill data lama — migration `0032`
+
+Retur Warung Kang Ade (`0023_seed_demo_ar_credit_notes.sql`, sebelum fitur ini ada) udah lebih dulu bikin invoice-nya minus tanpa lewat jalur otomatis di atas — migration seed `0032` manual insert jurnal reklasifikasi + baris `ar_return_credits` yang SEHARUSNYA otomatis kebentuk kalau fitur ini udah ada waktu itu, lalu demo `refund_ar_return_credit` buat nunjukin disposisinya. Detail skenario: `docs/story/accounts-receivable.md` Skenario 13.
+
+### RLS & Grant
+
+Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
-- **Retur yang bikin outstanding invoice negatif** (lihat "AR Credit Note" di atas) — beda mekanisme dari overpayment payment (yang di atas udah di-scope): retur ngurangin `ar_invoices.amount` via kontra-revenue, bukan lewat kelebihan kas payment. Penanganan saldo kreditnya masih belum didesain.
 - **Aging report / dashboard piutang jatuh tempo** — query read-side (`due_date` vs `now()`, join alokasi buat status), digarap pas UI dibangun, gak butuh kolom/tabel tambahan.
 - **Recovery piutang yang udah di-write-off** (lihat "AR Bad Debt Write-off" di atas) — direct write-off gak punya akun cadangan penyangga, penanganannya kalau ternyata kebayar lagi belum didesain.
+- **Batas akumulasi saldo kredit retur lintas waktu/invoice buat 1 customer** — per invoice udah ada batas alami (`ar_credit_notes_no_over_return` caps retur ≤ `amount` invoice), tapi belum ada cap gabungan lintas invoice/waktu. Gak dirancang sekarang karena belum ada bukti kebutuhan di cerita.
