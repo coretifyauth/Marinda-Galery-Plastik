@@ -36,7 +36,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **Cancellation guard**: invoice cuma boleh dibatalkan (reversing entry via `cancel_ar_invoice`) kalau `ar_payment_allocations` buat invoice itu masih 0 baris. Begitu ada 1 alokasi (walau partial), pembatalan ditolak — piutang udah kesentuh transaksi lain, nasib pembayarannya jadi keputusan bisnis terpisah (belum di-scope).
 - **Credit hold**: `create_ar_invoice` hard-reject kalau customer kelampaui `credit_limit` (total outstanding open) ATAU ada invoice open yang overdue lebih dari `overdue_threshold_days`-nya (OR, bukan AND). Status hold gak disimpan, derived tiap kali RPC dipanggil. NULL di salah satu kolom = batas itu gak berlaku buat customer itu. Cash sale ke customer on-hold gak lewat `ar_invoices` sama sekali (langsung jurnal Debit Kas/Kredit Pendapatan, di luar scope AR).
 - **No over-return**: total `ar_credit_note` (akumulasi) per invoice gak boleh ngelebihin `ar_invoice.amount` (jalur financial-only) atau `qty_issued` baris `goods_issue_lines`-nya (jalur full) — pola sama no-over-allocation.
-- **Return window (per item)**: `items.return_window_days` (nullable, `NULL`=gak dibatasi). `create_ar_credit_note` cek tiap baris jalur full: `credit_note_date - invoice_date > items.return_window_days` → reject. Ditaro per item (bukan per customer/global) karena soal umur simpan fisik barang, bukan hubungan dagang.
+- **Return window (per item)**: `items.return_window_days` (nullable, `NULL`=gak dibatasi). `create_ar_credit_note` cek tiap baris jalur full: `credit_note_date - invoice_date > items.return_window_days` → reject. Soal umur simpan fisik barang — cuma kena jalur full.
+- **Return window (per customer, snapshot ke invoice)**: `customers.return_window_days` (nullable) → snapshot ke `ar_invoices.return_window_days` pas `create_ar_invoice` (pola sama `due_date`). `create_ar_credit_note` cek ini PALING AWAL (sebelum jurnal apa pun), berlaku ke SEMUA jalur (full + financial-only). Coexist sama window per item — dua-duanya independen, retur ditolak kalau salah satu kelampaui (OR-to-reject, pola sama Credit Hold).
 - **Period-closing tetap berlaku**: retur ke periode tertutup ditolak otomatis lewat `journal_entries_block_retroactive_into_closed_period` (reuse, gak ada constraint baru).
 - **Penggantian gratis wajib nunjuk credit note jalur full**: `warranty_replacement.credit_note_id` harus punya baris `inventory_returns` yang match — kalau credit note-nya financial-only (gak ada retur fisik), RPC `raise exception`.
 - **No over-replace**: `SUM(qty)` `warranty_replacement_lines` (akumulasi, per item, per credit note) ≤ `SUM(qty_returned)` `inventory_return_lines` item itu di credit note yang sama.
@@ -67,6 +68,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 15 | Saldo kredit direfund tunai | Debit Saldo Kredit Customer / Kredit Kas |
 | 16 | Piutang tak tertagih (write-off) | 1 jurnal, Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik |
 | 17 | Saldo kredit dari retur | Retur setelah lunas bikin outstanding negatif, excess-nya otomatis jurnal Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer |
+| 18 | Batas retur per customer | `customers.return_window_days` snapshot ke invoice, `create_ar_credit_note` tolak kalau kelampaui — berlaku semua jalur, independen dari window per item |
 
 ## Common mistakes to guard against
 
@@ -93,6 +95,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - Excess dari retur negatif dicatat ke akun overpayment (`Saldo Kredit Customer`) — harus akun terpisah, beda asal jurnal.
 - Excess dari retur dihitung dari seluruh nominal retur, bukan cuma bagian yang ngelebihin sisa outstanding — dobel hitung.
 - Nambah reducer baru ke `ar_invoices` tanpa nge-extend `ar_invoice_remaining()` (dan lewat situ otomatis semua guard yang manggilnya) — kelas bug yang udah kejadian berulang sebelum fungsi ini disentralisasi.
+- Anggap window retur per item dan per customer saling gantiin — dua axis beda (fisik barang vs trade term), harus coexist, jangan didrop salah satu.
+- `customers.return_window_days` dihitung ulang dari nilai terkini tiap retur dicek (bukan snapshot ke invoice pas dibuat) — invoice lama ikut kena batas baru kalau toleransi customer diubah belakangan.
 
 ## Belum termasuk (di luar scope fase ini)
 

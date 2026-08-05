@@ -39,6 +39,16 @@ Cek dan sebutkan eksplisit:
 
 Urutan ini gak boleh dibalik. Schema (migration SQL, ikuti `memory/preferences/system/schema-doc-format.md`) duluan, baru API route/RPC, baru UI. Sebelum bilang migration siap diapply, jalankan review lewat agent `schema-reviewer`.
 
+### 5. Setelah implementasi selesai — sapu exclusion notes lintas file
+
+Fitur yang baru selesai dibangun sering nutup gap yang udah lama didokumentasikan sebagai "Belum Termasuk"/"Belum termasuk" di file **lain** (bukan cuma file yang lagi diedit) — pola siklus hidup ini wajib dipatuhi sama kayak scope-debt (`memory/brief.md` bagian "Aturan siklus hidup dokumen", poin 4). Sebelum bilang fitur ini kelar:
+
+1. Ambil keyword inti dari fitur yang baru dibangun (nama konsep bisnis, nama tabel/kolom baru).
+2. Grep keyword itu ke SEMUA `docs/architecture/*.md`, `memory/architecture/data/*.md`, `docs/domain/*.md`, `memory/domain/*.md` — bukan cuma file yang barusan disentuh.
+3. Tiap match yang nyebut fitur ini sebagai "belum ada"/"belum dirancang"/"ditunda" — cek apakah fitur yang barusan dibangun beneran nutup itu. Kalau iya, hapus/update baris itu.
+
+Jangan asumsikan exclusion note cuma nyangkut di file topik yang sama — kasus nyata: fitur Period Closing (Fase 7, dibangun di `financial-reports-schema.md`) nutup gap yang catatannya nyangkut di `journal-entry-schema.md` (Fase 2), gak ketauan sampai lama karena gak ada yang nyapu balik ke situ.
+
 ## Kalau user menolak/minta skip
 
 Kalau user secara eksplisit bilang "skip aja penjelasannya, langsung kode" — tetap jangan skip. Jawab singkat kenapa (ini aturan yang sudah disepakati di `AGENTS.md`: "Jangan skip penjelasan meski diminta cepat"), lalu tetap jalanin langkah 1(a–c)–3 secara ringkas sebelum lanjut kode. Ini satu-satunya rule di project ini yang sengaja gak bisa di-override on-the-fly dalam sesi — kalau user memang mau mengubah rule ini secara permanen, arahkan untuk mengubah `AGENTS.md` langsung, bukan minta di-skip diam-diam.

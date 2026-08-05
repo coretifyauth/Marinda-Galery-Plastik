@@ -22,6 +22,7 @@ export default function CustomersPage() {
   const [creditLimit, setCreditLimit] = useState("");
   const [overdueThresholdDays, setOverdueThresholdDays] = useState("7");
   const [overdueThresholdTouched, setOverdueThresholdTouched] = useState(false);
+  const [returnWindowDays, setReturnWindowDays] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -29,7 +30,9 @@ export default function CustomersPage() {
   const loadCustomers = useCallback(async () => {
     const { data, error } = await supabase
       .from("customers")
-      .select("id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at")
+      .select(
+        "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, return_window_days, archived_at"
+      )
       .order("name");
     if (error) {
       setLoadError(error.message);
@@ -69,6 +72,7 @@ export default function CustomersPage() {
       payment_term_days: paymentTermDays,
       credit_limit: creditLimit || undefined,
       overdue_threshold_days: overdueThresholdDays || undefined,
+      return_window_days: returnWindowDays || undefined,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -87,6 +91,7 @@ export default function CustomersPage() {
     setCreditLimit("");
     setOverdueThresholdDays("7");
     setOverdueThresholdTouched(false);
+    setReturnWindowDays("");
     setShowForm(false);
     await loadCustomers();
   }
@@ -136,6 +141,7 @@ export default function CustomersPage() {
               <th className="px-4 py-2">Termin (hari)</th>
               <th className="px-4 py-2">Credit Limit</th>
               <th className="px-4 py-2">Toleransi Telat (hari)</th>
+              <th className="px-4 py-2">Toleransi Retur (hari)</th>
             </tr>
           </thead>
           <tbody>
@@ -152,11 +158,12 @@ export default function CustomersPage() {
                   {c.credit_limit != null ? c.credit_limit.toLocaleString("id-ID") : "Tanpa batas"}
                 </td>
                 <td className="px-4 py-2">{c.overdue_threshold_days ?? "Tanpa batas"}</td>
+                <td className="px-4 py-2">{c.return_window_days ?? "Tanpa batas"}</td>
               </tr>
             ))}
             {customers.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
                   Belum ada customer.
                 </td>
               </tr>
@@ -228,6 +235,17 @@ export default function CustomersPage() {
                   setOverdueThresholdTouched(true);
                   setOverdueThresholdDays(e.target.value);
                 }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="return_window_days">Toleransi Retur (hari, kosongkan = tanpa batas)</Label>
+              <Input
+                id="return_window_days"
+                type="number"
+                min="1"
+                placeholder="mis. 14"
+                value={returnWindowDays}
+                onChange={(e) => setReturnWindowDays(e.target.value)}
               />
             </div>
             <Button type="submit" disabled={submitting}>

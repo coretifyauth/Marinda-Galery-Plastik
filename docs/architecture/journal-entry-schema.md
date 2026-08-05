@@ -57,7 +57,4 @@ Aplikasi tidak pernah menyimpan transaksi lewat langkah-langkah terpisah yang bi
 | Membuat transaksi baru | Role `admin` atau `accountant` |
 | Mengedit atau menghapus transaksi | **Tidak ada seorang pun** — hanya reversing entry yang diizinkan |
 
-## Belum Termasuk
-
-- **Penutupan periode (period closing)** — konsep bisnisnya dijelaskan di `docs/domain/general-ledger.md`, tapi mekanismenya (mengunci periode yang sudah dilaporkan, menutup saldo Laba/Rugi ke Laba Ditahan) ditunda sampai modul Financial Reports (Fase 7) selesai, karena butuh mesin laporan jalan dulu untuk tahu angka pasti yang harus ditutup.
-- Perhitungan saldo per akun untuk kebutuhan laporan (Trial Balance, Neraca) belum dibangun di sini — itu bagian dari modul Financial Reports.
+Penutupan periode (period closing) dan perhitungan saldo per akun (Trial Balance/Neraca) sudah dibangun — lihat `docs/architecture/financial-reports-schema.md`. Satu dampak balik ke modul ini: transaksi baru dengan tanggal yang jatuh di periode yang sudah ditutup otomatis ditolak.

@@ -285,7 +285,4 @@ grant select, insert on journal_entries to authenticated;
 grant select, insert on journal_lines to authenticated;
 ```
 
-## Belum termasuk (dependency ke modul lain)
-
-- **Period closing** (`docs/domain/general-ledger.md`) — kunci entry per rentang waktu + closing entry ke `Laba Ditahan`. Ditunda ke Fase 7 (Financial Reports), butuh mesin laporan jalan dulu buat tau total definitif tiap akun yang mau ditutup.
-- Fungsi rollup saldo per akun (buat Trial Balance/Neraca) belum ditulis di sini — itu query read-side, digarap pas modul Financial Reports.
+Period closing (kunci entry per rentang waktu + closing entry ke `Laba Ditahan`) dan rollup saldo per akun (Trial Balance/Neraca) udah dibangun di Fase 7 — lihat `memory/architecture/data/financial-reports-schema.md`. Dampak balik ke modul ini: trigger `journal_entries_block_retroactive_into_closed_period` (ditambah migration `0016_period_closing.sql`) nolak `insert` baru ke `journal_entries` yang `entry_date`-nya jatuh di rentang yang udah tercatat di `period_closings`.

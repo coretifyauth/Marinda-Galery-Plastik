@@ -17,6 +17,7 @@ export type ArInvoice = {
   customer_id: string;
   invoice_date: string;
   due_date: string;
+  return_window_days: number | null;
   description: string | null;
   source_ref: string;
   amount: number;

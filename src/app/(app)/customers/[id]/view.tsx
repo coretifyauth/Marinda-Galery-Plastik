@@ -35,6 +35,7 @@ export function CustomerDetailView({ id }: { id: string }) {
   const [editPaymentTermDays, setEditPaymentTermDays] = useState("");
   const [editCreditLimit, setEditCreditLimit] = useState("");
   const [editOverdueThresholdDays, setEditOverdueThresholdDays] = useState("");
+  const [editReturnWindowDays, setEditReturnWindowDays] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -47,13 +48,15 @@ export function CustomerDetailView({ id }: { id: string }) {
     ] = await Promise.all([
       supabase
         .from("customers")
-        .select("id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at")
+        .select(
+          "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, return_window_days, archived_at"
+        )
         .eq("id", id)
         .single(),
       supabase
         .from("ar_invoices")
         .select(
-          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount), ar_return_credit_applications(amount)"
+          "id, customer_id, invoice_date, due_date, return_window_days, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount), ar_return_credit_applications(amount)"
         )
         .eq("customer_id", id)
         .order("invoice_date", { ascending: false }),
@@ -78,6 +81,7 @@ export function CustomerDetailView({ id }: { id: string }) {
     setEditPaymentTermDays(String(c.payment_term_days));
     setEditCreditLimit(c.credit_limit != null ? String(c.credit_limit) : "");
     setEditOverdueThresholdDays(c.overdue_threshold_days != null ? String(c.overdue_threshold_days) : "");
+    setEditReturnWindowDays(c.return_window_days != null ? String(c.return_window_days) : "");
     setInvoices((inv ?? []) as unknown as ArInvoice[]);
     setPayments((pay ?? []) as unknown as ArPayment[]);
     setReversedEntryIds(
@@ -115,6 +119,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       payment_term_days: editPaymentTermDays,
       credit_limit: editCreditLimit || undefined,
       overdue_threshold_days: editOverdueThresholdDays || undefined,
+      return_window_days: editReturnWindowDays || undefined,
     });
     if (!parsed.success) {
       setEditError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -129,6 +134,7 @@ export function CustomerDetailView({ id }: { id: string }) {
         payment_term_days: parsed.data.payment_term_days,
         credit_limit: parsed.data.credit_limit ?? null,
         overdue_threshold_days: parsed.data.overdue_threshold_days ?? null,
+        return_window_days: parsed.data.return_window_days ?? null,
       })
       .eq("id", id);
     setSaving(false);
@@ -183,6 +189,7 @@ export function CustomerDetailView({ id }: { id: string }) {
             {customer.contact ?? "-"} · Termin net-{customer.payment_term_days} · Credit limit{" "}
             {customer.credit_limit != null ? customer.credit_limit.toLocaleString("id-ID") : "tanpa batas"}
             {" "}· Toleransi telat {customer.overdue_threshold_days ?? "tanpa batas"} hari
+            {" "}· Toleransi retur {customer.return_window_days ?? "tanpa batas"} hari
             {customer.archived_at && " · Diarsipkan"}
           </p>
         </div>
@@ -241,6 +248,16 @@ export function CustomerDetailView({ id }: { id: string }) {
                 min="1"
                 value={editOverdueThresholdDays}
                 onChange={(e) => setEditOverdueThresholdDays(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit_return_window_days">Toleransi Retur (hari, kosongkan = tanpa batas)</Label>
+              <Input
+                id="edit_return_window_days"
+                type="number"
+                min="1"
+                value={editReturnWindowDays}
+                onChange={(e) => setEditReturnWindowDays(e.target.value)}
               />
             </div>
             <Button type="submit" disabled={saving}>

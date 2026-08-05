@@ -20,6 +20,8 @@ Tiap customer juga punya `credit_limit` dan `overdue_threshold_days` (prefill = 
 | Warung Bu Imas | Rp2.000.000 | 7 (default) |
 | Warung Kang Ade | NULL (belum pernah macet, gak dibatasi) | 7 (default) |
 
+`return_window_days` (toleransi hari boleh ngajuin retur) awalnya `NULL` buat ketiganya (gak dibatasi) — Bu Imas dapet nilai eksplisit belakangan (Oktober 2026, lihat Skenario 14), Pak Budi & Kang Ade tetap `NULL` sampai sekarang.
+
 ## Skenario 1 — Invoice awal + lunas tepat waktu (Warung Bu Imas)
 
 10 Juli 2026: kirim roti ke Warung Bu Imas, invoice Rp500.000, `due_date` = 10+7 = **17 Juli 2026**.
@@ -239,6 +241,16 @@ Debit Saldo Kredit Retur Customer  50.000
 Saldo kredit retur Kang Ade: **Rp0** (habis, direfund tunai).
 
 *(Catatan implementasi: karena retur Kang Ade ini sendiri terjadi SEBELUM fitur AR Return Credit dibangun — tercatat pas fitur retur pertama kali dibuat, jauh sebelum gap ini disadari — jurnal reklasifikasi & baris `ar_return_credits` di atas di-backfill manual lewat migration seed, bukan otomatis dari `create_ar_credit_note` versi lama. Kejadian bisnisnya tetap sama: excess Rp50.000, tanggal yang sama, cuma jalur teknisnya beda dari retur yang terjadi SETELAH fitur ini ada.)*
+
+## Skenario 14 — Batas retur per customer (Warung Bu Imas)
+
+1 Oktober 2026: Bu Nur mulai kerepotan nge-track retur yang diajukan lama banget setelah roti dikirim — barangnya udah pasti gak layak tapi customer tetap nagih potongan. Bu Nur mutusin kasih kebijakan eksplisit ke Warung Bu Imas: `return_window_days = 14` (customer lain dibiarin `NULL`/gak dibatasi dulu, belum jadi masalah buat mereka).
+
+`update customers set return_window_days = 14 where name = 'Warung Bu Imas'` — cuma ngaruh ke invoice **baru** Bu Imas ke depan (snapshot ke `ar_invoices.return_window_days` pas dibuat), gak retroaktif ke invoice lama dia (Skenario 1, 10, 11) yang `return_window_days`-nya tetap `NULL` (dibuat sebelum kebijakan ini ada).
+
+**Uji kasus (ditolak)**: seandainya Bu Imas coba ngajuin retur Rp30.000 di 1 Oktober 2026 buat invoice 28 Agustus 2026 (Skenario 10, Rp700.000) — invoice itu dibuat **sebelum** kebijakan 14 hari berlaku, jadi `ar_invoices.return_window_days`-nya `NULL`, dan retur ini **tetap diterima** (gak ada batas). Tapi kalau invoice itu **seandainya** dibuat setelah 1 Oktober (jadi udah ke-snapshot 14 hari), retur di hari ke-34 bakal ditolak: `raise exception` sebelum jurnal apa pun dibuat, pesan jelas nyebut telat 20 hari dari batas.
+
+*(Skenario ini sengaja gak dieksekusi sebagai SQL nyata di migration seed — bakal gagalin transaksi migration kalau beneran dijalanin sampai exception. Cukup didokumentasikan naratif, sama pola skenario credit hold Pak Budi di atas.)*
 
 ## Simulasi Interface (rencana)
 

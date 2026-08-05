@@ -199,7 +199,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount), ar_return_credit_applications(amount)"
+        "id, customer_id, invoice_date, due_date, return_window_days, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount), ar_return_credit_applications(amount)"
       )
       .eq("id", id)
       .single();
@@ -1731,6 +1731,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             {goodsIssue
               ? "Invoice ini lewat Goods Issue — isi qty per item yang balik, stok & HPP otomatis ke-reverse proporsional."
               : "Invoice ini gak lewat Goods Issue — retur cuma ngurangin piutang (kontra-revenue), gak ada stok yang disentuh."}
+            {invoice.return_window_days != null && (
+              <>
+                {" "}Batas retur customer ini: <strong>{invoice.return_window_days} hari</strong> sejak{" "}
+                {invoice.invoice_date} (item tertentu bisa punya batas lebih ketat lagi).
+              </>
+            )}
           </p>
           <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

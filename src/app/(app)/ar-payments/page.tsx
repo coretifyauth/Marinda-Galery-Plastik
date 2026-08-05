@@ -63,7 +63,7 @@ export default function ArPaymentsPage() {
     const { data } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount)"
+        "id, customer_id, invoice_date, due_date, return_window_days, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount)"
       )
       .order("invoice_date");
     setInvoices((data ?? []) as unknown as ArInvoice[]);

@@ -22,6 +22,7 @@ Tiap baris = 1 customer (warung langganan). Yang perlu diperhatiin:
 - `payment_term_days` — default termin (hari) dipakai buat ngitung `due_date` invoice baru. Bukan kolom terkunci — boleh diubah kapan pun, cuma ngaruh ke invoice baru ke depan (`due_date` invoice lama udah ke-snapshot, gak ikut berubah).
 - `credit_limit` — nullable, batas nominal total piutang open (belum lunas) yang boleh nyangkut bersamaan buat customer ini. `NULL` = gak ada batas (unlimited), dipilih biar customer existing gak otomatis kena hold begitu migration ini di-apply. Dicek di `create_ar_invoice` (lihat "Credit Hold" di bawah), bukan constraint DB — perlu bandingin sama data dari tabel lain (`ar_invoices`/`ar_payment_allocations`), gak bisa jadi `CHECK` di level kolom.
 - `overdue_threshold_days` — nullable, toleransi hari keterlambatan sebelum kena hold. `NULL` = gak ada batas waktu buat customer ini. UI prefill nilainya = `payment_term_days` pas customer baru dibuat (keputusan produk, bukan default DB), tapi keduanya kolom independen — bisa diubah manual per customer sesuai profil risiko (lihat `docs/domain/accounts-receivable.md` bagian "Credit Hold").
+- `return_window_days` — nullable, toleransi hari customer ini boleh ngajuin retur (trade term, beda axis dari `items.return_window_days` yang soal sifat fisik barang). `NULL` = gak dibatasi. Snapshot ke `ar_invoices.return_window_days` pas invoice dibuat (lihat di bawah), bukan dicek dari nilai terkini.
 - `archived_at` — pola sama kayak `accounts` (`memory/preferences/system/state-naming-convention.md`): satu-satunya penanda lifecycle, gak ada `is_active` terpisah.
 
 ```sql
@@ -32,6 +33,7 @@ create table customers (
   payment_term_days int not null default 7 check (payment_term_days > 0),
   credit_limit numeric(14,2) check (credit_limit is null or credit_limit > 0),
   overdue_threshold_days int check (overdue_threshold_days is null or overdue_threshold_days > 0),
+  return_window_days int check (return_window_days is null or return_window_days > 0),
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -42,7 +44,7 @@ create trigger customers_set_updated_at
   for each row execute function set_updated_at();
 ```
 
-`credit_limit`/`overdue_threshold_days` ditambah belakangan lewat `0020_ar_credit_hold.sql` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel, bukan riwayat migration per migration (lihat migration file buat riwayat perubahannya).
+`credit_limit`/`overdue_threshold_days` ditambah belakangan lewat `0020_ar_credit_hold.sql`, `return_window_days` lewat `0033_ar_customer_return_window.sql` (keduanya `alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel, bukan riwayat migration per migration (lihat migration file buat riwayat perubahannya).
 
 `set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang.
 
@@ -50,6 +52,7 @@ create trigger customers_set_updated_at
 
 Satu baris = satu kejadian "kirim barang/jasa, belum dibayar". Yang perlu diperhatiin:
 - `due_date` — **disimpan**, dihitung `invoice_date + customers.payment_term_days` di RPC pas insert, bukan generated column (lihat "Keputusan" di atas).
+- `return_window_days` — **disimpan**, snapshot `customers.return_window_days` di RPC pas insert, pola sama persis `due_date`. Nullable, `NULL` = gak dibatasi.
 - `journal_entry_id` — **wajib** (`not null`), nunjuk ke entry yang dibikin RPC `create_journal_entry` (Debit Piutang Usaha, Kredit Pendapatan). Invoice AR tanpa journal entry gak boleh ada — dijamin karena satu-satunya jalur insert yang diizinin RLS (lewat RPC `security invoker`) selalu bikin entry-nya duluan.
 - `source_ref` — wajib, pola sama `journal_entries` (traceability ke bukti fisik/surat jalan).
 - **Gak ada `updated_at`/`archived_at`** — invoice gak pernah diedit, sekali ada permanen (koreksi = reversing entry lewat `journal_entries`, invoice asli tetap kelihatan di histori).
@@ -64,6 +67,7 @@ create table ar_invoices (
   source_ref text not null,
   amount numeric(14,2) not null check (amount > 0),
   journal_entry_id uuid not null references journal_entries(id),
+  return_window_days int check (return_window_days is null or return_window_days > 0),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -71,6 +75,8 @@ create table ar_invoices (
 create index ar_invoices_customer_id_idx on ar_invoices(customer_id);
 create index ar_invoices_journal_entry_id_idx on ar_invoices(journal_entry_id);
 ```
+
+`return_window_days` ditambah belakangan lewat `0033_ar_customer_return_window.sql` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel (pola sama catatan di `customers` di atas).
 
 Index di `customer_id` buat query "semua invoice 1 customer" (histori piutang per warung, dipakai aging report). Index di `journal_entry_id` jaga-jaga lookup balik dari sisi GL.
 
@@ -482,7 +488,7 @@ Barang yang balik masuk sebagai lot baru (`inventory_lots.source_type = 'SALES_R
 
 Gabung 2 pengecekan dalam 1 trigger (dipasang `before insert on inventory_return_lines`):
 1. **No over-return (qty)** — akumulasi `qty_returned` per item per goods_issue gak boleh ngelebihin `goods_issue_lines.qty_issued`-nya. Pola sama `inventory_lot_consumptions_no_over_consumption`.
-2. **Batas waktu retur** — kalau `items.return_window_days` (kolom baru, nullable) gak NULL, `return_date - invoice_date` (invoice diambil lewat join `goods_issues` -> `ar_invoices`) gak boleh ngelewatin itu. Ditaro per item (bukan per customer/global) karena soal umur simpan fisik barang — lihat `memory/domain/inventory.md`. `NULL` = gak dibatasi (default, biar item existing gak ke-block retroaktif).
+2. **Batas waktu retur (per item)** — kalau `items.return_window_days` (kolom baru, nullable) gak NULL, `return_date - invoice_date` (invoice diambil lewat join `goods_issues` -> `ar_invoices`) gak boleh ngelewatin itu. Ditaro per item (bukan per customer/global) karena soal umur simpan fisik barang — lihat `memory/domain/inventory.md`. `NULL` = gak dibatasi (default, biar item existing gak ke-block retroaktif). **Coexist** sama batas per customer (`ar_invoices.return_window_days`, dicek terpisah di awal `create_ar_credit_note`, lihat bagian "Batas Hari Retur per Customer" di bawah) — dua cek independen, retur ditolak kalau salah satu kelampaui.
 
 Full body trigger: lihat migration file.
 
@@ -815,6 +821,38 @@ Retur Warung Kang Ade (`0023_seed_demo_ar_credit_notes.sql`, sebelum fitur ini a
 ### RLS & Grant
 
 Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
+
+## Batas Hari Retur per Customer — migration `0033_ar_customer_return_window.sql` + `0034_seed_demo_ar_customer_return_window.sql`
+
+Toleransi dagang (trade term) berapa hari 1 customer boleh ngajuin retur, snapshot ke invoice pas dibuat — pola identik `due_date` dari `payment_term_days`. **Coexist** sama `items.return_window_days` (0021, soal sifat fisik barang) — 2 axis independen, gak saling gantiin. Detail rationale: `docs/domain/accounts-receivable.md` bagian "Retur Barang" > "Batas waktu retur".
+
+### Kolom baru (bukan tabel baru)
+
+```sql
+alter table customers
+  add column return_window_days int check (return_window_days is null or return_window_days > 0);
+
+alter table ar_invoices
+  add column return_window_days int check (return_window_days is null or return_window_days > 0);
+```
+
+`customers.return_window_days` — master data, nullable, `NULL` = gak dibatasi (biar customer existing gak otomatis kena batas begitu migration diapply, pola sama `credit_limit`/`overdue_threshold_days`). `ar_invoices.return_window_days` — **snapshot**, diisi sekali di `create_ar_invoice` pas invoice dibuat, bukan dihitung ulang tiap kali dicek — perubahan `customers.return_window_days` belakangan gak retroaktif ngubah invoice lama.
+
+### `create_ar_invoice` diperluas (signature gak berubah)
+
+Tinggal nambah `return_window_days` ke `select` yang udah ngambil `payment_term_days`/`credit_limit`/`overdue_threshold_days`, terus disisipin ke `insert into ar_invoices` bareng `due_date`. Gak ada parameter baru — customer selalu jadi sumber, bukan input caller.
+
+### `create_ar_credit_note` diperluas (signature gak berubah)
+
+Cek baru ditaro **paling awal fungsi**, sebelum `ar_invoice_remaining()` dipanggil dan sebelum jurnal apa pun dibuat (fail-fast, pola sama credit hold di `create_ar_invoice`) — kalau `ar_invoices.return_window_days` gak null dan `p_credit_note_date - v_invoice_date > v_return_window_days`, `raise exception` sebelum ada efek samping apa pun.
+
+**Berlaku ke SEMUA jalur** (full + financial-only) — beda dari `items.return_window_days` (trigger `inventory_return_lines_guard`, 0021) yang cuma jalan di jalur full karena butuh `item_id`. Ini yang nutup gap nyata: sebelum migration ini, retur financial-only gak punya batas waktu sama sekali.
+
+**Dua cek independen, retur ditolak kalau salah satu kelampaui** (OR-to-reject, pola sama credit hold `create_ar_invoice`) — item-level (`inventory_return_lines_guard`) sama sekali gak disentuh/diubah migration ini, tetap jalan sendiri di tempatnya.
+
+### Seed — migration `0034`
+
+Cuma `update customers set return_window_days = 14 where name = 'Warung Bu Imas'` — customer lain sengaja dibiarin `NULL`. Skenario retur yang DITOLAK (Bu Imas lewat batas 14 hari) sengaja gak dieksekusi sebagai SQL (bakal ngegagalin migration) — cuma didokumentasikan naratif, pola sama skenario credit hold. Detail: `docs/story/accounts-receivable.md` Skenario 14.
 
 ## Belum termasuk (dependency / di luar scope fase ini)
 
