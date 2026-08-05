@@ -20,6 +20,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - **Status invoice (lunas/sebagian/belum)** — **derived**, dihitung dari `SUM(allocations.amount)` invoice itu dibanding `invoice.amount`, bukan kolom manual. Konsisten sama pola `archived_at`/"published" yang udah dipakai di COA & Journal Entry (`memory/preferences/system/state-naming-convention.md`).
 - **AR Credit Note (retur barang)** — barang yang udah diinvoice beneran dibalikin customer (rusak/gak laku/salah kirim), **bukan** koreksi salah input. Beda dari `cancel_ar_invoice` di 3 hal: (1) bisa **partial** (retur sebagian qty/nominal dari invoice, bukan all-or-nothing), (2) tetap bisa dibuat walau invoice udah ada payment/alokasi masuk (`cancel_ar_invoice` nolak keras di kondisi ini), (3) invoice asli **gak diedit/dibatalkan** — nilai `ar_invoices.amount` tetap penuh, retur dicatat sebagai baris/jurnal terpisah yang ngurangin outstanding-nya. Detail lengkap di bawah ("Retur Barang").
 - **AR Deposit (uang muka/DP)** — customer bayar duluan sebelum invoice ada (misal pesanan custom). **Bukan** `AR Payment` — gak nyentuh Piutang Usaha sama sekali pas diterima, dicatat ke akun liability `Uang Muka Penjualan` dulu, baru direklasifikasi jadi pengurang Piutang Usaha begitu invoice-nya kebentuk (atau jadi Pendapatan Lain-lain kalau order-nya batal & DP-nya hangus). Detail lengkap di bawah ("Uang Muka / DP").
+- **AR Customer Credit (kelebihan bayar)** — customer transfer lebih dari total invoice yang lagi dilunasin dalam 1 payment. Beda dari DP: piutangnya **udah ada** dan **udah kesentuh** (invoice ternutup penuh lewat alokasi normal), sisa lebihnya baru "jatuh" ke saldo kredit. Dicatat ke akun liability `Saldo Kredit Customer` (beda dari `Uang Muka Penjualan` walau sama-sama liability — asal jurnalnya beda, lihat "Kelebihan Bayar" di bawah).
 
 ## Kenapa payment_term_days aman diubah di tempat (bukan versioned)
 
@@ -134,6 +135,28 @@ Status 1 deposit (belum dipakai / diterapkan / hangus) **derived**, bukan kolom 
 
 **Interaksi sama pembatalan invoice**: kalau invoice yang DP-nya udah diterapkan ternyata perlu dibatalin (misal salah input), `cancel_ar_invoice` **ikut membalikkan jurnal DP-application-nya juga** (reversing entry kedua, bukan cuma jurnal invoice-nya doang) — biar DP-nya otomatis balik jadi "belum dipakai" lagi (siap dipakai ulang/dihanguskan), bukan nyangkut jadi piutang minus yang gak jelas asalnya. Tanpa ini, cuma nolak pembatalan (kayak guard `ar_payment_allocations`) gak nyelesain apa-apa — orangnya cuma kejebak, DP-nya tetep nyangkut gak jelas statusnya.
 
+## Kelebihan Bayar (Overpayment) jadi Saldo Kredit Customer
+
+Customer transfer lebih dari yang seharusnya buat nutup invoice yang lagi dibayar (salah nominal, pembulatan, atau sengaja "biar gak minus lagi" nanti). 1 payment event (1 bukti transfer bank = 1 source document) yang jumlahnya lebih besar dari total alokasi ke invoice yang bisa nampung.
+
+**Kenapa bukan `AR Deposit`**: DP diterima **sebelum** piutang ada sama sekali. Overpayment terjadi **setelah** piutang ada dan lagi dilunasin — invoice yang dituju tetap ternutup penuh lewat alokasi normal (Debit Kas, Kredit Piutang Usaha, sejumlah nominal invoice), sisa lebihnya yang gak punya invoice buat nyantol. Dua kejadian yang keliatan mirip hasil akhirnya (sama-sama liability "utang ke customer") tapi beda total asal-usul jurnalnya.
+
+**Kenapa 1 payment event, bukan 2 payment terpisah**: satu bukti transfer bank cuma 1 kejadian nyata (Core Invariant — traceability ke 1 source document). Splitnya (porsi nutup invoice vs porsi jadi kredit) terjadi **di dalam** 1 journal entry yang sama, bukan 2 payment record beda tanggal/sumber.
+
+Jurnal pas payment diterima (kalau ada excess):
+```
+Debit Kas/Bank                [total transfer]
+  Kredit Piutang Usaha              [porsi yang teralokasi ke invoice]
+  Kredit Saldo Kredit Customer      [sisa excess]
+```
+
+**Dua disposisi excess, boleh dipakai sebagian-sebagian / berkali-kali** (beda dari DP yang cuma 1 disposisi aktif) — karena saldo kredit ini sifatnya kayak "dompet" customer, bukan terikat ke 1 pesanan spesifik:
+
+1. **Dipakai motong invoice lain** (kapan aja ke depan, gak harus invoice berikutnya langsung) — Debit Saldo Kredit Customer, Kredit Piutang Usaha, sejumlah yang dipakai.
+2. **Direfund tunai** (customer minta balik, bukan dipakai) — Debit Saldo Kredit Customer, Kredit Kas/Bank.
+
+Total (dipakai + direfund) gak boleh ngelebihin nominal kredit awal — pola sama no-over-allocation.
+
 ## Skenario (lihat detail angka lengkap di `docs/story/accounts-receivable.md`)
 
 1. Invoice lunas tepat waktu — kasus paling sederhana, 1 payment = 1 invoice, alokasi penuh.
@@ -148,6 +171,9 @@ Status 1 deposit (belum dipakai / diterapkan / hangus) **derived**, bukan kolom 
 10. DP hangus — order dibatalin sebelum invoice ada, DP jadi Pendapatan Lain-lain, gak ada invoice yang pernah dibuat sama sekali.
 11. Invoice yang DP-nya udah diterapkan ternyata dibatalin (salah input) — pembatalan otomatis ikut membalikkan jurnal DP-application, DP balik jadi belum dipakai.
 12. Penggantian barang gratis pasca-retur (jalur full) — 1 jurnal (HPP/Persediaan Barang Jadi), gak nyentuh Piutang/Pendapatan, referensi ke credit note yang udah ada.
+13. Overpayment — payment nutup 1 invoice penuh + sisa jadi saldo kredit, dalam 1 journal entry (3 baris: Kas, Piutang Usaha, Saldo Kredit Customer).
+14. Saldo kredit dipakai motong invoice lain — Debit Saldo Kredit Customer, Kredit Piutang Usaha, partial-capable.
+15. Saldo kredit direfund tunai — Debit Saldo Kredit Customer, Kredit Kas.
 
 ## Common Mistakes
 
@@ -170,7 +196,10 @@ Status 1 deposit (belum dipakai / diterapkan / hangus) **derived**, bukan kolom 
 - Penggantian barang gratis lewat `create_goods_issue` biasa (bikin invoice lagi) — piutang & pendapatan numpuk palsu padahal gak ada penjualan baru.
 - Penggantian barang gratis tanpa referensi ke credit note yang udah ada — kehilangan audit trail, pengeluaran stok gratis jadi gak bisa dipertanggungjawabkan.
 - Barang pengganti diambil dari lot `SALES_RETURN` (barang rusak yang balik dari retur) — harusnya dari stok fresh, barang rusak gak dipakai ganti lagi.
+- Overpayment dicatat sebagai 2 payment terpisah (1 nutup invoice, 1 lagi "nyimpen" kelebihan) — harus 1 payment event, 1 journal entry, biar traceable ke 1 bukti transfer.
+- Excess overpayment dicatat langsung ke `Uang Muka Penjualan` (nyamain sama DP) — beda akun, karena beda asal-usul (piutang udah ada & udah dilunasin vs piutang belum ada sama sekali).
+- Saldo kredit dipakai/refund ngelebihin nominal awal — pola sama no-over-allocation, harus ditolak trigger.
 
 ## Belum Termasuk (di luar scope fase ini)
 
-- **Overpayment jadi saldo kredit customer** — kalau `SUM(allocations)` mau ngelebihin amount invoice, constraint #3 nolak; retur juga bisa bikin outstanding negatif (lihat "Retur Barang"). Kasus "kelebihan bayar/saldo kredit dipakai/refund" jadi keputusan desain terpisah, belum di-scope.
+- **Retur yang bikin outstanding invoice negatif** (lihat "Retur Barang") — beda mekanisme dari overpayment payment (yang sekarang udah di-scope di atas): retur ngurangin `amount` piutang lewat kontra-revenue, bukan lewat kelebihan pembayaran kas. Penanganan saldo kredit dari retur-negatif ini masih belum didesain.

@@ -14,13 +14,25 @@ export const recordArPaymentSchema = z
     cash_account_id: z.string().uuid("Pilih akun Kas/Bank"),
     receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
     allocations: z.array(paymentAllocationSchema).min(1, "Minimal 1 alokasi ke invoice"),
+    customer_credit_account_id: z.string().uuid("Pilih akun Saldo Kredit Customer").optional(),
   })
   .refine(
     (data) => {
       const totalAllocated = data.allocations.reduce((sum, a) => sum + a.amount, 0);
-      return Math.abs(totalAllocated - data.amount) < 0.005;
+      return totalAllocated <= data.amount + 0.005;
     },
-    { message: "Total alokasi harus sama dengan jumlah pembayaran", path: ["allocations"] }
+    { message: "Total alokasi gak boleh melebihi jumlah pembayaran", path: ["allocations"] }
+  )
+  .refine(
+    (data) => {
+      const totalAllocated = data.allocations.reduce((sum, a) => sum + a.amount, 0);
+      const excess = data.amount - totalAllocated;
+      return excess < 0.005 || !!data.customer_credit_account_id;
+    },
+    {
+      message: "Ada kelebihan bayar — wajib pilih akun Saldo Kredit Customer",
+      path: ["customer_credit_account_id"],
+    }
   );
 
 export type RecordArPaymentInput = z.infer<typeof recordArPaymentSchema>;

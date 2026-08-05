@@ -36,6 +36,7 @@ export default function ArPaymentsPage() {
   const [sourceRef, setSourceRef] = useState("");
   const [cashAccountId, setCashAccountId] = useState("");
   const [receivableAccountId, setReceivableAccountId] = useState("");
+  const [customerCreditAccountId, setCustomerCreditAccountId] = useState("");
   const [allocations, setAllocations] = useState<AllocationInput[]>([emptyAllocation()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -62,7 +63,7 @@ export default function ArPaymentsPage() {
     const { data } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_deposit_applications(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount)"
       )
       .order("invoice_date");
     setInvoices((data ?? []) as unknown as ArInvoice[]);
@@ -140,7 +141,10 @@ export default function ArPaymentsPage() {
 
   const totalAllocated = allocations.reduce((sum, a) => sum + (parseFloat(a.amount) || 0), 0);
   const amountNumber = parseFloat(amount) || 0;
-  const isBalanced = amountNumber > 0 && Math.abs(totalAllocated - amountNumber) < 0.005;
+  const excess = amountNumber - totalAllocated;
+  const hasExcess = excess > 0.005;
+  const isBalanced =
+    amountNumber > 0 && totalAllocated <= amountNumber + 0.005 && (!hasExcess || !!customerCreditAccountId);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -154,6 +158,7 @@ export default function ArPaymentsPage() {
       cash_account_id: cashAccountId,
       receivable_account_id: receivableAccountId,
       allocations: allocations.map((a) => ({ invoice_id: a.invoice_id, amount: a.amount })),
+      customer_credit_account_id: customerCreditAccountId || undefined,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -169,6 +174,7 @@ export default function ArPaymentsPage() {
       p_cash_account_id: parsed.data.cash_account_id,
       p_receivable_account_id: parsed.data.receivable_account_id,
       p_allocations: parsed.data.allocations,
+      p_customer_credit_account_id: parsed.data.customer_credit_account_id ?? null,
     });
     setSubmitting(false);
     if (error) {
@@ -182,6 +188,7 @@ export default function ArPaymentsPage() {
     setSourceRef("");
     setCashAccountId("");
     setReceivableAccountId("");
+    setCustomerCreditAccountId("");
     setAllocations([emptyAllocation()]);
     setShowForm(false);
     await Promise.all([loadInvoices(), loadPayments()]);
@@ -349,6 +356,23 @@ export default function ArPaymentsPage() {
                   ))}
                 </Select>
               </div>
+              {hasExcess && (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="customer_credit_account">Akun Saldo Kredit Customer (kredit, buat kelebihan bayar)</Label>
+                  <Select
+                    id="customer_credit_account"
+                    value={customerCreditAccountId}
+                    onChange={(e) => setCustomerCreditAccountId(e.target.value)}
+                  >
+                    <option value="">Pilih akun...</option>
+                    {leafAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} — {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
             </div>
 
             <div className="flex flex-col gap-2">
@@ -402,6 +426,13 @@ export default function ArPaymentsPage() {
                 Total alokasi:{" "}
                 <strong className="font-mono">{totalAllocated.toLocaleString("id-ID")}</strong> — Jumlah
                 dibayar: <strong className="font-mono">{amountNumber.toLocaleString("id-ID")}</strong>
+                {hasExcess && (
+                  <>
+                    {" "}
+                    — Sisa jadi saldo kredit:{" "}
+                    <strong className="font-mono">{excess.toLocaleString("id-ID")}</strong>
+                  </>
+                )}
               </span>
               <span className={isBalanced ? "font-medium text-emerald-600" : "font-medium text-red-600"}>
                 {isBalanced ? "Cocok ✓" : "Belum cocok"}

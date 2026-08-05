@@ -84,7 +84,7 @@ Debit Retur & Potongan Penjualan   50.000
   Kredit Piutang Usaha                    50.000
 ```
 
-Piutang Usaha Kang Ade: 900.000 (invoice) − 900.000 (bayar lunas) − 50.000 (retur) = **−50.000** (saldo kredit — Bu Nur "berutang" 50.000 ke Kang Ade, penanganannya belum di-scope, lihat `memory/scope-debt/ar-overpayment-saldo-kredit.md`).
+Piutang Usaha Kang Ade: 900.000 (invoice) − 900.000 (bayar lunas) − 50.000 (retur) = **−50.000** (saldo kredit — Bu Nur "berutang" 50.000 ke Kang Ade, penanganannya belum di-scope — beda dari kelebihan bayar payment yang udah di-scope di "AR Customer Credit", ini dari retur yang bikin outstanding negatif).
 
 ## Skenario 6 — Retur, full/stok+HPP (Warung Pak Budi, lanjutan `docs/story/inventory.md` Tahap 7)
 
@@ -175,9 +175,36 @@ Hasil akhir: Piutang Usaha customer ini balik ke **0**, Uang Muka Penjualan bali
 
 Invoice yang benar (Rp1.000.000) diterbitkan ulang, DP Rp300.000 yang sama diterapkan lagi ke invoice baru ini. Outstanding: 700.000.
 
+## Skenario 10 — Kelebihan bayar jadi saldo kredit (Warung Bu Imas)
+
+28 Agustus 2026 (setelah periode Jan-25 Agustus 2026 ditutup, lihat `docs/story/financial-reports.md`): kirim roti ke Warung Bu Imas, invoice Rp700.000, `due_date` 4 September (net-7).
+Jurnal: Piutang Usaha (D) 700.000 | Pendapatan Penjualan Grosir (K) 700.000
+
+2 September 2026: Bu Imas transfer **Rp750.000** (salah baca nominal). Gak ada invoice lain outstanding buat Bu Imas. Payment dicatat 1 event, dialokasikan Rp700.000 penuh ke invoice ini, sisa Rp50.000 gak punya invoice buat nyantol → jadi saldo kredit.
+Jurnal (1 payment event, 3 baris):
+```
+Kas di Bank (D) 750.000
+  Piutang Usaha (K) 700.000
+  Saldo Kredit Customer (K) 50.000
+```
+Status invoice: **lunas**. Saldo kredit Bu Imas: **Rp50.000** (belum dipakai).
+
+## Skenario 11 — Saldo kredit dipakai motong invoice berikutnya (Bu Imas, lanjutan Skenario 10)
+
+5 September 2026: Bu Imas pesan lagi, invoice Rp300.000, `due_date` 12 September.
+Jurnal: Piutang Usaha (D) 300.000 | Pendapatan Penjualan Grosir (K) 300.000
+
+Bu Nur inget Bu Imas ada saldo kredit Rp50.000, dipakai motong invoice ini duluan:
+Jurnal: Saldo Kredit Customer (D) 50.000 | Piutang Usaha (K) 50.000. Outstanding invoice jadi Rp250.000. Saldo kredit Bu Imas: **Rp0** (habis terpakai).
+
+10 September 2026: Bu Imas transfer sisa Rp250.000 pas.
+Jurnal: Kas di Bank (D) 250.000 | Piutang Usaha (K) 250.000. Status invoice: **lunas**.
+
+(Kalau Bu Imas minta saldo kreditnya di-refund tunai alih-alih dipakai: Saldo Kredit Customer (D) 50.000 | Kas di Bank (K) 50.000 — jurnal alternatif, gak dipakai di skenario ini.)
+
 ## Simulasi Interface (rencana)
 
-Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Detail flow menyusul pas fase UI dikerjakan.
+Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate — plus tampilin sisa Rp yang jadi saldo kredit kalau ada excess), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Saldo kredit customer (pakai/refund) menyusul di halaman customer detail atau inline di `/ar-invoices`, pola sama tombol "Terapkan DP". Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

@@ -14,6 +14,7 @@ const routeLabels: Record<string, string> = {
   "/ar-invoices": "AR Invoices",
   "/ar-payments": "AR Payments",
   "/ar-deposits": "AR Deposits",
+  "/ar-customer-credits": "AR Customer Credit",
   "/suppliers": "Suppliers",
   "/ap-bills": "AP Bills",
   "/ap-payments": "AP Payments",

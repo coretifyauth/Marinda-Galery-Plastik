@@ -16,9 +16,13 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **warranty_replacement** — penggantian barang gratis pasca-retur (jalur full). Wajib referensi ke `ar_credit_note` yang punya `inventory_returns` (bukti barang emang balik). Jurnal: Debit HPP / Kredit Persediaan Barang Jadi — gak nyentuh Piutang/Pendapatan. Qty diganti (akumulasi) ≤ qty yang diretur di credit note itu (per item), pola no-over-return. Barang pengganti diambil dari stok fresh (FIFO/Weighted Average biasa), bukan dari lot `SALES_RETURN`.
 - **ar_deposit** — uang muka/DP diterima sebelum invoice ada. **Bukan** `ar_payment` — jurnalnya Debit Kas / Kredit `Uang Muka Penjualan` (liability baru, akun `2300`), gak nyentuh Piutang Usaha sama sekali (piutangnya belum ada). 3 kejadian turunan, masing-masing tabel anak sendiri (immutable, status deposit derived dari situ, bukan kolom):
   - **ar_deposit_application** — DP diterapkan ke invoice yang udah diterbitkan penuh. Jurnal: Debit Uang Muka Penjualan / Kredit Piutang Usaha (reklasifikasi, ngurangin outstanding invoice).
-  - **ar_deposit_forfeiture** — DP hangus, order dibatalin SEBELUM invoice ada (kebijakan: DP gak direfund). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (akun `4300`, baru — BUKAN `Pendapatan Penjualan`, biar gak nyampur sama hasil jualan beneran).
+  - **ar_deposit_forfei/ture** — DP hangus, order dibatalin SEBELUM invoice ada (kebijakan: DP gak direfund). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (akun `4300`, baru — BUKAN `Pendapatan Penjualan`, biar gak nyampur sama hasil jualan beneran).
   - 1 deposit cuma boleh punya **1 disposisi aktif** (diterapkan ATAU hangus, gak dua-duanya) — trigger jaga ini, sama pola no-over-allocation.
   - **`cancel_ar_invoice` diperluas**: kalau invoice yang dibatalin punya `ar_deposit_applications`, RPC ikut manggil `reverse_journal_entry` buat jurnal application-nya juga (bukan cuma jurnal invoice) — DP-nya otomatis balik status "belum dipakai". Ini beda dari guard `ar_payment_allocations` (yang cuma nolak keras) — dipilih auto-unwind karena nolak doang gak nyelesaiin apa-apa buat kasus DP (duitnya nyangkut gak jelas kalau cuma diblok).
+- **ar_customer_credit** — kelebihan bayar 1 payment event di atas total alokasi ke invoice. **Beda dari `ar_deposit`**: piutang udah ada & udah kesentuh (invoice ternutup penuh via alokasi normal), bukan bayar sebelum piutang ada. `record_ar_payment` diperluas: kalau `p_amount > SUM(p_allocations.amount)`, excess-nya masuk baris jurnal ke-3 (Kredit `Saldo Kredit Customer`, akun liability baru — beda dari `Uang Muka Penjualan` karena beda asal jurnal) dalam **journal entry yang sama** (1 payment event = 1 bukti transfer = 1 entry, bukan 2 payment terpisah), dan insert 1 baris `ar_customer_credits` (customer_id, source `payment_id`, amount = excess).
+  - **ar_customer_credit_application** — kredit dipakai motong invoice lain (kapan aja ke depan, gak harus invoice berikutnya). Jurnal: Debit Saldo Kredit Customer / Kredit Piutang Usaha.
+  - **ar_customer_credit_refund** — kredit direfund tunai. Jurnal: Debit Saldo Kredit Customer / Kredit Kas/Bank.
+  - Beda dari `ar_deposit` (1 disposisi aktif doang): kredit ini bisa dipakai **sebagian-sebagian, berkali-kali** (application + refund berulang) sampai habis — pola lebih mirip `ar_payment_allocations` (partial-capable) daripada disposisi tunggal DP. Guard: `SUM(applications.amount) + SUM(refunds.amount)` per credit ≤ `ar_customer_credits.amount`.
 
 ## Constraints (wajib ditegakkan di implementasi)
 
@@ -33,6 +37,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **Period-closing tetap berlaku**: retur ke periode tertutup ditolak otomatis lewat `journal_entries_block_retroactive_into_closed_period` (reuse, gak ada constraint baru).
 - **Penggantian gratis wajib nunjuk credit note jalur full**: `warranty_replacement.credit_note_id` harus punya baris `inventory_returns` yang match — kalau credit note-nya financial-only (gak ada retur fisik), RPC `raise exception`.
 - **No over-replace**: `SUM(qty)` `warranty_replacement_lines` (akumulasi, per item, per credit note) ≤ `SUM(qty_returned)` `inventory_return_lines` item itu di credit note yang sama.
+- **Overpayment split dalam 1 journal entry**: `record_ar_payment` gak boleh split excess jadi payment/entry terpisah — 1 bukti transfer = 1 entry (3 baris kalau ada excess: Kas, Piutang Usaha, Saldo Kredit Customer).
+- **No over-use saldo kredit**: `SUM(ar_customer_credit_applications.amount) + SUM(ar_customer_credit_refunds.amount)` per `ar_customer_credits` ≤ `ar_customer_credits.amount`.
 
 ## Skenario referensi (detail angka: `docs/story/accounts-receivable.md`)
 
@@ -50,6 +56,9 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 10 | DP hangus (order dibatalin sebelum invoice ada) | 1 jurnal, Uang Muka Penjualan → Pendapatan Lain-lain, gak pernah ada invoice |
 | 11 | Invoice dengan DP-application dibatalkan | `cancel_ar_invoice` reverse jurnal invoice + jurnal application, DP balik "belum dipakai" |
 | 12 | Penggantian barang gratis pasca-retur | 1 jurnal (HPP/Persediaan Barang Jadi), referensi credit note jalur full, gak nyentuh Piutang/Pendapatan |
+| 13 | Overpayment — payment > invoice, excess jadi saldo kredit | 1 payment event, 1 journal entry 3 baris (Kas, Piutang Usaha, Saldo Kredit Customer) |
+| 14 | Saldo kredit dipakai motong invoice lain | Debit Saldo Kredit Customer / Kredit Piutang Usaha, partial-capable |
+| 15 | Saldo kredit direfund tunai | Debit Saldo Kredit Customer / Kredit Kas |
 
 ## Common mistakes to guard against
 
@@ -67,10 +76,13 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - Penggantian barang gratis lewat `create_goods_issue` biasa — bikin piutang/pendapatan palsu.
 - Penggantian barang gratis tanpa referensi ke credit note — kehilangan audit trail.
 - Barang pengganti diambil dari lot `SALES_RETURN` — harusnya stok fresh.
+- Overpayment dicatat sebagai 2 payment terpisah — harus 1 event, 1 entry.
+- Excess overpayment ke `Uang Muka Penjualan` — harus ke `Saldo Kredit Customer`, beda asal jurnal dari DP.
+- Saldo kredit dipakai/refund ngelebihin nominal awal — harus ditolak trigger, pola no-over-allocation.
 
 ## Belum termasuk (di luar scope fase ini)
 
-- Overpayment jadi saldo kredit customer (termasuk hasil retur yang bikin outstanding negatif) — refund/pemakaian saldo kredit belum didesain. **Beda mekanisme** dari `ar_deposit` (yang solve "bayar sebelum invoice ada") — overpayment itu "bayar lebih dari invoice yang udah ada", masih 2 masalah terpisah.
+- **Retur yang bikin outstanding invoice negatif** — beda mekanisme dari overpayment payment (yang di atas udah di-scope): retur ngurangin `amount` piutang lewat kontra-revenue, bukan lewat kelebihan kas. Penanganan saldo kreditnya masih belum didesain.
 
 ## Glossary
 
@@ -83,5 +95,6 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **AR Credit Note**: retur barang yang udah diinvoice — ngurangin outstanding invoice tanpa ubah `amount` asli, beda dari `cancel_ar_invoice`.
 - **AR Deposit**: uang muka diterima sebelum invoice ada, dicatat ke liability `Uang Muka Penjualan` — beda dari `AR Payment` yang selalu terhadap invoice existing.
 - **Warranty Replacement**: penggantian barang gratis pasca-retur — keluar stok+HPP tanpa invoice/piutang baru, wajib referensi credit note jalur full.
+- **AR Customer Credit**: kelebihan bayar 1 payment event di atas invoice yang ditutup — liability `Saldo Kredit Customer`, beda asal dari `AR Deposit`, bisa dipakai/refund parsial berkali-kali.
 
 Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`.

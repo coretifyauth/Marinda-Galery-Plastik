@@ -633,7 +633,89 @@ Full body: `supabase/migrations/0026_ar_warranty_replacements.sql`.
 
 Pola identik AR/Inventory lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`).
 
+## AR Customer Credit (Kelebihan Bayar) — migration `0027_ar_customer_credits.sql` + `0028_seed_demo_ar_customer_credits.sql`
+
+Customer transfer lebih dari total alokasi ke invoice dalam 1 payment event. **Bukan** `ar_deposit` — piutangnya udah ada dan udah kesentuh (invoice ternutup penuh via alokasi normal), excess-nya baru "jatuh" ke liability baru `Saldo Kredit Customer` (`2400`, insert di migration seed 0028, pola sama `2300 Uang Muka Penjualan`). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Kelebihan Bayar (Overpayment) jadi Saldo Kredit Customer".
+
+**Bugfix pas apply ke remote** (ketauan pas `supabase db push`, bukan dari review statis): `create or replace function record_ar_payment(...)` di `0027` nambah parameter ke-8 (`p_customer_credit_account_id default null`) — Postgres nge-ID fungsi dari nama+tipe parameter, bukan nama doang, jadi `create or replace` gak nge-replace versi 0007 (7 param), malah nambah **overload baru**. Remote yang tetep 2 overload bikin `record_ar_payment(...)` 7 argumen ambigu (`42725 function ... is not unique`). Fix: `drop function if exists record_ar_payment(uuid, date, numeric, text, uuid, uuid, jsonb)` ditambahin di **dua** tempat — di `0027` sendiri (buat instalasi baru yang belum pernah apply versi lama) DAN di awal `0028` (buat instance yang udah kadung apply `0027` sebelum drop itu ditambahin, kayak kasus yang kejadian). Pelajaran: nambah parameter ke fungsi existing lewat `create or replace` **selalu** butuh `drop function if exists <signature lama>` eksplisit duluan, gak otomatis ke-replace kalau signature-nya beda.
+
+### `record_ar_payment` (aslinya 0007) diperluas — `create or replace`, bukan RPC baru
+
+Sebelum ini, baris jurnal Kredit Piutang Usaha selalu = `p_amount` penuh, gak peduli `p_allocations` totalnya kurang dari itu — over-credit Piutang Usaha kalau ada excess. Sekarang:
+- `v_allocated_total` = `SUM(p_allocations.amount)`, wajib ≤ `p_amount` (`raise exception` kalau lebih — gak masuk akal alokasi lebih dari yang dibayar).
+- `v_excess` = `p_amount - v_allocated_total`. Kalau `v_excess > 0`, jurnal dapet baris ke-3 (Kredit `p_customer_credit_account_id`, wajib diisi caller kalau excess-nya ada — `raise exception` kalau NULL), dan 1 baris `ar_customer_credits` di-insert nunjuk ke payment yang sama.
+- **1 payment event = 1 journal entry** (bukan 2 payment terpisah) — pola ini yang bikin traceable ke 1 bukti transfer bank (Core Invariant), dibahas bareng user pas teaching cycle.
+- Parameter baru `p_customer_credit_account_id` ditaro **paling akhir dengan default `null`** — signature call existing (0008, 0025 seed) yang gak isi param ini tetep jalan tanpa perubahan.
+
+### `ar_customer_credits` — saldo kredit lahir
+
+Satu baris = satu kejadian excess dari 1 payment. `payment_id` nunjuk `ar_payments` sumbernya, `journal_entry_id` nunjuk entry **yang sama** dengan payment-nya (bukan entry baru terpisah — beda dari `ar_deposits` yang punya entry sendiri karena kejadiannya independen).
+
+```sql
+create table ar_customer_credits (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid not null references customers(id),
+  payment_id uuid not null references ar_payments(id),
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### `ar_customer_credit_applications` + `ar_customer_credit_refunds` — 2 disposisi, partial-capable & berulang
+
+Beda dari `ar_deposit` (1 disposisi aktif doang, ditegakkan trigger): saldo kredit ini kayak "dompet" — bisa dipakai/direfund **sebagian-sebagian, berkali-kali**, gak ada guard "cuma 1 disposisi". Fungsi `ar_customer_credit_remaining(credit_id)` (SQL function, bukan view) ngitung sisa saldo: `amount - SUM(applications) - SUM(refunds)`, dipanggil kedua trigger guard di bawah dan bisa dipanggil langsung dari query read-side (misal nampilin "sisa saldo kredit" di UI).
+
+```sql
+create table ar_customer_credit_applications (
+  id uuid primary key default gen_random_uuid(),
+  credit_id uuid not null references ar_customer_credits(id),
+  invoice_id uuid not null references ar_invoices(id),
+  amount numeric(14,2) not null check (amount > 0),
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table ar_customer_credit_refunds (
+  id uuid primary key default gen_random_uuid(),
+  credit_id uuid not null references ar_customer_credits(id),
+  amount numeric(14,2) not null check (amount > 0),
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+Trigger `ar_customer_credit_applications_guard` (before insert, 3 pengecekan): (1) `new.amount ≤ ar_customer_credit_remaining(credit_id)`; (2) credit & invoice customer harus sama (pola sama guard DP, gak ada FK natural yang nyegah ini); (3) digabung sama `ar_payment_allocations` + `ar_deposit_applications` yang udah ada buat cek over-collect ke invoice yang sama (3 jalur independen sekarang, semua harus keitung bareng).
+
+Trigger `ar_customer_credit_refunds_guard` (before insert, 1 pengecekan): `new.amount ≤ ar_customer_credit_remaining(credit_id)` doang — refund gak nyentuh invoice, gak butuh cek sisi itu.
+
+### RPC: `apply_ar_customer_credit`, `refund_ar_customer_credit`
+
+`security invoker`, pola sama RPC AR lain — reuse `create_journal_entry`, gak insert manual ke `journal_entries`/`journal_lines`. `apply_ar_customer_credit` insert `ar_customer_credit_applications` (Debit Saldo Kredit Customer / Kredit Piutang Usaha). `refund_ar_customer_credit` insert `ar_customer_credit_refunds` (Debit Saldo Kredit Customer / Kredit Kas/Bank). Nominal keduanya input eksplisit dari caller (bukan dihitung RPC), konsisten sama pola RPC AR lain.
+
+Full body: `supabase/migrations/0027_ar_customer_credits.sql`.
+
+### 4 fungsi existing yang ikut diperluas (`create or replace` di `0027`, bukan tabel baru)
+
+Sekarang ada 3 jalur independen yang sama-sama bisa ngurangin outstanding 1 invoice — `ar_payment_allocations`, `ar_deposit_applications`, `ar_customer_credit_applications` — jadi 3 fungsi guard-nya semua di-extend biar konsisten jumlahin ketiganya, SEMUA exclude application yang udah di-reverse (`not exists (... je.reverses_entry_id = ...)`):
+- **`ar_payment_allocations_no_over_allocation`** (0007, di-extend 0024) — tambah `v_invoice_credited` (SUM `ar_customer_credit_applications` aktif per invoice) ke perhitungan.
+- **`ar_deposit_applications_guard`** (0024) — tambah `v_already_credited_to_invoice` ke perhitungan poin 5-nya.
+- **`ar_customer_credit_applications_guard`** (0027) — jumlahin ketiganya, PLUS cek invoice belum dibatalkan (poin yang kelewat di draft awal, ketauan `schema-reviewer` — lihat di bawah).
+
+**`cancel_ar_invoice`** (0009, di-extend 0024 buat DP) ikut di-extend lagi di `0027`: setelah reverse jurnal invoice + jurnal `ar_deposit_applications` aktif (perilaku 0024, gak berubah), sekarang loop juga semua `ar_customer_credit_applications` aktif buat invoice itu dan ikut `reverse_journal_entry`-in. **Kenapa perlu, ketauan lewat `schema-reviewer` bukan dari awal**: draft pertama `0027` cuma nambah `ar_customer_credit_applications` ke perhitungan no-over-allocation, tapi lupa extend `cancel_ar_invoice` — akibatnya invoice yang udah dipotong saldo kredit terus dibatalkan bikin jurnal invoice ke-reverse tapi jurnal application-nya kagak, Piutang Usaha nyasar minus dan saldo kreditnya abis kepakai permanen tanpa invoice yang beneran nutup (kelas bug sama persis yang komentar 0024 udah jelasin buat DP, luput karena gak eksplisit diperiksa waktu nulis). `ar_customer_credit_remaining()` (dipanggil 2 trigger guard di atas) exclude application yang udah di-reverse dari perhitungan sisa saldo — konsisten sama fix ini, biar saldo yang application-nya di-unwind balik "belum dipakai" lagi (mirror behavior `ar_deposit`, bukan "hangus kepakai" permanen).
+
+**`create_ar_invoice`** (0007, di-extend 0020 buat credit hold, 0024 buat DP) di-extend lagi: outstanding calc buat credit hold sekarang ikut ngurangin `ar_customer_credit_applications` aktif juga (union ke-3 di subquery `alloc`, sama pola `ar_deposit_applications`). Ini juga ketauan lewat `schema-reviewer` (re-review, bukan review pertama) — draft sebelumnya sengaja skip fungsi ini dengan alasan "saldo kredit bukan piutang yang belum ditagih", tapi itu salah: kalau saldo kredit udah dipakai motong invoice X, outstanding invoice X beneran berkurang, jadi credit hold yang ngitung outstanding tanpa itu jadi overly conservative (bukan celah duit, tapi tetap salah — kelas bug sama persis yang 0024 jelasin buat DP).
+
+### RLS & Grant
+
+Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
-- **Overpayment jadi saldo kredit customer** — trigger sekarang nolak keras alokasi yang ngelebihin. Retur juga bisa bikin outstanding negatif (lihat "AR Credit Note" di atas). Kasus "kelebihan bayar dianggap kredit buat invoice berikutnya / refund" belum di-scope. **Beda mekanisme** dari `ar_deposit` — itu solve "bayar sebelum invoice ada", ini "bayar lebih dari invoice yang udah ada", masih 2 masalah terpisah.
+- **Retur yang bikin outstanding invoice negatif** (lihat "AR Credit Note" di atas) — beda mekanisme dari overpayment payment (yang di atas udah di-scope): retur ngurangin `ar_invoices.amount` via kontra-revenue, bukan lewat kelebihan kas payment. Penanganan saldo kreditnya masih belum didesain.
 - **Aging report / dashboard piutang jatuh tempo** — query read-side (`due_date` vs `now()`, join alokasi buat status), digarap pas UI dibangun, gak butuh kolom/tabel tambahan.

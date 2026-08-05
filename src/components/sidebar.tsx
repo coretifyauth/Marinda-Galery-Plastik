@@ -33,6 +33,7 @@ import {
   Waves,
   Lock,
   PiggyBank,
+  Coins,
 } from "lucide-react";
 
 const navGroups = [
@@ -53,6 +54,7 @@ const navGroups = [
       { href: "/ar-invoices", label: "AR Invoices", icon: FileText },
       { href: "/ar-payments", label: "AR Payments", icon: HandCoins },
       { href: "/ar-deposits", label: "AR Deposits", icon: PiggyBank },
+      { href: "/ar-customer-credits", label: "AR Customer Credit", icon: Coins },
     ],
   },
   {
