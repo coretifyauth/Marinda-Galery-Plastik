@@ -15,6 +15,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario n
 | `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `customers`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) yang otomatis dibuat |
 | `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
 | `ar_deposit_forfeitures` | DP hangus — order dibatalin sebelum invoice pernah ada | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Pendapatan Lain-lain) |
+| `warranty_replacements` + `warranty_replacement_lines` | Penggantian barang gratis pasca-retur — barang keluar gratis, tanpa invoice/piutang baru | `ar_credit_notes` (wajib retur fisik yang sudah ada dulu), dan ke transaksi jurnal (HPP → Persediaan Barang Jadi) |
 
 Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invoice satu pembayaran: satu pembayaran bisa melunasi beberapa invoice sekaligus (bayar gabungan), dan satu invoice bisa dilunasi lewat beberapa pembayaran (dicicil). Hubungannya banyak-ke-banyak, jadi butuh tabel sendiri yang mencatat tiap pasangan pembayaran-invoice beserta jumlahnya.
 
@@ -36,6 +37,7 @@ Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invo
 5. **Invoice baru ditolak kalau pelanggan kena "credit hold".** Dicek dua hal, cukup salah satu terpenuhi: total piutang belum lunas pelanggan (ditambah invoice baru ini) melebihi batas kreditnya, atau ada piutang lama yang telatnya sudah melebihi toleransi hari yang diizinkan buat pelanggan itu. Kalau batas kredit atau toleransi telatnya tidak diisi (kosong), pelanggan itu tidak pernah kena hold dari sisi itu. Pelanggan yang kena hold tetap bisa dilayani asal bayar tunai langsung — itu dicatat sebagai penjualan tunai biasa, bukan lewat invoice.
 6. **Retur tidak boleh melebihi nilai invoice, dan (kalau retur fisik) tidak boleh melebihi qty yang pernah terjual maupun batas waktu retur item itu.** Retur boleh dibuat kapan pun terlepas status bayar invoice — kalau invoicenya sudah lunas, retur membuat saldo pelanggan jadi negatif (kelebihan bayar), yang penanganannya di luar cakupan saat ini.
 7. **Satu uang muka cuma boleh punya satu nasib akhir** — diterapkan ke invoice, atau dihanguskan. Sistem menolak kalau uang muka yang sudah dihanguskan dicoba diterapkan, atau sebaliknya. Jumlah yang diterapkan juga tidak boleh melebihi sisa uang muka maupun nilai invoice tujuannya.
+8. **Penggantian barang gratis wajib nunjuk retur yang sudah ada, dan jumlahnya dibatasi.** Tidak bisa dibuat berdiri sendiri — harus terhubung ke retur fisik yang sudah tercatat. Total yang diganti tidak boleh melebihi jumlah yang benar-benar diretur untuk item itu.
 
 ## Cara Kerja "Buat Invoice", "Catat Pembayaran", dan "Batalkan Invoice"
 
@@ -43,6 +45,7 @@ Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invo
 - **Catat pembayaran** — sistem membuat transaksi jurnal (Debit Kas/Bank, Kredit Piutang Usaha) untuk total yang dibayar, mencatat pembayarannya, lalu mengalokasikan jumlah itu ke satu atau beberapa invoice sekaligus (bisa bayar gabungan atau cicilan) — semua dalam satu langkah gabungan.
 - **Batalkan invoice** — sistem memeriksa dulu apakah invoice sudah punya pelunasan; kalau belum, sistem membuat transaksi pembalik (debit/kredit ditukar) memakai akun yang sama persis dengan invoice aslinya. Kalau invoice itu punya uang muka yang sudah diterapkan, transaksi jurnal uang muka itu ikut dibalik juga dalam langkah yang sama. Invoice aslinya sendiri tidak diubah sama sekali — status "dibatalkan" murni dibaca dari keberadaan transaksi pembalik itu.
 - **Catat retur barang** — sistem mendeteksi sendiri invoicenya lahir dari Goods Issue (ada stok yang dilacak) atau tidak. Kalau tidak, cukup satu transaksi jurnal (mengurangi piutang lewat akun kontra "Retur & Potongan Penjualan"). Kalau iya, ada dua transaksi jurnal sekaligus — satu buat mengurangi piutang, satu lagi membalik sebagian biaya pokok penjualan yang sudah diakui — plus barangnya dikembalikan ke catatan stok. Invoice aslinya tetap tidak diubah, retur selalu berupa catatan tambahan.
+- **Catat penggantian barang gratis** — hanya bisa dilakukan kalau retur fisiknya sudah ada (barang beneran balik ke gudang). Sistem membuat satu transaksi jurnal (Debit HPP, Kredit Persediaan Barang Jadi) dan mengeluarkan barang pengganti dari stok yang aktif — tidak ada invoice atau piutang baru sama sekali. Jumlah yang diganti (ditotal, bisa lebih dari satu kali) tidak boleh melebihi jumlah yang benar-benar diretur.
 
 ## Uang Muka / DP
 
@@ -71,5 +74,4 @@ Status satu uang muka (belum dipakai / diterapkan / hangus) tidak disimpan sebag
 ## Belum Termasuk
 
 - **Kelebihan bayar (overpayment) sebagai saldo kredit pelanggan** — saat ini sistem menolak keras alokasi yang melebihi nilai invoice; retur juga bisa bikin saldo negatif dengan efek serupa. Belum ada tempat menampung kelebihannya untuk dipakai di invoice berikutnya / refund. Ini beda mekanisme dari uang muka (yang solve "bayar sebelum invoice ada") — kasus ini "bayar lebih dari invoice yang sudah ada", masih terpisah.
-- **Penggantian barang gratis pasca-retur** — pelanggan minta barang pengganti tanpa ditagih ulang, butuh proses baru (keluar stok tanpa invoice baru).
 - **Laporan umur piutang (aging) / dashboard invoice jatuh tempo** — ini laporan baca-saja dari data yang sudah ada, akan dibangun bersama tampilan UI-nya, tidak butuh perubahan struktur data.

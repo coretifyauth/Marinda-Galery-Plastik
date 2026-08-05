@@ -98,7 +98,25 @@ Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang 
 - **Kebijakan window retur** — `items.return_window_days` (nullable, default `NULL` = gak dibatasi). Ditaro **per item**, bukan per customer atau global, karena yang nentuin "boleh diretur sampai berapa lama" itu sifat fisik barangnya (roti tawar cepat basi vs kue kering awet), bukan hubungan dagang ke customer tertentu — beda axis dari `customers.credit_limit`/`overdue_threshold_days`. RPC `create_ar_credit_note` cek tiap baris: kalau item itu punya `return_window_days` dan `credit_note_date - invoice_date` ngelewatin itu → `raise exception`, tolak sebelum jurnal dibuat. Cuma berlaku buat jalur full (retur yang nunjuk `item_id` lewat `goods_issue_lines`) — jalur financial-only gak ada `item_id` buat dicek ke situ.
 - **Batasan period closing** — retur gak boleh dicatat ke periode yang udah ditutup (`period_closings`). Ini **udah otomatis kepegang** oleh trigger `journal_entries_block_retroactive_into_closed_period` yang di-reuse lewat `create_journal_entry`, gak butuh constraint baru. Beda dari window retur di atas: ini soal integritas pembukuan (gak boleh ubah periode yang udah dikunci), bukan kebijakan toko.
 
-**Bukan penggantian barang** — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penggantian barang gratis (tukar barang rusak dengan barang baru tanpa nagih ulang) butuh RPC beda (keluar stok + HPP tanpa invoice/piutang baru) — di luar scope fitur ini, lihat "Belum Termasuk".
+**Bukan penggantian barang** — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penggantian barang gratis (tukar barang rusak dengan barang baru tanpa nagih ulang) butuh RPC beda — lihat "Penggantian Barang Gratis Pasca-Retur" di bawah.
+
+## Penggantian Barang Gratis Pasca-Retur
+
+Customer balikin barang rusak (garansi kualitas) DAN minta barang pengganti — **tanpa nagih ulang**, karena ini kompensasi garansi, bukan penjualan baru. Beda dari retur biasa di atas: retur cuma "barang balik, tagihan berkurang", ini "barang balik, DAN ada barang baru keluar gratis buat gantiin".
+
+**Kenapa gak lewat `create_goods_issue` biasa** — `create_goods_issue` selalu bikin invoice baru (Debit Piutang Usaha, Kredit Pendapatan). Penggantian gratis gak nagih customer lagi, jadi kalau dipaksa lewat situ, piutang customer numpuk palsu dan Pendapatan Penjualan kegedean padahal bukan penjualan beneran. Jurnal yang bener cuma:
+```
+Debit Harga Pokok Penjualan (HPP)   [cost barang pengganti]
+  Kredit Persediaan Barang Jadi            [cost barang pengganti]
+```
+Gak nyentuh Piutang Usaha atau Pendapatan sama sekali — invoice asli & retur yang udah ada tetap gak berubah.
+
+**Wajib referensi ke AR Credit Note yang udah ada** (jalur full, retur yang punya `inventory_returns` — bukti barang emang balik ke gudang) — gak bisa berdiri sendiri tanpa retur formal duluan. Alasan bisnis:
+- **Audit trail** — tanpa bukti retur, penggantian gratis gampang disalahgunakan (klaim "rusak" tanpa bukti barang balik).
+- **Traceability** (Core Invariant project ini) — pengeluaran stok gratis harus nunjuk ke dokumen sumber jelas, biar gak disalahartikan kebocoran/pencurian stok.
+- **Matching principle** — biaya penggantian itu beban garansi yang berasal dari penjualan yang udah diakui sebelumnya, harus terhubung ke transaksi asalnya.
+
+**Batas kuantitas** — total qty yang diganti (akumulasi, bisa lebih dari 1 kali penggantian per credit note) gak boleh ngelebihin qty yang beneran diretur di credit note itu (per item) — pola sama no-over-return. Barang pengganti diambil dari stok **fresh** yang aktif (FIFO/Weighted Average biasa) — **bukan** dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak yang balik itu gak dijual/dipakai ganti lagi, lot-nya kepisah).
 
 ## Uang Muka / DP (Deposit)
 
@@ -129,6 +147,7 @@ Status 1 deposit (belum dipakai / diterapkan / hangus) **derived**, bukan kolom 
 9. DP diterima lalu diterapkan penuh ke invoice — 3 jurnal terpisah (terima DP, terbitkan invoice, terapkan DP), outstanding invoice berkurang sejumlah DP.
 10. DP hangus — order dibatalin sebelum invoice ada, DP jadi Pendapatan Lain-lain, gak ada invoice yang pernah dibuat sama sekali.
 11. Invoice yang DP-nya udah diterapkan ternyata dibatalin (salah input) — pembatalan otomatis ikut membalikkan jurnal DP-application, DP balik jadi belum dipakai.
+12. Penggantian barang gratis pasca-retur (jalur full) — 1 jurnal (HPP/Persediaan Barang Jadi), gak nyentuh Piutang/Pendapatan, referensi ke credit note yang udah ada.
 
 ## Common Mistakes
 
@@ -148,8 +167,10 @@ Status 1 deposit (belum dipakai / diterapkan / hangus) **derived**, bukan kolom 
 - Mengakui DP sebagai Pendapatan (atau langsung ngurangin Piutang Usaha) pas diterima — piutangnya belum ada, dan barang/jasanya belum diserahkan. Harus lewat akun liability `Uang Muka Penjualan` dulu.
 - DP hangus dicatat ke `Pendapatan Penjualan` biasa — harus ke `Pendapatan Lain-lain`, biar gak nyampur sama hasil jualan beneran.
 - Batalin invoice yang DP-nya udah diterapkan tanpa ikut membalikkan jurnal DP-application-nya — Piutang Usaha customer itu bakal nyasar jadi minus, dan DP-nya nyangkut gak jelas statusnya.
+- Penggantian barang gratis lewat `create_goods_issue` biasa (bikin invoice lagi) — piutang & pendapatan numpuk palsu padahal gak ada penjualan baru.
+- Penggantian barang gratis tanpa referensi ke credit note yang udah ada — kehilangan audit trail, pengeluaran stok gratis jadi gak bisa dipertanggungjawabkan.
+- Barang pengganti diambil dari lot `SALES_RETURN` (barang rusak yang balik dari retur) — harusnya dari stok fresh, barang rusak gak dipakai ganti lagi.
 
 ## Belum Termasuk (di luar scope fase ini)
 
 - **Overpayment jadi saldo kredit customer** — kalau `SUM(allocations)` mau ngelebihin amount invoice, constraint #3 nolak; retur juga bisa bikin outstanding negatif (lihat "Retur Barang"). Kasus "kelebihan bayar/saldo kredit dipakai/refund" jadi keputusan desain terpisah, belum di-scope.
-- **Penggantian barang gratis pasca-retur** — customer balikin barang rusak DAN minta barang pengganti tanpa nagih ulang. Butuh RPC baru (keluar stok + HPP tanpa invoice/piutang baru), beda dari `create_goods_issue` yang selalu bikin invoice. Belum di-scope, lihat `memory/scope-debt/ar-penggantian-barang-retur.md`.

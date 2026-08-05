@@ -587,8 +587,53 @@ Fix-nya **`create or replace function`** di `0024_ar_deposits_schema.sql` (bukan
 
 Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
 
+## Warranty Replacement (Penggantian Barang Gratis Pasca-Retur) — migration `0026_ar_warranty_replacements.sql`
+
+Customer retur barang rusak (AR Credit Note jalur full, sudah ada `inventory_returns`) DAN minta barang pengganti gratis — TANPA invoice/piutang baru. Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Penggantian Barang Gratis Pasca-Retur".
+
+### `warranty_replacements` + `warranty_replacement_lines`
+
+Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per credit note, retur bertahap). `journal_entry_id` nunjuk jurnal Debit HPP / Kredit Persediaan Barang Jadi (`create_journal_entry`, reuse) — **gak ada** jurnal ke Piutang/Pendapatan. Immutable, pola sama `ar_credit_notes`/`inventory_returns`.
+
+```sql
+create table warranty_replacements (
+  id uuid primary key default gen_random_uuid(),
+  credit_note_id uuid not null references ar_credit_notes(id),
+  replacement_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table warranty_replacement_lines (
+  id uuid primary key default gen_random_uuid(),
+  warranty_replacement_id uuid not null references warranty_replacements(id) on delete cascade,
+  item_id uuid not null references items(id),
+  qty_replaced numeric(14,3) not null check (qty_replaced > 0),
+  total_cost numeric(14,2) not null check (total_cost > 0)
+);
+```
+
+### Trigger `warranty_replacement_lines_no_over_replace`
+
+Pola sama `inventory_return_lines_guard` (no-over-return) — total `qty_replaced` (akumulasi per item per credit note) gak boleh ngelebihin `SUM(qty_returned)` item itu di `inventory_return_lines` (join lewat `inventory_returns.credit_note_id`). Kalau item itu gak ketemu sama sekali di retur credit note itu, `raise exception` duluan (bukan lolos dengan batas 0).
+
+### RPC `create_warranty_replacement`
+
+`security invoker`, reuse `create_journal_entry` + `consume_fifo`/`consume_weighted_average` (fungsi generik konsumsi stok dari `0012`, sama yang dipakai `create_goods_issue`/`create_production_order`) — 0 fungsi baru buat logic FIFO/Weighted Average.
+
+- Guard "credit note jalur full" dicek eksplisit di awal RPC (`exists (select 1 from inventory_returns where credit_note_id = ...)`), bukan cuma ngandelin trigger belakangan — kalau credit note-nya financial-only, `raise exception` duluan sebelum sempat konsumsi stok.
+- Guard `p_lines` kosong/null juga dicek eksplisit — tanpa ini RPC bisa "sukses" bikin jurnal 0/0 dan header tanpa baris sama sekali (ketauan pas review).
+- Konsumsi stok pakai `consumption_type = 'WARRANTY_REPLACEMENT'` (value baru, `inventory_lot_consumptions.consumption_type` check constraint diperluas — pola sama 0021 extend `inventory_lots.source_type` nambah `SALES_RETURN`) — **selalu** ambil dari lot aktif (FIFO urut tanggal), bukan dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak gak dipakai ganti lagi, tapi ini gak butuh guard eksplisit karena `consume_fifo` emang jalan lot demi lot dari yang paling lama — lot `SALES_RETURN` baru cuma "menang" urutan konsumsi kalau `lot_date`-nya emang lebih lama dari lot lain, yang secara bisnis gak akan kejadian karena retur selalu terjadi setelah barang asli keluar).
+
+Full body: `supabase/migrations/0026_ar_warranty_replacements.sql`.
+
+### RLS & Grant
+
+Pola identik AR/Inventory lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`).
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
 - **Overpayment jadi saldo kredit customer** — trigger sekarang nolak keras alokasi yang ngelebihin. Retur juga bisa bikin outstanding negatif (lihat "AR Credit Note" di atas). Kasus "kelebihan bayar dianggap kredit buat invoice berikutnya / refund" belum di-scope. **Beda mekanisme** dari `ar_deposit` — itu solve "bayar sebelum invoice ada", ini "bayar lebih dari invoice yang udah ada", masih 2 masalah terpisah.
-- **Penggantian barang gratis pasca-retur** — butuh RPC baru (keluar stok+HPP tanpa invoice baru), `memory/scope-debt/ar-penggantian-barang-retur.md`.
 - **Aging report / dashboard piutang jatuh tempo** — query read-side (`due_date` vs `now()`, join alokasi buat status), digarap pas UI dibangun, gak butuh kolom/tabel tambahan.

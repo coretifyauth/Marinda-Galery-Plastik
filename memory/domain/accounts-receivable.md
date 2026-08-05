@@ -13,6 +13,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
   - **Financial-only** (invoice gak lewat `create_goods_issue`): 1 jurnal, Debit `Retur & Potongan Penjualan` (akun kontra-revenue baru, `is_contra=true`) / Kredit Piutang Usaha.
   - **Full** (invoice lewat `create_goods_issue`): 2 jurnal — kontra-revenue di atas + Debit Persediaan Barang Jadi / Kredit HPP sejumlah cost proporsional dari `goods_issue_lines.total_cost` snapshot asli (bukan harga sekarang). Barang balik masuk lot baru (`source_type = SALES_RETURN`, FIFO) atau nambah `inventory_balances` (Weighted Average).
   - Independen dari status bayar invoice — kalau invoice udah lunas, retur bikin outstanding negatif (saldo kredit customer, penanganannya di luar scope, lihat "Belum termasuk").
+- **warranty_replacement** — penggantian barang gratis pasca-retur (jalur full). Wajib referensi ke `ar_credit_note` yang punya `inventory_returns` (bukti barang emang balik). Jurnal: Debit HPP / Kredit Persediaan Barang Jadi — gak nyentuh Piutang/Pendapatan. Qty diganti (akumulasi) ≤ qty yang diretur di credit note itu (per item), pola no-over-return. Barang pengganti diambil dari stok fresh (FIFO/Weighted Average biasa), bukan dari lot `SALES_RETURN`.
 - **ar_deposit** — uang muka/DP diterima sebelum invoice ada. **Bukan** `ar_payment` — jurnalnya Debit Kas / Kredit `Uang Muka Penjualan` (liability baru, akun `2300`), gak nyentuh Piutang Usaha sama sekali (piutangnya belum ada). 3 kejadian turunan, masing-masing tabel anak sendiri (immutable, status deposit derived dari situ, bukan kolom):
   - **ar_deposit_application** — DP diterapkan ke invoice yang udah diterbitkan penuh. Jurnal: Debit Uang Muka Penjualan / Kredit Piutang Usaha (reklasifikasi, ngurangin outstanding invoice).
   - **ar_deposit_forfeiture** — DP hangus, order dibatalin SEBELUM invoice ada (kebijakan: DP gak direfund). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (akun `4300`, baru — BUKAN `Pendapatan Penjualan`, biar gak nyampur sama hasil jualan beneran).
@@ -30,6 +31,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **No over-return**: total `ar_credit_note` (akumulasi) per invoice gak boleh ngelebihin `ar_invoice.amount` (jalur financial-only) atau `qty_issued` baris `goods_issue_lines`-nya (jalur full) — pola sama no-over-allocation.
 - **Return window (per item)**: `items.return_window_days` (nullable, `NULL`=gak dibatasi). `create_ar_credit_note` cek tiap baris jalur full: `credit_note_date - invoice_date > items.return_window_days` → reject. Ditaro per item (bukan per customer/global) karena soal umur simpan fisik barang, bukan hubungan dagang.
 - **Period-closing tetap berlaku**: retur ke periode tertutup ditolak otomatis lewat `journal_entries_block_retroactive_into_closed_period` (reuse, gak ada constraint baru).
+- **Penggantian gratis wajib nunjuk credit note jalur full**: `warranty_replacement.credit_note_id` harus punya baris `inventory_returns` yang match — kalau credit note-nya financial-only (gak ada retur fisik), RPC `raise exception`.
+- **No over-replace**: `SUM(qty)` `warranty_replacement_lines` (akumulasi, per item, per credit note) ≤ `SUM(qty_returned)` `inventory_return_lines` item itu di credit note yang sama.
 
 ## Skenario referensi (detail angka: `docs/story/accounts-receivable.md`)
 
@@ -46,6 +49,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 9 | DP diterima lalu diterapkan penuh ke invoice | 3 jurnal terpisah (terima DP, terbitkan invoice, terapkan DP) |
 | 10 | DP hangus (order dibatalin sebelum invoice ada) | 1 jurnal, Uang Muka Penjualan → Pendapatan Lain-lain, gak pernah ada invoice |
 | 11 | Invoice dengan DP-application dibatalkan | `cancel_ar_invoice` reverse jurnal invoice + jurnal application, DP balik "belum dipakai" |
+| 12 | Penggantian barang gratis pasca-retur | 1 jurnal (HPP/Persediaan Barang Jadi), referensi credit note jalur full, gak nyentuh Piutang/Pendapatan |
 
 ## Common mistakes to guard against
 
@@ -60,11 +64,13 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - DP diterima langsung dicatat ngurangin Piutang Usaha atau jadi Pendapatan — piutangnya belum ada, barang/jasanya belum diserahkan. Harus lewat `Uang Muka Penjualan` (liability) dulu.
 - DP hangus dicatat ke `Pendapatan Penjualan` — harus ke `Pendapatan Lain-lain`, biar gak nyampur sama pendapatan jualan beneran.
 - `cancel_ar_invoice` cuma reverse jurnal invoice-nya doang tanpa ikut reverse jurnal `ar_deposit_applications` — Piutang Usaha customer itu nyasar jadi minus, DP-nya nyangkut gak jelas status.
+- Penggantian barang gratis lewat `create_goods_issue` biasa — bikin piutang/pendapatan palsu.
+- Penggantian barang gratis tanpa referensi ke credit note — kehilangan audit trail.
+- Barang pengganti diambil dari lot `SALES_RETURN` — harusnya stok fresh.
 
 ## Belum termasuk (di luar scope fase ini)
 
 - Overpayment jadi saldo kredit customer (termasuk hasil retur yang bikin outstanding negatif) — refund/pemakaian saldo kredit belum didesain. **Beda mekanisme** dari `ar_deposit` (yang solve "bayar sebelum invoice ada") — overpayment itu "bayar lebih dari invoice yang udah ada", masih 2 masalah terpisah.
-- Penggantian barang gratis pasca-retur (`memory/scope-debt/ar-penggantian-barang-retur.md`) — butuh RPC keluar stok+HPP tanpa invoice baru.
 
 ## Glossary
 
@@ -76,5 +82,6 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **Aging**: invoice yang `due_date`-nya udah lewat dan belum lunas.
 - **AR Credit Note**: retur barang yang udah diinvoice — ngurangin outstanding invoice tanpa ubah `amount` asli, beda dari `cancel_ar_invoice`.
 - **AR Deposit**: uang muka diterima sebelum invoice ada, dicatat ke liability `Uang Muka Penjualan` — beda dari `AR Payment` yang selalu terhadap invoice existing.
+- **Warranty Replacement**: penggantian barang gratis pasca-retur — keluar stok+HPP tanpa invoice/piutang baru, wajib referensi credit note jalur full.
 
 Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`.

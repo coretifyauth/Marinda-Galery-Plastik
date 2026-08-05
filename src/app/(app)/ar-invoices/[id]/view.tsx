@@ -10,6 +10,10 @@ import {
   type GoodsIssueForInvoice,
 } from "@/lib/ar-credit-notes/schema";
 import { applyArDepositSchema, depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
+import {
+  createWarrantyReplacementSchema,
+  type WarrantyReplacement,
+} from "@/lib/ar-warranty-replacements/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -18,6 +22,7 @@ import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 
 type ReturnLineInput = { item_id: string; name: string; uom: string; qty_available: number; qty_returned: string };
+type ReplacementLineInput = { item_id: string; name: string; uom: string; qty_remaining: number; qty: string };
 
 type JournalEntryDetail = {
   id: string;
@@ -107,6 +112,16 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
+  const [replacements, setReplacements] = useState<WarrantyReplacement[]>([]);
+  const [replaceCreditNoteId, setReplaceCreditNoteId] = useState<string | null>(null);
+  const [replaceDate, setReplaceDate] = useState("");
+  const [replaceSourceRef, setReplaceSourceRef] = useState("");
+  const [replaceHppAccountId, setReplaceHppAccountId] = useState("");
+  const [replaceFinishedGoodAccountId, setReplaceFinishedGoodAccountId] = useState("");
+  const [replaceLines, setReplaceLines] = useState<ReplacementLineInput[]>([]);
+  const [replaceError, setReplaceError] = useState<string | null>(null);
+  const [replaceSubmitting, setReplaceSubmitting] = useState(false);
+
   const leafAccounts = getLeafAccounts(accounts);
 
   const load = useCallback(async () => {
@@ -130,6 +145,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       { data: entries, error: entriesErr },
       { data: allocs, error: allocErr },
       { data: cns, error: cnErr },
+      { data: reps, error: repErr },
       { data: gi },
       { data: depApps, error: depAppErr },
       { data: custDeposits, error: custDepositsErr },
@@ -161,6 +177,13 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("invoice_id", id)
         .order("credit_note_date"),
       supabase
+        .from("warranty_replacements")
+        .select(
+          "id, credit_note_id, replacement_date, source_ref, created_at, warranty_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom)), ar_credit_notes!inner(invoice_id)"
+        )
+        .eq("ar_credit_notes.invoice_id", id)
+        .order("replacement_date"),
+      supabase
         .from("goods_issues")
         .select("id, goods_issue_lines(item_id, qty_issued, items(name, uom))")
         .eq("invoice_id", id)
@@ -186,11 +209,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
     setAllocations((allocs ?? []) as unknown as PaymentAllocationDetail[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
+    setReplacements((reps ?? []) as unknown as WarrantyReplacement[]);
     setGoodsIssue((gi ?? null) as unknown as GoodsIssueForInvoice | null);
     setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
     setCustomerDeposits((custDeposits ?? []) as unknown as ArDeposit[]);
     setLoadError(
-      entriesErr?.message ?? allocErr?.message ?? cnErr?.message ?? depAppErr?.message ?? custDepositsErr?.message ?? null
+      entriesErr?.message ??
+        allocErr?.message ??
+        cnErr?.message ??
+        repErr?.message ??
+        depAppErr?.message ??
+        custDepositsErr?.message ??
+        null
     );
   }, [id]);
 
@@ -290,6 +320,82 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     }
 
     setShowReturForm(false);
+    await load();
+  }
+
+  function openReplaceForm(creditNote: CreditNoteDetail) {
+    const invReturn = creditNote.inventory_returns[0];
+    if (!invReturn) return;
+
+    const alreadyReplaced = new Map<string, number>();
+    for (const r of replacements) {
+      if (r.credit_note_id !== creditNote.id) continue;
+      for (const l of r.warranty_replacement_lines) {
+        alreadyReplaced.set(l.item_id, (alreadyReplaced.get(l.item_id) ?? 0) + l.qty_replaced);
+      }
+    }
+
+    setReplaceError(null);
+    setReplaceCreditNoteId(creditNote.id);
+    setReplaceDate("");
+    setReplaceSourceRef("");
+    setReplaceHppAccountId("");
+    setReplaceFinishedGoodAccountId("");
+    setReplaceLines(
+      invReturn.inventory_return_lines
+        .map((l) => ({
+          item_id: l.item_id,
+          name: l.items.name,
+          uom: l.items.uom,
+          qty_remaining: l.qty_returned - (alreadyReplaced.get(l.item_id) ?? 0),
+          qty: "",
+        }))
+        .filter((l) => l.qty_remaining > 0)
+    );
+  }
+
+  function updateReplaceLine(itemId: string, qty: string) {
+    setReplaceLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, qty } : l)));
+  }
+
+  async function handleReplaceSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!replaceCreditNoteId) return;
+    setReplaceError(null);
+
+    const activeLines = replaceLines
+      .filter((l) => l.qty.trim() !== "")
+      .map((l) => ({ item_id: l.item_id, qty: l.qty }));
+
+    const parsed = createWarrantyReplacementSchema.safeParse({
+      credit_note_id: replaceCreditNoteId,
+      replacement_date: replaceDate,
+      source_ref: replaceSourceRef,
+      lines: activeLines,
+      hpp_account_id: replaceHppAccountId,
+      finished_good_account_id: replaceFinishedGoodAccountId,
+    });
+    if (!parsed.success) {
+      setReplaceError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setReplaceSubmitting(true);
+    const { error } = await supabase.rpc("create_warranty_replacement", {
+      p_credit_note_id: parsed.data.credit_note_id,
+      p_replacement_date: parsed.data.replacement_date,
+      p_source_ref: parsed.data.source_ref,
+      p_lines: parsed.data.lines,
+      p_hpp_account_id: parsed.data.hpp_account_id,
+      p_finished_good_account_id: parsed.data.finished_good_account_id,
+    });
+    setReplaceSubmitting(false);
+    if (error) {
+      setReplaceError(error.message);
+      return;
+    }
+
+    setReplaceCreditNoteId(null);
     await load();
   }
 
@@ -601,6 +707,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               <th className="px-4 py-2">Jalur</th>
               <th className="px-4 py-2">Item Diretur</th>
               <th className="px-4 py-2 text-right">Nominal</th>
+              <th className="px-4 py-2"></th>
             </tr>
           </thead>
           <tbody>
@@ -634,12 +741,19 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                     )}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{cn.amount.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2">
+                    {canWrite && invReturn && (
+                      <Button variant="toolbar" onClick={() => openReplaceForm(cn)}>
+                        Ganti Barang
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
             {creditNotes.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
                   Belum ada retur.
                 </td>
               </tr>
@@ -647,6 +761,158 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 px-4 py-2">
+          <span className="text-sm font-medium text-black">Penggantian Barang</span>
+          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+            {replacements.length}
+          </span>
+        </div>
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="px-4 py-2">Tanggal</th>
+              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Item Diganti</th>
+              <th className="px-4 py-2 text-right">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {replacements.map((r) => (
+              <tr key={r.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                <td className="whitespace-nowrap px-4 py-2">{r.replacement_date}</td>
+                <td className="px-4 py-2">{r.source_ref}</td>
+                <td className="px-4 py-2">
+                  <ul className="space-y-0.5">
+                    {r.warranty_replacement_lines.map((l) => (
+                      <li key={l.item_id}>
+                        {l.items.name} — {l.qty_replaced} {l.items.uom}
+                      </li>
+                    ))}
+                  </ul>
+                </td>
+                <td className="px-4 py-2 text-right font-mono">
+                  {r.warranty_replacement_lines
+                    .reduce((sum, l) => sum + l.total_cost, 0)
+                    .toLocaleString("id-ID")}
+                </td>
+              </tr>
+            ))}
+            {replacements.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                  Belum ada penggantian barang.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {replaceCreditNoteId && (
+        <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-6 shadow-sm">
+          <h2 className="mb-4 font-semibold text-black">Ganti Barang Gratis (Garansi)</h2>
+          <p className="mb-4 text-sm text-slate-600">
+            Barang pengganti keluar dari stok, dijurnal HPP/Persediaan Barang Jadi — gak nagih
+            ulang, gak nyentuh Piutang/Pendapatan. Qty dibatasi sisa yang belum diganti dari retur
+            ini.
+          </p>
+          <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="replace_date">Tanggal</Label>
+                <Input
+                  id="replace_date"
+                  type="date"
+                  value={replaceDate}
+                  onChange={(e) => setReplaceDate(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="replace_source_ref">Rujukan dokumen</Label>
+                <Input
+                  id="replace_source_ref"
+                  placeholder="mis. Nota ganti #001"
+                  value={replaceSourceRef}
+                  onChange={(e) => setReplaceSourceRef(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="replace_hpp_account">Akun HPP (debit)</Label>
+                <Select
+                  id="replace_hpp_account"
+                  value={replaceHppAccountId}
+                  onChange={(e) => setReplaceHppAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="replace_finished_good_account">Akun Persediaan Barang Jadi (kredit)</Label>
+                <Select
+                  id="replace_finished_good_account"
+                  value={replaceFinishedGoodAccountId}
+                  onChange={(e) => setReplaceFinishedGoodAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+                <span>Item (sisa bisa diganti)</span>
+                <span>Qty Ganti</span>
+              </div>
+              {replaceLines.map((line) => (
+                <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
+                  <span className="flex items-center text-sm text-slate-700">
+                    {line.name} ({line.qty_remaining} {line.uom})
+                  </span>
+                  <Input
+                    type="number"
+                    min="0"
+                    max={line.qty_remaining}
+                    placeholder="0"
+                    value={line.qty}
+                    onChange={(e) => updateReplaceLine(line.item_id, e.target.value)}
+                  />
+                </div>
+              ))}
+              {replaceLines.length === 0 && (
+                <p className="text-sm text-slate-400">Semua item di retur ini udah diganti penuh.</p>
+              )}
+            </div>
+
+            {replaceError && <FormError>{replaceError}</FormError>}
+
+            <div className="flex gap-2">
+              <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0} className="w-fit">
+                {replaceSubmitting ? "Menyimpan..." : "Simpan Penggantian"}
+              </Button>
+              <Button
+                type="button"
+                variant="toolbar"
+                className="w-fit"
+                onClick={() => setReplaceCreditNoteId(null)}
+              >
+                Batal
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showApplyForm && (
         <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
