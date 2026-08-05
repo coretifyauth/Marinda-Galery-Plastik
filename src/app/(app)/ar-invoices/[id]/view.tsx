@@ -19,6 +19,7 @@ import {
   createWarrantyReplacementSchema,
   type WarrantyReplacement,
 } from "@/lib/ar-warranty-replacements/schema";
+import { writeOffArInvoiceSchema } from "@/lib/ar-bad-debt-writeoffs/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -60,6 +61,14 @@ type CreditApplicationDetail = {
   ar_customer_credits: { ar_payments: { source_ref: string } };
 };
 
+type WriteoffDetail = {
+  id: string;
+  writeoff_date: string;
+  source_ref: string;
+  amount: number;
+  created_at: string;
+};
+
 type CreditNoteDetail = {
   id: string;
   credit_note_date: string;
@@ -83,6 +92,7 @@ const statusStyle: Record<string, string> = {
   sebagian: "bg-amber-50 text-amber-700",
   belum: "bg-slate-100 text-slate-600",
   dibatalkan: "bg-slate-100 text-slate-400 line-through",
+  dihapusbukukan: "bg-red-50 text-red-700",
 };
 
 export function ArInvoiceDetailView({ id }: { id: string }) {
@@ -94,6 +104,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [allocations, setAllocations] = useState<PaymentAllocationDetail[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
+  const [writeoffs, setWriteoffs] = useState<WriteoffDetail[]>([]);
   const [depositApplications, setDepositApplications] = useState<DepositApplicationDetail[]>([]);
   const [creditApplications, setCreditApplications] = useState<CreditApplicationDetail[]>([]);
   const [customerDeposits, setCustomerDeposits] = useState<ArDeposit[]>([]);
@@ -137,6 +148,15 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
+  const [showWriteoffForm, setShowWriteoffForm] = useState(false);
+  const [writeoffDate, setWriteoffDate] = useState("");
+  const [writeoffSourceRef, setWriteoffSourceRef] = useState("");
+  const [writeoffAmount, setWriteoffAmount] = useState("");
+  const [writeoffExpenseAccountId, setWriteoffExpenseAccountId] = useState("");
+  const [writeoffReceivableAccountId, setWriteoffReceivableAccountId] = useState("");
+  const [writeoffError, setWriteoffError] = useState<string | null>(null);
+  const [writeoffSubmitting, setWriteoffSubmitting] = useState(false);
+
   const [replacements, setReplacements] = useState<WarrantyReplacement[]>([]);
   const [replaceCreditNoteId, setReplaceCreditNoteId] = useState<string | null>(null);
   const [replaceDate, setReplaceDate] = useState("");
@@ -153,7 +173,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount)"
       )
       .eq("id", id)
       .single();
@@ -170,6 +190,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       { data: entries, error: entriesErr },
       { data: allocs, error: allocErr },
       { data: cns, error: cnErr },
+      { data: wos, error: woErr },
       { data: reps, error: repErr },
       { data: gi },
       { data: depApps, error: depAppErr },
@@ -203,6 +224,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         )
         .eq("invoice_id", id)
         .order("credit_note_date"),
+      supabase
+        .from("ar_bad_debt_writeoffs")
+        .select("id, writeoff_date, source_ref, amount, created_at")
+        .eq("invoice_id", id)
+        .order("writeoff_date"),
       supabase
         .from("warranty_replacements")
         .select(
@@ -247,6 +273,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
     setAllocations((allocs ?? []) as unknown as PaymentAllocationDetail[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
+    setWriteoffs((wos ?? []) as unknown as WriteoffDetail[]);
     setReplacements((reps ?? []) as unknown as WarrantyReplacement[]);
     setGoodsIssue((gi ?? null) as unknown as GoodsIssueForInvoice | null);
     setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
@@ -257,6 +284,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       entriesErr?.message ??
         allocErr?.message ??
         cnErr?.message ??
+        woErr?.message ??
         repErr?.message ??
         depAppErr?.message ??
         custDepositsErr?.message ??
@@ -541,6 +569,53 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     await load();
   }
 
+  function openWriteoffForm() {
+    setWriteoffError(null);
+    setWriteoffDate("");
+    setWriteoffSourceRef("");
+    setWriteoffAmount("");
+    setWriteoffExpenseAccountId("");
+    setWriteoffReceivableAccountId("");
+    setShowWriteoffForm(true);
+  }
+
+  async function handleWriteoffSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!invoice) return;
+    setWriteoffError(null);
+
+    const parsed = writeOffArInvoiceSchema.safeParse({
+      invoice_id: invoice.id,
+      writeoff_date: writeoffDate,
+      amount: writeoffAmount,
+      source_ref: writeoffSourceRef,
+      expense_account_id: writeoffExpenseAccountId,
+      receivable_account_id: writeoffReceivableAccountId,
+    });
+    if (!parsed.success) {
+      setWriteoffError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setWriteoffSubmitting(true);
+    const { error } = await supabase.rpc("write_off_ar_invoice", {
+      p_invoice_id: parsed.data.invoice_id,
+      p_writeoff_date: parsed.data.writeoff_date,
+      p_amount: parsed.data.amount,
+      p_source_ref: parsed.data.source_ref,
+      p_expense_account_id: parsed.data.expense_account_id,
+      p_receivable_account_id: parsed.data.receivable_account_id,
+    });
+    setWriteoffSubmitting(false);
+    if (error) {
+      setWriteoffError(error.message);
+      return;
+    }
+
+    setShowWriteoffForm(false);
+    await load();
+  }
+
   async function handleCancel() {
     if (!invoice) return;
     const ref = window.prompt(
@@ -575,10 +650,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const isCancelled = reversedEntryIds.has(invoice.journal_entry_id);
   const { status, outstanding, allocated, returned } = invoiceStatus(invoice, isCancelled);
   const overdue =
-    status !== "lunas" && status !== "dibatalkan" && invoice.due_date < new Date().toISOString().slice(0, 10);
+    status !== "lunas" &&
+    status !== "dibatalkan" &&
+    status !== "dihapusbukukan" &&
+    invoice.due_date < new Date().toISOString().slice(0, 10);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  const canCancel = canWrite && !isCancelled && allocated === 0;
+  const canCancel = canWrite && !isCancelled && allocated === 0 && writeoffs.length === 0;
   const canRetur = canWrite && !isCancelled;
+  const canWriteOff = canWrite && !isCancelled && outstanding > 0.005;
   const availableDeposits = customerDeposits.filter(
     (dep) => depositStatus(dep, reversedEntryIds).status === "belum_dipakai"
   );
@@ -639,6 +718,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             {canRetur && (
               <Button variant="toolbar" onClick={() => (showReturForm ? setShowReturForm(false) : openReturForm())}>
                 {showReturForm ? "Batal Retur" : "Retur"}
+              </Button>
+            )}
+            {canWriteOff && (
+              <Button
+                variant="toolbar"
+                onClick={() => (showWriteoffForm ? setShowWriteoffForm(false) : openWriteoffForm())}
+              >
+                {showWriteoffForm ? "Batal Hapusbukukan" : "Hapusbukukan"}
               </Button>
             )}
             {canCancel && (
@@ -897,6 +984,40 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
                   Belum ada retur.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 px-4 py-2">
+          <span className="text-sm font-medium text-black">Piutang Tak Tertagih (Write-off)</span>
+          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+            {writeoffs.length}
+          </span>
+        </div>
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="px-4 py-2">Tanggal</th>
+              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2 text-right">Nominal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {writeoffs.map((w) => (
+              <tr key={w.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="whitespace-nowrap px-4 py-2">{w.writeoff_date}</td>
+                <td className="px-4 py-2">{w.source_ref}</td>
+                <td className="px-4 py-2 text-right font-mono">{w.amount.toLocaleString("id-ID")}</td>
+              </tr>
+            ))}
+            {writeoffs.length === 0 && (
+              <tr>
+                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                  Belum ada write-off.
                 </td>
               </tr>
             )}
@@ -1259,6 +1380,87 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
             <Button type="submit" disabled={applyCreditSubmitting} className="w-fit">
               {applyCreditSubmitting ? "Menyimpan..." : "Pakai Saldo Kredit"}
+            </Button>
+          </form>
+        </div>
+      )}
+
+      {showWriteoffForm && (
+        <div className="rounded-xl border border-red-200 bg-red-50/40 p-6 shadow-sm">
+          <h2 className="mb-4 font-semibold text-black">Hapusbukukan Piutang Tak Tertagih</h2>
+          <p className="mb-4 text-sm text-slate-600">
+            Piutang ini beneran gak akan tertagih (customer menghilang/tutup usaha) —
+            Pendapatan asli gak dibalik, cuma piutangnya dihapusbukukan lewat beban baru.
+            Boleh sebagian, tapi gak boleh ngelebihin sisa outstanding.
+          </p>
+          <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="writeoff_date">Tanggal Write-off</Label>
+                <Input
+                  id="writeoff_date"
+                  type="date"
+                  value={writeoffDate}
+                  onChange={(e) => setWriteoffDate(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="writeoff_source_ref">Rujukan dokumen</Label>
+                <Input
+                  id="writeoff_source_ref"
+                  placeholder="mis. Write-off piutang - customer tidak dapat dihubungi"
+                  value={writeoffSourceRef}
+                  onChange={(e) => setWriteoffSourceRef(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="writeoff_amount">Nominal Write-off (maks {outstanding.toLocaleString("id-ID")})</Label>
+                <Input
+                  id="writeoff_amount"
+                  type="number"
+                  min="0"
+                  max={outstanding}
+                  placeholder="0"
+                  value={writeoffAmount}
+                  onChange={(e) => setWriteoffAmount(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="writeoff_expense_account">Akun Beban Piutang Tak Tertagih (debit)</Label>
+                <Select
+                  id="writeoff_expense_account"
+                  value={writeoffExpenseAccountId}
+                  onChange={(e) => setWriteoffExpenseAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="writeoff_receivable_account">Akun Piutang Usaha (kredit)</Label>
+                <Select
+                  id="writeoff_receivable_account"
+                  value={writeoffReceivableAccountId}
+                  onChange={(e) => setWriteoffReceivableAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            {writeoffError && <FormError>{writeoffError}</FormError>}
+
+            <Button type="submit" disabled={writeoffSubmitting} className="w-fit">
+              {writeoffSubmitting ? "Menyimpan..." : "Simpan Write-off"}
             </Button>
           </form>
         </div>

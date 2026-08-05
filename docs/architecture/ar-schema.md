@@ -19,6 +19,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario n
 | `ar_customer_credits` | Kelebihan bayar — pelanggan transfer lebih dari yang dialokasikan ke invoice dalam satu pembayaran | `customers`, `ar_payments` (sumbernya), dan ke transaksi jurnal pembayaran yang sama |
 | `ar_customer_credit_applications` | Saldo kredit dipakai memotong invoice lain | Menghubungkan `ar_customer_credits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
 | `ar_customer_credit_refunds` | Saldo kredit dikembalikan tunai ke pelanggan | `ar_customer_credits`, dan ke transaksi jurnal (Saldo Kredit Customer → Kas) |
+| `ar_bad_debt_writeoffs` | Piutang yang benar-benar tidak akan tertagih, dihapusbukukan | `ar_invoices` (1 invoice bisa punya lebih dari satu write-off parsial), dan ke transaksi jurnal (Beban Piutang Tak Tertagih → Piutang Usaha) |
 
 Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invoice satu pembayaran: satu pembayaran bisa melunasi beberapa invoice sekaligus (bayar gabungan), dan satu invoice bisa dilunasi lewat beberapa pembayaran (dicicil). Hubungannya banyak-ke-banyak, jadi butuh tabel sendiri yang mencatat tiap pasangan pembayaran-invoice beserta jumlahnya.
 
@@ -43,6 +44,7 @@ Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invo
 8. **Penggantian barang gratis wajib nunjuk retur yang sudah ada, dan jumlahnya dibatasi.** Tidak bisa dibuat berdiri sendiri — harus terhubung ke retur fisik yang sudah tercatat. Total yang diganti tidak boleh melebihi jumlah yang benar-benar diretur untuk item itu.
 9. **Kelebihan bayar otomatis jadi saldo kredit, dalam pembayaran yang sama.** Kalau nominal yang dibayar melebihi total yang dialokasikan ke invoice, selisihnya langsung tercatat sebagai saldo kredit pelanggan — bukan pembayaran terpisah, tapi bagian dari transaksi jurnal pembayaran itu juga (satu bukti transfer, satu transaksi).
 10. **Saldo kredit boleh dipakai atau dikembalikan sebagian-sebagian, berkali-kali** — beda dari uang muka yang cuma boleh punya satu nasib akhir. Total yang dipakai + dikembalikan tidak boleh melebihi nominal saldo kredit awalnya, dan pemakaiannya ikut dihitung bareng alokasi pembayaran + penerapan uang muka supaya satu invoice tidak bisa "kelunasan" dari gabungan tiga jalur itu.
+11. **Write-off tidak boleh melebihi sisa piutang yang benar-benar masih outstanding.** Beda dari retur (yang boleh bikin saldo negatif) — write-off ikut menghitung SEMUA pengurang lain yang sudah ada buat invoice itu (pembayaran, retur, uang muka, saldo kredit), supaya tidak "menghapus" uang yang sebenarnya sudah lunas/diretur/dikreditkan lewat jalur lain. Invoice yang sudah punya write-off tidak bisa dibatalkan lewat jalur biasa — sama seperti invoice yang sudah ada pembayarannya.
 
 ## Cara Kerja "Buat Invoice", "Catat Pembayaran", dan "Batalkan Invoice"
 
@@ -81,17 +83,28 @@ Sisa saldo kredit tidak disimpan sebagai kolom — dihitung dari nominal awal di
 
 Kalau invoice yang sudah dipotong saldo kredit ternyata dibatalkan (aturan #3 di atas), transaksi jurnal pemakaian saldo kreditnya ikut dibalik otomatis — saldo kreditnya kembali tersedia buat dipakai/dikembalikan lagi, bukan hilang percuma.
 
+## Piutang Tak Tertagih (Write-off)
+
+Kadang piutang pelanggan benar-benar tidak akan pernah tertagih — bukan cuma telat, tapi customer-nya menghilang atau tutup usaha. Ini beda dari pembatalan invoice: penjualannya beneran terjadi dan Pendapatan yang sudah diakui **tidak dibalik** — yang terjadi cuma pengakuan kerugian baru di periode saat ketauan macetnya, lewat akun beban baru "Beban Piutang Tak Tertagih" (bukan akun kontra, langsung mengurangi Piutang Usaha).
+
+Sistem ini pakai metode **langsung dihapuskan** (bukan metode mencadangkan dulu sebagian piutang tiap tutup buku) — cocok buat skala usaha yang piutang macetnya jarang dan tidak ada pola historis buat diestimasi, dan juga satu-satunya metode yang diakui pajak buat badan usaha umum di Indonesia (bukan lembaga keuangan).
+
+Write-off boleh sebagian (tidak wajib menghapus penuh nilai outstanding invoice), tapi jumlahnya dibatasi sisa piutang yang benar-benar masih outstanding (lihat aturan #11 di atas). Invoice yang sudah punya write-off, statusnya jadi "dihapusbukukan" — beda dari "lunas" (piutang ini tidak pernah benar-benar dibayar, cuma diakui hilang).
+
+**Belum termasuk**: kalau piutang yang sudah di-write-off ternyata akhirnya kebayar juga (pemulihan) — metode langsung dihapuskan tidak punya akun cadangan penyangga buat menangani ini dengan mulus, penanganannya belum dirancang.
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat pelanggan, invoice, pembayaran, uang muka | Semua user yang sudah login |
 | Menambah pelanggan baru, mengubah data pelanggan | Role `admin` atau `accountant` |
-| Membuat invoice, mencatat pembayaran, mencatat/menerapkan/menghanguskan uang muka | Role `admin` atau `accountant` |
-| Mengedit atau menghapus invoice/pembayaran/retur/uang muka | **Tidak ada seorang pun** — hanya pembatalan/retur lewat jalur resmi yang diizinkan |
+| Membuat invoice, mencatat pembayaran, mencatat/menerapkan/menghanguskan uang muka, mencatat write-off | Role `admin` atau `accountant` |
+| Mengedit atau menghapus invoice/pembayaran/retur/uang muka/write-off | **Tidak ada seorang pun** — hanya pembatalan/retur lewat jalur resmi yang diizinkan |
 | Menghapus data pelanggan secara permanen | **Tidak ada seorang pun** — hanya bisa diarsipkan |
 
 ## Belum Termasuk
 
 - **Retur yang membuat saldo invoice negatif** — beda mekanisme dari kelebihan bayar pembayaran (yang sudah di atas): retur mengurangi nilai invoice lewat akun kontra-pendapatan, bukan lewat kelebihan kas pembayaran. Penanganan saldo kreditnya masih belum dirancang.
 - **Laporan umur piutang (aging) / dashboard invoice jatuh tempo** — ini laporan baca-saja dari data yang sudah ada, akan dibangun bersama tampilan UI-nya, tidak butuh perubahan struktur data.
+- **Pemulihan piutang yang sudah di-write-off** — lihat "Piutang Tak Tertagih" di atas, belum dirancang.

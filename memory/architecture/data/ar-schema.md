@@ -715,7 +715,55 @@ Sekarang ada 3 jalur independen yang sama-sama bisa ngurangin outstanding 1 invo
 
 Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
 
+## AR Bad Debt Write-off (Piutang Tak Tertagih) — migration `0029_ar_bad_debt_writeoffs.sql` + `0030_seed_demo_ar_bad_debt_writeoffs.sql`
+
+Piutang yang beneran gak akan pernah tertagih (customer menghilang/tutup usaha), dihapusbukukan lewat metode **direct write-off** (bukan allowance/provisi — gak ada data historis buat estimasi kredibel, gak diakui fiskus buat badan usaha umum di Indonesia, gak konsisten sama pola RPC AR lain yang reaktif per-kejadian). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Piutang Tak Tertagih (Bad Debt Write-off)".
+
+### `ar_bad_debt_writeoffs` — write-off, selalu terhadap 1 invoice
+
+Satu baris = satu kejadian write-off. `journal_entry_id` nunjuk jurnal Debit `Beban Piutang Tak Tertagih` (`5700`, expense biasa — **bukan** kontra, beda dari `Retur & Potongan Penjualan`/`Akumulasi Penyusutan`) / Kredit Piutang Usaha (`create_journal_entry`, reuse). Immutable, pola sama `ar_credit_notes`.
+
+```sql
+create table ar_bad_debt_writeoffs (
+  id uuid primary key default gen_random_uuid(),
+  invoice_id uuid not null references ar_invoices(id),
+  writeoff_date date not null,
+  source_ref text not null,
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### Trigger `ar_bad_debt_writeoffs_no_over_writeoff`
+
+Beda dari `ar_credit_notes_no_over_return` (sengaja independen, boleh bikin outstanding negatif) — write-off gak boleh ngelebihin **sisa outstanding riil** invoice: `amount` dikurangi SEMUA reducer lain yang udah ada (`ar_payment_allocations`, `ar_credit_notes`, `ar_deposit_applications` aktif, `ar_customer_credit_applications` aktif, write-off lain yang udah ada) — gak masuk akal "menghapus" uang yang udah lunas/diretur/dikreditkan duluan lewat jalur lain. Juga nolak kalau invoice-nya udah dibatalkan (exists reversal), pola sama `ar_deposit_applications_guard`/`ar_customer_credit_applications_guard`.
+
+### RPC `write_off_ar_invoice`
+
+`security invoker`, reuse `create_journal_entry`. 1 kejadian = 1 jurnal, gak ada tahap estimasi/cadangan terpisah. Nominal (`p_amount`) input eksplisit dari caller, konsisten pola RPC AR lain.
+
+Full body: `supabase/migrations/0029_ar_bad_debt_writeoffs.sql`.
+
+### 5 fungsi existing yang ikut diperluas (`create or replace` di `0029`, bukan tabel baru)
+
+Sekarang ada **5 reducer independen** terhadap outstanding 1 invoice — `ar_payment_allocations`, `ar_credit_notes`, `ar_deposit_applications`, `ar_customer_credit_applications`, `ar_bad_debt_writeoffs` — jadi guard yang udah ada semua di-extend biar konsisten jumlahin write-off juga (exclude yang udah di-reverse, pola sama 3 perluasan sebelumnya):
+- **`ar_payment_allocations_no_over_allocation`** (0007, di-extend 0024/0027) — tambah `v_invoice_written_off` ke perhitungan.
+- **`ar_deposit_applications_guard`** (0024, di-extend 0027) — tambah `v_already_written_off_to_invoice`.
+- **`ar_customer_credit_applications_guard`** (0027) — tambah `v_already_written_off`.
+- **`create_ar_invoice`** (0007, di-extend 0020/0024/0027) — outstanding calc buat credit hold ikut ngurangin `ar_bad_debt_writeoffs` aktif (union ke-4 di subquery `combined`) — piutang yang udah dihapusbukukan gak boleh masih keitung exposure customer itu.
+
+**`cancel_ar_invoice`** (0009, di-extend 0024/0027) ikut di-extend lagi: guard baru di awal fungsi, nolak keras kalau invoice udah punya `ar_bad_debt_writeoffs` — beda dari `ar_deposit_applications`/`ar_customer_credit_applications` (auto-unwind), write-off itu keputusan bisnis yang udah dijurnal sebagai kerugian nyata, sama kelasnya kayak guard `ar_payment_allocations` (ditolak keras, bukan di-unwind).
+
+Direview `schema-reviewer` sebelum apply — gak ada temuan blocker/warning, termasuk dicek eksplisit soal function-overload hazard (nama fungsi yang di-`create or replace` semua signature-nya identik ke versi sebelumnya, gak butuh `drop function if exists`).
+
+### RLS & Grant
+
+Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
 - **Retur yang bikin outstanding invoice negatif** (lihat "AR Credit Note" di atas) — beda mekanisme dari overpayment payment (yang di atas udah di-scope): retur ngurangin `ar_invoices.amount` via kontra-revenue, bukan lewat kelebihan kas payment. Penanganan saldo kreditnya masih belum didesain.
 - **Aging report / dashboard piutang jatuh tempo** — query read-side (`due_date` vs `now()`, join alokasi buat status), digarap pas UI dibangun, gak butuh kolom/tabel tambahan.
+- **Recovery piutang yang udah di-write-off** (lihat "AR Bad Debt Write-off" di atas) — direct write-off gak punya akun cadangan penyangga, penanganannya kalau ternyata kebayar lagi belum didesain.

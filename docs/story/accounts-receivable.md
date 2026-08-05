@@ -202,9 +202,27 @@ Jurnal: Kas di Bank (D) 250.000 | Piutang Usaha (K) 250.000. Status invoice: **l
 
 (Kalau Bu Imas minta saldo kreditnya di-refund tunai alih-alih dipakai: Saldo Kredit Customer (D) 50.000 | Kas di Bank (K) 50.000 — jurnal alternatif, gak dipakai di skenario ini.)
 
+## Skenario 12 — Piutang tak tertagih (write-off), pesanan custom yang kabur (Bu Rina)
+
+Selain Ibu Dewi & Pak Joko (yang selalu bayar DP di muka), 1 Februari 2027 ada pesanan custom dari **Bu Rina** (0812-xxxx-0006, referral dari Ibu Dewi) — kue ulang tahun anak Rp1.500.000. Karena referral dari langganan yang udah dipercaya, Bu Nur bikin pengecualian: kirim langsung hari itu juga **tanpa minta DP**. `payment_term_days` default 7 (`due_date` 8 Februari 2027), `credit_limit`/`overdue_threshold_days` NULL (customer baru, gak dibatasi — sama pola Ibu Dewi/Pak Joko).
+
+Jurnal: Piutang Usaha (D) 1.500.000 | Pendapatan Penjualan Toko (K) 1.500.000
+
+Setelah due date lewat, Bu Nur follow-up berkali-kali lewat WhatsApp — gak pernah dibales. Bulan berikutnya nomornya udah gak aktif, alamat yang dikasih pas pesan ternyata gak ditemuin. Ditunggu sampai **1 Juni 2027** (4 bulan sejak jatuh tempo), gak ada respons sama sekali — Bu Nur mutusin piutang ini gak akan pernah tertagih.
+
+RPC `write_off_ar_invoice` dipanggil: `invoice_id` = invoice Bu Rina, `writeoff_date = 2027-06-01`, `amount = 1.500.000` (penuh — belum ada payment/retur/DP/kredit apa pun yang nyentuh invoice ini, jadi sisa outstanding riilnya emang penuh Rp1.500.000).
+
+Jurnal:
+```
+Debit Beban Piutang Tak Tertagih   1.500.000
+  Kredit Piutang Usaha                    1.500.000
+```
+
+Piutang Usaha Bu Rina: 1.500.000 (invoice) − 1.500.000 (write-off) = **0 outstanding**. Status invoice berubah dari **belum** jadi **dihapusbukukan** — beda dari **lunas** (piutang ini gak pernah beneran dibayar, cuma diakui hilang). Pendapatan Penjualan Toko 1.500.000 dari 1 Februari **tetap berdiri** gak dibalik — penjualannya beneran kejadian, cuma piutangnya yang gak bisa dicairkan. Laba Rugi periode Juni 2027 kena beban baru Rp1.500.000 (bukan periode Februari saat penjualan awal terjadi).
+
 ## Simulasi Interface (rencana)
 
-Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate — plus tampilin sisa Rp yang jadi saldo kredit kalau ada excess), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Saldo kredit customer (pakai/refund) menyusul di halaman customer detail atau inline di `/ar-invoices`, pola sama tombol "Terapkan DP". Detail flow menyusul pas fase UI dikerjakan.
+Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate — plus tampilin sisa Rp yang jadi saldo kredit kalau ada excess), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Saldo kredit customer (pakai/refund) menyusul di halaman customer detail atau inline di `/ar-invoices`, pola sama tombol "Terapkan DP". Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

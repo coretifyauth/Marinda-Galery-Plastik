@@ -17,6 +17,7 @@ const statusStyle: Record<string, string> = {
   sebagian: "bg-amber-50 text-amber-700",
   belum: "bg-slate-100 text-slate-600",
   dibatalkan: "bg-slate-100 text-slate-400 line-through",
+  dihapusbukukan: "bg-red-50 text-red-700",
 };
 
 export default function ArInvoicesPage() {
@@ -56,7 +57,7 @@ export default function ArInvoicesPage() {
     const { data, error } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount)"
       )
       .order("invoice_date", { ascending: false });
     if (error) {
@@ -203,7 +204,10 @@ export default function ArInvoicesPage() {
               const isCancelled = reversedEntryIds.has(inv.journal_entry_id);
               const { status, outstanding, returned } = invoiceStatus(inv, isCancelled);
               const overdue =
-                status !== "lunas" && status !== "dibatalkan" && inv.due_date < new Date().toISOString().slice(0, 10);
+                status !== "lunas" &&
+                status !== "dibatalkan" &&
+                status !== "dihapusbukukan" &&
+                inv.due_date < new Date().toISOString().slice(0, 10);
               return (
                 <tr
                   key={inv.id}
