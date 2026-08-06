@@ -101,6 +101,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 ## Belum termasuk (di luar scope fase ini)
 
 - **Recovery piutang yang udah di-write-off** — direct write-off gak punya akun cadangan penyangga, belum didesain.
+- **Barang rusak yang di-retur masuk lagi sebagai stok bernilai** — `warranty_replacement` (dan retur full pada umumnya) masukin barang balik ke `inventory_lots`/`inventory_balances` seolah layak jual, padahal kalau alasannya rusak harusnya diakui Beban Kerugian Barang Rusak (write-off). Ref `memory/scope-debt/kerugian-barang-rusak.md`.
+- **BUG diketahui: `warranty_replacement` additive sama `create_ar_credit_note`** — customer bisa dapat diskon dari retur DAN barang pengganti gratis sekaligus buat 1 kejadian cacat yang sama (kompensasi ganda). Perlu diperbaiki jadi saling eksklusif (mirror pola Opsi A/B di AP) atau `warranty_replacement` wajib membalikkan diskon yang sudah diberikan. Ref `memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`.
 
 ## Glossary
 

@@ -67,6 +67,42 @@ Belum ada payment yang dialokasikan ke bill ini, jadi bisa langsung dibatalkan v
 
 Total saldo akun `Utang Usaha` di General Ledger per 30 Juli 2026: **Rp800.000** (cuma sisa Toko Tepung Makmur — sama pola kayak AR yang nyisain Rp1.200.000 dari Warung Pak Budi, dua-duanya kebetulan berasal dari entry 7 & 10 Juli yang udah ada sebelum modul AR/AP dibangun).
 
+## Skenario 6 — Retur (Opsi A: kurangi utang), bill belum lunas (Toko Gula Sejahtera)
+
+Lanjutan cerita cross-modul dari `docs/story/inventory.md` Tahap 3 (8 Agustus 2026: GRN+Bill 20kg Gula Pasir @ Rp13.000 = Rp260.000, due **15 Agustus 2026**, item-tracked lewat GRN — jadi retur ini lewat **jalur full**).
+
+29 Agustus 2026: Barokah cek ulang stok, 4kg dari kiriman itu ternyata basah kena air pas disimpan. Toko Gula Sejahtera setuju **kurangi tagihan** (Opsi A). Nilai retur = 4kg × avg_cost Gula Pasir saat itu (**Rp12.500/kg**, angka terakhir dari `inventory.md` Tahap 5/6) = **Rp50.000**.
+
+Jurnal: `Debit Utang Usaha 50.000 / Kredit Persediaan Bahan Baku 50.000` — **tanpa akun kontra** (beda dari AR, lihat `docs/domain/accounts-payable.md`).
+
+Efek: Utang Usaha bill ini turun dari Rp260.000 → **Rp210.000** (bill masih belum dibayar sama sekali). `inventory_balances` Gula Pasir: qty_on_hand 39kg → **35kg** (avg_cost tetap Rp12.500/kg, konsumsi gak ngubah rata-rata).
+
+## Skenario 7 — Retur (Opsi A), bill udah lunas penuh → jadi Piutang Retur Supplier (Toko Gula Sejahtera)
+
+Pakai bill lama **Skenario 1** di atas (12 Juli 2026, Rp300.000, **lunas** 19 Juli 2026) — bill ini dibuat sebelum modul Inventory ada, jadi **gak ada GRN**, retur lewat **jalur financial-only**.
+
+30 Agustus 2026: setelah dinego ulang, Toko Gula Sejahtera setuju potong Rp50.000 dari nota lama itu karena sebagian kualitasnya kurang bagus. Karena bill ini udah lunas (outstanding = Rp0), seluruh Rp50.000 jadi **excess**:
+
+1. Jurnal retur (tetap jalan dulu): `Debit Utang Usaha 50.000 / Kredit Persediaan Bahan Baku 50.000` → Utang Usaha bill ini jadi **minus Rp50.000**.
+2. Jurnal reklasifikasi otomatis (excess = Rp50.000, karena `sisa_outstanding_sebelum_retur = 0`): `Debit Piutang Retur Supplier 50.000 / Kredit Utang Usaha 50.000` → Utang Usaha balik ke **Rp0**, `ap_return_credits` baru: **Rp50.000** (akun asset `1350`, Toko Gula Sejahtera "berutang" balik ke Barokah).
+
+## Skenario 8 — Retur (Opsi B: tukar barang), independen dari status bayar (Toko Gula Sejahtera)
+
+Lanjutan Tahap 5 di `inventory.md` (20 Agustus 2026: GRN+Bill 20kg Gula Pasir @ Rp12.000 = Rp240.000, due **27 Agustus 2026**, **belum dibayar**).
+
+31 Agustus 2026: 3kg dari kiriman ini juga basah. Kali ini Toko Gula Sejahtera pilih **ganti barang langsung** (Opsi B) buat jaga hubungan baik, bukan kurangi tagihan. Nilai = 3kg × Rp12.500 = **Rp37.500**.
+
+Jurnal: `Debit Persediaan Bahan Baku 37.500 (gula baru) / Kredit Persediaan Bahan Baku 37.500 (gula rusak)` — **net nol**, **Utang Usaha bill ini tetap penuh Rp240.000** (gak berubah sama sekali, Barokah tetap wajib bayar penuh pas jatuh tempo 27 Agustus). `inventory_balances` Gula Pasir: 3kg keluar + 3kg masuk → qty_on_hand tetap **35kg**, avg_cost tetap Rp12.500/kg.
+
+## Skenario 9 & 10 — Piutang Retur Supplier dipakai sebagian + dicairkan sebagian (Toko Gula Sejahtera)
+
+2 September 2026: Barokah beli lagi 10kg Gula Pasir dari Toko Gula Sejahtera, bill baru Rp120.000 (due 9 September). Saldo `ap_return_credits` dari **Skenario 7** (Rp50.000) dipakai **sebagian**:
+
+- **Diterapkan Rp30.000** ke bill baru ini: `Debit Utang Usaha 30.000 / Kredit Piutang Retur Supplier 30.000` → sisa utang bill baru jadi **Rp90.000** (masih harus dibayar cash/transfer biasa).
+- **Sisa Rp20.000 dicairkan tunai**: `Debit Kas di Bank 20.000 / Kredit Piutang Retur Supplier 20.000`.
+
+Saldo `ap_return_credits` dari Skenario 7 sekarang **habis** (Rp30.000 + Rp20.000 = Rp50.000, pas nominal awalnya) — guard no-over-use mencegah dipakai/dicairkan lebih dari itu.
+
 ## Simulasi Interface (rencana)
 
 Sama pola AR: setelah schema (`ap-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/suppliers` (CRUD supplier + termin), `/ap-bills` (list + form bikin bill, pilih akun debit manual — Persediaan atau Beban tergantung jenis pembelian), dan `/ap-payments` (form bayar dengan pilih 1+ bill outstanding buat dialokasikan). Detail flow menyusul pas fase UI dikerjakan.

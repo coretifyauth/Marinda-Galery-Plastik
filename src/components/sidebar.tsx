@@ -66,6 +66,7 @@ const navGroups = [
       { href: "/suppliers", label: "Suppliers", icon: Truck },
       { href: "/ap-bills", label: "AP Bills", icon: Receipt },
       { href: "/ap-payments", label: "AP Payments", icon: Banknote },
+      { href: "/ap-return-credits", label: "AP Return Credit", icon: RotateCcw },
     ],
   },
   {

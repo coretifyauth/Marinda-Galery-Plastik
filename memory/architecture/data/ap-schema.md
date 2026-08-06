@@ -340,11 +340,196 @@ grant select, insert on ap_payments to authenticated;
 grant select, insert on ap_payment_allocations to authenticated;
 ```
 
+## AP Credit Note (Retur Barang ke Supplier, migration `0035_ap_credit_notes_schema.sql`)
+
+Ref bisnis: `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier". Ref DDL yang di-reuse: `journal-entry-schema.md` (`create_journal_entry`, `block_edit_delete`), `inventory-schema.md` (`consume_weighted_average`, `goods_receipt_notes`/`goods_receipt_lines`). 0 perubahan struktur ke `ap_bills`/`ap_payments`/`suppliers` (gak ada kolom baru) — tapi 2 fungsi existing dari `0010` diperluas (`create or replace`): `ap_payment_allocations_no_over_allocation` dan `cancel_ap_bill`, lihat bagian `ap_bill_remaining` di bawah.
+
+**Beda mendasar dari AR Credit Note (`ar-schema.md`)**: 2 resolusi retur yang **saling eksklusif**, dipilih manual, bukan additive kayak AR. Ketauan lewat proses ngajarin fitur ini bahwa `warranty_replacement` di AR justru punya cacat desain (kompensasi ganda) — dicatat `memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`, belum diperbaiki.
+
+Akun baru: `1350` **Piutang Retur Supplier** (asset) — di-insert di migration **seed** (`0036_seed_demo_ap_credit_notes.sql`), bukan di migration schema, pola sama semua akun baru lain (`2400`/`2500` dst) — bukan bagian dari `0035_ap_credit_notes_schema.sql` itu sendiri. Sengaja terpisah dari rencana akun `Uang Muka Pembelian` (`ap-uang-muka-dp.md`, belum dibangun), beda asal jurnal.
+
+**Ketahuan lewat `schema-reviewer` sebelum diapply** (2 blocker + 1 warning, sudah diperbaiki di file final): (1) `ap_bill_remaining()` awalnya cuma 2 reducer, kelewat `ap_return_credit_applications` — bisa bikin over-allocation nyata (bill yang udah "dibayar" pakai saldo kredit retur masih bisa dialokasikan payment lagi ngelebihin sisa riil); (2) `cancel_ap_bill` (0010) awalnya gak diperbarui sama sekali buat 2 reducer baru — sekarang diperluas; (3) `create_ap_credit_note` jalur full awalnya nerima `p_amount` independen dari cost fisik yang dihitung `consume_weighted_average` — bisa divergen tanpa ketauan. Detail perbaikan di masing-masing bagian di bawah.
+
+Asumsi sementara: cuma nanganin item `WEIGHTED_AVERAGE` — `memory/scope-debt/penghapusan-fifo.md`. Batas waktu retur sengaja gak termasuk dan gak akan digarap (bukan scope-debt, keputusan final).
+
+### `ap_credit_notes` — Opsi A, selalu dibuat kalau resolusinya "kurangi utang"
+
+Struktur identik `ar_credit_notes`, field `invoice_id` diganti `bill_id`.
+
+```sql
+create table ap_credit_notes (
+  id uuid primary key default gen_random_uuid(),
+  bill_id uuid not null references ap_bills(id),
+  credit_note_date date not null,
+  source_ref text not null,
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+Guard `ap_credit_notes_no_over_return` — cap ke `ap_bills.amount` (bukan sisa outstanding, karena retur independen dari status bayar), pola identik `ar_credit_notes_no_over_return`.
+
+### `purchase_return_lines` — rincian item Opsi A (cuma jalur full, ada `goods_receipt_notes`)
+
+Beda dari `inventory_returns`/`inventory_return_lines` di AR: **gak butuh tabel header terpisah** — `inventory_returns` di AR eksis karena `warranty_replacement` butuh nunjuk balik ke situ (bukti fisik). Opsi B di AP berdiri sendiri, gak pernah nunjuk ke sini, jadi `purchase_return_lines` cukup FK langsung ke `ap_credit_notes`.
+
+```sql
+create table purchase_return_lines (
+  id uuid primary key default gen_random_uuid(),
+  credit_note_id uuid not null references ap_credit_notes(id) on delete cascade,
+  item_id uuid not null references items(id),
+  qty_returned numeric(14,3) not null check (qty_returned > 0),
+  total_cost numeric(14,2) not null check (total_cost > 0)
+);
+```
+
+### `purchase_replacements` + `purchase_replacement_lines` — Opsi B, berdiri sendiri
+
+**Gak pernah nunjuk ke `ap_credit_notes`** — berbeda dari `warranty_replacements` AR yang wajib punya `credit_note_id`. Jurnalnya Debit Persediaan (barang baru) / Kredit Persediaan (barang rusak) — **akun yang sama di 2 baris**, net nol, dokumentasi/audit trail doang.
+
+```sql
+create table purchase_replacements (
+  id uuid primary key default gen_random_uuid(),
+  bill_id uuid not null references ap_bills(id),
+  replacement_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table purchase_replacement_lines (
+  id uuid primary key default gen_random_uuid(),
+  purchase_replacement_id uuid not null references purchase_replacements(id) on delete cascade,
+  item_id uuid not null references items(id),
+  qty_replaced numeric(14,3) not null check (qty_replaced > 0),
+  total_cost numeric(14,2) not null check (total_cost > 0)
+);
+```
+
+### `purchase_returned_qty(bill_id, item_id)` — guard qty gabungan Opsi A + B
+
+Item Weighted Average gak punya proteksi otomatis per-lot kayak FIFO (`inventory_lot_consumptions_no_over_consumption`) — stoknya udah nyampur begitu diterima. Guard ini jumlahin klaim dari **2 tabel sekaligus** (`purchase_return_lines` via `ap_credit_notes.bill_id`, `purchase_replacement_lines` via `purchase_replacements.bill_id`) dan dibandingin ke `goods_receipt_lines.qty_received` — fisiknya cuma ada 1 pool qty yang bisa diklaim, mau lewat jalur mana pun.
+
+```sql
+create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns numeric as $$
+  select
+    coalesce((
+      select sum(prl.qty_returned) from purchase_return_lines prl
+      join ap_credit_notes acn on acn.id = prl.credit_note_id
+      where acn.bill_id = p_bill_id and prl.item_id = p_item_id
+    ), 0)
+    +
+    coalesce((
+      select sum(prpl.qty_replaced) from purchase_replacement_lines prpl
+      join purchase_replacements prp on prp.id = prpl.purchase_replacement_id
+      where prp.bill_id = p_bill_id and prpl.item_id = p_item_id
+    ), 0);
+$$ language sql stable;
+```
+
+Dipakai 2 trigger insert (`purchase_return_lines_no_over_return_trigger`, `purchase_replacement_lines_no_over_return_trigger`) yang keduanya juga nge-lookup `goods_receipt_lines.qty_received` lewat `goods_receipt_notes.bill_id`.
+
+### `ap_return_credits` + `ap_return_credit_applications` + `ap_return_credit_refunds`
+
+Mirror `ar_return_credits` (0031) persis, arah asset kebalik (di AR liability kita ke customer, di sini asset kita ke supplier).
+
+```sql
+create table ap_return_credits (
+  id uuid primary key default gen_random_uuid(),
+  supplier_id uuid not null references suppliers(id),
+  credit_note_id uuid not null references ap_credit_notes(id),
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table ap_return_credit_applications (
+  id uuid primary key default gen_random_uuid(),
+  credit_id uuid not null references ap_return_credits(id),
+  bill_id uuid not null references ap_bills(id),
+  amount numeric(14,2) not null check (amount > 0),
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table ap_return_credit_refunds (
+  id uuid primary key default gen_random_uuid(),
+  credit_id uuid not null references ap_return_credits(id),
+  amount numeric(14,2) not null check (amount > 0),
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+Guard `ap_return_credit_applications_guard` cek: supplier match, bill belum dibatalkan, amount ≤ `ap_bill_remaining(bill_id)`. Guard `ap_return_credit_refunds_guard` cek amount ≤ `ap_return_credit_remaining(credit_id)`. Pola identik `ar_return_credit_applications_guard`/`ar_return_credit_refunds_guard`.
+
+### `ap_bill_remaining(bill_id)` — disentralisasi dari AWAL, 3 reducer
+
+Beda dari AR yang baru disentralisasi belakangan (0031, setelah bug over-allocation berulang kebukti) — di AP langsung dibangun dari awal karena polanya udah kenal. **3 reducer**: `ap_payment_allocations` + `ap_credit_notes` + `ap_return_credit_applications` **aktif** (belum di-reverse). Reducer ke-3 ini awalnya kelewat (ketauan `schema-reviewer`) — tanpa dia, bill yang udah "dibayar" pakai saldo kredit retur masih bisa dialokasikan payment tunai lagi ngelebihin sisa riil, exploit konkret: bill 100, `apply_ap_return_credit` 100 (guard lolos karena `ap_bill_remaining` belum ngitung applications), lalu `record_ap_payment` 100 lagi ke bill yang sama juga lolos (guard yang sama, cek yang sama) → total "pelunasan" 200 buat bill 100.
+
+```sql
+create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
+  select ab.amount
+    - coalesce((select sum(amount) from ap_payment_allocations where bill_id = p_bill_id), 0)
+    - coalesce((select sum(amount) from ap_credit_notes where bill_id = p_bill_id), 0)
+    - coalesce((
+        select sum(arca.amount) from ap_return_credit_applications arca
+        where arca.bill_id = p_bill_id
+          and not exists (
+            select 1 from journal_entries je where je.reverses_entry_id = arca.journal_entry_id
+          )
+      ), 0)
+  from ap_bills ab
+  where ab.id = p_bill_id;
+$$ language sql stable;
+```
+
+**`ap_payment_allocations_no_over_allocation` (0010) diperbarui** pakai fungsi ini alih-alih ngecek langsung ke `ap_bills.amount`. **`cancel_ap_bill` (0010) juga diperbarui** — hard-block tambahan kalau bill udah punya `ap_credit_notes` (pola sama guard payment-allocation: bill udah "kesentuh" transaksi lain), plus auto-reverse loop buat `ap_return_credit_applications` aktif yang nunjuk ke bill itu (reklasifikasi sederhana, aman dibalik — mirror perluasan `cancel_ar_invoice` di 0031 pas `ar_return_credit_applications` ditambahkan). Awalnya `cancel_ap_bill` gak disentuh sama sekali di migration ini (ketauan `schema-reviewer` sebagai blocker) — pelajarannya: migration yang nambah reducer baru wajib langsung revisit RPC cancel yang berkaitan, jangan ditunda.
+
+### RPC `create_ap_credit_note` (Opsi A)
+
+`p_lines` null/kosong → financial-only (1 jurnal, gak nyentuh inventory, `p_amount` dipakai apa adanya). `p_lines` terisi → full, bill wajib punya `goods_receipt_notes`, **`p_amount` DIABAIKAN dan DIGANTI** hasil penjumlahan cost fisik tiap baris (`consume_weighted_average`, dikumpulin ke `v_total_cost_returned` lewat loop yang jalan DULUAN sebelum jurnal dibikin). **Gak ada akun kontra** — beda dari `create_ar_credit_note`, karena Persediaan itu akun neraca.
+
+Kenapa `p_amount` diabaikan di jalur full (beda dari desain awal yang nerima 2 angka independen, ketauan `schema-reviewer` sebagai warning): `create_ar_credit_note` sengaja punya 2 jurnal beda angka (kontra-revenue di harga jual, reversal HPP di cost) karena emang beda konsep. `create_ap_credit_note` cuma punya **1 jurnal** yang langsung ngeKredit Persediaan — nominalnya HARUS sama persis nilai barang yang beneran keluar dari stok, kalau dibiarkan independen Persediaan di GL bisa menyimpang dari `inventory_balances` tanpa ketauan trigger mana pun. Konsekuensi urutan kerja: konsumsi stok jalan duluan (buat tau total cost), baru jurnal + insert `ap_credit_notes` + insert `purchase_return_lines`, baru terakhir hitung excess.
+
+Excess handling: `v_remaining_before` dihitung dari `ap_bill_remaining()` SEBELUM proses apa pun, `v_excess := greatest(0, v_effective_amount - greatest(0, v_remaining_before))`, kalau > 0 wajib isi `p_return_credit_asset_account_id` atau `raise exception`.
+
+Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
+
+### RPC `create_purchase_replacement` (Opsi B)
+
+Konsumsi barang rusak pakai `consume_weighted_average` (fungsi yang sama dipakai jalur full Opsi A), lalu "terima" barang baru pakai `avg_cost` yang identik (`v_line_cost / v_qty`) — karena unit cost-nya sama persis, hitung ulang rata-rata otomatis balik ke `avg_cost` semula (murni aljabar: `((qty_before - qty)*avg + qty*avg) / qty_before = avg`), konsisten sama klaim "net nol" di dokumentasi bisnis.
+
+Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
+
+### RPC `apply_ap_return_credit` / `refund_ap_return_credit`
+
+Mirror `apply_ar_return_credit`/`refund_ar_return_credit` (0031) persis, arah jurnal kebalik (Debit Utang Usaha bukan Kredit Piutang Usaha; Debit Kas bukan konsisten — lihat body lengkap).
+
+Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
+
+### RLS Policy
+
+Pola identik semua tabel transaksional AP/AR lain: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `update`/`delete` di 7 tabel baru (RLS default-deny + `block_edit_delete` jaring kedua).
+
+### Seed demo
+
+`supabase/migrations/0036_seed_demo_ap_credit_notes.sql` — skenario 6-10 di `docs/story/accounts-payable.md`, lanjutan cross-modul dari `docs/story/inventory.md` (bill Toko Gula Sejahtera Tahap 3 `GRN-GULA-001` & Tahap 5 `GRN-GULA-002`).
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
 Detail lengkap tiap item: `memory/scope-debt/`.
 
-- **Retur barang ke supplier** — `memory/scope-debt/ap-retur-barang.md`.
 - **Diskon bayar cepat** — `memory/scope-debt/ap-diskon-bayar-cepat.md`.
 - **Uang muka/DP ke supplier** — `memory/scope-debt/ap-uang-muka-dp.md`.
 - **Bill kepisah kategori (compound debit)** — `memory/scope-debt/ap-bill-compound.md`.
+- **Retur/tukar barang untuk item FIFO** — `memory/scope-debt/penghapusan-fifo.md`.
+- **Barang rusak tanpa kompensasi supplier sama sekali** — `memory/scope-debt/kerugian-barang-rusak.md` (lintas modul AR & AP).

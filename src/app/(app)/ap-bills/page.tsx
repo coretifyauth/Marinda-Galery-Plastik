@@ -58,7 +58,7 @@ export default function ApBillsPage() {
     const { data, error } = await supabase
       .from("ap_bills")
       .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(amount)"
+        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(amount), ap_credit_notes(amount), ap_return_credit_applications(amount)"
       )
       .order("bill_date", { ascending: false });
     if (error) {
@@ -232,7 +232,11 @@ export default function ApBillsPage() {
                 status !== "lunas" && status !== "dibatalkan" && bill.due_date < new Date().toISOString().slice(0, 10);
               const canCancel = canWrite && !isCancelled && allocated === 0;
               return (
-                <tr key={bill.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <tr
+                  key={bill.id}
+                  className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                  onClick={() => router.push(`/ap-bills/${bill.id}`)}
+                >
                   <td className="px-4 py-2 font-medium text-black">{bill.suppliers.name}</td>
                   <td className="whitespace-nowrap px-4 py-2">{bill.bill_date}</td>
                   <td className="whitespace-nowrap px-4 py-2">
@@ -259,7 +263,10 @@ export default function ApBillsPage() {
                     {canCancel && (
                       <button
                         type="button"
-                        onClick={() => handleCancel(bill)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancel(bill);
+                        }}
                         disabled={cancellingId === bill.id}
                         className="text-xs text-red-600 hover:underline disabled:opacity-40"
                       >

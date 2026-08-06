@@ -265,3 +265,5 @@ Nominal `excess` = nominal retur dikurangi sisa outstanding yang masih ada sebel
 ## Belum Termasuk (di luar scope fase ini)
 
 - **Recovery piutang yang udah di-write-off** (lihat "Piutang Tak Tertagih") — direct write-off gak punya akun cadangan penyangga, penanganannya kalau ternyata kebayar lagi belum didesain.
+- **Barang rusak yang di-retur masuk lagi sebagai stok bernilai** — penggantian barang gratis pasca-retur masukin barang balik ke inventory seolah layak jual, padahal kalau alasannya rusak harusnya diakui sebagai kerugian (Beban Kerugian Barang Rusak), bukan stok. Detail: `memory/scope-debt/kerugian-barang-rusak.md`.
+- **BUG diketahui: penggantian barang gratis (warranty replacement) kasih kompensasi ganda** — customer bisa dapat diskon dari retur DAN barang pengganti gratis sekaligus untuk 1 kejadian cacat yang sama (contoh konkret: Pak Budi, `docs/story/accounts-receivable.md` Skenario 6+6b). Harusnya cuma pilih salah satu. Detail: `memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`.
