@@ -189,6 +189,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [replaceSourceRef, setReplaceSourceRef] = useState("");
   const [replaceHppAccountId, setReplaceHppAccountId] = useState("");
   const [replaceFinishedGoodAccountId, setReplaceFinishedGoodAccountId] = useState("");
+  const [replaceContraRevenueAccountId, setReplaceContraRevenueAccountId] = useState("");
+  const [replaceReceivableAccountId, setReplaceReceivableAccountId] = useState("");
   const [replaceLines, setReplaceLines] = useState<ReplacementLineInput[]>([]);
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [replaceSubmitting, setReplaceSubmitting] = useState(false);
@@ -260,7 +262,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("warranty_replacements")
         .select(
-          "id, credit_note_id, replacement_date, source_ref, created_at, warranty_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom)), ar_credit_notes!inner(invoice_id)"
+          "id, credit_note_id, replacement_date, source_ref, created_at, discount_reversed_amount, warranty_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom)), ar_credit_notes!inner(invoice_id)"
         )
         .eq("ar_credit_notes.invoice_id", id)
         .order("replacement_date"),
@@ -457,6 +459,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setReplaceSourceRef("");
     setReplaceHppAccountId("");
     setReplaceFinishedGoodAccountId("");
+    setReplaceContraRevenueAccountId("");
+    setReplaceReceivableAccountId("");
     setReplaceLines(
       invReturn.inventory_return_lines
         .map((l) => ({
@@ -490,6 +494,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       lines: activeLines,
       hpp_account_id: replaceHppAccountId,
       finished_good_account_id: replaceFinishedGoodAccountId,
+      contra_revenue_account_id: replaceContraRevenueAccountId,
+      receivable_account_id: replaceReceivableAccountId,
     });
     if (!parsed.success) {
       setReplaceError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -504,6 +510,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       p_lines: parsed.data.lines,
       p_hpp_account_id: parsed.data.hpp_account_id,
       p_finished_good_account_id: parsed.data.finished_good_account_id,
+      p_contra_revenue_account_id: parsed.data.contra_revenue_account_id,
+      p_receivable_account_id: parsed.data.receivable_account_id,
     });
     setReplaceSubmitting(false);
     if (error) {
@@ -1187,6 +1195,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               <th className="px-4 py-2">Source Ref</th>
               <th className="px-4 py-2">Item Diganti</th>
               <th className="px-4 py-2 text-right">Cost</th>
+              <th className="px-4 py-2 text-right">Diskon Retur Dibalik</th>
             </tr>
           </thead>
           <tbody>
@@ -1208,11 +1217,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                     .reduce((sum, l) => sum + l.total_cost, 0)
                     .toLocaleString("id-ID")}
                 </td>
+                <td className="px-4 py-2 text-right font-mono">
+                  {r.discount_reversed_amount.toLocaleString("id-ID")}
+                </td>
               </tr>
             ))}
             {replacements.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
                   Belum ada penggantian barang.
                 </td>
               </tr>
@@ -1223,11 +1235,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
       {replaceCreditNoteId && (
         <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Ganti Barang Gratis (Garansi)</h2>
+          <h2 className="mb-4 font-semibold text-black">Tukar Barang (Garansi)</h2>
           <p className="mb-4 text-sm text-slate-600">
-            Barang pengganti keluar dari stok, dijurnal HPP/Persediaan Barang Jadi — gak nagih
-            ulang, gak nyentuh Piutang/Pendapatan. Qty dibatasi sisa yang belum diganti dari retur
-            ini.
+            Bukan gratis — barang pengganti keluar dari stok (dijurnal HPP/Persediaan Barang
+            Jadi), dan diskon retur yang sudah diberikan untuk item ini otomatis dibalik
+            proporsional (Piutang Usaha naik lagi) — supaya piutang kami ke customer gak berkurang
+            gara-gara penukaran ini. Qty dibatasi sisa yang belum ditukar dari retur ini.
           </p>
           <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -1270,6 +1283,36 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                   id="replace_finished_good_account"
                   value={replaceFinishedGoodAccountId}
                   onChange={(e) => setReplaceFinishedGoodAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="replace_receivable_account">Akun Piutang Usaha (debit, pembalikan diskon)</Label>
+                <Select
+                  id="replace_receivable_account"
+                  value={replaceReceivableAccountId}
+                  onChange={(e) => setReplaceReceivableAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="replace_contra_revenue_account">Akun Retur & Potongan Penjualan (kredit, pembalikan diskon)</Label>
+                <Select
+                  id="replace_contra_revenue_account"
+                  value={replaceContraRevenueAccountId}
+                  onChange={(e) => setReplaceContraRevenueAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (

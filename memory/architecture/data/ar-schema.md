@@ -593,13 +593,13 @@ Fix-nya **`create or replace function`** di `0024_ar_deposits_schema.sql` (bukan
 
 Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
 
-## Warranty Replacement (Penggantian Barang Gratis Pasca-Retur) — migration `0026_ar_warranty_replacements.sql`
+## Warranty Replacement (Penukaran Barang Pasca-Retur/Garansi) — migration `0026_ar_warranty_replacements.sql` + `0037_ar_warranty_replacement_discount_reversal.sql`
 
-Customer retur barang rusak (AR Credit Note jalur full, sudah ada `inventory_returns`) DAN minta barang pengganti gratis — TANPA invoice/piutang baru. Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Penggantian Barang Gratis Pasca-Retur".
+Customer retur barang rusak (AR Credit Note jalur full, sudah ada `inventory_returns`) DAN minta barang pengganti — BUKAN gratis/cuma-cuma, TANPA invoice baru tapi piutang kami ke customer gak berkurang gara-gara penukaran ini (lihat pembalikan diskon di bawah). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)".
 
 ### `warranty_replacements` + `warranty_replacement_lines`
 
-Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per credit note, retur bertahap). `journal_entry_id` nunjuk jurnal Debit HPP / Kredit Persediaan Barang Jadi (`create_journal_entry`, reuse) — **gak ada** jurnal ke Piutang/Pendapatan. Immutable, pola sama `ar_credit_notes`/`inventory_returns`.
+Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per credit note, retur bertahap). `journal_entry_id` nunjuk jurnal Debit HPP / Kredit Persediaan Barang Jadi (`create_journal_entry`, reuse). `discount_reversal_journal_entry_id` (**fix `0037`**, nullable) nunjuk jurnal kedua yang membalikkan diskon retur — Debit Piutang Usaha / Kredit Retur & Potongan Penjualan, cuma dibuat kalau `discount_reversed_amount > 0`. Immutable, pola sama `ar_credit_notes`/`inventory_returns`.
 
 ```sql
 create table warranty_replacements (
@@ -608,6 +608,8 @@ create table warranty_replacements (
   replacement_date date not null,
   source_ref text not null,
   journal_entry_id uuid not null references journal_entries(id),
+  discount_reversed_amount numeric(14,2) not null default 0 check (discount_reversed_amount >= 0),
+  discount_reversal_journal_entry_id uuid references journal_entries(id),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -625,6 +627,10 @@ create table warranty_replacement_lines (
 
 Pola sama `inventory_return_lines_guard` (no-over-return) — total `qty_replaced` (akumulasi per item per credit note) gak boleh ngelebihin `SUM(qty_returned)` item itu di `inventory_return_lines` (join lewat `inventory_returns.credit_note_id`). Kalau item itu gak ketemu sama sekali di retur credit note itu, `raise exception` duluan (bukan lolos dengan batas 0).
 
+### Trigger `warranty_replacements_no_over_reverse` (fix `0037`)
+
+Total `discount_reversed_amount` (akumulasi lintas semua `warranty_replacements` per `credit_note_id`) gak boleh ngelebihin `ar_credit_notes.amount` credit note itu. Pola sama no-over-replace tapi di level header, bukan line — karena reversal dihitung per pemanggilan RPC (1 angka), bukan per baris item.
+
 ### RPC `create_warranty_replacement`
 
 `security invoker`, reuse `create_journal_entry` + `consume_fifo`/`consume_weighted_average` (fungsi generik konsumsi stok dari `0012`, sama yang dipakai `create_goods_issue`/`create_production_order`) — 0 fungsi baru buat logic FIFO/Weighted Average.
@@ -632,8 +638,10 @@ Pola sama `inventory_return_lines_guard` (no-over-return) — total `qty_replace
 - Guard "credit note jalur full" dicek eksplisit di awal RPC (`exists (select 1 from inventory_returns where credit_note_id = ...)`), bukan cuma ngandelin trigger belakangan — kalau credit note-nya financial-only, `raise exception` duluan sebelum sempat konsumsi stok.
 - Guard `p_lines` kosong/null juga dicek eksplisit — tanpa ini RPC bisa "sukses" bikin jurnal 0/0 dan header tanpa baris sama sekali (ketauan pas review).
 - Konsumsi stok pakai `consumption_type = 'WARRANTY_REPLACEMENT'` (value baru, `inventory_lot_consumptions.consumption_type` check constraint diperluas — pola sama 0021 extend `inventory_lots.source_type` nambah `SALES_RETURN`) — **selalu** ambil dari lot aktif (FIFO urut tanggal), bukan dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak gak dipakai ganti lagi, tapi ini gak butuh guard eksplisit karena `consume_fifo` emang jalan lot demi lot dari yang paling lama — lot `SALES_RETURN` baru cuma "menang" urutan konsumsi kalau `lot_date`-nya emang lebih lama dari lot lain, yang secara bisnis gak akan kejadian karena retur selalu terjadi setelah barang asli keluar).
+- **Pembalikan diskon (fix `0037`, param baru `p_contra_revenue_account_id`/`p_receivable_account_id`)**: sebelum fix ini, jurnal HPP/Persediaan di atas adalah SATU-SATUNYA efek RPC — additive di atas diskon `create_ar_credit_note` yang udah jalan duluan, bikin kompensasi ganda (`memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`, sekarang dihapus karena sudah diperbaiki). Sekarang RPC hitung `v_reversal_share_cost` = jumlah (qty diganti × unit cost asli dari `inventory_return_lines`) tiap baris, lalu `v_reversal_amount = round(ar_credit_notes.amount * v_reversal_share_cost / total_cost_retur_credit_note, 2)` — proxy proporsi nilai pakai rasio cost, karena `ar_credit_notes` cuma nyimpen 1 `amount` total, gak per baris item. Kalau `v_reversal_amount > 0`, bikin jurnal kedua (Debit Piutang Usaha / Kredit Retur & Potongan Penjualan — kebalikan `create_ar_credit_note`) lewat `create_journal_entry` lagi, disimpan ke `discount_reversed_amount`+`discount_reversal_journal_entry_id`.
+- **Diketahui, gak diperbaiki (konsisten sama trigger guard lain di modul ini)**: `warranty_replacements_no_over_reverse` gak pakai `pg_advisory_xact_lock` (beda dari `close_period` di `0016`) — 2 pemanggilan konkuren ke credit note yang sama secara teori bisa race lolos guard individual. Rounding `round(...,2)` per pemanggilan independen (gak liat sisa) bisa juga bikin retur bertahap terakhir kena reject padahal proporsinya sah. Bukan blocker (bukan kompensasi ganda beneran, cuma false-rejection edge case) — sama level risiko kayak `inventory_return_lines_guard`/`warranty_replacement_lines_no_over_replace` yang juga gak pakai lock.
 
-Full body: `supabase/migrations/0026_ar_warranty_replacements.sql`.
+Full body: `supabase/migrations/0026_ar_warranty_replacements.sql` + `supabase/migrations/0037_ar_warranty_replacement_discount_reversal.sql`.
 
 ### RLS & Grant
 

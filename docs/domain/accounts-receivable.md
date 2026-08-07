@@ -103,25 +103,31 @@ Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang 
   - **Dua window ini COEXIST, bukan saling gantiin** — buat retur jalur full yang nunjuk 1 item spesifik, DUA-duanya dicek independen, dan retur ditolak kalau **salah satu** kelampaui (pola OR-to-reject, sama persis logika Credit Hold di atas). Analoginya: batas kecepatan jalan umum vs zona sekolah — 2 rambu beda sumber, yang lebih ketat yang berlaku, bukan saling menganulir. Contoh: item Roti Tawar window 3 hari, customer window 15 hari, retur diajukan hari ke-10 → tetap **ditolak** (item exceeded), walau customer window-nya masih longgar.
 - **Batasan period closing** — retur gak boleh dicatat ke periode yang udah ditutup (`period_closings`). Ini **udah otomatis kepegang** oleh trigger `journal_entries_block_retroactive_into_closed_period` yang di-reuse lewat `create_journal_entry`, gak butuh constraint baru. Beda dari 2 window di atas: ini soal integritas pembukuan (gak boleh ubah periode yang udah dikunci), bukan kebijakan toko.
 
-**Bukan penggantian barang** — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penggantian barang gratis (tukar barang rusak dengan barang baru tanpa nagih ulang) butuh RPC beda — lihat "Penggantian Barang Gratis Pasca-Retur" di bawah.
+**Bukan penukaran barang** — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penukaran barang pasca-retur (tukar barang rusak dengan barang baru) butuh RPC beda — lihat "Penukaran Barang Pasca-Retur (Garansi)" di bawah.
 
-## Penggantian Barang Gratis Pasca-Retur
+## Penukaran Barang Pasca-Retur (Garansi)
 
-Customer balikin barang rusak (garansi kualitas) DAN minta barang pengganti — **tanpa nagih ulang**, karena ini kompensasi garansi, bukan penjualan baru. Beda dari retur biasa di atas: retur cuma "barang balik, tagihan berkurang", ini "barang balik, DAN ada barang baru keluar gratis buat gantiin".
+Customer balikin barang rusak (garansi kualitas) DAN minta barang pengganti — **bukan hadiah/cuma-cuma**, customer memang berhak dapat barang yang layak jual sebagai ganti barang cacat. Bedanya sama retur biasa di atas: retur murni "barang balik, tagihan berkurang lewat diskon"; ini "barang cacat ditukar barang baik" — secara net customer tetap harus bayar penuh nilai barang yang akhirnya dia terima, cuma **gak ada penerbitan piutang/invoice baru** buat barang pengganti itu (piutangnya udah tercakup di invoice/retur yang sudah ada, lihat pembalikan diskon di bawah).
 
-**Kenapa gak lewat `create_goods_issue` biasa** — `create_goods_issue` selalu bikin invoice baru (Debit Piutang Usaha, Kredit Pendapatan). Penggantian gratis gak nagih customer lagi, jadi kalau dipaksa lewat situ, piutang customer numpuk palsu dan Pendapatan Penjualan kegedean padahal bukan penjualan beneran. Jurnal yang bener cuma:
+**Kenapa gak lewat `create_goods_issue` biasa** — `create_goods_issue` selalu bikin invoice baru (Debit Piutang Usaha, Kredit Pendapatan). Barang pengganti bukan penjualan baru, jadi kalau dipaksa lewat situ, piutang customer numpuk palsu dan Pendapatan Penjualan kegedean padahal bukan penjualan beneran. Jurnal cost-nya:
 ```
 Debit Harga Pokok Penjualan (HPP)   [cost barang pengganti]
   Kredit Persediaan Barang Jadi            [cost barang pengganti]
 ```
-Gak nyentuh Piutang Usaha atau Pendapatan sama sekali — invoice asli & retur yang udah ada tetap gak berubah.
+
+**Wajib membalikkan diskon retur yang udah diberikan** (fix `0037`, ditemukan lewat contoh Pak Budi di `docs/story/accounts-receivable.md` Skenario 6/6b) — retur (`create_ar_credit_note`) udah kasih diskon (Debit Retur & Potongan Penjualan, Kredit Piutang Usaha) buat barang yang sama. Kalau penukaran barang dibiarin nempel di atas diskon itu tanpa dibalik, customer dapat kompensasi **dobel** (diskon DAN barang pengganti) buat 1 kejadian cacat yang sama — Bu Nur rugi ekstra. Jadi tiap `create_warranty_replacement` juga bikin jurnal kedua yang membalikkan diskon **secara proporsional** ke qty yang ditukar (bukan seluruh credit note — bisa ditukar bertahap):
+```
+Debit Piutang Usaha                          [porsi diskon dibalik]
+  Kredit Retur & Potongan Penjualan               [porsi diskon dibalik]
+```
+Porsi dihitung dari rasio cost baris retur asli (`inventory_return_lines.total_cost`) terhadap total cost retur di credit note itu, dikali `ar_credit_notes.amount` — proxy nilai, karena credit note cuma nyimpen 1 `amount` total per retur (gak per baris item). Net-nya: customer yang akhirnya ditukar barangnya bayar penuh (gak dapat diskon lagi) — piutang kami ke customer gak berkurang gara-gara penukaran ini. Total reversal ditegakkan gak boleh ngelebihin diskon aslinya (trigger `warranty_replacements_no_over_reverse`, akumulasi lintas semua penukaran di credit note itu).
 
 **Wajib referensi ke AR Credit Note yang udah ada** (jalur full, retur yang punya `inventory_returns` — bukti barang emang balik ke gudang) — gak bisa berdiri sendiri tanpa retur formal duluan. Alasan bisnis:
-- **Audit trail** — tanpa bukti retur, penggantian gratis gampang disalahgunakan (klaim "rusak" tanpa bukti barang balik).
-- **Traceability** (Core Invariant project ini) — pengeluaran stok gratis harus nunjuk ke dokumen sumber jelas, biar gak disalahartikan kebocoran/pencurian stok.
-- **Matching principle** — biaya penggantian itu beban garansi yang berasal dari penjualan yang udah diakui sebelumnya, harus terhubung ke transaksi asalnya.
+- **Audit trail** — tanpa bukti retur, penukaran barang gampang disalahgunakan (klaim "rusak" tanpa bukti barang balik).
+- **Traceability** (Core Invariant project ini) — pengeluaran stok buat penukaran harus nunjuk ke dokumen sumber jelas, biar gak disalahartikan kebocoran/pencurian stok.
+- **Matching principle** — biaya penukaran itu beban garansi yang berasal dari penjualan yang udah diakui sebelumnya, harus terhubung ke transaksi asalnya.
 
-**Batas kuantitas** — total qty yang diganti (akumulasi, bisa lebih dari 1 kali penggantian per credit note) gak boleh ngelebihin qty yang beneran diretur di credit note itu (per item) — pola sama no-over-return. Barang pengganti diambil dari stok **fresh** yang aktif (FIFO/Weighted Average biasa) — **bukan** dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak yang balik itu gak dijual/dipakai ganti lagi, lot-nya kepisah).
+**Batas kuantitas** — total qty yang ditukar (akumulasi, bisa lebih dari 1 kali penukaran per credit note) gak boleh ngelebihin qty yang beneran diretur di credit note itu (per item) — pola sama no-over-return. Barang pengganti diambil dari stok **fresh** yang aktif (FIFO/Weighted Average biasa) — **bukan** dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak yang balik itu gak dijual/dipakai ganti lagi, lot-nya kepisah).
 
 ## Uang Muka / DP (Deposit)
 
@@ -223,7 +229,7 @@ Nominal `excess` = nominal retur dikurangi sisa outstanding yang masih ada sebel
 9. DP diterima lalu diterapkan penuh ke invoice — 3 jurnal terpisah (terima DP, terbitkan invoice, terapkan DP), outstanding invoice berkurang sejumlah DP.
 10. DP hangus — order dibatalin sebelum invoice ada, DP jadi Pendapatan Lain-lain, gak ada invoice yang pernah dibuat sama sekali.
 11. Invoice yang DP-nya udah diterapkan ternyata dibatalin (salah input) — pembatalan otomatis ikut membalikkan jurnal DP-application, DP balik jadi belum dipakai.
-12. Penggantian barang gratis pasca-retur (jalur full) — 1 jurnal (HPP/Persediaan Barang Jadi), gak nyentuh Piutang/Pendapatan, referensi ke credit note yang udah ada.
+12. Penukaran barang pasca-retur/garansi (jalur full) — 2 jurnal (HPP/Persediaan Barang Jadi + pembalikan diskon retur proporsional ke Piutang Usaha), gak nyentuh Pendapatan, referensi ke credit note yang udah ada.
 13. Overpayment — payment nutup 1 invoice penuh + sisa jadi saldo kredit, dalam 1 journal entry (3 baris: Kas, Piutang Usaha, Saldo Kredit Customer).
 14. Saldo kredit dipakai motong invoice lain — Debit Saldo Kredit Customer, Kredit Piutang Usaha, partial-capable.
 15. Saldo kredit direfund tunai — Debit Saldo Kredit Customer, Kredit Kas.
@@ -250,8 +256,8 @@ Nominal `excess` = nominal retur dikurangi sisa outstanding yang masih ada sebel
 - Mengakui DP sebagai Pendapatan (atau langsung ngurangin Piutang Usaha) pas diterima — piutangnya belum ada, dan barang/jasanya belum diserahkan. Harus lewat akun liability `Uang Muka Penjualan` dulu.
 - DP hangus dicatat ke `Pendapatan Penjualan` biasa — harus ke `Pendapatan Lain-lain`, biar gak nyampur sama hasil jualan beneran.
 - Batalin invoice yang DP-nya udah diterapkan tanpa ikut membalikkan jurnal DP-application-nya — Piutang Usaha customer itu bakal nyasar jadi minus, dan DP-nya nyangkut gak jelas statusnya.
-- Penggantian barang gratis lewat `create_goods_issue` biasa (bikin invoice lagi) — piutang & pendapatan numpuk palsu padahal gak ada penjualan baru.
-- Penggantian barang gratis tanpa referensi ke credit note yang udah ada — kehilangan audit trail, pengeluaran stok gratis jadi gak bisa dipertanggungjawabkan.
+- Penukaran barang lewat `create_goods_issue` biasa (bikin invoice lagi) — piutang & pendapatan numpuk palsu padahal gak ada penjualan baru.
+- Penukaran barang tanpa referensi ke credit note yang udah ada — kehilangan audit trail, pengeluaran stok buat penukaran jadi gak bisa dipertanggungjawabkan.
 - Barang pengganti diambil dari lot `SALES_RETURN` (barang rusak yang balik dari retur) — harusnya dari stok fresh, barang rusak gak dipakai ganti lagi.
 - Overpayment dicatat sebagai 2 payment terpisah (1 nutup invoice, 1 lagi "nyimpen" kelebihan) — harus 1 payment event, 1 journal entry, biar traceable ke 1 bukti transfer.
 - Excess overpayment dicatat langsung ke `Uang Muka Penjualan` (nyamain sama DP) — beda akun, karena beda asal-usul (piutang udah ada & udah dilunasin vs piutang belum ada sama sekali).
@@ -265,5 +271,4 @@ Nominal `excess` = nominal retur dikurangi sisa outstanding yang masih ada sebel
 ## Belum Termasuk (di luar scope fase ini)
 
 - **Recovery piutang yang udah di-write-off** (lihat "Piutang Tak Tertagih") — direct write-off gak punya akun cadangan penyangga, penanganannya kalau ternyata kebayar lagi belum didesain.
-- **Barang rusak yang di-retur masuk lagi sebagai stok bernilai** — penggantian barang gratis pasca-retur masukin barang balik ke inventory seolah layak jual, padahal kalau alasannya rusak harusnya diakui sebagai kerugian (Beban Kerugian Barang Rusak), bukan stok. Detail: `memory/scope-debt/kerugian-barang-rusak.md`.
-- **BUG diketahui: penggantian barang gratis (warranty replacement) kasih kompensasi ganda** — customer bisa dapat diskon dari retur DAN barang pengganti gratis sekaligus untuk 1 kejadian cacat yang sama (contoh konkret: Pak Budi, `docs/story/accounts-receivable.md` Skenario 6+6b). Harusnya cuma pilih salah satu. Detail: `memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`.
+- **Barang rusak yang di-retur masuk lagi sebagai stok bernilai** — penukaran barang pasca-retur masukin barang balik ke inventory seolah layak jual, padahal kalau alasannya rusak harusnya diakui sebagai kerugian (Beban Kerugian Barang Rusak), bukan stok. Detail: `memory/scope-debt/kerugian-barang-rusak.md`.

@@ -13,7 +13,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
   - **Financial-only** (invoice gak lewat `create_goods_issue`): 1 jurnal, Debit `Retur & Potongan Penjualan` (akun kontra-revenue baru, `is_contra=true`) / Kredit Piutang Usaha.
   - **Full** (invoice lewat `create_goods_issue`): 2 jurnal — kontra-revenue di atas + Debit Persediaan Barang Jadi / Kredit HPP sejumlah cost proporsional dari `goods_issue_lines.total_cost` snapshot asli (bukan harga sekarang). Barang balik masuk lot baru (`source_type = SALES_RETURN`, FIFO) atau nambah `inventory_balances` (Weighted Average).
   - Independen dari status bayar invoice — kalau invoice udah lunas, retur bikin outstanding negatif (saldo kredit customer, penanganannya di luar scope, lihat "Belum termasuk").
-- **warranty_replacement** — penggantian barang gratis pasca-retur (jalur full). Wajib referensi ke `ar_credit_note` yang punya `inventory_returns` (bukti barang emang balik). Jurnal: Debit HPP / Kredit Persediaan Barang Jadi — gak nyentuh Piutang/Pendapatan. Qty diganti (akumulasi) ≤ qty yang diretur di credit note itu (per item), pola no-over-return. Barang pengganti diambil dari stok fresh (FIFO/Weighted Average biasa), bukan dari lot `SALES_RETURN`.
+- **warranty_replacement** — penukaran barang pasca-retur/garansi (jalur full), BUKAN gratis/cuma-cuma. Wajib referensi ke `ar_credit_note` yang punya `inventory_returns` (bukti barang emang balik). Jurnal cost: Debit HPP / Kredit Persediaan Barang Jadi. Qty ditukar (akumulasi) ≤ qty yang diretur di credit note itu (per item), pola no-over-return. Barang pengganti diambil dari stok fresh (FIFO/Weighted Average biasa), bukan dari lot `SALES_RETURN`. **(fix `0037`)** Wajib juga membalikkan diskon retur yang udah diberikan `create_ar_credit_note` secara proporsional (Debit Piutang Usaha / Kredit Retur & Potongan Penjualan) — sebelumnya additive/kompensasi ganda, sekarang net-nya piutang kami ke customer gak berkurang gara-gara penukaran.
 - **ar_deposit** — uang muka/DP diterima sebelum invoice ada. **Bukan** `ar_payment` — jurnalnya Debit Kas / Kredit `Uang Muka Penjualan` (liability baru, akun `2300`), gak nyentuh Piutang Usaha sama sekali (piutangnya belum ada). 3 kejadian turunan, masing-masing tabel anak sendiri (immutable, status deposit derived dari situ, bukan kolom):
   - **ar_deposit_application** — DP diterapkan ke invoice yang udah diterbitkan penuh. Jurnal: Debit Uang Muka Penjualan / Kredit Piutang Usaha (reklasifikasi, ngurangin outstanding invoice).
   - **ar_deposit_forfei/ture** — DP hangus, order dibatalin SEBELUM invoice ada (kebijakan: DP gak direfund). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (akun `4300`, baru — BUKAN `Pendapatan Penjualan`, biar gak nyampur sama hasil jualan beneran).
@@ -39,8 +39,9 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **Return window (per item)**: `items.return_window_days` (nullable, `NULL`=gak dibatasi). `create_ar_credit_note` cek tiap baris jalur full: `credit_note_date - invoice_date > items.return_window_days` → reject. Soal umur simpan fisik barang — cuma kena jalur full.
 - **Return window (per customer, snapshot ke invoice)**: `customers.return_window_days` (nullable) → snapshot ke `ar_invoices.return_window_days` pas `create_ar_invoice` (pola sama `due_date`). `create_ar_credit_note` cek ini PALING AWAL (sebelum jurnal apa pun), berlaku ke SEMUA jalur (full + financial-only). Coexist sama window per item — dua-duanya independen, retur ditolak kalau salah satu kelampaui (OR-to-reject, pola sama Credit Hold).
 - **Period-closing tetap berlaku**: retur ke periode tertutup ditolak otomatis lewat `journal_entries_block_retroactive_into_closed_period` (reuse, gak ada constraint baru).
-- **Penggantian gratis wajib nunjuk credit note jalur full**: `warranty_replacement.credit_note_id` harus punya baris `inventory_returns` yang match — kalau credit note-nya financial-only (gak ada retur fisik), RPC `raise exception`.
+- **Penukaran barang wajib nunjuk credit note jalur full**: `warranty_replacement.credit_note_id` harus punya baris `inventory_returns` yang match — kalau credit note-nya financial-only (gak ada retur fisik), RPC `raise exception`.
 - **No over-replace**: `SUM(qty)` `warranty_replacement_lines` (akumulasi, per item, per credit note) ≤ `SUM(qty_returned)` `inventory_return_lines` item itu di credit note yang sama.
+- **No over-reverse**: `SUM(discount_reversed_amount)` `warranty_replacements` (akumulasi per credit note) ≤ `ar_credit_notes.amount` credit note itu. Porsi reversal per pemanggilan dihitung dari rasio cost baris retur asli yang lagi diganti terhadap total cost retur di credit note itu, dikali `ar_credit_notes.amount`.
 - **Overpayment split dalam 1 journal entry**: `record_ar_payment` gak boleh split excess jadi payment/entry terpisah — 1 bukti transfer = 1 entry (3 baris kalau ada excess: Kas, Piutang Usaha, Saldo Kredit Customer).
 - **No over-use saldo kredit**: `SUM(ar_customer_credit_applications.amount) + SUM(ar_customer_credit_refunds.amount)` per `ar_customer_credits` ≤ `ar_customer_credits.amount`.
 - **No over-writeoff**: `SUM(ar_bad_debt_writeoffs.amount)` per invoice ≤ `ar_invoice_remaining(invoice_id)` (fungsi terpusat, lihat di atas).
@@ -62,7 +63,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 9 | DP diterima lalu diterapkan penuh ke invoice | 3 jurnal terpisah (terima DP, terbitkan invoice, terapkan DP) |
 | 10 | DP hangus (order dibatalin sebelum invoice ada) | 1 jurnal, Uang Muka Penjualan → Pendapatan Lain-lain, gak pernah ada invoice |
 | 11 | Invoice dengan DP-application dibatalkan | `cancel_ar_invoice` reverse jurnal invoice + jurnal application, DP balik "belum dipakai" |
-| 12 | Penggantian barang gratis pasca-retur | 1 jurnal (HPP/Persediaan Barang Jadi), referensi credit note jalur full, gak nyentuh Piutang/Pendapatan |
+| 12 | Penukaran barang pasca-retur/garansi | 2 jurnal (HPP/Persediaan Barang Jadi + pembalikan diskon proporsional ke Piutang Usaha), referensi credit note jalur full, gak nyentuh Pendapatan |
 | 13 | Overpayment — payment > invoice, excess jadi saldo kredit | 1 payment event, 1 journal entry 3 baris (Kas, Piutang Usaha, Saldo Kredit Customer) |
 | 14 | Saldo kredit dipakai motong invoice lain | Debit Saldo Kredit Customer / Kredit Piutang Usaha, partial-capable |
 | 15 | Saldo kredit direfund tunai | Debit Saldo Kredit Customer / Kredit Kas |
@@ -83,8 +84,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - DP diterima langsung dicatat ngurangin Piutang Usaha atau jadi Pendapatan — piutangnya belum ada, barang/jasanya belum diserahkan. Harus lewat `Uang Muka Penjualan` (liability) dulu.
 - DP hangus dicatat ke `Pendapatan Penjualan` — harus ke `Pendapatan Lain-lain`, biar gak nyampur sama pendapatan jualan beneran.
 - `cancel_ar_invoice` cuma reverse jurnal invoice-nya doang tanpa ikut reverse jurnal `ar_deposit_applications` — Piutang Usaha customer itu nyasar jadi minus, DP-nya nyangkut gak jelas status.
-- Penggantian barang gratis lewat `create_goods_issue` biasa — bikin piutang/pendapatan palsu.
-- Penggantian barang gratis tanpa referensi ke credit note — kehilangan audit trail.
+- Penukaran barang lewat `create_goods_issue` biasa — bikin piutang/pendapatan palsu.
+- Penukaran barang tanpa referensi ke credit note — kehilangan audit trail.
 - Barang pengganti diambil dari lot `SALES_RETURN` — harusnya stok fresh.
 - Overpayment dicatat sebagai 2 payment terpisah — harus 1 event, 1 entry.
 - Excess overpayment ke `Uang Muka Penjualan` — harus ke `Saldo Kredit Customer`, beda asal jurnal dari DP.
@@ -102,7 +103,6 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 
 - **Recovery piutang yang udah di-write-off** — direct write-off gak punya akun cadangan penyangga, belum didesain.
 - **Barang rusak yang di-retur masuk lagi sebagai stok bernilai** — `warranty_replacement` (dan retur full pada umumnya) masukin barang balik ke `inventory_lots`/`inventory_balances` seolah layak jual, padahal kalau alasannya rusak harusnya diakui Beban Kerugian Barang Rusak (write-off). Ref `memory/scope-debt/kerugian-barang-rusak.md`.
-- **BUG diketahui: `warranty_replacement` additive sama `create_ar_credit_note`** — customer bisa dapat diskon dari retur DAN barang pengganti gratis sekaligus buat 1 kejadian cacat yang sama (kompensasi ganda). Perlu diperbaiki jadi saling eksklusif (mirror pola Opsi A/B di AP) atau `warranty_replacement` wajib membalikkan diskon yang sudah diberikan. Ref `memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`.
 
 ## Glossary
 
@@ -114,7 +114,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 - **Aging**: invoice yang `due_date`-nya udah lewat dan belum lunas.
 - **AR Credit Note**: retur barang yang udah diinvoice — ngurangin outstanding invoice tanpa ubah `amount` asli, beda dari `cancel_ar_invoice`.
 - **AR Deposit**: uang muka diterima sebelum invoice ada, dicatat ke liability `Uang Muka Penjualan` — beda dari `AR Payment` yang selalu terhadap invoice existing.
-- **Warranty Replacement**: penggantian barang gratis pasca-retur — keluar stok+HPP tanpa invoice/piutang baru, wajib referensi credit note jalur full.
+- **Warranty Replacement**: penukaran barang pasca-retur/garansi (BUKAN gratis) — keluar stok+HPP tanpa invoice baru, wajib membalikkan diskon retur proporsional (piutang gak berkurang gara-gara penukaran), wajib referensi credit note jalur full.
 - **AR Customer Credit**: kelebihan bayar 1 payment event di atas invoice yang ditutup — liability `Saldo Kredit Customer`, beda asal dari `AR Deposit`, bisa dipakai/refund parsial berkali-kali.
 - **AR Bad Debt Write-off**: piutang yang beneran gak akan tertagih, dihapusbukukan lewat beban baru (direct write-off, bukan allowance) — Pendapatan asli gak dibalik, beda dari `cancel_ar_invoice`.
 - **AR Return Credit**: excess dari retur setelah invoice lunas, dicairkan otomatis jadi saldo resmi (liability `Saldo Kredit Retur Customer`) — bisa dipakai/direfund kayak overpayment, beda akun karena beda asal jurnal.

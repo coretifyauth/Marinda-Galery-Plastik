@@ -107,21 +107,27 @@ Debit Persediaan Barang Jadi       3.750
 
 3 buah Roti Tawar masuk lot baru (`source_type = SALES_RETURN`, `unit_cost = 1.250`). Piutang Usaha Pak Budi: 60.000 (invoice, belum dibayar) − 6.000 (retur) = **54.000 outstanding**. Persediaan Roti Tawar: 20 (sisa Tahap 7) + 3 (retur) = **23 buah**.
 
-## Skenario 6b — Penggantian barang gratis pasca-retur (Pak Budi, lanjutan Skenario 6)
+## Skenario 6b — Penukaran barang pasca-retur/garansi (Pak Budi, lanjutan Skenario 6)
 
-29 Agustus 2026: Pak Budi minta ganti 3 roti fresh buat gantiin 3 roti apek kemarin — bukan cuma potongan tagihan, dia tetap mau 30 roti utuh buat dijual. Bu Nur setuju (garansi kualitas), kirim 3 Roti Tawar baru dari stok aktif.
+29 Agustus 2026: Pak Budi minta ganti 3 roti fresh buat gantiin 3 roti apek kemarin — bukan cuma potongan tagihan, dia tetap mau 30 roti utuh buat dijual. Bu Nur setuju (garansi kualitas), kirim 3 Roti Tawar baru dari stok aktif. Ini penukaran, bukan hadiah — Pak Budi tetap harus bayar penuh nilai 30 roti baik, cuma gak ada invoice baru buat 3 roti pengganti ini.
 
-RPC penggantian dipanggil dengan `credit_note_id` = credit note Skenario 6. Cek: credit note itu punya `inventory_returns` (jalur full) → boleh lanjut. Cek qty: 3 diminta ≤ 3 yang diretur di credit note itu → lolos.
+RPC penukaran dipanggil dengan `credit_note_id` = credit note Skenario 6. Cek: credit note itu punya `inventory_returns` (jalur full) → boleh lanjut. Cek qty: 3 diminta ≤ 3 yang diretur di credit note itu → lolos.
 
 3 roti diambil dari stok fresh (FIFO, lot aktif sisa Tahap 7, **bukan** lot `SALES_RETURN` yang baru masuk dari retur kemarin — roti apek gak dipakai ganti lagi). Cost tetap Rp1.250/buah.
 
-Jurnal:
+Jurnal cost:
 ```
 Debit Harga Pokok Penjualan (HPP)   3.750
   Kredit Persediaan Barang Jadi            3.750
 ```
 
-Gak ada jurnal ke Piutang Usaha atau Pendapatan — Piutang Usaha Pak Budi tetap **54.000 outstanding** (gak berubah dari Skenario 6). Persediaan Roti Tawar: 23 (sisa Skenario 6) − 3 (keluar buat ganti) = **20 buah** — balik ke jumlah yang sama kayak sebelum retur terjadi, tapi sekarang 3 di antaranya adalah roti pengganti baru, bukan 3 yang lama.
+**Diskon retur Skenario 6 dibalik** (fix `0037` — sebelum fix ini, Pak Budi dapat diskon Rp6.000 DAN 3 roti pengganti gratis sekaligus, kompensasi ganda): qty ditukar (3) = seluruh qty yang diretur di credit note itu (3), jadi reversal-nya **penuh** — porsi cost retur yang ditukar (3×1.250=3.750) dibagi total cost retur di credit note itu (3.750) = 100% dari diskon Rp6.000.
+```
+Debit Piutang Usaha                 6.000
+  Kredit Retur & Potongan Penjualan        6.000
+```
+
+Piutang Usaha Pak Budi: 54.000 (outstanding pasca-retur Skenario 6) + 6.000 (diskon dibalik) = **60.000 outstanding** — balik ke nilai invoice penuh, karena akhirnya Pak Budi diganti barang (bukan didiskon). Persediaan Roti Tawar: 23 (sisa Skenario 6) − 3 (keluar buat ganti) = **20 buah** — balik ke jumlah yang sama kayak sebelum retur terjadi, tapi sekarang 3 di antaranya adalah roti pengganti baru, bukan 3 yang lama.
 
 ## Uang Muka / DP — customer baru (pesanan custom, bukan warung langganan)
 
