@@ -19,7 +19,7 @@ Pembukuan Bu Nur masih di buku tulis + catatan HP. Sekarang mau ajukan pinjaman 
 2. **General Ledger + Journal Entries** — baru bisa mulai catat transaksi harian (jual roti, beli tepung, bayar gaji) dengan benar.
 3. **AR** — nagih ke 3 warung langganan tadi.
 4. **AP** — utang ke 2 supplier tepung/gula.
-5. **Inventory** — hitung HPP roti (bahan baku jadi barang jadi), butuh FIFO/weighted average karena harga tepung naik-turun.
+5. **Inventory** — hitung HPP roti (bahan baku jadi barang jadi), butuh weighted average karena harga tepung naik-turun.
 6. **Fixed Assets** — oven + motor disusutkan (depresiasi), bukan langsung jadi beban semua di tahun beli.
 7. **Financial Reports** — inilah tujuan akhirnya: Neraca + Laba Rugi yang bisa dibawa ke bank.
 

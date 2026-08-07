@@ -39,7 +39,7 @@ Begitu barang rusak ketauan, ada **2 resolusi** yang bisa disepakati sama suppli
   - Jurnal: Debit Persediaan Bahan Baku (barang baru masuk) / Kredit Persediaan Bahan Baku (barang rusak keluar) — **net nol**, murni reklasifikasi fisik (barang keluar-masuk dicatat biar jejak audit per-kejadian lengkap), **tanpa** baris Beban — karena Barokah gak kehilangan nilai apa pun (dapat gantinya senilai sama).
   - **Beda dari barang rusak yang GAK dapat kompensasi sama sekali** (supplier nolak ganti maupun kurangi utang) — itu bukan retur, itu kerugian murni yang ditanggung Barokah sendiri (Beban Kerugian Barang Rusak), kasus terpisah di luar scope fitur ini (lihat "Belum Termasuk").
 
-**Catatan implementasi sementara**: fitur ini baru nanganin item dengan metode costing **Weighted Average** — item FIFO diabaikan dulu karena FIFO rencananya mau dihapus dari sistem (lihat "Belum Termasuk"). Nilai barang yang diretur/ditukar dihitung dari harga rata-rata (`avg_cost`) **saat retur terjadi**, bukan harga asal pas barang diterima — konsisten dengan cara Weighted Average bekerja di modul Inventory (gak nyimpen asal-usul per batch).
+**Catatan implementasi**: fitur ini nanganin item dengan metode costing **Weighted Average** — satu-satunya metode yang ada, FIFO sudah dihapus total dari sistem (migration `0038_remove_fifo_costing.sql`). Nilai barang yang diretur/ditukar dihitung dari harga rata-rata (`avg_cost`) **saat retur terjadi**, bukan harga asal pas barang diterima — konsisten dengan cara Weighted Average bekerja di modul Inventory (gak nyimpen asal-usul per batch).
 
 ## Constraint Wajib
 
@@ -59,7 +59,7 @@ Perubahan termin supplier ke depan gak boleh retroaktif ngubah `due_date` bill l
 Sama guard yang dipakai di AR (`cancel_ar_invoice`) — begitu ada 1 alokasi aja, pembatalan ditolak. Beda dari AR, di AP aturan ini **langsung diterapkan dari awal** (bukan ditambah belakangan), karena udah kebukti perlu dari pengalaman desain AR.
 
 **6. No over-return — gabungan Opsi A + Opsi B**
-Total qty yang diklaim retur (Opsi A) **plus** total qty yang ditukar (Opsi B) buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu. Ini guard baru (gabungan 2 mekanisme sekaligus, bukan cuma 1) — beda dari item FIFO yang otomatis kejaga lewat batas per-lot, item Weighted Average butuh pengecekan eksplisit karena stoknya udah nyampur, gak ada cara nelusurin balik "qty ini asalnya dari bill mana".
+Total qty yang diklaim retur (Opsi A) **plus** total qty yang ditukar (Opsi B) buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu. Ini guard baru (gabungan 2 mekanisme sekaligus, bukan cuma 1) — item Weighted Average butuh pengecekan eksplisit karena stoknya udah nyampur, gak ada cara nelusurin balik "qty ini asalnya dari bill mana" (beda dari zaman FIFO masih ada, yang otomatis kejaga lewat batas per-lot).
 
 **7. No over-use Piutang Retur Supplier**
 Total saldo yang dipakai motong bill lain plus yang dicairkan tunai, gak boleh ngelebihin nominal awal saldo itu — pola sama guard di AR (`ar_customer_credits`).
@@ -92,4 +92,3 @@ Detail lengkap tiap item ada di `memory/scope-debt/`:
 - **Uang muka/DP ke supplier** — `memory/scope-debt/ap-uang-muka-dp.md`.
 - **Bill kepisah kategori (compound debit)** — `memory/scope-debt/ap-bill-compound.md`. Nota supplier yang isinya campuran (misal barang + ongkos kirim) butuh RPC yang nerima array baris debit, bukan 1 akun tetap.
 - **Kerugian barang rusak tanpa kompensasi supplier** — `memory/scope-debt/kerugian-barang-rusak.md`. Lintas modul AR & AP — barang rusak yang gak diganti maupun gak dikurangin utangnya (atau di AR, gak dikurangin piutangnya) harus diakui sebagai kerugian (Beban Kerugian Barang Rusak), bukan lewat jalur retur.
-- **Retur/tukar barang untuk item FIFO** — fitur ini baru nanganin item Weighted Average. FIFO rencananya mau dihapus dari sistem, lihat `memory/scope-debt/penghapusan-fifo.md`.

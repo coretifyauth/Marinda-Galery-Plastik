@@ -350,7 +350,7 @@ Akun baru: `1350` **Piutang Retur Supplier** (asset) — di-insert di migration 
 
 **Ketahuan lewat `schema-reviewer` sebelum diapply** (2 blocker + 1 warning, sudah diperbaiki di file final): (1) `ap_bill_remaining()` awalnya cuma 2 reducer, kelewat `ap_return_credit_applications` — bisa bikin over-allocation nyata (bill yang udah "dibayar" pakai saldo kredit retur masih bisa dialokasikan payment lagi ngelebihin sisa riil); (2) `cancel_ap_bill` (0010) awalnya gak diperbarui sama sekali buat 2 reducer baru — sekarang diperluas; (3) `create_ap_credit_note` jalur full awalnya nerima `p_amount` independen dari cost fisik yang dihitung `consume_weighted_average` — bisa divergen tanpa ketauan. Detail perbaikan di masing-masing bagian di bawah.
 
-Asumsi sementara: cuma nanganin item `WEIGHTED_AVERAGE` — `memory/scope-debt/penghapusan-fifo.md`. Batas waktu retur sengaja gak termasuk dan gak akan digarap (bukan scope-debt, keputusan final).
+Cuma nanganin item Weighted Average — bukan lagi "sementara": FIFO sudah dihapus total dari sistem (migration `0038_remove_fifo_costing.sql`), jadi Weighted Average sekarang satu-satunya jalur yang ada, 0 dampak balik ke fitur ini. Batas waktu retur sengaja gak termasuk dan gak akan digarap (bukan scope-debt, keputusan final).
 
 ### `ap_credit_notes` — Opsi A, selalu dibuat kalau resolusinya "kurangi utang"
 
@@ -411,7 +411,7 @@ create table purchase_replacement_lines (
 
 ### `purchase_returned_qty(bill_id, item_id)` — guard qty gabungan Opsi A + B
 
-Item Weighted Average gak punya proteksi otomatis per-lot kayak FIFO (`inventory_lot_consumptions_no_over_consumption`) — stoknya udah nyampur begitu diterima. Guard ini jumlahin klaim dari **2 tabel sekaligus** (`purchase_return_lines` via `ap_credit_notes.bill_id`, `purchase_replacement_lines` via `purchase_replacements.bill_id`) dan dibandingin ke `goods_receipt_lines.qty_received` — fisiknya cuma ada 1 pool qty yang bisa diklaim, mau lewat jalur mana pun.
+Item Weighted Average gak punya proteksi otomatis per-lot (beda dari zaman FIFO masih ada — dulu ada `inventory_lot_consumptions_no_over_consumption`, sudah dihapus bareng FIFO di migration `0038`) — stoknya udah nyampur begitu diterima. Guard ini jumlahin klaim dari **2 tabel sekaligus** (`purchase_return_lines` via `ap_credit_notes.bill_id`, `purchase_replacement_lines` via `purchase_replacements.bill_id`) dan dibandingin ke `goods_receipt_lines.qty_received` — fisiknya cuma ada 1 pool qty yang bisa diklaim, mau lewat jalur mana pun.
 
 ```sql
 create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns numeric as $$
@@ -531,5 +531,4 @@ Detail lengkap tiap item: `memory/scope-debt/`.
 - **Diskon bayar cepat** — `memory/scope-debt/ap-diskon-bayar-cepat.md`.
 - **Uang muka/DP ke supplier** — `memory/scope-debt/ap-uang-muka-dp.md`.
 - **Bill kepisah kategori (compound debit)** — `memory/scope-debt/ap-bill-compound.md`.
-- **Retur/tukar barang untuk item FIFO** — `memory/scope-debt/penghapusan-fifo.md`.
 - **Barang rusak tanpa kompensasi supplier sama sekali** — `memory/scope-debt/kerugian-barang-rusak.md` (lintas modul AR & AP).

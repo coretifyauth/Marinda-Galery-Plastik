@@ -109,14 +109,14 @@ Karena semua RPC financial write di modul lain (AR, AP, Inventory, Fixed Assets)
 
 ### Contoh — Kenapa Pemecahan Periode Penting (bukan cuma angka gabungan)
 
-Ambil data CV Roti Barokah (`docs/story/financial-reports.md`): kalau dibiarkan gak pernah ditutup, Laba Rugi kumulatif (Jan 2025–Agu 2026) nunjukin **rugi Rp11.627.500** — angka yang bikin panik tapi gak jelas asalnya dari mana. Begitu dipecah jadi 2 periode kontigu:
+Ambil data CV Roti Barokah (`docs/story/financial-reports.md`): kalau dibiarkan gak pernah ditutup, Laba Rugi kumulatif (Jan 2025–Agu 2026) nunjukin **rugi Rp11.629.000** — angka yang bikin panik tapi gak jelas asalnya dari mana. Begitu dipecah jadi 2 periode kontigu:
 
 | Periode | Pendapatan | Beban | Laba (Rugi) |
 |---|---|---|---|
 | 2025 (tahun akuisisi oven+motor, baru penyusutan) | 0 | 12.600.000 (penyusutan) | **(12.600.000)** — wajar, tahun investasi |
-| Jan–Agu 2026 (operasional jualan) | 3.160.000 | 2.187.500 | **972.500** — untung |
+| Jan–Agu 2026 (operasional jualan) | 3.160.000 | 2.189.000 | **971.000** — untung |
 
-`(12.600.000) + 972.500 = (11.627.500)` — **totalnya sama persis** dengan angka kumulatif. Period closing gak mengubah kebenaran angka, cuma memecahnya jadi potongan yang bisa dibaca dan dibandingkan — dari sini baru kelihatan bahwa operasional 2026 sebenarnya sehat, rugi besarnya murni dari investasi aset di 2025.
+`(12.600.000) + 971.000 = (11.629.000)` — **totalnya sama persis** dengan angka kumulatif. Period closing gak mengubah kebenaran angka, cuma memecahnya jadi potongan yang bisa dibaca dan dibandingkan — dari sini baru kelihatan bahwa operasional 2026 sebenarnya sehat, rugi besarnya murni dari investasi aset di 2025.
 
 **Status:** dibangun di Fase 7 (Financial Reports), begitu Income Statement siap dipakai buat ngasih angka definitif per periode. Detail struktur data: `docs/architecture/financial-reports-schema.md` bagian "Tutup Buku".
 

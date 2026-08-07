@@ -70,7 +70,7 @@ export default function PurchaseOrdersPage() {
   const loadItems = useCallback(async () => {
     const { data } = await supabase
       .from("items")
-      .select("id, name, item_type, costing_method, uom, inventory_account_id, archived_at")
+      .select("id, name, item_type, uom, inventory_account_id, archived_at")
       .order("name");
     setItems((data ?? []) as Item[]);
   }, []);

@@ -90,22 +90,24 @@ Piutang Usaha Kang Ade: 900.000 (invoice) − 900.000 (bayar lunas) − 50.000 (
 
 ## Skenario 6 — Retur, full/stok+HPP (Warung Pak Budi, lanjutan `docs/story/inventory.md` Tahap 7)
 
-Basis: 25 Agustus 2026, Pak Budi beli 30 Roti Tawar @Rp2.000 = Rp60.000 lewat `create_goods_issue`, HPP 30×Rp1.250 = Rp37.500 dari Lot #P1 (`docs/story/inventory.md`).
+Basis: 25 Agustus 2026, Pak Budi beli 30 Roti Tawar @Rp2.000 = Rp60.000 lewat `create_goods_issue`, HPP 30×Rp1.300 = Rp39.000 dari `inventory_balances` Roti Tawar (`docs/story/inventory.md`).
 
 28 Agustus 2026: 3 dari 30 roti apek, Pak Budi balikin. RPC retur dipanggil, `qty_returned = 3`. Cek: invoice ini punya baris `goods_issues` → **jalur full**.
 
-Cost per unit asli = 37.500 / 30 = Rp1.250/buah (snapshot, bukan harga sekarang). Nominal retur = 3 × (60.000/30) = Rp6.000. Cost retur = 3 × 1.250 = Rp3.750.
+Cost per unit asli = 39.000 / 30 = Rp1.300/buah (snapshot, bukan harga sekarang). Nominal retur = 3 × (60.000/30) = Rp6.000. Cost retur = 3 × 1.300 = Rp3.900.
 
 Jurnal:
 ```
 Debit Retur & Potongan Penjualan   6.000
   Kredit Piutang Usaha                    6.000
 
-Debit Persediaan Barang Jadi       3.750
-  Kredit Harga Pokok Penjualan            3.750
+Debit Persediaan Barang Jadi       3.900
+  Kredit Harga Pokok Penjualan            3.900
 ```
 
-3 buah Roti Tawar masuk lot baru (`source_type = SALES_RETURN`, `unit_cost = 1.250`). Piutang Usaha Pak Budi: 60.000 (invoice, belum dibayar) − 6.000 (retur) = **54.000 outstanding**. Persediaan Roti Tawar: 20 (sisa Tahap 7) + 3 (retur) = **23 buah**.
+3 buah Roti Tawar masuk balik ke `inventory_balances` (bukan lot baru — konsep lot udah gak ada sejak FIFO dihapus): qty_before 20, avg_before Rp1.300 → qty_after 20+3 = **23**, avg_after = (20×1.300 + 3×1.300) / 23 = **Rp1.300** (kebetulan avg-nya gak berubah, karena unit cost retur ini persis sama dengan avg_cost yang berlaku saat itu — bukan aturan umum, kalau unit cost retur beda dari avg saat ini pasti avg_after ikut bergeser). Piutang Usaha Pak Budi: 60.000 (invoice, belum dibayar) − 6.000 (retur) = **54.000 outstanding**. Persediaan Roti Tawar: 23 buah @ Rp1.300 = **Rp29.900**.
+
+**Catatan realitas baru:** dulu (waktu FIFO masih ada), 3 roti apek yang diretur ini masuk sebagai lot terpisah (`source_type = SALES_RETURN`) supaya gak ketuker pas ada penukaran garansi berikutnya (Skenario 6b). Sekarang gak ada lagi konsep lot — 3 roti apek ini langsung campur jadi 1 pool `inventory_balances` bareng 20 roti baik yang tersisa, gak ada segregasi sama sekali. Ini keterbatasan yang sudah diketahui & dicatat terpisah di `memory/scope-debt/kerugian-barang-rusak.md` (barang rusak yang diretur harusnya diakui sebagai Beban Kerugian, bukan balik jadi stok bernilai) — bukan hal yang diselesaikan di sini, cuma dicatat sebagai konsekuensi baru dari penghapusan FIFO.
 
 ## Skenario 6b — Penukaran barang pasca-retur/garansi (Pak Budi, lanjutan Skenario 6)
 
@@ -113,21 +115,21 @@ Debit Persediaan Barang Jadi       3.750
 
 RPC penukaran dipanggil dengan `credit_note_id` = credit note Skenario 6. Cek: credit note itu punya `inventory_returns` (jalur full) → boleh lanjut. Cek qty: 3 diminta ≤ 3 yang diretur di credit note itu → lolos.
 
-3 roti diambil dari stok fresh (FIFO, lot aktif sisa Tahap 7, **bukan** lot `SALES_RETURN` yang baru masuk dari retur kemarin — roti apek gak dipakai ganti lagi). Cost tetap Rp1.250/buah.
+3 roti diambil dari `inventory_balances` Roti Tawar — pool tunggal 23 buah @ avg Rp1.300, **bukan** "stok fresh terpisah dari lot retur" lagi, karena gak ada lot sama sekali (lihat catatan realitas di Skenario 6: 3 roti apek udah campur ke pool yang sama). Cost = 3 × Rp1.300 = **Rp3.900**.
 
 Jurnal cost:
 ```
-Debit Harga Pokok Penjualan (HPP)   3.750
-  Kredit Persediaan Barang Jadi            3.750
+Debit Harga Pokok Penjualan (HPP)   3.900
+  Kredit Persediaan Barang Jadi            3.900
 ```
 
-**Diskon retur Skenario 6 dibalik** (fix `0037` — sebelum fix ini, Pak Budi dapat diskon Rp6.000 DAN 3 roti pengganti gratis sekaligus, kompensasi ganda): qty ditukar (3) = seluruh qty yang diretur di credit note itu (3), jadi reversal-nya **penuh** — porsi cost retur yang ditukar (3×1.250=3.750) dibagi total cost retur di credit note itu (3.750) = 100% dari diskon Rp6.000.
+**Diskon retur Skenario 6 dibalik** (fix `0037` — sebelum fix ini, Pak Budi dapat diskon Rp6.000 DAN 3 roti pengganti gratis sekaligus, kompensasi ganda): qty ditukar (3) = seluruh qty yang diretur di credit note itu (3), jadi reversal-nya **penuh** — porsi cost retur yang ditukar (3×1.300=3.900) dibagi total cost retur di credit note itu (3.900) = 100% dari diskon Rp6.000 (jumlah reversal-nya sama kayak sebelum FIFO dihapus, karena proporsinya tetap 100% — cuma angka cost dasarnya yang beda).
 ```
 Debit Piutang Usaha                 6.000
   Kredit Retur & Potongan Penjualan        6.000
 ```
 
-Piutang Usaha Pak Budi: 54.000 (outstanding pasca-retur Skenario 6) + 6.000 (diskon dibalik) = **60.000 outstanding** — balik ke nilai invoice penuh, karena akhirnya Pak Budi diganti barang (bukan didiskon). Persediaan Roti Tawar: 23 (sisa Skenario 6) − 3 (keluar buat ganti) = **20 buah** — balik ke jumlah yang sama kayak sebelum retur terjadi, tapi sekarang 3 di antaranya adalah roti pengganti baru, bukan 3 yang lama.
+Piutang Usaha Pak Budi: 54.000 (outstanding pasca-retur Skenario 6) + 6.000 (diskon dibalik) = **60.000 outstanding** — balik ke nilai invoice penuh, karena akhirnya Pak Budi diganti barang (bukan didiskon). Persediaan Roti Tawar: 23 (sisa Skenario 6) − 3 (keluar buat ganti) = **20 buah** @ Rp1.300 = Rp26.000 — balik ke qty yang sama kayak sebelum retur terjadi, tapi sekarang gak ada jejak lot mana yang "asli" vs "pengganti" — semua udah 1 pool campur, konsisten sama catatan di Skenario 6.
 
 ## Uang Muka / DP — customer baru (pesanan custom, bukan warung langganan)
 

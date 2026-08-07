@@ -109,4 +109,4 @@ Sama pola AR: setelah schema (`ap-schema.md`) dibangun + migration diterapkan, w
 
 ## Lanjutan Story
 
-Fase berikutnya (Inventory) bakal mulai ngitung HPP roti dari bahan baku yang udah dicatat di sini (Persediaan Bahan Baku dari bill Tepung Makmur & Gula Sejahtera) jadi barang jadi — butuh FIFO/weighted average karena harga tepung naik-turun (`company-profile.md`).
+Fase berikutnya (Inventory) bakal mulai ngitung HPP roti dari bahan baku yang udah dicatat di sini (Persediaan Bahan Baku dari bill Tepung Makmur & Gula Sejahtera) jadi barang jadi — butuh weighted average karena harga tepung naik-turun (`company-profile.md`).

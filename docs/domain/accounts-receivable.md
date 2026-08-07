@@ -83,7 +83,7 @@ Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang 
    Debit Retur & Potongan Penjualan   [nominal retur]
      Kredit Piutang Usaha                    [nominal retur]
    ```
-2. **Full (stok + HPP)** — invoice yang lahir dari `create_goods_issue` (barang jadi yang qty & HPP-nya udah dilacak lewat FIFO/Weighted Average). Retur bikin **2 jurnal sekaligus**:
+2. **Full (stok + HPP)** — invoice yang lahir dari `create_goods_issue` (barang jadi yang qty & HPP-nya udah dilacak lewat Weighted Average). Retur bikin **2 jurnal sekaligus**:
    ```
    Debit Retur & Potongan Penjualan   [nominal retur = qty_returned x (invoice.amount / qty_issued)]
      Kredit Piutang Usaha                    [nominal retur]
@@ -91,7 +91,7 @@ Warung ngembaliin barang yang udah diinvoice. Ini kejadian bisnis nyata (barang 
    Debit Persediaan Barang Jadi       [cost retur = qty_returned x (goods_issue_lines.total_cost / qty_issued)]
      Kredit Harga Pokok Penjualan            [cost retur]
    ```
-   Cost retur pakai **harga snapshot asli** dari `goods_issue_lines.total_cost` (harga pas barang itu keluar), bukan hitung ulang harga sekarang — biar konsisten sama biaya yang beneran diakui waktu itu. Barang yang balik masuk sebagai lot baru (FIFO, `source_type = SALES_RETURN`) atau nambah `inventory_balances` (Weighted Average).
+   Cost retur pakai **harga snapshot asli** dari `goods_issue_lines.total_cost` (harga pas barang itu keluar), bukan hitung ulang harga sekarang — biar konsisten sama biaya yang beneran diakui waktu itu. Barang yang balik masuk nambah `inventory_balances` (Weighted Average) — metode costing satu-satunya di sistem ini sejak FIFO dihapus total (migration `0038`, dulu item FIFO masuk sebagai lot baru terpisah `source_type = SALES_RETURN`, sekarang gak ada lagi segregasi kayak gitu, semua item lewat pool `inventory_balances` yang sama).
 
 **Independen dari status bayar** — retur tetap bisa dibuat baik invoice-nya belum dibayar, sebagian, maupun udah lunas penuh. Kalau invoice udah lunas, retur bikin outstanding jadi **negatif** (saldo kredit customer, Bu Nur "berutang" ke warung) — penanganan refund/pemakaian saldo kredit ini **di luar scope** fitur ini, lihat "Belum Termasuk".
 
@@ -127,7 +127,7 @@ Porsi dihitung dari rasio cost baris retur asli (`inventory_return_lines.total_c
 - **Traceability** (Core Invariant project ini) — pengeluaran stok buat penukaran harus nunjuk ke dokumen sumber jelas, biar gak disalahartikan kebocoran/pencurian stok.
 - **Matching principle** — biaya penukaran itu beban garansi yang berasal dari penjualan yang udah diakui sebelumnya, harus terhubung ke transaksi asalnya.
 
-**Batas kuantitas** — total qty yang ditukar (akumulasi, bisa lebih dari 1 kali penukaran per credit note) gak boleh ngelebihin qty yang beneran diretur di credit note itu (per item) — pola sama no-over-return. Barang pengganti diambil dari stok **fresh** yang aktif (FIFO/Weighted Average biasa) — **bukan** dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak yang balik itu gak dijual/dipakai ganti lagi, lot-nya kepisah).
+**Batas kuantitas** — total qty yang ditukar (akumulasi, bisa lebih dari 1 kali penukaran per credit note) gak boleh ngelebihin qty yang beneran diretur di credit note itu (per item) — pola sama no-over-return. Barang pengganti diambil dari stok **fresh** yang aktif (`inventory_balances`, Weighted Average). Sebelum FIFO dihapus (migration `0038`), barang pengganti sengaja **bukan** diambil dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak yang balik itu gak dijual/dipakai ganti lagi, lot-nya kepisah) — sekarang tabel lot itu sudah gak ada, jadi segregasi itu juga sudah gak ada (barang retur & barang fresh campur di pool yang sama, catatan terbuka soal ini ada di "Belum Termasuk").
 
 ## Uang Muka / DP (Deposit)
 

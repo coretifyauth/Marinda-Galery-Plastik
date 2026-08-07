@@ -51,6 +51,8 @@ FIFO **mengingat riwayat per-batch** (butuh struktur data berlapis — banyak ba
 
 Beda hasil HPP di atas (Rp610.000 vs Rp630.000) kelihatan kecil di contoh ini, tapi bisa signifikan kalau harga bahan baku fluktuatif terus-menerus dan volume transaksi besar.
 
+**Catatan implementasi:** kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per item boleh pilih salah satu — misal Tepung Terigu FIFO karena harganya sering naik-turun, Gula Pasir Weighted Average). FIFO kemudian **dihapus total** dari sistem (migration `0038_remove_fifo_costing.sql`) — sekarang Weighted Average dipakai semua item tanpa kecuali, termasuk yang harganya fluktuatif. Alasannya: rata-rata berjalan tetap merefleksikan perubahan harga (kenaikan/penurunan langsung kebawa ke `avg_cost` pas penerimaan baru), cuma gak sepresisi FIFO di level per-batch — trade-off yang diterima demi struktur data & logika yang jauh lebih sederhana, dianggap sepadan buat skala bisnis ini.
+
 ## Bill of Materials (BOM) — Resep Produksi
 
 Kalau bisnisnya mengolah bahan baku jadi barang jadi (bukan cuma jual-beli barang yang sama persis), perlu ada **resep** yang mendefinisikan: berapa banyak tiap bahan baku dibutuhkan buat menghasilkan sejumlah barang jadi tertentu.
@@ -58,7 +60,7 @@ Kalau bisnisnya mengolah bahan baku jadi barang jadi (bukan cuma jual-beli baran
 Contoh generik: 1 batch produksi = 5kg Bahan A + 1kg Bahan B → menghasilkan 50 unit Barang Jadi.
 
 Pas ada **Production Order** (kejadian produksi beneran), sistem:
-1. **Konsumsi** bahan baku sesuai resep (dikali berapa batch yang dijalankan) — nilai konsumsi dihitung dari metode costing masing-masing bahan (FIFO ambil dari lot terlama, Weighted Average pakai harga rata-rata saat itu).
+1. **Konsumsi** bahan baku sesuai resep (dikali berapa batch yang dijalankan) — nilai konsumsi dihitung dari Weighted Average (harga rata-rata saat itu).
 2. **Hasilkan** barang jadi sejumlah output resep, dengan **nilai/biaya = total biaya bahan baku yang dikonsumsi**.
 
 Ini tetap **tukar aset ke aset** (Persediaan Bahan Baku → Persediaan Barang Jadi) — belum jadi HPP, karena barang jadi belum tentu langsung terjual.
@@ -69,7 +71,7 @@ Ini tetap **tukar aset ke aset** (Persediaan Bahan Baku → Persediaan Barang Ja
 
 Sebelum barang fisik diterima, ada tahap **komitmen**: perusahaan memesan barang ke supplier lewat **Purchase Order (PO)** — mencatat apa yang dipesan, berapa qty, dan harga yang disepakati. PO **belum mengubah apapun di General Ledger** — ini baru rencana/janji, belum kejadian akuntansi (belum ada pertukaran aset/liability apapun).
 
-Begitu barang fisik sampai, dicatat **Goods Receipt Note (GRN)** — bukti penerimaan riil, isinya qty & harga yang **benar-benar** diterima (bisa beda dari yang dipesan). GRN inilah yang jadi dasar penambahan Persediaan (bikin lot baru buat FIFO, atau update rata-rata buat Weighted Average).
+Begitu barang fisik sampai, dicatat **Goods Receipt Note (GRN)** — bukti penerimaan riil, isinya qty & harga yang **benar-benar** diterima (bisa beda dari yang dipesan). GRN inilah yang jadi dasar penambahan Persediaan (update rata-rata berjalan).
 
 **3-way matching** adalah praktik mencocokkan **3 dokumen**: PO (apa yang dipesan), GRN (apa yang diterima), dan Bill/Invoice dari supplier (apa yang ditagih). Tujuannya mencegah:
 - Diterima kurang dari yang ditagih (dipesan 50 unit, datang cuma 48, tapi ditagih 50).
@@ -97,19 +99,16 @@ Selisih antara harga jual dan HPP = **laba kotor** transaksi itu.
 **1. Membeli bahan baku selalu masuk Persediaan (aset), bukan Beban langsung**
 Konsekuensi matching principle — biaya baru diakui pas barang terjual, bukan pas dibeli.
 
-**2. Metode costing (FIFO/Weighted Average) ditentukan per item, konsisten**
-Gak boleh gonta-ganti metode di tengah jalan buat item yang sama tanpa proses revaluasi formal — kalau berubah, itu sendiri kejadian akuntansi yang perlu penyesuaian tersendiri (di luar scope dasar ini).
+**2. Metode costing: Weighted Average, berlaku semua item**
+Sejak FIFO dihapus (migration `0038`), gak ada lagi pilihan metode per item — satu mekanisme buat semua, gak ada isu "gonta-ganti metode" lagi.
 
-**3. FIFO harus consume dari lot terlama dulu (urut waktu terima)**
-Kalau lompat urutan, prinsip "First In First Out" gak lagi ditegakkan — hasil HPP jadi gak sesuai definisi metodenya.
-
-**4. Konsumsi (FIFO) atau pengurangan qty (Weighted Average) gak boleh melebihi yang tersedia**
+**3. Pengurangan qty (Weighted Average) gak boleh melebihi yang tersedia**
 Gak bisa mengeluarkan barang yang secara fisik gak ada di stok.
 
-**5. Goods Receipt harus tertelusur ke Purchase Order, dan gak boleh melebihi qty yang dipesan**
+**4. Goods Receipt harus tertelusur ke Purchase Order, dan gak boleh melebihi qty yang dipesan**
 Bagian dari 3-way matching — mencegah penerimaan "siluman" yang gak pernah dipesan, atau qty diterima melebihi qty dipesan tanpa sepengetahuan.
 
-**6. Tiap pergerakan stok (masuk/keluar) harus tertelusur ke dokumen sumber**
+**5. Tiap pergerakan stok (masuk/keluar) harus tertelusur ke dokumen sumber**
 Sama invarian traceability yang berlaku di semua modul lain — Goods Receipt tertelusur ke PO+Bill, Goods Issue tertelusur ke Invoice, Production Order tertelusur ke resep (BOM) yang dipakai.
 
 **Catatan lintas modul:** master data item punya kolom `return_window_days` (nullable) — batas hari maksimal item itu boleh diretur customer, dipakai fitur AR Credit Note (`docs/domain/accounts-receivable.md` bagian "Retur Barang"). Ditaro di item (bukan di customer), karena soal umur simpan fisik barangnya, bukan soal hubungan dagang ke customer tertentu.
@@ -118,7 +117,6 @@ Sama invarian traceability yang berlaku di semua modul lain — Goods Receipt te
 
 - Mencatat pembelian bahan baku langsung sebagai Beban/HPP — padahal itu masih aset sampai barangnya terjual.
 - Menghitung HPP berdasarkan **kapan utang ke supplier dibayar**, bukan berdasarkan **kapan barangnya terjual** — dua hal yang sama sekali gak berhubungan.
-- FIFO tapi consume dari lot yang salah urutan (misal ambil dari lot termuda duluan) — hasilnya bukan FIFO lagi.
 - Weighted Average tapi nyimpen riwayat per-batch juga — bikin ambigu metode mana yang beneran dipakai; padahal justru kesederhanaan (melupakan riwayat) itu ciri khasnya.
 - Menganggap Purchase Order sebagai kejadian akuntansi (bikin jurnal) — PO cuma komitmen, jurnal baru muncul pas barang diterima (GRN+Bill).
 - Lupa bahwa produksi (bahan baku → barang jadi) bukan HPP — itu masih pemindahan antar-aset, HPP baru muncul pas barang jadi itu terjual.

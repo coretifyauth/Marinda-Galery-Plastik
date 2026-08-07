@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
-import { createItemSchema, itemTypes, costingMethods, type Item } from "@/lib/items/schema";
+import { createItemSchema, itemTypes, type Item } from "@/lib/items/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -21,7 +21,6 @@ export default function ItemsPage() {
 
   const [name, setName] = useState("");
   const [itemType, setItemType] = useState<(typeof itemTypes)[number]>("RAW_MATERIAL");
-  const [costingMethod, setCostingMethod] = useState<(typeof costingMethods)[number]>("FIFO");
   const [uom, setUom] = useState("");
   const [inventoryAccountId, setInventoryAccountId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -33,7 +32,7 @@ export default function ItemsPage() {
   const loadItems = useCallback(async () => {
     const { data, error } = await supabase
       .from("items")
-      .select("id, name, item_type, costing_method, uom, inventory_account_id, archived_at")
+      .select("id, name, item_type, uom, inventory_account_id, archived_at")
       .order("name");
     if (error) {
       setLoadError(error.message);
@@ -78,7 +77,6 @@ export default function ItemsPage() {
     const parsed = createItemSchema.safeParse({
       name,
       item_type: itemType,
-      costing_method: costingMethod,
       uom,
       inventory_account_id: inventoryAccountId,
     });
@@ -95,7 +93,6 @@ export default function ItemsPage() {
     }
     setName("");
     setItemType("RAW_MATERIAL");
-    setCostingMethod("FIFO");
     setUom("");
     setInventoryAccountId("");
     setShowForm(false);
@@ -144,7 +141,6 @@ export default function ItemsPage() {
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Nama</th>
               <th className="px-4 py-2">Tipe</th>
-              <th className="px-4 py-2">Costing</th>
               <th className="px-4 py-2">Satuan</th>
               <th className="px-4 py-2">Akun Persediaan</th>
             </tr>
@@ -164,7 +160,6 @@ export default function ItemsPage() {
                       {item.item_type}
                     </span>
                   </td>
-                  <td className="px-4 py-2">{item.costing_method}</td>
                   <td className="px-4 py-2">{item.uom}</td>
                   <td className="px-4 py-2">{account ? `${account.code} — ${account.name}` : "-"}</td>
                 </tr>
@@ -172,7 +167,7 @@ export default function ItemsPage() {
             })}
             {items.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
                   Belum ada item.
                 </td>
               </tr>
@@ -211,20 +206,6 @@ export default function ItemsPage() {
                   {itemTypes.map((t) => (
                     <option key={t} value={t}>
                       {t}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="costing_method">Metode Costing</Label>
-                <Select
-                  id="costing_method"
-                  value={costingMethod}
-                  onChange={(e) => setCostingMethod(e.target.value as (typeof costingMethods)[number])}
-                >
-                  {costingMethods.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
                     </option>
                   ))}
                 </Select>

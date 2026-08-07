@@ -14,7 +14,7 @@ AP = kebalikan AR: CV Barokah berutang ke supplier, bukan piutang dari customer.
     - Bill belum lunas/sebagian → utang beneran berkurang.
     - Bill udah lunas penuh (atau retur ngelebihin sisa outstanding) → jurnal yang sama tetap jalan dulu (outstanding jadi minus) → excess-nya **otomatis** direklasifikasi jadi `ap_return_credits` (pola sama `ar_return_credits`, arah aset kebalik).
   - **Opsi B — Tukar Barang** (`create_purchase_replacement`) — **berdiri sendiri, gak lewat `ap_credit_notes` sama sekali** (beda dari AR `warranty_replacement` yang wajib nunjuk credit note dulu — AP sengaja gak niru pola itu karena kalau Opsi A dan B jalan bareng jadi kompensasi ganda dari sisi supplier). Berlaku sama persis di semua status bayar — Utang Usaha **gak pernah kesentuh**. Jurnal: Debit Persediaan Bahan Baku (barang baru) / Kredit Persediaan Bahan Baku (barang rusak) — net zero, murni reklasifikasi fisik.
-  - **Asumsi sementara: cuma nanganin item `WEIGHTED_AVERAGE`** — item FIFO diabaikan dulu (`memory/scope-debt/penghapusan-fifo.md`, FIFO rencana dihapus dari sistem). Retur/tukar barang kurangin `inventory_balances.qty_on_hand` langsung (reuse pola `consume_weighted_average`), pakai `avg_cost` **saat itu** (bukan harga asal GRN — WA emang gak nyimpen asal-usul per lot).
+  - **Cuma nanganin item Weighted Average** — bukan lagi "sementara", FIFO sudah dihapus total dari sistem (migration `0038_remove_fifo_costing.sql`), jadi Weighted Average satu-satunya jalur yang ada. Retur/tukar barang kurangin `inventory_balances.qty_on_hand` langsung (reuse pola `consume_weighted_average`), pakai `avg_cost` **saat itu** (bukan harga asal GRN — WA emang gak nyimpen asal-usul per lot).
 - **ap_return_credits** — asset **"Piutang Retur Supplier"** (akun baru `1350`), mirror `ar_return_credits` tapi arah kebalik (di AR itu liability kita ke customer; di sini asset kita ke supplier — supplier "berutang" balik ke kita). **Sengaja akun terpisah dari rencana `Uang Muka Pembelian`** (`memory/scope-debt/ap-uang-muka-dp.md`) walau sekilas sama-sama "nilai kita di supplier" — beda asal jurnal (DP = bayar duluan sebelum barang datang; return credit = kelebihan setelah retur pada bill yang udah lunas), harus bisa ditelusuri balik terpisah. Partial-capable, 2 disposisi (mirror `ar_customer_credit`/`ar_return_credit`):
   - **ap_return_credit_applications** — dipakai motong bill lain: Debit Utang Usaha / Kredit Piutang Retur Supplier.
   - **ap_return_credit_refunds** — dicairkan tunai: Debit Kas/Bank / Kredit Piutang Retur Supplier.
@@ -27,7 +27,7 @@ AP = kebalikan AR: CV Barokah berutang ke supplier, bukan piutang dari customer.
 - **No over-allocation**: sama constraint AR, arah kebalik.
 - **`due_date` snapshot**: dari `payment_term_days` supplier pas insert, gak retroaktif.
 - **Cancellation guard**: `cancel_ap_bill` nolak kalau `ap_payment_allocations` bill itu udah ≥1 baris — **diterapkan dari awal** (beda dari AR yang nambah guard ini belakangan setelah kebukti perlu).
-- **No over-return (kombinasi Opsi A + B)**: total qty retur (`purchase_return_lines`, jalur Opsi A full) + total qty tukar (`purchase_replacement_lines`, Opsi B) per item per bill gak boleh ngelebihin `goods_receipt_lines.qty_received` bill itu — guard trigger baru (checks gabungan 2 tabel), karena item Weighted Average gak punya proteksi otomatis per-lot kayak FIFO (`inventory_lot_consumptions_no_over_consumption`).
+- **No over-return (kombinasi Opsi A + B)**: total qty retur (`purchase_return_lines`, jalur Opsi A full) + total qty tukar (`purchase_replacement_lines`, Opsi B) per item per bill gak boleh ngelebihin `goods_receipt_lines.qty_received` bill itu — guard trigger baru (checks gabungan 2 tabel), karena item Weighted Average gak punya proteksi otomatis per-lot (beda dari zaman FIFO masih ada, `inventory_lot_consumptions_no_over_consumption` sudah dihapus bareng FIFO di migration `0038`).
 - **No over-use `ap_return_credits`**: `SUM(ap_return_credit_applications.amount) + SUM(ap_return_credit_refunds.amount)` per `ap_return_credits` ≤ `amount`.
 
 ## Skenario referensi (detail angka: `docs/story/accounts-payable.md`)
@@ -51,7 +51,6 @@ Sama semua yang di AR (`memory/domain/accounts-receivable.md`), arah kebalik. Ta
 - Salah pilih akun debit bill (Persediaan vs Beban) — RPC generik terima parameter, gak dicegah sistem.
 - Opsi A dan Opsi B (retur) dianggap bisa jalan bareng buat 1 kejadian retur yang sama — itu kompensasi ganda dari sisi supplier, harus pilih SALAH SATU.
 - Excess dari retur (Opsi A pada bill lunas) dianggap otomatis berarti barang harus diganti (Opsi B) — dua-duanya independen, pilihan resolusi bukan konsekuensi status bayar.
-- Retur/tukar barang dari item FIFO — diabaikan dulu sampai `memory/scope-debt/penghapusan-fifo.md` selesai, cuma nanganin `WEIGHTED_AVERAGE`.
 - Barang rusak yang gak dapat kompensasi sama sekali (supplier nolak ganti/kurangi utang) dicatat lewat jalur retur — itu kasus terpisah (write-off/spoilage), lihat `memory/scope-debt/kerugian-barang-rusak.md`.
 
 ## Belum termasuk (di luar scope fase ini)

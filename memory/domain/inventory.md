@@ -10,19 +10,10 @@ Beli bahan baku (aset naik) → Produksi (pindah aset: Bahan Baku → Barang Jad
 
 Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 
-## Metode Costing (per item, ditentukan di master data item)
+## Metode Costing: Weighted Average (satu-satunya, berlaku semua item)
 
-- **FIFO** — tracking per-batch (lot). Tiap penerimaan = 1 lot baru (qty + unit_cost + tanggal terima). Konsumsi ambil dari lot **terlama dulu** sampai habis, baru lanjut ke lot berikutnya (bisa span multi-lot). Butuh struktur data berlapis (banyak baris aktif per item).
 - **Weighted Average** — 1 angka rata-rata berjalan per item, dihitung ulang **tiap ada penerimaan baru**: `new_avg = (qty_before × avg_before + qty_in × unit_cost_in) / (qty_before + qty_in)`. Konsumsi cuma kurangin qty, avg_cost gak berubah sampai penerimaan berikutnya. Cukup 1 baris per item, di-update terus (bukan derived dari agregat — beda dari pola "status derived" di modul lain, karena rata-rata berjalan gak bisa dihitung ulang dari SUM sederhana).
-
-### Lot: masuk vs keluar
-
-Konsep "lot" FIFO punya 2 sisi yang gampang keketuker karena sama-sama bisa dipicu oleh produksi:
-
-- **Lot lahir (masuk)** — tiap kali qty suatu item bertambah, dari pembelian (bahan baku diterima) ATAU dari hasil produksi (barang jadi dihasilkan). Ini "kelahiran" batch baru.
-- **Lot dikonsumsi (keluar)** — tiap kali qty suatu lot berkurang, dipakai sebagai input produksi (bahan baku) ATAU keluar karena terjual (barang jadi). Ini "pemakaian" dari batch yang sudah ada.
-
-Satu production order menyentuh **dua-duanya sekaligus** dari arah berlawanan: bahan baku **keluar** (dikonsumsi sebagai input), barang jadi **masuk** (lahir sebagai lot baru hasil output) — makanya kata "produksi" muncul di kedua sisi tapi maknanya kebalikan, tergantung item mana yang dimaksud (bahan baku vs barang jadi).
+- **FIFO sudah dihapus total dari sistem** (migration `0038_remove_fifo_costing.sql`). Dulu ada 2 metode, ditentukan per item (misal Tepung Terigu FIFO karena harganya sering naik-turun dan presisi per-batch penting, Gula Pasir Weighted Average). Sekarang Weighted Average dipakai semua item, termasuk yang harganya fluktuatif — rata-rata berjalan tetap merefleksikan perubahan harga (naik/turun langsung kebawa ke `avg_cost` pas penerimaan baru), cuma gak sepresisi FIFO di level per-batch. Trade-off yang diterima sengaja: struktur data lebih sederhana (1 baris per item, bukan berlapis-lapis lot), cukup buat skala bisnis ini.
 
 ## BOM (Bill of Materials) & Production Order
 
@@ -31,7 +22,7 @@ Resep: 1 finished item ← beberapa raw material item + qty per batch. Productio
 ## Purchase Order & 3-Way Matching
 
 - **Purchase Order (PO)** — komitmen pesan ke supplier (item, qty, harga disepakati). **Gak bikin jurnal** — belum kejadian akuntansi.
-- **Goods Receipt Note (GRN)** — bukti terima fisik (qty & harga riil, bisa beda dari PO). Dicocokkan ke `purchase_order_lines` (qty diterima gak boleh melebihi qty dipesan). GRN inilah yang nambah Persediaan (bikin lot FIFO / update avg cost).
+- **Goods Receipt Note (GRN)** — bukti terima fisik (qty & harga riil, bisa beda dari PO). Dicocokkan ke `purchase_order_lines` (qty diterima gak boleh melebihi qty dipesan). GRN inilah yang nambah Persediaan (update avg cost).
 - **Bill (AP)** — tagihan dari supplier. Di desain ini, GRN & Bill dibuat **bersamaan** (asumsi proses pembelian informal, nota = bukti kirim + tagihan sekaligus) — menghindari kompleksitas akun perantara "Barang Diterima Belum Ditagih" yang dibutuhkan kalau GRN dan Bill terjadi di waktu berbeda.
 
 ## Goods Issue (sisi keluar — penjualan)
@@ -41,13 +32,11 @@ Barang jadi keluar gudang karena terjual → dua jurnal bersamaan:
 Debit Piutang/Kas [harga jual]     | Kredit Pendapatan [harga jual]
 Debit HPP [biaya pokok]            | Kredit Persediaan Barang Jadi [biaya pokok]
 ```
-Biaya pokok dihitung dari metode costing item itu (FIFO: consume lot terlama; Weighted Average: qty × avg_cost saat itu).
+Biaya pokok dihitung dari Weighted Average (qty × avg_cost saat itu).
 
 ## Constraints (wajib ditegakkan di implementasi)
 
 - Pembelian bahan baku selalu ke Persediaan (aset), gak pernah langsung Beban.
-- Metode costing tetap/konsisten per item, gak boleh gonta-ganti tanpa revaluasi formal.
-- FIFO wajib consume lot terlama dulu (urut `received_at`).
 - Konsumsi/pengurangan qty gak boleh melebihi yang tersedia (anti over-consumption, pola sama anti-over-allocation AR/AP).
 - Goods Receipt gak boleh melebihi qty yang dipesan di PO line-nya (anti over-receipt, pola sama).
 - Semua pergerakan stok tertelusur ke dokumen sumber (PO+Bill buat masuk, Invoice buat keluar, BOM buat produksi).
@@ -56,7 +45,6 @@ Biaya pokok dihitung dari metode costing item itu (FIFO: consume lot terlama; We
 
 - Mencatat pembelian bahan baku sebagai Beban/HPP langsung.
 - HPP dihitung dari kapan utang dibayar (harusnya dari kapan barang terjual).
-- FIFO consume lot salah urutan.
 - PO dianggap bikin jurnal (harusnya GRN+Bill yang bikin).
 - Produksi dianggap HPP (masih tukar aset, HPP baru pas barang jadi terjual).
 
@@ -68,9 +56,7 @@ Detail: `memory/scope-debt/` — akun perantara "Barang Diterima Belum Ditagih" 
 
 ## Glossary
 
-- **Item**: master data barang (raw material atau finished good), punya metode costing sendiri.
-- **Lot**: 1 batch barang (khusus item FIFO) yang "lahir" — bisa dari penerimaan pembelian atau dari hasil produksi — punya qty & harga sendiri, immutable setelah dibuat.
-- **Konsumsi (Lot Consumption)**: kebalikan Lot — pencatatan qty yang "keluar"/dipakai dari sebuah lot, entah buat input produksi atau karena terjual.
+- **Item**: master data barang (raw material atau finished good), costing-nya Weighted Average.
 - **BOM (Bill of Materials)**: resep — daftar bahan baku & qty yang dibutuhkan buat 1 batch produksi.
 - **Purchase Order (PO)**: pesanan ke supplier, belum kejadian akuntansi.
 - **Goods Receipt Note (GRN)**: bukti penerimaan fisik barang, dasar penambahan Persediaan.

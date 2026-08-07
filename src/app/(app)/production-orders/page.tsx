@@ -219,8 +219,8 @@ export default function ProductionOrdersPage() {
             </p>
           )}
           <p className="mb-4 text-sm text-slate-500">
-            Bahan baku dikonsumsi otomatis sesuai resep (BOM) — FIFO atau Weighted Average
-            tergantung <code>costing_method</code> tiap item, gak perlu diinput manual di sini.
+            Bahan baku dikonsumsi otomatis sesuai resep (BOM), Weighted Average — gak perlu
+            diinput manual di sini.
           </p>
           <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
