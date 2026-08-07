@@ -227,7 +227,11 @@ export default function GoodsReceiptsPage() {
           </thead>
           <tbody>
             {receipts.map((grn) => (
-              <tr key={grn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+              <tr
+                key={grn.id}
+                className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                onClick={() => router.push(`/goods-receipts/${grn.id}`)}
+              >
                 <td className="px-4 py-2 font-medium text-black">{grn.purchase_orders.suppliers.name}</td>
                 <td className="px-4 py-2">{grn.purchase_orders.source_ref}</td>
                 <td className="whitespace-nowrap px-4 py-2">{grn.receipt_date}</td>

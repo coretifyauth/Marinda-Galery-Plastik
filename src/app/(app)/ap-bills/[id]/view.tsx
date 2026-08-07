@@ -125,6 +125,9 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [replaceSubmitting, setReplaceSubmitting] = useState(false);
 
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+
   const leafAccounts = getLeafAccounts(accounts);
 
   const load = useCallback(async () => {
@@ -407,6 +410,29 @@ export function ApBillDetailView({ id }: { id: string }) {
     await load();
   }
 
+  async function handleCancel() {
+    if (!bill) return;
+    const reasonRef = window.prompt(
+      `Batalkan bill ${bill.source_ref} (Rp${bill.amount.toLocaleString("id-ID")})?\nMasukin rujukan dokumen buat entry pembalik:`,
+      `Pembatalan ${bill.source_ref}`
+    );
+    if (!reasonRef) return;
+
+    setCancelError(null);
+    setCancelling(true);
+    const { error } = await supabase.rpc("cancel_ap_bill", {
+      p_bill_id: bill.id,
+      p_entry_date: new Date().toISOString().slice(0, 10),
+      p_source_ref: reasonRef,
+    });
+    setCancelling(false);
+    if (error) {
+      setCancelError(error.message);
+      return;
+    }
+    await load();
+  }
+
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -421,6 +447,7 @@ export function ApBillDetailView({ id }: { id: string }) {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canRetur = canWrite && !isCancelled;
   const canReplace = canWrite && !isCancelled && goodsReceipt !== null;
+  const canCancel = canWrite && !isCancelled && allocated === 0;
 
   return (
     <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
@@ -458,11 +485,17 @@ export function ApBillDetailView({ id }: { id: string }) {
                 {showReplaceForm ? "Batal Tukar Barang" : "Tukar Barang"}
               </Button>
             )}
+            {canCancel && (
+              <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+                {cancelling ? "Membatalkan..." : "Batalkan Bill"}
+              </Button>
+            )}
           </div>
         </div>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
+      {cancelError && <FormError>{cancelError}</FormError>}
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-5">

@@ -224,7 +224,11 @@ export default function GoodsIssuesPage() {
             {issues.map((gi) => {
               const totalHpp = gi.goods_issue_lines.reduce((sum, l) => sum + l.total_cost, 0);
               return (
-                <tr key={gi.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                <tr
+                  key={gi.id}
+                  className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                  onClick={() => router.push(`/goods-issues/${gi.id}`)}
+                >
                   <td className="px-4 py-2 font-medium text-black">{gi.ar_invoices.customers.name}</td>
                   <td className="px-4 py-2">{gi.ar_invoices.source_ref}</td>
                   <td className="whitespace-nowrap px-4 py-2">{gi.issue_date}</td>

@@ -181,7 +181,11 @@ export default function ProductionOrdersPage() {
             {orders.map((po) => {
               const totalCost = po.production_order_lines.reduce((sum, l) => sum + l.total_cost, 0);
               return (
-                <tr key={po.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                <tr
+                  key={po.id}
+                  className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                  onClick={() => router.push(`/production-orders/${po.id}`)}
+                >
                   <td className="px-4 py-2 font-medium text-black">{po.bom_headers.items.name}</td>
                   <td className="px-4 py-2">{po.qty_produced}</td>
                   <td className="whitespace-nowrap px-4 py-2">{po.production_date}</td>

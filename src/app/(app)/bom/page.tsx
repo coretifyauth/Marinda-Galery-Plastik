@@ -185,7 +185,11 @@ export default function BomPage() {
           </thead>
           <tbody>
             {boms.map((bom) => (
-              <tr key={bom.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+              <tr
+                key={bom.id}
+                className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                onClick={() => router.push(`/bom/${bom.id}`)}
+              >
                 <td className="px-4 py-2 font-medium text-black">{bom.items.name}</td>
                 <td className="px-4 py-2">
                   {bom.output_qty} {bom.items.uom}

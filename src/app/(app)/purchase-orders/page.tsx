@@ -200,7 +200,11 @@ export default function PurchaseOrdersPage() {
           </thead>
           <tbody>
             {orders.map((po) => (
-              <tr key={po.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+              <tr
+                key={po.id}
+                className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                onClick={() => router.push(`/purchase-orders/${po.id}`)}
+              >
                 <td className="px-4 py-2 font-medium text-black">{po.suppliers.name}</td>
                 <td className="whitespace-nowrap px-4 py-2">{po.po_date}</td>
                 <td className="px-4 py-2">{po.source_ref}</td>

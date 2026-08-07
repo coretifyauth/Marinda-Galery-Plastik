@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { Account } from "@/lib/accounts/schema";
-import type { FixedAsset, DepreciationEntry } from "@/lib/fixed-assets/schema";
-import { FormError } from "@/components/ui/form-message";
+import { postDepreciationSchema, type FixedAsset, type DepreciationEntry } from "@/lib/fixed-assets/schema";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { FormError, FormHint } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 
 export function FixedAssetDetailView({ id }: { id: string }) {
@@ -14,7 +17,15 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const [asset, setAsset] = useState<FixedAsset | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<DepreciationEntry[]>([]);
+  const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [showPostForm, setShowPostForm] = useState(false);
+  const [postPeriod, setPostPeriod] = useState("");
+  const [postSourceRef, setPostSourceRef] = useState("");
+  const [postOverride, setPostOverride] = useState("");
+  const [postError, setPostError] = useState<string | null>(null);
+  const [posting, setPosting] = useState(false);
 
   const load = useCallback(async () => {
     const [{ data: fa, error: faErr }, { data: acc }, { data: de, error: deErr }] = await Promise.all([
@@ -49,6 +60,12 @@ export function FixedAssetDetailView({ id }: { id: string }) {
         router.replace("/login");
         return;
       }
+      const { data: roleRows } = await supabase
+        .from("user_roles")
+        .select("role_name")
+        .eq("user_id", session.user.id);
+      if (!active) return;
+      setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await load();
       if (active) setCheckingSession(false);
     });
@@ -56,6 +73,41 @@ export function FixedAssetDetailView({ id }: { id: string }) {
       active = false;
     };
   }, [router, load]);
+
+  async function handlePost(e: FormEvent) {
+    e.preventDefault();
+    setPostError(null);
+
+    const parsed = postDepreciationSchema.safeParse({
+      fixed_asset_id: id,
+      period: postPeriod,
+      source_ref: postSourceRef,
+      amount_override: postOverride || undefined,
+    });
+    if (!parsed.success) {
+      setPostError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setPosting(true);
+    const { error } = await supabase.rpc("post_depreciation", {
+      p_fixed_asset_id: parsed.data.fixed_asset_id,
+      p_period: parsed.data.period,
+      p_source_ref: parsed.data.source_ref,
+      p_amount_override: parsed.data.amount_override ?? null,
+    });
+    setPosting(false);
+    if (error) {
+      setPostError(error.message);
+      return;
+    }
+
+    setShowPostForm(false);
+    setPostPeriod("");
+    setPostSourceRef("");
+    setPostOverride("");
+    await load();
+  }
 
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
@@ -85,14 +137,15 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const accumulated = rows.length > 0 ? rows[rows.length - 1].accumulated : 0;
   const bookValue = asset.acquisition_cost - accumulated;
   const isPublished = entries.length > 0;
+  const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
     <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
       <BackLink href="/fixed-assets" label="Kembali ke Fixed Assets" />
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-black">{asset.name}</h1>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold text-black">{asset.name}</h1>
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
               {asset.depreciation_method === "straight_line"
                 ? "Straight-Line"
@@ -105,18 +158,82 @@ export function FixedAssetDetailView({ id }: { id: string }) {
             )}
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-xs uppercase text-slate-400">Nilai Buku</div>
-          <div className="font-mono text-lg font-medium text-black">
-            {bookValue.toLocaleString("id-ID")}
+        <div className="flex items-start gap-4">
+          <div className="text-right">
+            <div className="text-xs uppercase text-slate-400">Nilai Buku</div>
+            <div className="font-mono text-lg font-medium text-black">
+              {bookValue.toLocaleString("id-ID")}
+            </div>
+            <div className="text-sm text-slate-500">
+              Akumulasi {accumulated.toLocaleString("id-ID")} / cap {cap.toLocaleString("id-ID")}
+            </div>
           </div>
-          <div className="text-sm text-slate-500">
-            Akumulasi {accumulated.toLocaleString("id-ID")} / cap {cap.toLocaleString("id-ID")}
-          </div>
+          {canWrite && (
+            <Button variant="toolbar" onClick={() => setShowPostForm((v) => !v)}>
+              {showPostForm ? "Batal" : "Posting Penyusutan"}
+            </Button>
+          )}
         </div>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
+
+      {showPostForm && (
+        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="mb-3 text-sm text-slate-500">
+            Jumlah penyusutan dihitung otomatis sesuai metode aset ini (
+            {asset.depreciation_method === "straight_line"
+              ? "straight-line: nilai perolehan dibagi umur manfaat"
+              : "declining balance: nilai buku dikali tarif"}
+            ) — biasanya gak perlu isi apapun selain periode & rujukan dokumen.
+          </p>
+          <form onSubmit={handlePost} className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="post_period">Periode</Label>
+              <Input
+                id="post_period"
+                type="date"
+                value={postPeriod}
+                onChange={(e) => setPostPeriod(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="post_source_ref">Rujukan dokumen</Label>
+              <Input
+                id="post_source_ref"
+                placeholder="mis. PENYST-OVEN-2026-01"
+                value={postSourceRef}
+                onChange={(e) => setPostSourceRef(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="post_override">Jumlah Manual (jarang dipakai)</Label>
+              <Input
+                id="post_override"
+                type="number"
+                min="0"
+                placeholder="kosongkan — biarkan dihitung otomatis"
+                value={postOverride}
+                onChange={(e) => setPostOverride(e.target.value)}
+              />
+            </div>
+            <Button type="submit" disabled={posting}>
+              {posting ? "Memproses..." : "Post"}
+            </Button>
+          </form>
+          <FormHint>
+            Isi kolom &quot;Jumlah Manual&quot; cuma kalau ini periode TERAKHIR aset declining
+            balance & mau dipotong biar nilai buku pas berhenti di nilai residu (lihat catatan
+            teknis di <code>docs/domain/human/fixed-assets.md</code>). Selain itu, selalu
+            kosongkan.
+          </FormHint>
+          {postError && (
+            <div className="mt-2">
+              <FormError>{postError}</FormError>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         {isPublished && (

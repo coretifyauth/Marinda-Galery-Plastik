@@ -1,12 +1,11 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import {
   createFixedAssetSchema,
-  postDepreciationSchema,
   depreciationMethods,
   accumulatedDepreciation,
   bookValue,
@@ -17,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { FormError, FormHint } from "@/components/ui/form-message";
+import { FormError } from "@/components/ui/form-message";
 
 export default function FixedAssetsPage() {
   const router = useRouter();
@@ -41,13 +40,6 @@ export default function FixedAssetsPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-
-  const [postingAssetId, setPostingAssetId] = useState<string | null>(null);
-  const [postPeriod, setPostPeriod] = useState("");
-  const [postSourceRef, setPostSourceRef] = useState("");
-  const [postOverride, setPostOverride] = useState("");
-  const [postError, setPostError] = useState<string | null>(null);
-  const [posting, setPosting] = useState(false);
 
   const leafAccounts = getLeafAccounts(accounts);
   const assetAccounts = leafAccounts.filter((a) => a.category === "asset" && !a.is_contra);
@@ -160,42 +152,6 @@ export default function FixedAssetsPage() {
     await loadAssets();
   }
 
-  async function handlePost(e: FormEvent) {
-    e.preventDefault();
-    setPostError(null);
-    if (!postingAssetId) return;
-
-    const parsed = postDepreciationSchema.safeParse({
-      fixed_asset_id: postingAssetId,
-      period: postPeriod,
-      source_ref: postSourceRef,
-      amount_override: postOverride || undefined,
-    });
-    if (!parsed.success) {
-      setPostError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setPosting(true);
-    const { error } = await supabase.rpc("post_depreciation", {
-      p_fixed_asset_id: parsed.data.fixed_asset_id,
-      p_period: parsed.data.period,
-      p_source_ref: parsed.data.source_ref,
-      p_amount_override: parsed.data.amount_override ?? null,
-    });
-    setPosting(false);
-    if (error) {
-      setPostError(error.message);
-      return;
-    }
-
-    setPostingAssetId(null);
-    setPostPeriod("");
-    setPostSourceRef("");
-    setPostOverride("");
-    await loadEntries();
-  }
-
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -241,7 +197,6 @@ export default function FixedAssetsPage() {
               <th className="px-4 py-2 text-right">Nilai Perolehan</th>
               <th className="px-4 py-2 text-right">Akumulasi Penyusutan</th>
               <th className="px-4 py-2 text-right">Nilai Buku</th>
-              <th className="px-4 py-2" />
             </tr>
           </thead>
           <tbody>
@@ -249,101 +204,34 @@ export default function FixedAssetsPage() {
               const accumulated = accumulatedDepreciation(entries, asset.id);
               const book = bookValue(asset, accumulated);
               return (
-                <Fragment key={asset.id}>
-                  <tr
-                    className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
-                    onClick={() => router.push(`/fixed-assets/${asset.id}`)}
-                  >
-                    <td className="px-4 py-2 font-medium text-black">{asset.name}</td>
-                    <td className="px-4 py-2">
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                        {asset.depreciation_method === "straight_line"
-                          ? "Straight-Line"
-                          : `Declining Balance (${(asset.depreciation_rate! * 100).toFixed(0)}%)`}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {asset.acquisition_cost.toLocaleString("id-ID")}
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {accumulated.toLocaleString("id-ID")}
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono font-medium text-black">
-                      {book.toLocaleString("id-ID")}
-                    </td>
-                    <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
-                      {canWrite && (
-                        <Button
-                          variant="toolbar"
-                          onClick={() =>
-                            setPostingAssetId((v) => (v === asset.id ? null : asset.id))
-                          }
-                        >
-                          Posting Penyusutan
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                  {postingAssetId === asset.id && (
-                    <tr className="border-b border-slate-100 bg-slate-50">
-                      <td colSpan={6} className="px-4 py-4">
-                        <p className="mb-3 text-sm text-slate-500">
-                          Jumlah penyusutan dihitung otomatis sesuai metode aset ini (
-                          {asset.depreciation_method === "straight_line"
-                            ? "straight-line: nilai perolehan dibagi umur manfaat"
-                            : "declining balance: nilai buku dikali tarif"}
-                          ) — biasanya gak perlu isi apapun selain periode & rujukan dokumen.
-                        </p>
-                        <form onSubmit={handlePost} className="flex flex-wrap items-end gap-3">
-                          <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="post_period">Periode</Label>
-                            <Input
-                              id="post_period"
-                              type="date"
-                              value={postPeriod}
-                              onChange={(e) => setPostPeriod(e.target.value)}
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="post_source_ref">Rujukan dokumen</Label>
-                            <Input
-                              id="post_source_ref"
-                              placeholder="mis. PENYST-OVEN-2026-01"
-                              value={postSourceRef}
-                              onChange={(e) => setPostSourceRef(e.target.value)}
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="post_override">Jumlah Manual (jarang dipakai)</Label>
-                            <Input
-                              id="post_override"
-                              type="number"
-                              min="0"
-                              placeholder="kosongkan — biarkan dihitung otomatis"
-                              value={postOverride}
-                              onChange={(e) => setPostOverride(e.target.value)}
-                            />
-                          </div>
-                          <Button type="submit" disabled={posting}>
-                            {posting ? "Memproses..." : "Post"}
-                          </Button>
-                        </form>
-                        <FormHint>
-                          Isi kolom &quot;Jumlah Manual&quot; cuma kalau ini periode TERAKHIR aset
-                          declining balance & mau dipotong biar nilai buku pas berhenti di nilai
-                          residu (lihat catatan teknis di <code>docs/domain/human/fixed-assets.md</code>).
-                          Selain itu, selalu kosongkan.
-                        </FormHint>
-                        {postError && <div className="mt-2"><FormError>{postError}</FormError></div>}
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
+                <tr
+                  key={asset.id}
+                  className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                  onClick={() => router.push(`/fixed-assets/${asset.id}`)}
+                >
+                  <td className="px-4 py-2 font-medium text-black">{asset.name}</td>
+                  <td className="px-4 py-2">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                      {asset.depreciation_method === "straight_line"
+                        ? "Straight-Line"
+                        : `Declining Balance (${(asset.depreciation_rate! * 100).toFixed(0)}%)`}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {asset.acquisition_cost.toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {accumulated.toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono font-medium text-black">
+                    {book.toLocaleString("id-ID")}
+                  </td>
+                </tr>
               );
             })}
             {assets.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
                   Belum ada aset tetap.
                 </td>
               </tr>

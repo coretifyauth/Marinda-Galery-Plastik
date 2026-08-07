@@ -40,15 +40,7 @@ Ini pola utama ERPNext, dipake di HAMPIR SEMUA index halaman kita (`/accounts`, 
 
 **Keputusan user (per percakapan sesi ini, supersede catatan "dipicu kebutuhan riil" versi lama):** tiap tabel yang punya child/related table (1-ke-banyak — invoice punya payment+retur+DP, deposit punya application+forfeiture, journal entry punya lines, dst) **wajib** punya halaman detail `[id]`, dan **aksi transaksional apa pun** terhadap baris itu (retur, batalkan, terapkan, hanguskan, posting, dsb) **wajib hidup di halaman detail itu**, bukan inline di row list. Ini sekarang default buat entity baru — bukan sesuatu yang ditunggu sampai "kerasa butuh".
 
-Entity yang **sudah** ikut aturan ini penuh (8, termasuk aksi transaksional pindah ke detail): `/accounts/[id]`, `/customers/[id]`, `/suppliers/[id]`, `/items/[id]`, `/ar-invoices/[id]`, `/ar-deposits/[id]`.
-
-**Utang retrofit** (`memory/scope-debt/ui-detail-page-retrofit.md`) — list-nya masih murni tabel row tanpa detail page, padahal tabelnya punya children:
-- `/journal-entries` (child: `journal_lines`)
-- `/ar-payments` (child: `ar_payment_allocations`)
-- `/ap-bills`, `/ap-payments` (child: `ap_payment_allocations` dst, mirror AR)
-- `/purchase-orders` (child: `purchase_order_lines`), `/goods-receipts` (child: `goods_receipt_lines`), `/production-orders` (child: `production_order_lines`), `/bom` (child: `bom_lines`), `/goods-issues` (child: `goods_issue_lines`)
-
-Fixed-assets (`/fixed-assets/[id]`) itu pengecualian lama yang **belum** dirapikan ke pola baru — detail page-nya udah ada tapi cuma read-only histori, aksi "Posting Penyusutan" masih nyangkut di row list `/fixed-assets` (kategori gap beda dari daftar di atas: bukan "belum ada detail page", tapi "detail page ada, aksinya belum dipindah ke situ"). Dicatat di scope-debt yang sama.
+Entity yang **sudah** ikut aturan ini penuh (retrofit selesai 2026-08-07, `memory/scope-debt/ui-detail-page-retrofit.md` sudah dihapus): `/accounts/[id]`, `/customers/[id]`, `/suppliers/[id]`, `/items/[id]`, `/ar-invoices/[id]`, `/ar-deposits/[id]`, `/ap-bills/[id]` (aksi "Batalkan" dipindah dari row list ke sini), `/journal-entries/[id]`, `/ar-payments/[id]`, `/ap-payments/[id]`, `/purchase-orders/[id]`, `/goods-receipts/[id]`, `/production-orders/[id]`, `/bom/[id]`, `/goods-issues/[id]`, `/fixed-assets/[id]` (aksi "Posting Penyusutan" dipindah dari row list ke sini). Semua list-nya sekarang murni klik-baris-ke-detail, gak ada tombol aksi apa pun nempel di row.
 
 - **Pola implementasi**: tiap route `[id]` punya `page.tsx` (Server Component tipis, cuma `await params` — Next 16 `params` selalu `Promise` di Page component) yang render `view.tsx` (Client Component, isi logic query+UI-nya, nerima `id` sebagai prop biasa). Bukan bikin 1 file client langsung baca `params` via `use()`.
 - **Row klik navigasi** ditambahkan di halaman list yang punya detail page (poin 2 di atas, "Klik baris navigasi ke detail") — seluruh `<tr>` clickable, TIDAK ada lagi tombol aksi apa pun di row list begitu detail page-nya ada (beda dari pola lama `fixed-assets` yang masih nyimpen "Posting Penyusutan" di row — itu pola LAMA yang sekarang dianggap gak sesuai aturan).

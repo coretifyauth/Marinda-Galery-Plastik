@@ -28,8 +28,6 @@ export default function ApBillsPage() {
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [cancelError, setCancelError] = useState<string | null>(null);
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const [supplierId, setSupplierId] = useState("");
   const [billDate, setBillDate] = useState("");
@@ -151,28 +149,6 @@ export default function ApBillsPage() {
     await loadBills();
   }
 
-  async function handleCancel(bill: ApBill) {
-    const reasonRef = window.prompt(
-      `Batalkan bill ${bill.source_ref} (Rp${bill.amount.toLocaleString("id-ID")})?\nMasukin rujukan dokumen buat entry pembalik:`,
-      `Pembatalan ${bill.source_ref}`
-    );
-    if (!reasonRef) return;
-
-    setCancelError(null);
-    setCancellingId(bill.id);
-    const { error } = await supabase.rpc("cancel_ap_bill", {
-      p_bill_id: bill.id,
-      p_entry_date: new Date().toISOString().slice(0, 10),
-      p_source_ref: reasonRef,
-    });
-    setCancellingId(null);
-    if (error) {
-      setCancelError(error.message);
-      return;
-    }
-    await Promise.all([loadBills(), loadReversedEntryIds()]);
-  }
-
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -190,7 +166,6 @@ export default function ApBillsPage() {
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
-      {cancelError && <FormError>{cancelError}</FormError>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
@@ -221,16 +196,14 @@ export default function ApBillsPage() {
               <th className="px-4 py-2 text-right">Jumlah</th>
               <th className="px-4 py-2 text-right">Outstanding</th>
               <th className="px-4 py-2">Status</th>
-              <th className="px-4 py-2" />
             </tr>
           </thead>
           <tbody>
             {bills.map((bill) => {
               const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
-              const { status, outstanding, allocated } = billStatus(bill, isCancelled);
+              const { status, outstanding } = billStatus(bill, isCancelled);
               const overdue =
                 status !== "lunas" && status !== "dibatalkan" && bill.due_date < new Date().toISOString().slice(0, 10);
-              const canCancel = canWrite && !isCancelled && allocated === 0;
               return (
                 <tr
                   key={bill.id}
@@ -259,27 +232,12 @@ export default function ApBillsPage() {
                       {status}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-right">
-                    {canCancel && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCancel(bill);
-                        }}
-                        disabled={cancellingId === bill.id}
-                        className="text-xs text-red-600 hover:underline disabled:opacity-40"
-                      >
-                        {cancellingId === bill.id ? "Membatalkan..." : "Batalkan"}
-                      </button>
-                    )}
-                  </td>
                 </tr>
               );
             })}
             {bills.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
                   Belum ada bill.
                 </td>
               </tr>

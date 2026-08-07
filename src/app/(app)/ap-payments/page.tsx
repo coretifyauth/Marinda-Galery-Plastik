@@ -236,7 +236,11 @@ export default function ApPaymentsPage() {
           </thead>
           <tbody>
             {payments.map((p) => (
-              <tr key={p.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+              <tr
+                key={p.id}
+                className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                onClick={() => router.push(`/ap-payments/${p.id}`)}
+              >
                 <td className="px-4 py-2 font-medium text-black">{p.suppliers.name}</td>
                 <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
                 <td className="px-4 py-2">{p.source_ref}</td>
