@@ -35,7 +35,6 @@ export function CustomerDetailView({ id }: { id: string }) {
   const [editPaymentTermDays, setEditPaymentTermDays] = useState("");
   const [editCreditLimit, setEditCreditLimit] = useState("");
   const [editOverdueThresholdDays, setEditOverdueThresholdDays] = useState("");
-  const [editReturnWindowDays, setEditReturnWindowDays] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -49,21 +48,21 @@ export function CustomerDetailView({ id }: { id: string }) {
       supabase
         .from("customers")
         .select(
-          "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, return_window_days, archived_at"
+          "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at"
         )
         .eq("id", id)
         .single(),
       supabase
         .from("ar_invoices")
         .select(
-          "id, customer_id, invoice_date, due_date, return_window_days, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount), ar_return_credit_applications(amount)"
+          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
         )
         .eq("customer_id", id)
         .order("invoice_date", { ascending: false }),
       supabase
         .from("ar_payments")
         .select(
-          "id, customer_id, payment_date, amount, source_ref, journal_entry_id, created_at, customers(name), ar_payment_allocations(id, amount, ar_invoices(source_ref))"
+          "id, customer_id, invoice_id, payment_date, amount, source_ref, journal_entry_id, created_at, customers(name), ar_invoices(source_ref)"
         )
         .eq("customer_id", id)
         .order("payment_date", { ascending: false }),
@@ -81,7 +80,6 @@ export function CustomerDetailView({ id }: { id: string }) {
     setEditPaymentTermDays(String(c.payment_term_days));
     setEditCreditLimit(c.credit_limit != null ? String(c.credit_limit) : "");
     setEditOverdueThresholdDays(c.overdue_threshold_days != null ? String(c.overdue_threshold_days) : "");
-    setEditReturnWindowDays(c.return_window_days != null ? String(c.return_window_days) : "");
     setInvoices((inv ?? []) as unknown as ArInvoice[]);
     setPayments((pay ?? []) as unknown as ArPayment[]);
     setReversedEntryIds(
@@ -119,7 +117,6 @@ export function CustomerDetailView({ id }: { id: string }) {
       payment_term_days: editPaymentTermDays,
       credit_limit: editCreditLimit || undefined,
       overdue_threshold_days: editOverdueThresholdDays || undefined,
-      return_window_days: editReturnWindowDays || undefined,
     });
     if (!parsed.success) {
       setEditError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -134,7 +131,6 @@ export function CustomerDetailView({ id }: { id: string }) {
         payment_term_days: parsed.data.payment_term_days,
         credit_limit: parsed.data.credit_limit ?? null,
         overdue_threshold_days: parsed.data.overdue_threshold_days ?? null,
-        return_window_days: parsed.data.return_window_days ?? null,
       })
       .eq("id", id);
     setSaving(false);
@@ -189,7 +185,6 @@ export function CustomerDetailView({ id }: { id: string }) {
             {customer.contact ?? "-"} · Termin net-{customer.payment_term_days} · Credit limit{" "}
             {customer.credit_limit != null ? customer.credit_limit.toLocaleString("id-ID") : "tanpa batas"}
             {" "}· Toleransi telat {customer.overdue_threshold_days ?? "tanpa batas"} hari
-            {" "}· Toleransi retur {customer.return_window_days ?? "tanpa batas"} hari
             {customer.archived_at && " · Diarsipkan"}
           </p>
         </div>
@@ -248,16 +243,6 @@ export function CustomerDetailView({ id }: { id: string }) {
                 min="1"
                 value={editOverdueThresholdDays}
                 onChange={(e) => setEditOverdueThresholdDays(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_return_window_days">Toleransi Retur (hari, kosongkan = tanpa batas)</Label>
-              <Input
-                id="edit_return_window_days"
-                type="number"
-                min="1"
-                value={editReturnWindowDays}
-                onChange={(e) => setEditReturnWindowDays(e.target.value)}
               />
             </div>
             <Button type="submit" disabled={saving}>
@@ -346,7 +331,7 @@ export function CustomerDetailView({ id }: { id: string }) {
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Source Ref</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
-              <th className="px-4 py-2">Dialokasikan ke</th>
+              <th className="px-4 py-2">Invoice</th>
             </tr>
           </thead>
           <tbody>
@@ -355,15 +340,7 @@ export function CustomerDetailView({ id }: { id: string }) {
                 <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
                 <td className="px-4 py-2">{p.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {p.ar_payment_allocations.map((a) => (
-                      <li key={a.id}>
-                        {a.ar_invoices.source_ref} — {a.amount.toLocaleString("id-ID")}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
+                <td className="px-4 py-2">{p.ar_invoices.source_ref}</td>
               </tr>
             ))}
             {payments.length === 0 && (

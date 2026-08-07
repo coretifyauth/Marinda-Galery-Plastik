@@ -9,17 +9,14 @@ import { BackLink } from "@/components/ui/back-link";
 type PaymentDetail = {
   id: string;
   customer_id: string;
+  invoice_id: string;
   payment_date: string;
   source_ref: string;
   amount: number;
   journal_entry_id: string;
   created_at: string;
   customers: { name: string };
-  ar_payment_allocations: {
-    id: string;
-    amount: number;
-    ar_invoices: { source_ref: string; amount: number };
-  }[];
+  ar_invoices: { source_ref: string; amount: number };
 };
 
 type JournalEntryDetail = {
@@ -42,7 +39,7 @@ export function ArPaymentDetailView({ id }: { id: string }) {
     const { data: pay, error: payErr } = await supabase
       .from("ar_payments")
       .select(
-        "id, customer_id, payment_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(id, amount, ar_invoices(source_ref, amount))"
+        "id, customer_id, invoice_id, payment_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_invoices(source_ref, amount)"
       )
       .eq("id", id)
       .single();
@@ -111,34 +108,22 @@ export function ArPaymentDetailView({ id }: { id: string }) {
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Alokasi ke Invoice</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {payment.ar_payment_allocations.length}
-          </span>
+          <span className="text-sm font-medium text-black">Invoice yang Dilunasi</span>
         </div>
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Invoice</th>
               <th className="px-4 py-2 text-right">Nominal Invoice</th>
-              <th className="px-4 py-2 text-right">Dialokasikan</th>
+              <th className="px-4 py-2 text-right">Dibayar</th>
             </tr>
           </thead>
           <tbody>
-            {payment.ar_payment_allocations.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{a.ar_invoices.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.ar_invoices.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {payment.ar_payment_allocations.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada alokasi.
-                </td>
-              </tr>
-            )}
+            <tr className="border-b border-slate-100 hover:bg-slate-50">
+              <td className="px-4 py-2">{payment.ar_invoices.source_ref}</td>
+              <td className="px-4 py-2 text-right font-mono">{payment.ar_invoices.amount.toLocaleString("id-ID")}</td>
+              <td className="px-4 py-2 text-right font-mono">{payment.amount.toLocaleString("id-ID")}</td>
+            </tr>
           </tbody>
         </table>
       </div>

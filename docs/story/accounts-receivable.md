@@ -20,8 +20,6 @@ Tiap customer juga punya `credit_limit` dan `overdue_threshold_days` (prefill = 
 | Warung Bu Imas | Rp2.000.000 | 7 (default) |
 | Warung Kang Ade | NULL (belum pernah macet, gak dibatasi) | 7 (default) |
 
-`return_window_days` (toleransi hari boleh ngajuin retur) awalnya `NULL` buat ketiganya (gak dibatasi) — Bu Imas dapet nilai eksplisit belakangan (Oktober 2026, lihat Skenario 14), Pak Budi & Kang Ade tetap `NULL` sampai sekarang.
-
 ## Skenario 1 — Invoice awal + lunas tepat waktu (Warung Bu Imas)
 
 10 Juli 2026: kirim roti ke Warung Bu Imas, invoice Rp500.000, `due_date` = 10+7 = **17 Juli 2026**.
@@ -29,19 +27,18 @@ Jurnal: Piutang Usaha (D) 500.000 | Pendapatan Penjualan Grosir (K) 500.000
 
 17 Juli 2026: Bu Imas bayar pas Rp500.000.
 Jurnal: Kas di Bank (D) 500.000 | Piutang Usaha (K) 500.000
-Alokasi: 1 baris, 500.000, penuh ke invoice ini.
+Payment nempel langsung ke invoice ini, persis Rp500.000 (sisa outstanding-nya).
 Status invoice: **lunas**.
 
-## Skenario 2 — Bayar sebagian / cicil (Warung Kang Ade)
+## Skenario 2 — Lunas 1x penuh (Warung Kang Ade)
 
 12 Juli 2026: kirim ke Warung Kang Ade, invoice Rp900.000, `due_date` = 12+7 = **19 Juli 2026**.
 Jurnal: Piutang Usaha (D) 900.000 | Pendapatan Penjualan Grosir (K) 900.000
 
-19 Juli 2026: Kang Ade baru sanggup bayar Rp500.000.
-Jurnal: Kas di Bank (D) 500.000 | Piutang Usaha (K) 500.000. Alokasi: 500.000 ke invoice ini. Status: **sebagian**.
+26 Juli 2026: Kang Ade lunasin Rp900.000 sekaligus.
+Jurnal: Kas di Bank (D) 900.000 | Piutang Usaha (K) 900.000. Status: **lunas**.
 
-26 Juli 2026: Kang Ade lunasin sisa Rp400.000.
-Jurnal: Kas di Bank (D) 400.000 | Piutang Usaha (K) 400.000. Alokasi: 400.000 ke invoice yang sama. Status: **lunas** (500.000+400.000 = 900.000).
+*(Catatan: skenario ini sebelumnya "bayar sebagian/cicil" — Rp500.000 tanggal 19 Juli, disusul Rp400.000 tanggal 26 Juli. Diubah jadi 1x lunas penuh Rp900.000 karena keputusan bisnis belakangan: payment wajib persis nutup 1 invoice, gak boleh dicicil — lihat migration `0040_ar_payment_strict_invoice_match.sql`.)*
 
 ## Skenario 3 — Piutang lama, telat bayar (Warung Pak Budi — lanjutan dari `general-ledger.md`)
 
@@ -86,7 +83,7 @@ Debit Retur & Potongan Penjualan   50.000
   Kredit Piutang Usaha                    50.000
 ```
 
-Piutang Usaha Kang Ade: 900.000 (invoice) − 900.000 (bayar lunas) − 50.000 (retur) = **−50.000** (saldo kredit — Bu Nur "berutang" 50.000 ke Kang Ade, penanganannya belum di-scope — beda dari kelebihan bayar payment yang udah di-scope di "AR Customer Credit", ini dari retur yang bikin outstanding negatif).
+Piutang Usaha Kang Ade: 900.000 (invoice) − 900.000 (bayar lunas) − 50.000 (retur) = **−50.000** (saldo kredit — Bu Nur "berutang" 50.000 ke Kang Ade, lihat Skenario 11 "Saldo Kredit dari Retur" buat penanganannya).
 
 ## Skenario 6 — Retur, full/stok+HPP (Warung Pak Budi, lanjutan `docs/story/inventory.md` Tahap 7)
 
@@ -185,34 +182,9 @@ Hasil akhir: Piutang Usaha customer ini balik ke **0**, Uang Muka Penjualan bali
 
 Invoice yang benar (Rp1.000.000) diterbitkan ulang, DP Rp300.000 yang sama diterapkan lagi ke invoice baru ini. Outstanding: 700.000.
 
-## Skenario 10 — Kelebihan bayar jadi saldo kredit (Warung Bu Imas)
+*(Catatan: sistem sempat punya mekanisme "Kelebihan Bayar jadi Saldo Kredit Customer" — dulu Skenario 10 & 11 di sini nyeritain Bu Imas transfer Rp750.000 buat invoice Rp700.000 (excess Rp50.000 jadi saldo kredit), lalu saldo itu dipakai motong invoice berikutnya. Dicabut total lewat migration `0040_ar_payment_strict_invoice_match.sql` — payment sekarang wajib persis nutup 1 invoice, gak ada lagi jalur kelebihan bayar. Seed data skenario ini juga udah dihapus dari migration.)*
 
-28 Agustus 2026 (setelah periode Jan-25 Agustus 2026 ditutup, lihat `docs/story/financial-reports.md`): kirim roti ke Warung Bu Imas, invoice Rp700.000, `due_date` 4 September (net-7).
-Jurnal: Piutang Usaha (D) 700.000 | Pendapatan Penjualan Grosir (K) 700.000
-
-2 September 2026: Bu Imas transfer **Rp750.000** (salah baca nominal). Gak ada invoice lain outstanding buat Bu Imas. Payment dicatat 1 event, dialokasikan Rp700.000 penuh ke invoice ini, sisa Rp50.000 gak punya invoice buat nyantol → jadi saldo kredit.
-Jurnal (1 payment event, 3 baris):
-```
-Kas di Bank (D) 750.000
-  Piutang Usaha (K) 700.000
-  Saldo Kredit Customer (K) 50.000
-```
-Status invoice: **lunas**. Saldo kredit Bu Imas: **Rp50.000** (belum dipakai).
-
-## Skenario 11 — Saldo kredit dipakai motong invoice berikutnya (Bu Imas, lanjutan Skenario 10)
-
-5 September 2026: Bu Imas pesan lagi, invoice Rp300.000, `due_date` 12 September.
-Jurnal: Piutang Usaha (D) 300.000 | Pendapatan Penjualan Grosir (K) 300.000
-
-Bu Nur inget Bu Imas ada saldo kredit Rp50.000, dipakai motong invoice ini duluan:
-Jurnal: Saldo Kredit Customer (D) 50.000 | Piutang Usaha (K) 50.000. Outstanding invoice jadi Rp250.000. Saldo kredit Bu Imas: **Rp0** (habis terpakai).
-
-10 September 2026: Bu Imas transfer sisa Rp250.000 pas.
-Jurnal: Kas di Bank (D) 250.000 | Piutang Usaha (K) 250.000. Status invoice: **lunas**.
-
-(Kalau Bu Imas minta saldo kreditnya di-refund tunai alih-alih dipakai: Saldo Kredit Customer (D) 50.000 | Kas di Bank (K) 50.000 — jurnal alternatif, gak dipakai di skenario ini.)
-
-## Skenario 12 — Piutang tak tertagih (write-off), pesanan custom yang kabur (Bu Rina)
+## Skenario 10 — Piutang tak tertagih (write-off), pesanan custom yang kabur (Bu Rina)
 
 Selain Ibu Dewi & Pak Joko (yang selalu bayar DP di muka), 1 Februari 2027 ada pesanan custom dari **Bu Rina** (0812-xxxx-0006, referral dari Ibu Dewi) — kue ulang tahun anak Rp1.500.000. Karena referral dari langganan yang udah dipercaya, Bu Nur bikin pengecualian: kirim langsung hari itu juga **tanpa minta DP**. `payment_term_days` default 7 (`due_date` 8 Februari 2027), `credit_limit`/`overdue_threshold_days` NULL (customer baru, gak dibatasi — sama pola Ibu Dewi/Pak Joko).
 
@@ -230,7 +202,7 @@ Debit Beban Piutang Tak Tertagih   1.500.000
 
 Piutang Usaha Bu Rina: 1.500.000 (invoice) − 1.500.000 (write-off) = **0 outstanding**. Status invoice berubah dari **belum** jadi **dihapusbukukan** — beda dari **lunas** (piutang ini gak pernah beneran dibayar, cuma diakui hilang). Pendapatan Penjualan Toko 1.500.000 dari 1 Februari **tetap berdiri** gak dibalik — penjualannya beneran kejadian, cuma piutangnya yang gak bisa dicairkan. Laba Rugi periode Juni 2027 kena beban baru Rp1.500.000 (bukan periode Februari saat penjualan awal terjadi).
 
-## Skenario 13 — Saldo kredit dari retur (Warung Kang Ade, lanjutan Skenario 5)
+## Skenario 11 — Saldo kredit dari retur (Warung Kang Ade, lanjutan Skenario 5)
 
 5 September 2026 (Skenario 5): retur Rp50.000 dari Warung Kang Ade, invoice 12 Juli (Rp900.000) udah lunas penuh sejak 26 Juli. Waktu itu, outstanding invoice-nya jadi **-50.000** — Bu Nur "berutang" ke Kang Ade, tapi belum ada mekanisme resmi buat mencairkannya (gap yang baru ditutup fitur ini).
 
@@ -250,19 +222,11 @@ Saldo kredit retur Kang Ade: **Rp0** (habis, direfund tunai).
 
 *(Catatan implementasi: karena retur Kang Ade ini sendiri terjadi SEBELUM fitur AR Return Credit dibangun — tercatat pas fitur retur pertama kali dibuat, jauh sebelum gap ini disadari — jurnal reklasifikasi & baris `ar_return_credits` di atas di-backfill manual lewat migration seed, bukan otomatis dari `create_ar_credit_note` versi lama. Kejadian bisnisnya tetap sama: excess Rp50.000, tanggal yang sama, cuma jalur teknisnya beda dari retur yang terjadi SETELAH fitur ini ada.)*
 
-## Skenario 14 — Batas retur per customer (Warung Bu Imas)
-
-1 Oktober 2026: Bu Nur mulai kerepotan nge-track retur yang diajukan lama banget setelah roti dikirim — barangnya udah pasti gak layak tapi customer tetap nagih potongan. Bu Nur mutusin kasih kebijakan eksplisit ke Warung Bu Imas: `return_window_days = 14` (customer lain dibiarin `NULL`/gak dibatasi dulu, belum jadi masalah buat mereka).
-
-`update customers set return_window_days = 14 where name = 'Warung Bu Imas'` — cuma ngaruh ke invoice **baru** Bu Imas ke depan (snapshot ke `ar_invoices.return_window_days` pas dibuat), gak retroaktif ke invoice lama dia (Skenario 1, 10, 11) yang `return_window_days`-nya tetap `NULL` (dibuat sebelum kebijakan ini ada).
-
-**Uji kasus (ditolak)**: seandainya Bu Imas coba ngajuin retur Rp30.000 di 1 Oktober 2026 buat invoice 28 Agustus 2026 (Skenario 10, Rp700.000) — invoice itu dibuat **sebelum** kebijakan 14 hari berlaku, jadi `ar_invoices.return_window_days`-nya `NULL`, dan retur ini **tetap diterima** (gak ada batas). Tapi kalau invoice itu **seandainya** dibuat setelah 1 Oktober (jadi udah ke-snapshot 14 hari), retur di hari ke-34 bakal ditolak: `raise exception` sebelum jurnal apa pun dibuat, pesan jelas nyebut telat 20 hari dari batas.
-
-*(Skenario ini sengaja gak dieksekusi sebagai SQL nyata di migration seed — bakal gagalin transaksi migration kalau beneran dijalanin sampai exception. Cukup didokumentasikan naratif, sama pola skenario credit hold Pak Budi di atas.)*
+*(Catatan: sistem sempat punya validasi batas waktu retur — per item dan per customer, termasuk kebijakan `return_window_days = 14` khusus Warung Bu Imas per Oktober 2026 — tapi dicabut total lewat migration `0039_ar_remove_return_window.sql`. Retur diterima/ditolak sekarang murni keputusan manual Bu Nur di luar sistem, gak ada lagi hard-reject berbasis tanggal.)*
 
 ## Simulasi Interface (rencana)
 
-Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar dengan pilih 1+ invoice outstanding buat dialokasikan, validasi gak boleh over-allocate — plus tampilin sisa Rp yang jadi saldo kredit kalau ada excess), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Saldo kredit customer (pakai/refund) menyusul di halaman customer detail atau inline di `/ar-invoices`, pola sama tombol "Terapkan DP". Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Halaman `/ar-return-credits` (list+detail, pola sama `/ar-customer-credits`) buat saldo kredit yang lahir dari retur negatif — lahir otomatis, gak ada form "bikin baru". Detail flow menyusul pas fase UI dikerjakan.
+Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar — pilih 1 invoice outstanding, nominal otomatis keisi sisa outstanding-nya, wajib persis biar bisa disubmit), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Halaman `/ar-return-credits` (list+detail) buat saldo kredit yang lahir dari retur negatif — lahir otomatis, gak ada form "bikin baru". Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

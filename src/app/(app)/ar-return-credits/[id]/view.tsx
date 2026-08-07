@@ -4,9 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
-import { invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
 import {
-  applyArReturnCreditSchema,
   refundArReturnCreditSchema,
   returnCreditRemaining,
   type ArReturnCredit,
@@ -32,21 +30,9 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
   const [checkingSession, setCheckingSession] = useState(true);
   const [credit, setCredit] = useState<ArReturnCredit | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
-  const [customerInvoices, setCustomerInvoices] = useState<ArInvoice[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  const [showApplyForm, setShowApplyForm] = useState(false);
-  const [applyInvoiceId, setApplyInvoiceId] = useState("");
-  const [applyAmount, setApplyAmount] = useState("");
-  const [applyDate, setApplyDate] = useState("");
-  const [applySourceRef, setApplySourceRef] = useState("");
-  const [applyReturnCreditAccountId, setApplyReturnCreditAccountId] = useState("");
-  const [applyReceivableAccountId, setApplyReceivableAccountId] = useState("");
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [applySubmitting, setApplySubmitting] = useState(false);
 
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [refundAmount, setRefundAmount] = useState("");
@@ -63,7 +49,7 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
     const { data: cred, error: credErr } = await supabase
       .from("ar_return_credits")
       .select(
-        "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, customers(name), ar_credit_notes(source_ref, credit_note_date), ar_return_credit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+        "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, customers(name), ar_credit_notes(source_ref, credit_note_date, warranty_replacements(id, replacement_date, source_ref, return_credit_settled_amount)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
       )
       .eq("id", id)
       .single();
@@ -76,9 +62,7 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
 
     const [
       { data: accs },
-      { data: reversedRows },
       { data: entries, error: entriesErr },
-      { data: custInvoices, error: custInvoicesErr },
     ] = await Promise.all([
       supabase
         .from("accounts")
@@ -86,31 +70,16 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
         .order("code"),
       supabase
         .from("journal_entries")
-        .select("reverses_entry_id")
-        .not("reverses_entry_id", "is", null),
-      supabase
-        .from("journal_entries")
         .select(
           "id, entry_date, description, source_ref, reverses_entry_id, journal_lines(id, debit, credit, accounts(code, name))"
         )
         .or(`id.eq.${loadedCredit.journal_entry_id},reverses_entry_id.eq.${loadedCredit.journal_entry_id}`)
         .order("entry_date"),
-      supabase
-        .from("ar_invoices")
-        .select(
-          "id, customer_id, invoice_date, due_date, return_window_days, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount), ar_bad_debt_writeoffs(amount), ar_return_credit_applications(amount)"
-        )
-        .eq("customer_id", loadedCredit.customer_id)
-        .order("invoice_date"),
     ]);
 
     setAccounts((accs ?? []) as Account[]);
-    setReversedEntryIds(
-      new Set(((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
-    );
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
-    setCustomerInvoices((custInvoices ?? []) as unknown as ArInvoice[]);
-    setLoadError(entriesErr?.message ?? custInvoicesErr?.message ?? null);
+    setLoadError(entriesErr?.message ?? null);
   }, [id]);
 
   useEffect(() => {
@@ -133,56 +102,6 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
       active = false;
     };
   }, [router, load]);
-
-  function openApplyForm() {
-    setApplyError(null);
-    setApplyInvoiceId("");
-    setApplyAmount("");
-    setApplyDate("");
-    setApplySourceRef("");
-    setApplyReturnCreditAccountId("");
-    setApplyReceivableAccountId("");
-    setShowApplyForm(true);
-  }
-
-  async function handleApplySubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!credit) return;
-    setApplyError(null);
-
-    const parsed = applyArReturnCreditSchema.safeParse({
-      credit_id: credit.id,
-      invoice_id: applyInvoiceId,
-      amount: applyAmount,
-      entry_date: applyDate,
-      source_ref: applySourceRef,
-      return_credit_liability_account_id: applyReturnCreditAccountId,
-      receivable_account_id: applyReceivableAccountId,
-    });
-    if (!parsed.success) {
-      setApplyError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setApplySubmitting(true);
-    const { error } = await supabase.rpc("apply_ar_return_credit", {
-      p_credit_id: parsed.data.credit_id,
-      p_invoice_id: parsed.data.invoice_id,
-      p_amount: parsed.data.amount,
-      p_entry_date: parsed.data.entry_date,
-      p_source_ref: parsed.data.source_ref,
-      p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id,
-      p_receivable_account_id: parsed.data.receivable_account_id,
-    });
-    setApplySubmitting(false);
-    if (error) {
-      setApplyError(error.message);
-      return;
-    }
-
-    setShowApplyForm(false);
-    await load();
-  }
 
   function openRefundForm() {
     setRefundError(null);
@@ -239,22 +158,11 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
     return <FormError>{loadError ?? "Saldo kredit retur gak ditemukan."}</FormError>;
   }
 
-  const { used, remaining } = returnCreditRemaining(credit, reversedEntryIds);
+  const { used, remaining } = returnCreditRemaining(credit);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canSpend = canWrite && remaining > 0.005;
-
-  const outstandingInvoices = customerInvoices
-    .map((inv) => ({
-      invoice: inv,
-      ...invoiceStatus(inv, reversedEntryIds.has(inv.journal_entry_id)),
-    }))
-    .filter((x) => x.status !== "lunas" && x.status !== "dibatalkan");
-
-  const activeApplications = credit.ar_return_credit_applications.filter(
-    (a) => !reversedEntryIds.has(a.journal_entry_id)
-  );
-  const reversedApplications = credit.ar_return_credit_applications.filter((a) =>
-    reversedEntryIds.has(a.journal_entry_id)
+  const settlements = credit.ar_credit_notes.warranty_replacements.filter(
+    (w) => w.return_credit_settled_amount > 0
   );
 
   return (
@@ -276,12 +184,6 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
             <div className="flex gap-1.5">
               <Button
                 variant="toolbar"
-                onClick={() => (showApplyForm ? setShowApplyForm(false) : openApplyForm())}
-              >
-                {showApplyForm ? "Batal Pakai" : "Pakai ke Invoice"}
-              </Button>
-              <Button
-                variant="toolbar"
                 onClick={() => (showRefundForm ? setShowRefundForm(false) : openRefundForm())}
               >
                 {showRefundForm ? "Batal Refund" : "Refund Tunai"}
@@ -290,6 +192,12 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      <p className="text-sm text-slate-500">
+        Saldo ini cuma bisa diselesaikan refund tunai (di sini) atau ganti barang (tombol
+        &quot;Ganti Barang&quot; di halaman invoice/credit note terkait) — gak bisa dititip/dipakai
+        motong invoice lain lagi.
+      </p>
 
       {loadError && <FormError>{loadError}</FormError>}
 
@@ -300,7 +208,7 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
             <dd className="font-mono text-black">{credit.amount.toLocaleString("id-ID")}</dd>
           </div>
           <div>
-            <dt className="text-xs uppercase text-slate-400">Sudah Dipakai</dt>
+            <dt className="text-xs uppercase text-slate-400">Sudah Diselesaikan</dt>
             <dd className="font-mono text-black">{used.toLocaleString("id-ID")}</dd>
           </div>
           <div>
@@ -366,49 +274,33 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Diterapkan ke Invoice</span>
+          <span className="text-sm font-medium text-black">Diselesaikan via Ganti Barang</span>
           <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {credit.ar_return_credit_applications.length}
+            {settlements.length}
           </span>
         </div>
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Invoice</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-              <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2 text-right">Nominal Diselesaikan</th>
             </tr>
           </thead>
           <tbody>
-            {activeApplications.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{a.source_ref}</td>
-                <td className="px-4 py-2">{a.ar_invoices.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2">
-                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">Aktif</span>
+            {settlements.map((w) => (
+              <tr key={w.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="whitespace-nowrap px-4 py-2">{w.replacement_date}</td>
+                <td className="px-4 py-2">{w.source_ref}</td>
+                <td className="px-4 py-2 text-right font-mono">
+                  {w.return_credit_settled_amount.toLocaleString("id-ID")}
                 </td>
               </tr>
             ))}
-            {reversedApplications.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 text-slate-400 hover:bg-slate-50">
-                <td className="px-4 py-2 line-through">{a.source_ref}</td>
-                <td className="px-4 py-2 line-through">{a.ar_invoices.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono line-through">
-                  {a.amount.toLocaleString("id-ID")}
-                </td>
-                <td className="px-4 py-2">
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                    Dibatalkan (invoice-nya dibatalkan)
-                  </span>
-                </td>
-              </tr>
-            ))}
-            {credit.ar_return_credit_applications.length === 0 && (
+            {settlements.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum pernah diterapkan ke invoice.
+                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                  Belum pernah diselesaikan lewat ganti barang.
                 </td>
               </tr>
             )}
@@ -449,101 +341,6 @@ export function ArReturnCreditDetailView({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
-
-      {showApplyForm && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Pakai Saldo Kredit Retur ke Invoice Lain</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Motong outstanding invoice lain milik customer yang sama pakai sisa saldo kredit retur
-            ini — bukan pembayaran baru.
-          </p>
-          <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_invoice">Invoice</Label>
-                <Select
-                  id="apply_invoice"
-                  value={applyInvoiceId}
-                  onChange={(e) => {
-                    setApplyInvoiceId(e.target.value);
-                    const found = outstandingInvoices.find((x) => x.invoice.id === e.target.value);
-                    if (found) {
-                      setApplyAmount(String(Math.min(remaining, found.outstanding)));
-                    }
-                  }}
-                >
-                  <option value="">Pilih invoice...</option>
-                  {outstandingInvoices.map(({ invoice, outstanding }) => (
-                    <option key={invoice.id} value={invoice.id}>
-                      {invoice.source_ref} — sisa {outstanding.toLocaleString("id-ID")}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_amount">Nominal Diterapkan (maks {remaining.toLocaleString("id-ID")})</Label>
-                <Input
-                  id="apply_amount"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={applyAmount}
-                  onChange={(e) => setApplyAmount(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_date">Tanggal</Label>
-                <Input id="apply_date" type="date" value={applyDate} onChange={(e) => setApplyDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="apply_source_ref"
-                  placeholder="mis. Nota Kue #001"
-                  value={applySourceRef}
-                  onChange={(e) => setApplySourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_return_credit_account">Akun Saldo Kredit Retur Customer (debit)</Label>
-                <Select
-                  id="apply_return_credit_account"
-                  value={applyReturnCreditAccountId}
-                  onChange={(e) => setApplyReturnCreditAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_receivable_account">Akun Piutang Usaha (kredit)</Label>
-                <Select
-                  id="apply_receivable_account"
-                  value={applyReceivableAccountId}
-                  onChange={(e) => setApplyReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            </div>
-
-            {applyError && <FormError>{applyError}</FormError>}
-
-            <Button type="submit" disabled={applySubmitting} className="w-fit">
-              {applySubmitting ? "Menyimpan..." : "Terapkan"}
-            </Button>
-          </form>
-        </div>
-      )}
 
       {showRefundForm && (
         <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">

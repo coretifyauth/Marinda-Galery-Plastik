@@ -1,37 +1,81 @@
--- Fase 4 (AP) lanjutan — AP Credit Note (Retur Barang ke Supplier).
--- Ref bisnis: docs/domain/accounts-payable.md bagian "Retur Barang ke Supplier".
--- Ref ERD+DDL humanable: docs/architecture/ap-schema.md (menyusul).
--- Reuse: create_journal_entry() (0004), block_edit_delete() (0004),
---        consume_weighted_average() (0012). 0 perubahan ke ap_bills/ap_payments/suppliers.
+-- Accounts Payable schema.
+-- Konsolidasi dari migration historis 0010 + 0035 — lihat git log untuk riwayat evolusi.
+-- Ref: docs/architecture/ap-schema.md
 --
--- Beda mendasar dari AR Credit Note (ar_credit_notes, 0021): 2 resolusi retur yang
--- SALING EKSKLUSIF, bukan additive kayak AR (lihat memory/scope-debt/
--- ar-warranty-replacement-kompensasi-ganda.md — gap yang baru ketauan di AR justru lewat
--- desain AP ini):
---   - Opsi A (create_ap_credit_note): kurangi Utang Usaha, TANPA akun kontra (Persediaan
---     itu akun neraca, boleh langsung dikurangi -- beda dari AR yang kontra-revenue).
---   - Opsi B (create_purchase_replacement): tukar barang, BERDIRI SENDIRI (gak lewat
---     ap_credit_notes sama sekali), Utang Usaha gak pernah kesentuh. Sengaja gak niru pola
---     warranty_replacement AR yang wajib nunjuk credit note dulu -- kalau AP niru itu,
---     supplier ngasih 2 kompensasi sekaligus (kurangi utang DAN ganti barang) untuk 1
---     kejadian rusak yang sama, gak masuk akal secara bisnis dari sisi supplier.
---
--- Asumsi sementara: cuma nanganin item WEIGHTED_AVERAGE (reuse consume_weighted_average).
--- Item FIFO diabaikan dulu -- memory/scope-debt/penghapusan-fifo.md (FIFO rencana dihapus
--- dari sistem, gak ada gunanya bikin mekanisme "konsumsi tertarget ke lot spesifik" buat
--- fitur yang bakal dibuang gak lama lagi).
---
--- Batas waktu retur (mirror return_window_days AR) SENGAJA gak termasuk dan gak akan
--- digarap (keputusan final, bukan scope-debt). Barang rusak yang gak dapat kompensasi sama
--- sekali (supplier nolak) juga di luar scope -- memory/scope-debt/kerugian-barang-rusak.md.
+-- Beda desain dari AR (lihat 0005_ar_schema.sql): AP TIDAK mengikuti perubahan strict-1:1
+-- payment atau larangan titip-saldo-kredit-retur yang baru diterapkan di AR (0040/0041) —
+-- AP masih pakai alokasi payment many-to-many (ap_payment_allocations) dan retur yang bisa
+-- dititip ke bill lain (ap_return_credit_applications), sengaja tidak diubah di sesi ini.
 
--- Akun COA baru "Piutang Retur Supplier" (1350) di-insert di migration seed (0036), pola
--- sama '2400 Saldo Kredit Customer' (0028)/'2500 Saldo Kredit Retur Customer' (0032) --
--- bukan di migration schema ini, biar konsisten sama semua fitur lain (environment yang
--- cuma apply schema tanpa demo seed gak otomatis dapet akun ini).
+create table suppliers (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  contact text,
+  payment_term_days int not null default 14 check (payment_term_days > 0),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create trigger suppliers_set_updated_at
+  before update on suppliers
+  for each row execute function set_updated_at();
+
+create table ap_bills (
+  id uuid primary key default gen_random_uuid(),
+  supplier_id uuid not null references suppliers(id),
+  bill_date date not null,
+  due_date date not null,
+  description text,
+  source_ref text not null,
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create index ap_bills_supplier_id_idx on ap_bills(supplier_id);
+create index ap_bills_journal_entry_id_idx on ap_bills(journal_entry_id);
+
+create trigger ap_bills_block_edit_delete
+  before update or delete on ap_bills
+  for each row execute function block_edit_delete();
+
+create table ap_payments (
+  id uuid primary key default gen_random_uuid(),
+  supplier_id uuid not null references suppliers(id),
+  payment_date date not null,
+  amount numeric(14,2) not null check (amount > 0),
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create index ap_payments_supplier_id_idx on ap_payments(supplier_id);
+
+create trigger ap_payments_block_edit_delete
+  before update or delete on ap_payments
+  for each row execute function block_edit_delete();
+
+create table ap_payment_allocations (
+  id uuid primary key default gen_random_uuid(),
+  payment_id uuid not null references ap_payments(id) on delete cascade,
+  bill_id uuid not null references ap_bills(id),
+  amount numeric(14,2) not null check (amount > 0),
+  created_at timestamptz not null default now()
+);
+
+create index ap_payment_allocations_payment_id_idx on ap_payment_allocations(payment_id);
+create index ap_payment_allocations_bill_id_idx on ap_payment_allocations(bill_id);
+
+create trigger ap_payment_allocations_block_edit_delete
+  before update or delete on ap_payment_allocations
+  for each row execute function block_edit_delete();
 
 -- ============================================================
--- Tabel: ap_credit_notes (Opsi A -- selalu dibuat kalau resolusinya "kurangi utang")
+-- ap_credit_notes (Opsi A — kurangi Utang Usaha) + purchase_return_lines (rincian item,
+-- cuma kalau bill full/item-tracked)
 -- ============================================================
 
 create table ap_credit_notes (
@@ -52,8 +96,8 @@ create trigger ap_credit_notes_block_edit_delete
   before update or delete on ap_credit_notes
   for each row execute function block_edit_delete();
 
--- No-over-return (level Rp, terhadap nilai bill) -- cap-nya ke ap_bills.amount, BUKAN sisa
--- outstanding, karena retur independen dari status bayar (pola sama ar_credit_notes_no_over_return).
+-- No-over-return (level Rp, terhadap nilai bill) — cap-nya ke ap_bills.amount, BUKAN sisa
+-- outstanding, karena retur independen dari status bayar.
 create function ap_credit_notes_no_over_return() returns trigger as $$
 declare
   v_bill_amount numeric;
@@ -76,14 +120,6 @@ create trigger ap_credit_notes_no_over_return_trigger
   before insert on ap_credit_notes
   for each row execute function ap_credit_notes_no_over_return();
 
--- ============================================================
--- Tabel: purchase_return_lines (rincian item Opsi A, cuma kalau bill full/item-tracked --
--- ada goods_receipt_notes). Beda dari inventory_returns/inventory_return_lines di AR: gak
--- butuh tabel header terpisah (inventory_returns) karena purchase_return_lines gak perlu
--- disebut balik oleh mekanisme lain (Opsi B berdiri sendiri, gak nunjuk ke sini) -- cukup
--- FK langsung ke ap_credit_notes.
--- ============================================================
-
 create table purchase_return_lines (
   id uuid primary key default gen_random_uuid(),
   credit_note_id uuid not null references ap_credit_notes(id) on delete cascade,
@@ -99,8 +135,8 @@ create trigger purchase_return_lines_block_edit_delete
   for each row execute function block_edit_delete();
 
 -- ============================================================
--- Tabel: purchase_replacements + purchase_replacement_lines (Opsi B -- tukar barang,
--- BERDIRI SENDIRI, gak lewat ap_credit_notes sama sekali).
+-- purchase_replacements + purchase_replacement_lines (Opsi B — tukar barang, BERDIRI
+-- SENDIRI, gak lewat ap_credit_notes sama sekali, Utang Usaha gak pernah kesentuh)
 -- ============================================================
 
 create table purchase_replacements (
@@ -133,16 +169,9 @@ create trigger purchase_replacement_lines_block_edit_delete
   before update or delete on purchase_replacement_lines
   for each row execute function block_edit_delete();
 
--- ============================================================
--- purchase_returned_qty(bill_id, item_id) -- total qty yang udah "diklaim" dari 1 item di
--- 1 bill, GABUNGAN Opsi A (purchase_return_lines) + Opsi B (purchase_replacement_lines).
--- Guard no-over-return per item pakai fungsi ini -- fisiknya cuma ada 1 pool qty_received
--- yang bisa diklaim, mau lewat jalur mana pun (kurangi utang atau tukar barang), gak boleh
--- kelebihan gabungan keduanya. Item FIFO otomatis kejaga trigger per-lot yang udah ada
--- (inventory_lot_consumptions_no_over_consumption) -- item WEIGHTED_AVERAGE gak punya
--- proteksi itu (stoknya udah nyampur), makanya guard eksplisit ini dibutuhkan.
--- ============================================================
-
+-- Total qty yang udah "diklaim" dari 1 item di 1 bill, GABUNGAN Opsi A (purchase_return_lines)
+-- + Opsi B (purchase_replacement_lines) — fisiknya cuma ada 1 pool qty_received yang bisa
+-- diklaim, mau lewat jalur mana pun, gak boleh kelebihan gabungan keduanya.
 create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns numeric as $$
   select
     coalesce((
@@ -231,9 +260,9 @@ create trigger purchase_replacement_lines_no_over_return_trigger
   for each row execute function purchase_replacement_lines_no_over_return();
 
 -- ============================================================
--- Tabel: ap_return_credits + ap_return_credit_applications + ap_return_credit_refunds
--- (mirror ar_return_credits/0031, arah asset kebalik -- di AR liability kita ke customer,
--- di sini asset kita ke supplier).
+-- ap_return_credits + ap_return_credit_applications + ap_return_credit_refunds (mirror
+-- ar_return_credits, arah asset kebalik — di AR liability ke customer, di sini asset ke
+-- supplier. Beda dari AR: titip/apply ke bill lain TETAP ADA di AP, sengaja gak dicabut.)
 -- ============================================================
 
 create table ap_return_credits (
@@ -288,15 +317,7 @@ create trigger ap_return_credit_refunds_block_edit_delete
   for each row execute function block_edit_delete();
 
 -- ============================================================
--- ap_bill_remaining(bill_id) -- sisa outstanding riil 1 bill (amount dikurangi payment
--- allocation + credit note + return-credit application AKTIF). Disentralisasi dari AWAL
--- (beda dari AR yang baru disentralisasi belakangan di 0031 setelah kebukti perlu lewat
--- bug berulang) -- pelajaran langsung dipakai di sini karena polanya udah kenal. 3
--- reducer, bukan 2 -- ap_return_credit_applications WAJIB ikut dihitung di sini (bukan
--- cuma di ap_return_credit_applications_guard) karena dia beneran ngurangin Utang Usaha
--- bill target-nya; kalau kelewat, ap_payment_allocations_no_over_allocation di bawah bisa
--- kealokasiin payment ngelebihin sisa riil pada bill yang udah sebagian "dibayar" pakai
--- saldo kredit retur -- kelas bug yang sama persis yang coba dicegah refactor ini.
+-- Fungsi "sumber kebenaran tunggal" — sisa outstanding riil per bill / per saldo kredit retur
 -- ============================================================
 
 create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
@@ -314,11 +335,21 @@ create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
   where ab.id = p_bill_id;
 $$ language sql stable;
 
--- ap_payment_allocations_no_over_allocation (0010) -- DIPERBARUI pakai ap_bill_remaining()
--- alih-alih ngitung langsung dari ap_bills.amount. Tanpa ini, bill yang udah diretur bisa
--- kealokasiin payment ngelebihin sisa riil -- kelas bug persis yang ditemukan di AR (0031)
--- sebelum ar_invoice_remaining() ada. Diperbaiki dari awal, bukan ditunggu kebukti lagi.
-create or replace function ap_payment_allocations_no_over_allocation() returns trigger as $$
+create function ap_return_credit_remaining(p_credit_id uuid) returns numeric as $$
+  select c.amount
+    - coalesce((
+        select sum(arca.amount) from ap_return_credit_applications arca
+        where arca.credit_id = p_credit_id
+          and not exists (
+            select 1 from journal_entries je where je.reverses_entry_id = arca.journal_entry_id
+          )
+      ), 0)
+    - coalesce((select sum(amount) from ap_return_credit_refunds where credit_id = p_credit_id), 0)
+  from ap_return_credits c
+  where c.id = p_credit_id;
+$$ language sql stable;
+
+create function ap_payment_allocations_no_over_allocation() returns trigger as $$
 declare
   v_bill_remaining numeric;
   v_payment_amount numeric;
@@ -344,23 +375,9 @@ begin
 end;
 $$ language plpgsql;
 
--- ============================================================
--- ap_return_credit_remaining(credit_id) -- pola identik ar_return_credit_remaining (0031).
--- ============================================================
-
-create function ap_return_credit_remaining(p_credit_id uuid) returns numeric as $$
-  select c.amount
-    - coalesce((
-        select sum(arca.amount) from ap_return_credit_applications arca
-        where arca.credit_id = p_credit_id
-          and not exists (
-            select 1 from journal_entries je where je.reverses_entry_id = arca.journal_entry_id
-          )
-      ), 0)
-    - coalesce((select sum(amount) from ap_return_credit_refunds where credit_id = p_credit_id), 0)
-  from ap_return_credits c
-  where c.id = p_credit_id;
-$$ language sql stable;
+create trigger ap_payment_allocations_no_over_allocation_trigger
+  before insert on ap_payment_allocations
+  for each row execute function ap_payment_allocations_no_over_allocation();
 
 create function ap_return_credit_refunds_guard() returns trigger as $$
 declare
@@ -429,19 +446,90 @@ create trigger ap_return_credit_applications_guard_trigger
   for each row execute function ap_return_credit_applications_guard();
 
 -- ============================================================
--- cancel_ap_bill (0010) -- DIPERBARUI: 2 hal baru yang bisa nempel ke bill sekarang harus
--- ditangani, mirror persis perluasan cancel_ar_invoice pas ar_return_credit_applications
--- ditambahkan (0031) -- migration yang nambah reducer baru WAJIB langsung revisit RPC
--- cancel yang berkaitan, jangan ditunda sampai kebukti bug (ketauan pas schema-reviewer).
---   1. Bill yang udah punya ap_credit_notes (pernah diretur) -- DITOLAK KERAS, pola sama
---      guard ap_payment_allocations (bill udah "kesentuh" transaksi lain, gak bisa
---      dianggap "gak pernah terjadi" lagi tanpa mikirin nasib retur yang udah dicatat).
---   2. Bill yang jadi TARGET ap_return_credit_applications (supplier lain punya saldo
---      kredit yang dipakai motong bill ini) -- AUTO-REVERSE jurnalnya, sama alasan
---      cancel_ar_invoice auto-unwind ar_return_credit_applications: reklasifikasi
---      sederhana, aman dibalik (beda dari kasus #1 yang keputusan bisnis, bukan reklas).
+-- RPC
 -- ============================================================
-create or replace function cancel_ap_bill(
+
+create function create_ap_bill(
+  p_supplier_id uuid,
+  p_bill_date date,
+  p_description text,
+  p_source_ref text,
+  p_amount numeric,
+  p_debit_account_id uuid,
+  p_payable_account_id uuid
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_term_days int;
+  v_due_date date;
+  v_entry_id uuid;
+  v_bill_id uuid;
+begin
+  select payment_term_days into v_term_days from suppliers where id = p_supplier_id;
+  v_due_date := p_bill_date + v_term_days;
+
+  v_entry_id := create_journal_entry(
+    p_bill_date, p_description, p_source_ref,
+    jsonb_build_array(
+      jsonb_build_object('account_id', p_debit_account_id, 'debit', p_amount, 'credit', 0),
+      jsonb_build_object('account_id', p_payable_account_id, 'debit', 0, 'credit', p_amount)
+    )
+  );
+
+  insert into ap_bills (supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_by)
+  values (p_supplier_id, p_bill_date, v_due_date, p_description, p_source_ref, p_amount, v_entry_id, auth.uid())
+  returning id into v_bill_id;
+
+  return v_bill_id;
+end;
+$$;
+
+create function record_ap_payment(
+  p_supplier_id uuid,
+  p_payment_date date,
+  p_amount numeric,
+  p_source_ref text,
+  p_payable_account_id uuid,
+  p_cash_account_id uuid,
+  p_allocations jsonb -- array of {"bill_id": uuid, "amount": numeric}
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_entry_id uuid;
+  v_payment_id uuid;
+  v_alloc jsonb;
+begin
+  v_entry_id := create_journal_entry(
+    p_payment_date, 'Pelunasan utang', p_source_ref,
+    jsonb_build_array(
+      jsonb_build_object('account_id', p_payable_account_id, 'debit', p_amount, 'credit', 0),
+      jsonb_build_object('account_id', p_cash_account_id, 'debit', 0, 'credit', p_amount)
+    )
+  );
+
+  insert into ap_payments (supplier_id, payment_date, amount, source_ref, journal_entry_id, created_by)
+  values (p_supplier_id, p_payment_date, p_amount, p_source_ref, v_entry_id, auth.uid())
+  returning id into v_payment_id;
+
+  for v_alloc in select * from jsonb_array_elements(p_allocations)
+  loop
+    insert into ap_payment_allocations (payment_id, bill_id, amount)
+    values (v_payment_id, (v_alloc->>'bill_id')::uuid, (v_alloc->>'amount')::numeric);
+  end loop;
+
+  return v_payment_id;
+end;
+$$;
+
+-- cancel_ap_bill: ditolak keras kalau bill udah punya alokasi payment ATAU udah pernah
+-- diretur (ap_credit_notes) — 2 hal itu keputusan bisnis, bukan reklasifikasi. Kalau bill ini
+-- jadi TARGET ap_return_credit_applications (saldo kredit dari retur bill lain dipakai motong
+-- bill ini), jurnalnya di-auto-reverse (reklasifikasi sederhana, aman dibalik).
+create function cancel_ap_bill(
   p_bill_id uuid,
   p_entry_date date,
   p_source_ref text
@@ -489,27 +577,11 @@ begin
 end;
 $$;
 
--- ============================================================
--- RPC: create_ap_credit_note (Opsi A -- kurangi Utang Usaha)
--- ============================================================
--- p_lines null/kosong -> jalur financial-only (1 jurnal, gak nyentuh inventory,
--- p_amount dipakai apa adanya -- caller yang tentuin nilainya).
--- p_lines terisi -> jalur full, bill WAJIB punya goods_receipt_notes, item WEIGHTED_AVERAGE
--- doang (FIFO diabaikan -- memory/scope-debt/penghapusan-fifo.md). p_amount DIABAIKAN dan
--- DIGANTI hasil penjumlahan cost fisik tiap baris (consume_weighted_average) -- beda dari
--- create_ar_credit_note yang sengaja punya 2 angka independen (harga jual vs cost, buat
--- kontra-revenue vs reversal HPP terpisah). Di sini cuma ADA 1 jurnal yang langsung
--- ngeKredit Persediaan, jadi nominalnya HARUS sama persis sama nilai barang yang beneran
--- keluar dari stok -- kalau p_amount dibiarkan independen, Persediaan di GL bisa
--- menyimpang dari inventory_balances tanpa ketauan trigger mana pun (ketauan pas
--- schema-reviewer, bukan disengaja dari awal). Konsekuensinya: urutan kerja jadi beda dari
--- create_ar_credit_note -- konsumsi stok WAJIB jalan duluan (buat tau total cost-nya)
--- sebelum jurnal & baris ap_credit_notes dibikin, bukan belakangan.
---
--- TANPA akun kontra (beda dari create_ar_credit_note yang kontra-revenue) -- Persediaan
--- itu akun neraca, boleh langsung dikurangi. p_credit_account_id generik (biasanya akun
--- yang sama dipakai create_ap_bill aslinya, Persediaan atau Beban), sama pola
--- p_debit_account_id di create_ap_bill -- caller yang tentuin, gak di-hardcode.
+-- Opsi A — kurangi Utang Usaha. p_lines null/kosong -> financial-only (1 jurnal, p_amount
+-- dipakai apa adanya). p_lines terisi -> jalur full, bill WAJIB punya goods_receipt_notes,
+-- item WEIGHTED_AVERAGE. p_amount DIABAIKAN dan DIGANTI hasil penjumlahan cost fisik tiap
+-- baris — Persediaan di GL harus sama persis sama nilai barang yang beneran keluar dari stok.
+-- TANPA akun kontra (beda dari create_ar_credit_note) — Persediaan itu akun neraca.
 create function create_ap_credit_note(
   p_bill_id uuid,
   p_credit_note_date date,
@@ -614,18 +686,9 @@ begin
 end;
 $$;
 
--- ============================================================
--- RPC: create_purchase_replacement (Opsi B -- tukar barang, BERDIRI SENDIRI)
--- ============================================================
--- Gak lewat ap_credit_notes, gak nyentuh Utang Usaha. Jurnal: Debit Persediaan (barang
--- baru) / Kredit Persediaan (barang rusak) -- akun yang SAMA di kedua baris, net nol,
--- murni reklasifikasi fisik buat jejak audit.
---
--- Mekanisme: barang rusak KELUAR (consume_weighted_average, sama fungsi dipakai Opsi A
--- jalur full), lalu barang baru MASUK pakai avg_cost yang sama persis (v_line_cost/qty)
--- -- karena unit cost-nya identik, hitung ulang rata-rata di langkah "masuk" otomatis
--- balik ke avg_cost semula (murni aljabar, bukan kebetulan) -- konsisten sama klaim
--- "net nol" di dokumentasi bisnis.
+-- Opsi B — tukar barang, BERDIRI SENDIRI, gak lewat ap_credit_notes, Utang Usaha gak pernah
+-- kesentuh. Jurnal: Debit Persediaan (barang baru) / Kredit Persediaan (barang rusak) —
+-- akun yang SAMA di kedua baris, net nol, murni reklasifikasi fisik buat jejak audit.
 create function create_purchase_replacement(
   p_bill_id uuid,
   p_replacement_date date,
@@ -707,11 +770,6 @@ begin
 end;
 $$;
 
--- ============================================================
--- RPC: apply_ap_return_credit -- pakai saldo kredit retur motong bill lain
--- (Debit Utang Usaha / Kredit Piutang Retur Supplier).
--- ============================================================
-
 create function apply_ap_return_credit(
   p_credit_id uuid,
   p_bill_id uuid,
@@ -743,11 +801,6 @@ begin
   return v_application_id;
 end;
 $$;
-
--- ============================================================
--- RPC: refund_ap_return_credit -- refund tunai saldo kredit retur
--- (Debit Kas/Bank / Kredit Piutang Retur Supplier).
--- ============================================================
 
 create function refund_ap_return_credit(
   p_credit_id uuid,
@@ -781,10 +834,69 @@ end;
 $$;
 
 -- ============================================================
--- RLS Policy -- pola identik semua tabel transaksional AP/AR lain: select terbuka semua
--- authenticated, insert cuma admin/accountant, gak ada update/delete (immutability, RLS
--- default-deny + block_edit_delete jaring kedua).
+-- FK lintas-modul (deferred dari 0004_inventory_schema.sql — lihat catatan di sana)
 -- ============================================================
+
+alter table purchase_orders
+  add constraint purchase_orders_supplier_id_fkey foreign key (supplier_id) references suppliers(id);
+
+alter table goods_receipt_notes
+  add constraint goods_receipt_notes_bill_id_fkey foreign key (bill_id) references ap_bills(id);
+
+-- ============================================================
+-- RLS Policy
+-- ============================================================
+
+alter table suppliers enable row level security;
+
+create policy suppliers_select on suppliers
+  for select using (auth.role() = 'authenticated');
+
+create policy suppliers_insert on suppliers
+  for insert with check (
+    exists (select 1 from user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  );
+
+create policy suppliers_update on suppliers
+  for update using (
+    exists (select 1 from user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  );
+-- sengaja gak ada policy DELETE -> arsip lewat archived_at, hard delete tertutup total
+
+alter table ap_bills enable row level security;
+
+create policy ap_bills_select on ap_bills
+  for select using (auth.role() = 'authenticated');
+
+create policy ap_bills_insert on ap_bills
+  for insert with check (
+    exists (select 1 from user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  );
+
+alter table ap_payments enable row level security;
+
+create policy ap_payments_select on ap_payments
+  for select using (auth.role() = 'authenticated');
+
+create policy ap_payments_insert on ap_payments
+  for insert with check (
+    exists (select 1 from user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  );
+
+alter table ap_payment_allocations enable row level security;
+
+create policy ap_payment_allocations_select on ap_payment_allocations
+  for select using (auth.role() = 'authenticated');
+
+create policy ap_payment_allocations_insert on ap_payment_allocations
+  for insert with check (
+    exists (select 1 from user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  );
 
 alter table ap_credit_notes enable row level security;
 
@@ -862,12 +974,17 @@ create policy ap_return_credit_refunds_insert on ap_return_credit_refunds
     exists (select 1 from user_roles ur
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
--- sengaja gak ada policy UPDATE/DELETE di 7 tabel transaksional baru ini -> RLS default deny
+-- sengaja gak ada policy UPDATE/DELETE di semua tabel transaksional AP -> RLS default deny
+-- + block_edit_delete
 
 -- ============================================================
 -- Grant
 -- ============================================================
 
+grant select, insert, update on suppliers to authenticated;
+grant select, insert on ap_bills to authenticated;
+grant select, insert on ap_payments to authenticated;
+grant select, insert on ap_payment_allocations to authenticated;
 grant select, insert on ap_credit_notes to authenticated;
 grant select, insert on purchase_return_lines to authenticated;
 grant select, insert on purchase_replacements to authenticated;

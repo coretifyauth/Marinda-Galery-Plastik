@@ -8,9 +8,9 @@ Fase 3 roadmap. Ref konsep bisnis: `docs/domain/accounts-receivable.md` + `memor
 - **AR gak bikin jalur pencatatan GL baru** — RPC AR (`create_ar_invoice`, `record_ar_payment`) manggil RPC `create_journal_entry` yang udah ada, bukan insert manual ke `journal_entries`/`journal_lines`. Ini mastiin AR gak pernah "kelewat" nyatet ke GL atau nyatet dengan cara beda.
 - **Immutability sama persis pola Journal Entry** — RLS gak ada policy `UPDATE`/`DELETE` (default deny) + trigger `block_edit_delete` (di-reuse dari `journal-entry-schema.md`, gak bikin fungsi baru) sebagai jaring kedua.
 - **`due_date` snapshot, bukan generated column** — dihitung sekali di RPC `create_ar_invoice` dari `customers.payment_term_days` **pas invoice dibuat**, disimpan sebagai kolom biasa. Beda dari `accounts.normal_balance` yang generated dan dihitung ulang tiap baca — di sini sengaja snapshot biar perubahan termin customer nanti gak retroaktif ngubah invoice lama (lihat `accounts-receivable.md` domain doc).
-- **Status invoice (lunas/sebagian/belum/dibatalkan) gak disimpan** — derived query dari `SUM(ar_payment_allocations.amount)` per invoice dibanding `ar_invoices.amount`, DITAMBAH cek apakah `journal_entry_id`-nya punya reversal (`exists (select 1 from journal_entries where reverses_entry_id = ar_invoices.journal_entry_id)`) buat status "dibatalkan". Konsisten sama keputusan "no `is_active`" di `coa-schema.md`.
-- **Pembatalan invoice cuma boleh kalau belum ada alokasi payment** — RPC `cancel_ar_invoice` nolak keras (`raise exception`) kalau `ar_payment_allocations` invoice itu udah punya ≥1 baris. Ref alasan bisnis: `docs/domain/accounts-receivable.md` constraint #5.
-- **Anti over-allocation ditegakkan trigger**, bukan cuma app-level — nolak insert alokasi yang bikin total alokasi ngelebihin amount invoice atau amount payment.
+- **Status invoice (lunas/belum/dibatalkan) gak disimpan** — derived query dari ada-tidaknya baris `ar_payments` (unique per invoice) dibanding `ar_invoices.amount`, DITAMBAH cek apakah `journal_entry_id`-nya punya reversal (`exists (select 1 from journal_entries where reverses_entry_id = ar_invoices.journal_entry_id)`) buat status "dibatalkan". Konsisten sama keputusan "no `is_active`" di `coa-schema.md`.
+- **Pembatalan invoice cuma boleh kalau belum ada payment** — RPC `cancel_ar_invoice` nolak keras (`raise exception`) kalau `ar_payments` invoice itu udah punya baris. Ref alasan bisnis: `docs/domain/accounts-receivable.md` constraint #5.
+- **Payment exact-match ditegakkan RPC**, bukan cuma app-level — `record_ar_payment` `raise exception` kalau amount gak persis sama sisa outstanding invoice (migration `0040`, regresi disengaja dari desain alokasi many-to-many yang sempat ada).
 - **`customers` satu-satunya tabel AR yang mutable** — master data, `payment_term_days`/`name`/`contact` boleh di-`UPDATE` kapan pun (gak ada published-lock kayak `accounts`, karena gak ada resiko retroaktif — lihat domain doc).
 - Money pakai `numeric(14,2)`, bukan float (invariant `AGENT.md`).
 
@@ -20,9 +20,8 @@ Fase 3 roadmap. Ref konsep bisnis: `docs/domain/accounts-receivable.md` + `memor
 
 Tiap baris = 1 customer (warung langganan). Yang perlu diperhatiin:
 - `payment_term_days` — default termin (hari) dipakai buat ngitung `due_date` invoice baru. Bukan kolom terkunci — boleh diubah kapan pun, cuma ngaruh ke invoice baru ke depan (`due_date` invoice lama udah ke-snapshot, gak ikut berubah).
-- `credit_limit` — nullable, batas nominal total piutang open (belum lunas) yang boleh nyangkut bersamaan buat customer ini. `NULL` = gak ada batas (unlimited), dipilih biar customer existing gak otomatis kena hold begitu migration ini di-apply. Dicek di `create_ar_invoice` (lihat "Credit Hold" di bawah), bukan constraint DB — perlu bandingin sama data dari tabel lain (`ar_invoices`/`ar_payment_allocations`), gak bisa jadi `CHECK` di level kolom.
+- `credit_limit` — nullable, batas nominal total piutang open (belum lunas) yang boleh nyangkut bersamaan buat customer ini. `NULL` = gak ada batas (unlimited), dipilih biar customer existing gak otomatis kena hold begitu migration ini di-apply. Dicek di `create_ar_invoice` (lihat "Credit Hold" di bawah), bukan constraint DB — perlu bandingin sama data dari tabel lain (`ar_invoices`/`ar_payments`), gak bisa jadi `CHECK` di level kolom.
 - `overdue_threshold_days` — nullable, toleransi hari keterlambatan sebelum kena hold. `NULL` = gak ada batas waktu buat customer ini. UI prefill nilainya = `payment_term_days` pas customer baru dibuat (keputusan produk, bukan default DB), tapi keduanya kolom independen — bisa diubah manual per customer sesuai profil risiko (lihat `docs/domain/accounts-receivable.md` bagian "Credit Hold").
-- `return_window_days` — nullable, toleransi hari customer ini boleh ngajuin retur (trade term, beda axis dari `items.return_window_days` yang soal sifat fisik barang). `NULL` = gak dibatasi. Snapshot ke `ar_invoices.return_window_days` pas invoice dibuat (lihat di bawah), bukan dicek dari nilai terkini.
 - `archived_at` — pola sama kayak `accounts` (`memory/preferences/system/state-naming-convention.md`): satu-satunya penanda lifecycle, gak ada `is_active` terpisah.
 
 ```sql
@@ -33,7 +32,6 @@ create table customers (
   payment_term_days int not null default 7 check (payment_term_days > 0),
   credit_limit numeric(14,2) check (credit_limit is null or credit_limit > 0),
   overdue_threshold_days int check (overdue_threshold_days is null or overdue_threshold_days > 0),
-  return_window_days int check (return_window_days is null or return_window_days > 0),
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -44,7 +42,7 @@ create trigger customers_set_updated_at
   for each row execute function set_updated_at();
 ```
 
-`credit_limit`/`overdue_threshold_days` ditambah belakangan lewat `0020_ar_credit_hold.sql`, `return_window_days` lewat `0033_ar_customer_return_window.sql` (keduanya `alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel, bukan riwayat migration per migration (lihat migration file buat riwayat perubahannya).
+`credit_limit`/`overdue_threshold_days` ditambah belakangan lewat `0020_ar_credit_hold.sql` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel, bukan riwayat migration per migration (lihat migration file buat riwayat perubahannya). Sempat ada `return_window_days` (ditambah `0033`), dicabut total lewat `0039_ar_remove_return_window.sql` — lihat `memory/domain/accounts-receivable.md` bagian batas waktu retur.
 
 `set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang.
 
@@ -52,7 +50,6 @@ create trigger customers_set_updated_at
 
 Satu baris = satu kejadian "kirim barang/jasa, belum dibayar". Yang perlu diperhatiin:
 - `due_date` — **disimpan**, dihitung `invoice_date + customers.payment_term_days` di RPC pas insert, bukan generated column (lihat "Keputusan" di atas).
-- `return_window_days` — **disimpan**, snapshot `customers.return_window_days` di RPC pas insert, pola sama persis `due_date`. Nullable, `NULL` = gak dibatasi.
 - `journal_entry_id` — **wajib** (`not null`), nunjuk ke entry yang dibikin RPC `create_journal_entry` (Debit Piutang Usaha, Kredit Pendapatan). Invoice AR tanpa journal entry gak boleh ada — dijamin karena satu-satunya jalur insert yang diizinin RLS (lewat RPC `security invoker`) selalu bikin entry-nya duluan.
 - `source_ref` — wajib, pola sama `journal_entries` (traceability ke bukti fisik/surat jalan).
 - **Gak ada `updated_at`/`archived_at`** — invoice gak pernah diedit, sekali ada permanen (koreksi = reversing entry lewat `journal_entries`, invoice asli tetap kelihatan di histori).
@@ -67,7 +64,6 @@ create table ar_invoices (
   source_ref text not null,
   amount numeric(14,2) not null check (amount > 0),
   journal_entry_id uuid not null references journal_entries(id),
-  return_window_days int check (return_window_days is null or return_window_days > 0),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -76,14 +72,13 @@ create index ar_invoices_customer_id_idx on ar_invoices(customer_id);
 create index ar_invoices_journal_entry_id_idx on ar_invoices(journal_entry_id);
 ```
 
-`return_window_days` ditambah belakangan lewat `0033_ar_customer_return_window.sql` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel (pola sama catatan di `customers` di atas).
-
 Index di `customer_id` buat query "semua invoice 1 customer" (histori piutang per warung, dipakai aging report). Index di `journal_entry_id` jaga-jaga lookup balik dari sisi GL.
 
 ### `ar_payments` — piutang berkurang
 
-Satu baris = satu kejadian bayar nyata dari customer (bukan jadwal). Yang perlu diperhatiin:
-- `amount` — **total** yang dibayar, gak peduli itu nanti dialokasikan ke berapa banyak invoice. Journal entry (Debit Kas/Bank, Kredit Piutang Usaha) dibikin sejumlah ini, satu entry per payment.
+Satu baris = satu kejadian bayar nyata dari customer (bukan jadwal), wajib persis nutup **1 invoice penuh** (migration `0040_ar_payment_strict_invoice_match.sql`, regresi disengaja dari desain tabel jembatan many-to-many yang sempat ada — lihat "AR Payment (Kelebihan Bayar, dst)" di bawah buat riwayatnya). Yang perlu diperhatiin:
+- `invoice_id` — **unique**, langsung nunjuk ke 1 invoice (bukan lewat tabel jembatan) — hard guard di level kolom: 1 invoice paling banyak 1 payment.
+- `amount` — wajib **persis** sama `ar_invoice_remaining(invoice_id)` pas `record_ar_payment` dipanggil, ditegakkan RPC (`raise exception` kalau gak pas), bukan constraint DB (butuh bandingin ke tabel lain, gak bisa jadi `CHECK`).
 - `journal_entry_id` — wajib, pola sama `ar_invoices`.
 - **Gak ada `updated_at`/`archived_at`** — sama alasan `ar_invoices`.
 
@@ -91,6 +86,7 @@ Satu baris = satu kejadian bayar nyata dari customer (bukan jadwal). Yang perlu 
 create table ar_payments (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references customers(id),
+  invoice_id uuid not null references ar_invoices(id),
   payment_date date not null,
   amount numeric(14,2) not null check (amount > 0),
   source_ref text not null,
@@ -100,71 +96,18 @@ create table ar_payments (
 );
 
 create index ar_payments_customer_id_idx on ar_payments(customer_id);
+create index ar_payments_invoice_id_idx on ar_payments(invoice_id);
+alter table ar_payments add constraint ar_payments_invoice_id_unique unique (invoice_id);
 ```
 
-### `ar_payment_allocations` — jembatan payment ↔ invoice
-
-Satu baris = "payment X nutup invoice Y sejumlah Z". Kenapa tabel terpisah, bukan `invoice_id` langsung di `ar_payments`: 1 payment bisa nutup banyak invoice sekaligus (bayar gabungan), 1 invoice bisa dilunasi lewat beberapa payment (cicilan) — hubungannya many-to-many, bukan many-to-one. Detail skenario: `docs/domain/accounts-receivable.md`.
-
-```sql
-create table ar_payment_allocations (
-  id uuid primary key default gen_random_uuid(),
-  payment_id uuid not null references ar_payments(id) on delete cascade,
-  invoice_id uuid not null references ar_invoices(id),
-  amount numeric(14,2) not null check (amount > 0),
-  created_at timestamptz not null default now()
-);
-
-create index ar_payment_allocations_payment_id_idx on ar_payment_allocations(payment_id);
-create index ar_payment_allocations_invoice_id_idx on ar_payment_allocations(invoice_id);
-```
-
-`on delete cascade` ke `ar_payments` cuma jaga-jaga integritas referensial (pola sama `journal_lines` ke `journal_entries`) — di praktiknya gak pernah kepakai karena `ar_payments` gak pernah bisa di-`DELETE` (trigger `block_edit_delete` nolak). Index di `invoice_id` yang paling sering dipakai: hitung `SUM(amount)` per invoice buat nentuin status lunas/sebagian/belum.
+`invoice_id` ditambah belakangan lewat `0040` (`alter table`, backfill dari `ar_payment_allocations` yang lama sebelum tabel itu di-drop) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel.
 
 ## Trigger
-
-### `ar_payment_allocations_no_over_allocation` — cegah alokasi ngelebihin
-
-Ditegakkan sebelum insert baris alokasi: total alokasi yang udah ada + alokasi baru gak boleh ngelebihin `amount` invoice-nya, atau `amount` payment-nya. Beda dari balance-check Journal Entry (yang deferred, nunggu semua baris entry masuk) — di sini gak perlu deferred, karena tiap baris alokasi adalah fakta independen yang bisa langsung divalidasi begitu masuk (gak ada baris "pasangan" yang belum tentu masuk dalam transaksi yang sama).
-
-```sql
-create function ar_payment_allocations_no_over_allocation() returns trigger as $$
-declare
-  v_invoice_amount numeric;
-  v_invoice_allocated numeric;
-  v_payment_amount numeric;
-  v_payment_allocated numeric;
-begin
-  select amount into v_invoice_amount from ar_invoices where id = new.invoice_id;
-  select coalesce(sum(amount), 0) into v_invoice_allocated
-    from ar_payment_allocations where invoice_id = new.invoice_id;
-
-  if v_invoice_allocated + new.amount > v_invoice_amount then
-    raise exception 'Alokasi ke invoice % melebihi sisa piutang (sisa %, coba alokasi %)',
-      new.invoice_id, v_invoice_amount - v_invoice_allocated, new.amount;
-  end if;
-
-  select amount into v_payment_amount from ar_payments where id = new.payment_id;
-  select coalesce(sum(amount), 0) into v_payment_allocated
-    from ar_payment_allocations where payment_id = new.payment_id;
-
-  if v_payment_allocated + new.amount > v_payment_amount then
-    raise exception 'Alokasi dari payment % melebihi sisa yang belum teralokasi (sisa %, coba alokasi %)',
-      new.payment_id, v_payment_amount - v_payment_allocated, new.amount;
-  end if;
-
-  return new;
-end;
-$$ language plpgsql;
-
-create trigger ar_payment_allocations_no_over_allocation_trigger
-  before insert on ar_payment_allocations
-  for each row execute function ar_payment_allocations_no_over_allocation();
 ```
 
 ### Immutability — reuse `block_edit_delete()` dari Journal Entry
 
-Fungsi ini udah ada di `journal-entry-schema.md`, tinggal dipasang ke 3 tabel AR yang gak boleh diedit/dihapus.
+Fungsi ini udah ada di `journal-entry-schema.md`, tinggal dipasang ke 2 tabel AR yang gak boleh diedit/dihapus.
 
 ```sql
 create trigger ar_invoices_block_edit_delete
@@ -174,23 +117,19 @@ create trigger ar_invoices_block_edit_delete
 create trigger ar_payments_block_edit_delete
   before update or delete on ar_payments
   for each row execute function block_edit_delete();
-
-create trigger ar_payment_allocations_block_edit_delete
-  before update or delete on ar_payment_allocations
-  for each row execute function block_edit_delete();
 ```
 
 ## RPC (financial write — atomik, reuse `create_journal_entry`)
 
 Dua-duanya `security invoker`, pola sama `journal-entry-schema.md`. Kunci desainnya: **gak insert manual ke `journal_entries`/`journal_lines`** — manggil RPC `create_journal_entry` yang udah ada, biar validasi (leaf-only, balance-check) dan atomicity-nya otomatis kewarisin, gak perlu ditulis ulang.
 
-### `create_ar_invoice` — bikin invoice + journal entry-nya sekaligus
+### `create_ar_invoice` — bikin invoice + journal entry-nya sekaligus (terakhir didefinisi `0039`)
 
-**Credit Hold** (`0020_ar_credit_hold.sql`) — sebelum bikin apa pun, RPC ini cek 2 kondisi independen (OR, salah satu kepenuhi udah cukup nolak):
+**Credit Hold** (`0020_ar_credit_hold.sql`, dasarnya dipertahankan tiap revisi) — sebelum bikin apa pun, RPC ini cek 2 kondisi independen (OR, salah satu kepenuhi udah cukup nolak):
 - **Nominal prospektif**: `(outstanding sekarang + amount invoice baru) > credit_limit` — sengaja prospektif (nambahin amount invoice yang mau dibuat), bukan cuma cek "udah lewat limit apa belum", karena tujuan limit itu nyegah exposure nambah lewat batas, bukan cuma ngasih tau udah lewat.
 - **Waktu**: ada invoice open (belum lunas & belum dibatalkan) yang `p_invoice_date - due_date` (hari overdue-nya) > `overdue_threshold_days`.
 
-Outstanding dihitung inline (bukan manggil fungsi terpisah) — `sum(amount - alokasi)` per invoice customer itu, exclude invoice yang punya reversal (`journal_entries.reverses_entry_id`), sama pola derived status lunas/sebagian/belum yang udah dipakai di tempat lain. `NULL` di `credit_limit`/`overdue_threshold_days` bikin kondisi itu di-skip (gak pernah nolak dari sisi itu).
+Outstanding dihitung dari `ar_invoice_remaining(invoice_id)` (fungsi terpusat, lihat bagian tersendiri di bawah) per invoice open milik customer itu, exclude invoice yang punya reversal (`journal_entries.reverses_entry_id`). `NULL` di `credit_limit`/`overdue_threshold_days` bikin kondisi itu di-skip (gak pernah nolak dari sisi itu).
 
 Kalau salah satu kepenuhi, RPC `raise exception` sebelum sempat manggil `create_journal_entry` — invoice gak jadi dibuat, gak ada jejak apa pun di GL (gagal bersih, bukan partial write).
 
@@ -222,20 +161,16 @@ begin
     from customers where id = p_customer_id;
   v_due_date := p_invoice_date + v_term_days;
 
-  select coalesce(sum(ai.amount - coalesce(alloc.paid, 0)), 0),
+  select coalesce(sum(greatest(r.remaining, 0)), 0),
          coalesce(max(p_invoice_date - ai.due_date), 0)
     into v_outstanding, v_max_overdue_days
     from ar_invoices ai
-    left join (
-      select invoice_id, sum(amount) as paid
-      from ar_payment_allocations
-      group by invoice_id
-    ) alloc on alloc.invoice_id = ai.id
+    cross join lateral (select ar_invoice_remaining(ai.id) as remaining) r
     where ai.customer_id = p_customer_id
       and not exists (
         select 1 from journal_entries je where je.reverses_entry_id = ai.journal_entry_id
       )
-      and ai.amount - coalesce(alloc.paid, 0) > 0;
+      and r.remaining > 0;
 
   if v_credit_limit is not null and (v_outstanding + p_amount) > v_credit_limit then
     raise exception 'Customer kena credit hold: piutang outstanding % + invoice baru % ngelewatin credit_limit %',
@@ -264,11 +199,14 @@ end;
 $$;
 ```
 
-### `record_ar_payment` — bikin payment + journal entry + alokasi ke invoice sekaligus
+### `record_ar_payment` — bikin payment + journal entry sekaligus, langsung ke 1 invoice (terakhir didefinisi `0040`)
 
-`p_allocations` array `{"invoice_id": uuid, "amount": numeric}` — boleh 1 baris (nutup 1 invoice) atau banyak baris (nutup beberapa invoice sekaligus). Trigger `ar_payment_allocations_no_over_allocation` yang nolak kalau totalnya gak masuk akal.
+Signature 7 param, `p_invoice_id` tunggal — bukan lagi `p_allocations` jsonb array (dicabut migration `0040_ar_payment_strict_invoice_match.sql`, riwayat: `0007` versi awal 7 param beda bentuk, `0027` diperluas jadi 8 param `p_allocations`+`p_customer_credit_account_id`). `p_amount` wajib **persis** sama `ar_invoice_remaining(p_invoice_id)` — `raise exception` sebelum jurnal apa pun dibuat kalau gak pas (baik kurang maupun lebih).
 
 ```sql
+drop function if exists record_ar_payment(uuid, date, numeric, text, uuid, uuid, jsonb, uuid);
+drop function if exists record_ar_payment(uuid, date, numeric, text, uuid, uuid, jsonb);
+
 create function record_ar_payment(
   p_customer_id uuid,
   p_payment_date date,
@@ -276,16 +214,23 @@ create function record_ar_payment(
   p_source_ref text,
   p_cash_account_id uuid,
   p_receivable_account_id uuid,
-  p_allocations jsonb
+  p_invoice_id uuid
 ) returns uuid
 language plpgsql
 security invoker
 as $$
 declare
+  v_remaining numeric;
   v_entry_id uuid;
   v_payment_id uuid;
-  v_alloc jsonb;
 begin
+  select ar_invoice_remaining(p_invoice_id) into v_remaining;
+
+  if p_amount != v_remaining then
+    raise exception 'Payment % harus persis sama dengan sisa piutang invoice % (sisa %, coba bayar %) — gak boleh cicilan/kurang/lebih',
+      p_source_ref, p_invoice_id, v_remaining, p_amount;
+  end if;
+
   v_entry_id := create_journal_entry(
     p_payment_date, 'Pelunasan piutang', p_source_ref,
     jsonb_build_array(
@@ -294,27 +239,21 @@ begin
     )
   );
 
-  insert into ar_payments (customer_id, payment_date, amount, source_ref, journal_entry_id, created_by)
-  values (p_customer_id, p_payment_date, p_amount, p_source_ref, v_entry_id, auth.uid())
+  insert into ar_payments (customer_id, invoice_id, payment_date, amount, source_ref, journal_entry_id, created_by)
+  values (p_customer_id, p_invoice_id, p_payment_date, p_amount, p_source_ref, v_entry_id, auth.uid())
   returning id into v_payment_id;
-
-  for v_alloc in select * from jsonb_array_elements(p_allocations)
-  loop
-    insert into ar_payment_allocations (payment_id, invoice_id, amount)
-    values (v_payment_id, (v_alloc->>'invoice_id')::uuid, (v_alloc->>'amount')::numeric);
-  end loop;
 
   return v_payment_id;
 end;
 $$;
 ```
 
-### `cancel_ar_invoice` — batalkan invoice salah input (reversing entry, dengan guard)
+### `cancel_ar_invoice` — batalkan invoice salah input (reversing entry, dengan guard) (terakhir didefinisi `0041`)
 
-Manggil `reverse_journal_entry` yang udah ada (fase 2) — pakai **akun yang sama persis** dengan invoice asli, debit/kredit ketuker, gak butuh akun baru (ini koreksi "salah input", bukan kejadian bisnis baru kayak retur barang). Bedanya dari reversing entry biasa: ada validasi awal yang nolak kalau invoice udah kesentuh payment.
+Manggil `reverse_journal_entry` yang udah ada (fase 2) — pakai **akun yang sama persis** dengan invoice asli, debit/kredit ketuker, gak butuh akun baru (ini koreksi "salah input", bukan kejadian bisnis baru kayak retur barang). Bedanya dari reversing entry biasa: ada validasi awal yang nolak kalau invoice udah kesentuh payment atau write-off, dan auto-unwind jurnal `ar_deposit_applications` aktif (reklasifikasi sederhana, aman dibalik — beda dari payment/write-off yang hard-reject). Loop unwind `ar_return_credit_applications` yang sempat ada (0031) **dihapus di `0041`** bareng tabelnya — gak ada lagi apa pun buat di-unwind di sisi return credit (lihat "AR Return Credit" di bawah).
 
 ```sql
-create function cancel_ar_invoice(
+create or replace function cancel_ar_invoice(
   p_invoice_id uuid,
   p_entry_date date,
   p_source_ref text
@@ -323,35 +262,55 @@ language plpgsql
 security invoker
 as $$
 declare
-  v_allocated_count int;
+  v_paid_count int;
+  v_written_off_count int;
   v_original_entry_id uuid;
   v_new_entry_id uuid;
+  v_application record;
 begin
-  select count(*) into v_allocated_count
-  from ar_payment_allocations where invoice_id = p_invoice_id;
+  select count(*) into v_paid_count
+  from ar_payments where invoice_id = p_invoice_id;
 
-  if v_allocated_count > 0 then
-    raise exception 'Invoice % udah punya % alokasi payment — gak bisa dibatalkan lewat jalur ini', p_invoice_id, v_allocated_count;
+  if v_paid_count > 0 then
+    raise exception 'Invoice % udah punya payment — gak bisa dibatalkan lewat jalur ini', p_invoice_id;
+  end if;
+
+  select count(*) into v_written_off_count
+  from ar_bad_debt_writeoffs where invoice_id = p_invoice_id;
+
+  if v_written_off_count > 0 then
+    raise exception 'Invoice % udah punya % write-off piutang tak tertagih — gak bisa dibatalkan lewat jalur ini', p_invoice_id, v_written_off_count;
   end if;
 
   select journal_entry_id into v_original_entry_id from ar_invoices where id = p_invoice_id;
 
   v_new_entry_id := reverse_journal_entry(v_original_entry_id, p_entry_date, p_source_ref);
 
+  for v_application in
+    select ada.journal_entry_id
+    from ar_deposit_applications ada
+    where ada.invoice_id = p_invoice_id
+      and not exists (
+        select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
+      )
+  loop
+    perform reverse_journal_entry(v_application.journal_entry_id, p_entry_date, p_source_ref);
+  end loop;
+
   return v_new_entry_id;
 end;
 $$;
 ```
 
-Gak insert/update apa pun ke `ar_invoices` — baris invoice asli tetap ada persis kayak semula (immutability tetap utuh). Status "dibatalkan" murni kebaca dari keberadaan reversal di `journal_entries`, sama pola derived kayak status lunas/sebagian/belum.
+Gak insert/update apa pun ke `ar_invoices` — baris invoice asli tetap ada persis kayak semula (immutability tetap utuh). Status "dibatalkan" murni kebaca dari keberadaan reversal di `journal_entries`, sama pola derived kayak status lunas/belum.
 
 ## RLS Policy
 
-**`customers_select`, `ar_invoices_select`, `ar_payments_select`, `ar_payment_allocations_select`** — semua yang `authenticated` boleh liat, pola sama modul lain: data AR itu referensi bareng buat kerja/lapor, gak dibatesin per role.
+**`customers_select`, `ar_invoices_select`, `ar_payments_select`** — semua yang `authenticated` boleh liat, pola sama modul lain: data AR itu referensi bareng buat kerja/lapor, gak dibatesin per role.
 
-**`customers_insert`/`customers_update`, `ar_invoices_insert`, `ar_payments_insert`, `ar_payment_allocations_insert`** — cuma `admin`/`accountant` (subquery ke `user_roles`, pola identik `accounts_insert`).
+**`customers_insert`/`customers_update`, `ar_invoices_insert`, `ar_payments_insert`** — cuma `admin`/`accountant` (subquery ke `user_roles`, pola identik `accounts_insert`).
 
-**Sengaja gak ada policy `UPDATE`/`DELETE` di 3 tabel AR transaksional** (`ar_invoices`, `ar_payments`, `ar_payment_allocations`) — RLS default deny + trigger `block_edit_delete` = 2 lapis immutability, sama persis `journal_entries`/`journal_lines`. `customers` beda, boleh `UPDATE` (master data, bukan transaksional) tapi tetap gak ada `DELETE` (arsip lewat `archived_at`, bukan hard-delete).
+**Sengaja gak ada policy `UPDATE`/`DELETE` di 2 tabel AR transaksional** (`ar_invoices`, `ar_payments`) — RLS default deny + trigger `block_edit_delete` = 2 lapis immutability, sama persis `journal_entries`/`journal_lines`. `customers` beda, boleh `UPDATE` (master data, bukan transaksional) tapi tetap gak ada `DELETE` (arsip lewat `archived_at`, bukan hard-delete).
 
 ```sql
 alter table customers enable row level security;
@@ -393,18 +352,7 @@ create policy ar_payments_insert on ar_payments
     exists (select 1 from user_roles ur
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
-
-alter table ar_payment_allocations enable row level security;
-
-create policy ar_payment_allocations_select on ar_payment_allocations
-  for select using (auth.role() = 'authenticated');
-
-create policy ar_payment_allocations_insert on ar_payment_allocations
-  for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
-  );
--- sengaja gak ada policy UPDATE/DELETE di 3 tabel AR transaksional -> RLS default deny
+-- sengaja gak ada policy UPDATE/DELETE di 2 tabel AR transaksional -> RLS default deny
 ```
 
 ## Grant
@@ -415,7 +363,6 @@ create policy ar_payment_allocations_insert on ar_payment_allocations
 grant select, insert, update on customers to authenticated;
 grant select, insert on ar_invoices to authenticated;
 grant select, insert on ar_payments to authenticated;
-grant select, insert on ar_payment_allocations to authenticated;
 ```
 
 RPC (`create_ar_invoice`, `record_ar_payment`) otomatis kepakai `authenticated` selama grant `execute` default Postgres gak dicabut — konsisten sama perlakuan `create_journal_entry`/`reverse_journal_entry` di `journal-entry-schema.md` (grant RPC eksplisit ditambahin di migration terpisah kalau ternyata perlu, ref migration `0006_journal_entry_rpc_grants.sql`).
@@ -449,7 +396,7 @@ create table ar_credit_notes (
 
 ### Trigger `ar_credit_notes_no_over_return`
 
-Pola sama `ar_payment_allocations_no_over_allocation` — total `SUM(amount)` credit note per invoice gak boleh ngelebihin `ar_invoices.amount`. Beda dari over-allocation: di sini gak peduli status bayar invoice (bisa aja retur bikin outstanding jadi negatif kalau invoice-nya udah lunas — itu skenario sah, lihat domain doc).
+Total `SUM(amount)` credit note per invoice gak boleh ngelebihin `ar_invoices.amount` — gak peduli status bayar invoice (bisa aja retur bikin outstanding jadi negatif kalau invoice-nya udah lunas — itu skenario sah, lihat domain doc).
 
 Full body trigger: lihat migration file.
 
@@ -486,9 +433,9 @@ Barang yang balik masuk blend ke `inventory_balances.avg_cost` (formula sama per
 
 ### Trigger `inventory_return_lines_guard`
 
-Gabung 2 pengecekan dalam 1 trigger (dipasang `before insert on inventory_return_lines`):
-1. **No over-return (qty)** — akumulasi `qty_returned` per item per goods_issue gak boleh ngelebihin `goods_issue_lines.qty_issued`-nya. Pola sama trigger anti-over-consumption `inventory_lot_consumptions_no_over_consumption` yang dulu ada (sudah dihapus bareng `inventory_lot_consumptions`, migration `0038`).
-2. **Batas waktu retur (per item)** — kalau `items.return_window_days` (kolom baru, nullable) gak NULL, `return_date - invoice_date` (invoice diambil lewat join `goods_issues` -> `ar_invoices`) gak boleh ngelewatin itu. Ditaro per item (bukan per customer/global) karena soal umur simpan fisik barang — lihat `memory/domain/inventory.md`. `NULL` = gak dibatasi (default, biar item existing gak ke-block retroaktif). **Coexist** sama batas per customer (`ar_invoices.return_window_days`, dicek terpisah di awal `create_ar_credit_note`, lihat bagian "Batas Hari Retur per Customer" di bawah) — dua cek independen, retur ditolak kalau salah satu kelampaui.
+`before insert on inventory_return_lines` — **cuma 1 pengecekan**: no-over-return (qty). Akumulasi `qty_returned` per item per goods_issue gak boleh ngelebihin `goods_issue_lines.qty_issued`-nya. Pola sama trigger anti-over-consumption `inventory_lot_consumptions_no_over_consumption` yang dulu ada (sudah dihapus bareng `inventory_lot_consumptions`, migration `0038`).
+
+Sempat gabung 2 pengecekan (qty + batas waktu retur per item, `items.return_window_days`) sampai migration `0039_ar_remove_return_window.sql` nyabut bagian window-nya total — lihat `memory/domain/accounts-receivable.md` bagian batas waktu retur buat alasan bisnisnya.
 
 Full body trigger: lihat migration file.
 
@@ -500,8 +447,9 @@ Full body trigger: lihat migration file.
 - Nominal jurnal kontra-revenue (`p_amount`) tetap **input eksplisit dari caller**, bukan dihitung RPC — konsisten sama `create_ar_invoice`/`record_ar_payment` yang juga gak pernah nebak nominal uang dari data lain (skema gak nyimpen harga per-unit di level invoice, cuma total).
 - Nominal reversal HPP **dihitung RPC dari snapshot** (`goods_issue_lines.total_cost / qty_issued × qty_returned`), bukan input caller — beda dari nominal revenue di atas, ini sengaja dikunci server-side biar gak ada celah caller masukin cost yang gak sesuai catatan asli.
 - Guard "item gak ketemu di goods_issue" dicek eksplisit di RPC (bukan cuma ngandelin trigger yang jalan belakangan pas insert `inventory_return_lines`) — biar gagalnya cepat & jelas, bukan nyusul jadi NULL yang baru ketauan pas constraint lain nolak.
+- Sempat ada fail-fast check batas waktu retur per customer di awal fungsi (`ar_invoices.return_window_days`, `0033`) — dicabut migration `0039_ar_remove_return_window.sql`.
 
-Full body (bentuk final, setelah bugfix): `supabase/migrations/0022_fix_ar_credit_note_lot_source_ref.sql` — versi awal ada di `0021_ar_credit_notes_schema.sql`.
+Full body (bentuk final): `supabase/migrations/0039_ar_remove_return_window.sql` — riwayat sebelumnya: `0021_ar_credit_notes_schema.sql` (versi awal), `0022_fix_ar_credit_note_lot_source_ref.sql` (bugfix), `0038_remove_fifo_costing.sql` (costing disederhanakan).
 
 ### RLS & Grant
 
@@ -599,7 +547,7 @@ Customer retur barang rusak (AR Credit Note jalur full, sudah ada `inventory_ret
 
 ### `warranty_replacements` + `warranty_replacement_lines`
 
-Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per credit note, retur bertahap). `journal_entry_id` nunjuk jurnal Debit HPP / Kredit Persediaan Barang Jadi (`create_journal_entry`, reuse). `discount_reversal_journal_entry_id` (**fix `0037`**, nullable) nunjuk jurnal kedua yang membalikkan diskon retur — Debit Piutang Usaha / Kredit Retur & Potongan Penjualan, cuma dibuat kalau `discount_reversed_amount > 0`. Immutable, pola sama `ar_credit_notes`/`inventory_returns`.
+Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per credit note, retur bertahap). `journal_entry_id` nunjuk jurnal Debit HPP / Kredit Persediaan Barang Jadi (`create_journal_entry`, reuse). `discount_reversal_journal_entry_id` (**fix `0037`**, nullable) nunjuk jurnal kedua yang membalikkan diskon retur — Debit Piutang Usaha / Kredit Retur & Potongan Penjualan, cuma dibuat kalau `discount_reversed_amount > 0`. `return_credit_settlement_journal_entry_id` (**`0041`**, nullable) nunjuk jurnal ketiga yang menyelesaikan saldo kredit retur — Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha, cuma dibuat kalau `return_credit_settled_amount > 0` (lihat "AR Return Credit" di bawah). Immutable, pola sama `ar_credit_notes`/`inventory_returns`.
 
 ```sql
 create table warranty_replacements (
@@ -610,6 +558,8 @@ create table warranty_replacements (
   journal_entry_id uuid not null references journal_entries(id),
   discount_reversed_amount numeric(14,2) not null default 0 check (discount_reversed_amount >= 0),
   discount_reversal_journal_entry_id uuid references journal_entries(id),
+  return_credit_settled_amount numeric(14,2) not null default 0 check (return_credit_settled_amount >= 0),
+  return_credit_settlement_journal_entry_id uuid references journal_entries(id),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
@@ -631,6 +581,10 @@ Pola sama `inventory_return_lines_guard` (no-over-return) — total `qty_replace
 
 Total `discount_reversed_amount` (akumulasi lintas semua `warranty_replacements` per `credit_note_id`) gak boleh ngelebihin `ar_credit_notes.amount` credit note itu. Pola sama no-over-replace tapi di level header, bukan line — karena reversal dihitung per pemanggilan RPC (1 angka), bukan per baris item.
 
+### Trigger `warranty_replacements_no_over_settle_return_credit` (`0041`)
+
+Pola sama `no_over_reverse` di atas, tapi buat kolom `return_credit_settled_amount`: kalau `new.return_credit_settled_amount = 0`, langsung lolos (`return new`, gak perlu lookup apa pun — kasus paling umum, credit note tanpa `ar_return_credits`). Kalau > 0, cari `ar_return_credits` yang `credit_note_id`-nya match — `raise exception` kalau gak ketemu (gak masuk akal isi kolom ini kalau gak ada saldo buat disettle), lalu `raise exception` juga kalau `new.return_credit_settled_amount > ar_return_credit_remaining(credit_id)` (dipanggil saat itu, sebelum row baru ini masuk — jadi "sisa SEBELUM settlement ini").
+
 ### RPC `create_warranty_replacement`
 
 `security invoker`, reuse `create_journal_entry` + `consume_weighted_average` (fungsi generik konsumsi stok dari `0012`, sama yang dipakai `create_goods_issue`/`create_production_order`; `consume_fifo` yang dulu jadi pasangannya sudah di-drop total di migration `0038`) — 0 fungsi baru buat logic konsumsi stok.
@@ -638,96 +592,20 @@ Total `discount_reversed_amount` (akumulasi lintas semua `warranty_replacements`
 - Guard "credit note jalur full" dicek eksplisit di awal RPC (`exists (select 1 from inventory_returns where credit_note_id = ...)`), bukan cuma ngandelin trigger belakangan — kalau credit note-nya financial-only, `raise exception` duluan sebelum sempat konsumsi stok.
 - Guard `p_lines` kosong/null juga dicek eksplisit — tanpa ini RPC bisa "sukses" bikin jurnal 0/0 dan header tanpa baris sama sekali (ketauan pas review).
 - Konsumsi stok ambil dari pool `inventory_balances` (Weighted Average) via `consume_weighted_average`. Sebelum migration `0038`: konsumsi pakai `consumption_type = 'WARRANTY_REPLACEMENT'` (value baru, `inventory_lot_consumptions.consumption_type` check constraint diperluas — pola sama 0021 extend `inventory_lots.source_type` nambah `SALES_RETURN`) — **selalu** ambil dari lot aktif (FIFO urut tanggal), bukan dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak gak dipakai ganti lagi). Sekarang tabel lot sudah gak ada, jadi segregasi itu juga sudah gak ada — barang pengganti diambil dari pool `inventory_balances` tunggal yang sama dengan barang retur (lihat catatan di bagian "AR Credit Note" soal `memory/scope-debt/kerugian-barang-rusak.md`).
-- **Pembalikan diskon (fix `0037`, param baru `p_contra_revenue_account_id`/`p_receivable_account_id`)**: sebelum fix ini, jurnal HPP/Persediaan di atas adalah SATU-SATUNYA efek RPC — additive di atas diskon `create_ar_credit_note` yang udah jalan duluan, bikin kompensasi ganda (`memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`, sekarang dihapus karena sudah diperbaiki). Sekarang RPC hitung `v_reversal_share_cost` = jumlah (qty diganti × unit cost asli dari `inventory_return_lines`) tiap baris, lalu `v_reversal_amount = round(ar_credit_notes.amount * v_reversal_share_cost / total_cost_retur_credit_note, 2)` — proxy proporsi nilai pakai rasio cost, karena `ar_credit_notes` cuma nyimpen 1 `amount` total, gak per baris item. Kalau `v_reversal_amount > 0`, bikin jurnal kedua (Debit Piutang Usaha / Kredit Retur & Potongan Penjualan — kebalikan `create_ar_credit_note`) lewat `create_journal_entry` lagi, disimpan ke `discount_reversed_amount`+`discount_reversal_journal_entry_id`.
-- **Diketahui, gak diperbaiki (konsisten sama trigger guard lain di modul ini)**: `warranty_replacements_no_over_reverse` gak pakai `pg_advisory_xact_lock` (beda dari `close_period` di `0016`) — 2 pemanggilan konkuren ke credit note yang sama secara teori bisa race lolos guard individual. Rounding `round(...,2)` per pemanggilan independen (gak liat sisa) bisa juga bikin retur bertahap terakhir kena reject padahal proporsinya sah. Bukan blocker (bukan kompensasi ganda beneran, cuma false-rejection edge case) — sama level risiko kayak `inventory_return_lines_guard`/`warranty_replacement_lines_no_over_replace` yang juga gak pakai lock.
+- **Pembalikan diskon (fix `0037`, param `p_contra_revenue_account_id`/`p_receivable_account_id`)**: sebelum fix ini, jurnal HPP/Persediaan di atas adalah SATU-SATUNYA efek RPC — additive di atas diskon `create_ar_credit_note` yang udah jalan duluan, bikin kompensasi ganda (`memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`, sekarang dihapus karena sudah diperbaiki). Sekarang RPC hitung `v_reversal_share_cost` = jumlah (qty diganti × unit cost asli dari `inventory_return_lines`) tiap baris, lalu `v_reversal_amount = round(ar_credit_notes.amount * v_reversal_share_cost / total_cost_retur_credit_note, 2)` — proxy proporsi nilai pakai rasio cost, karena `ar_credit_notes` cuma nyimpen 1 `amount` total, gak per baris item. Kalau `v_reversal_amount > 0`, bikin jurnal kedua (Debit Piutang Usaha / Kredit Retur & Potongan Penjualan — kebalikan `create_ar_credit_note`) lewat `create_journal_entry` lagi, disimpan ke `discount_reversed_amount`+`discount_reversal_journal_entry_id`.
+- **Penyelesaian saldo kredit retur (`0041`, param baru `p_return_credit_liability_account_id` default `null`)**: cuma jalan kalau `v_reversal_amount > 0` DAN credit note-nya punya baris `ar_return_credits` (lookup by `credit_note_id`). Kalau ketemu: (1) `raise exception` **SEBELUM bikin jurnal apa pun** kalau `v_reversal_amount > ar_return_credit_remaining(id)` — lihat catatan bug di bawah; (2) `raise exception` juga kalau `p_return_credit_liability_account_id is null` (pola sama `create_ar_credit_note` buat parameter serupa); (3) baru kalau lolos dua cek itu, `v_settlement_amount := v_reversal_amount` (persis sama, gak perlu `least()` lagi karena udah divalidasi duluan), bikin jurnal ketiga (Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha) lewat `create_journal_entry`, disimpan ke `return_credit_settled_amount`+`return_credit_settlement_journal_entry_id`. **Kenapa kredit Piutang Usaha (bukan Persediaan/HPP lagi)**: jurnal ini sengaja pasangan kebalikan dari pembalikan diskon di poin sebelumnya (yang men-debit Piutang Usaha) — net efek ke Piutang Usaha invoice jadi 0 (invoice tetap "lunas"), sementara liability-nya beneran berkurang. Fisik barangnya sendiri udah kejurnal di HPP/Persediaan di awal RPC, gak perlu disentuh lagi di sini.
+- **Bug ketauan schema-reviewer, bukan disengaja dari awal**: draft pertama nge-`least(v_reversal_amount, ar_return_credit_remaining())` cuma di sisi settlement, sementara jurnal reversal-nya (poin sebelumnya) tetap jalan penuh gak ke-cap. Kalau sebagian saldo `ar_return_credits` udah kadung direfund tunai duluan (`refund_ar_return_credit`) sebelum penukaran barang ini, selisih antara reversal penuh dan settlement yang ke-cap jadi debit Piutang Usaha yang nambah TANPA invoice manapun yang nyerap — gak ada baris `ar_invoices` baru, gak ada `ar_invoice_remaining()` manapun yang ngitung ini, dan (gara-gara `0040`) bahkan gak bisa dilunasin lewat `record_ar_payment` biasa karena itu sekarang wajib exact-match ke 1 invoice. Fix: cek dulu `v_reversal_amount > remaining` SEBELUM bikin jurnal reversal maupun settlement, `raise exception` kalau iya — bukan lolosin dengan angka yang dipotong diam-diam.
+- **Diketahui, gak diperbaiki (konsisten sama trigger guard lain di modul ini)**: `warranty_replacements_no_over_reverse`/`no_over_settle_return_credit` gak pakai `pg_advisory_xact_lock` (beda dari `close_period` di `0016`) — 2 pemanggilan konkuren ke credit note yang sama secara teori bisa race lolos guard individual. Rounding `round(...,2)` per pemanggilan independen (gak liat sisa) bisa juga bikin retur bertahap terakhir kena reject padahal proporsinya sah. Bukan blocker (bukan kompensasi ganda beneran, cuma false-rejection edge case) — sama level risiko kayak `inventory_return_lines_guard`/`warranty_replacement_lines_no_over_replace` yang juga gak pakai lock.
 
-Full body: `supabase/migrations/0026_ar_warranty_replacements.sql` + `supabase/migrations/0037_ar_warranty_replacement_discount_reversal.sql`.
+Full body (bentuk final): `supabase/migrations/0041_ar_return_credit_resolution.sql` — riwayat sebelumnya: `0026_ar_warranty_replacements.sql` (versi awal), `0037_ar_warranty_replacement_discount_reversal.sql` (pembalikan diskon), `0038_remove_fifo_costing.sql` (costing disederhanakan).
 
 ### RLS & Grant
 
 Pola identik AR/Inventory lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`).
 
-## AR Customer Credit (Kelebihan Bayar) — migration `0027_ar_customer_credits.sql` + `0028_seed_demo_ar_customer_credits.sql`
+## AR Customer Credit (Kelebihan Bayar) — dicabut total (migration `0040_ar_payment_strict_invoice_match.sql`)
 
-Customer transfer lebih dari total alokasi ke invoice dalam 1 payment event. **Bukan** `ar_deposit` — piutangnya udah ada dan udah kesentuh (invoice ternutup penuh via alokasi normal), excess-nya baru "jatuh" ke liability baru `Saldo Kredit Customer` (`2400`, insert di migration seed 0028, pola sama `2300 Uang Muka Penjualan`). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Kelebihan Bayar (Overpayment) jadi Saldo Kredit Customer".
-
-**Bugfix pas apply ke remote** (ketauan pas `supabase db push`, bukan dari review statis): `create or replace function record_ar_payment(...)` di `0027` nambah parameter ke-8 (`p_customer_credit_account_id default null`) — Postgres nge-ID fungsi dari nama+tipe parameter, bukan nama doang, jadi `create or replace` gak nge-replace versi 0007 (7 param), malah nambah **overload baru**. Remote yang tetep 2 overload bikin `record_ar_payment(...)` 7 argumen ambigu (`42725 function ... is not unique`). Fix: `drop function if exists record_ar_payment(uuid, date, numeric, text, uuid, uuid, jsonb)` ditambahin di **dua** tempat — di `0027` sendiri (buat instalasi baru yang belum pernah apply versi lama) DAN di awal `0028` (buat instance yang udah kadung apply `0027` sebelum drop itu ditambahin, kayak kasus yang kejadian). Pelajaran: nambah parameter ke fungsi existing lewat `create or replace` **selalu** butuh `drop function if exists <signature lama>` eksplisit duluan, gak otomatis ke-replace kalau signature-nya beda.
-
-### `record_ar_payment` (aslinya 0007) diperluas — `create or replace`, bukan RPC baru
-
-Sebelum ini, baris jurnal Kredit Piutang Usaha selalu = `p_amount` penuh, gak peduli `p_allocations` totalnya kurang dari itu — over-credit Piutang Usaha kalau ada excess. Sekarang:
-- `v_allocated_total` = `SUM(p_allocations.amount)`, wajib ≤ `p_amount` (`raise exception` kalau lebih — gak masuk akal alokasi lebih dari yang dibayar).
-- `v_excess` = `p_amount - v_allocated_total`. Kalau `v_excess > 0`, jurnal dapet baris ke-3 (Kredit `p_customer_credit_account_id`, wajib diisi caller kalau excess-nya ada — `raise exception` kalau NULL), dan 1 baris `ar_customer_credits` di-insert nunjuk ke payment yang sama.
-- **1 payment event = 1 journal entry** (bukan 2 payment terpisah) — pola ini yang bikin traceable ke 1 bukti transfer bank (Core Invariant), dibahas bareng user pas teaching cycle.
-- Parameter baru `p_customer_credit_account_id` ditaro **paling akhir dengan default `null`** — signature call existing (0008, 0025 seed) yang gak isi param ini tetep jalan tanpa perubahan.
-
-### `ar_customer_credits` — saldo kredit lahir
-
-Satu baris = satu kejadian excess dari 1 payment. `payment_id` nunjuk `ar_payments` sumbernya, `journal_entry_id` nunjuk entry **yang sama** dengan payment-nya (bukan entry baru terpisah — beda dari `ar_deposits` yang punya entry sendiri karena kejadiannya independen).
-
-```sql
-create table ar_customer_credits (
-  id uuid primary key default gen_random_uuid(),
-  customer_id uuid not null references customers(id),
-  payment_id uuid not null references ar_payments(id),
-  amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-### `ar_customer_credit_applications` + `ar_customer_credit_refunds` — 2 disposisi, partial-capable & berulang
-
-Beda dari `ar_deposit` (1 disposisi aktif doang, ditegakkan trigger): saldo kredit ini kayak "dompet" — bisa dipakai/direfund **sebagian-sebagian, berkali-kali**, gak ada guard "cuma 1 disposisi". Fungsi `ar_customer_credit_remaining(credit_id)` (SQL function, bukan view) ngitung sisa saldo: `amount - SUM(applications) - SUM(refunds)`, dipanggil kedua trigger guard di bawah dan bisa dipanggil langsung dari query read-side (misal nampilin "sisa saldo kredit" di UI).
-
-```sql
-create table ar_customer_credit_applications (
-  id uuid primary key default gen_random_uuid(),
-  credit_id uuid not null references ar_customer_credits(id),
-  invoice_id uuid not null references ar_invoices(id),
-  amount numeric(14,2) not null check (amount > 0),
-  source_ref text not null,
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-
-create table ar_customer_credit_refunds (
-  id uuid primary key default gen_random_uuid(),
-  credit_id uuid not null references ar_customer_credits(id),
-  amount numeric(14,2) not null check (amount > 0),
-  source_ref text not null,
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-Trigger `ar_customer_credit_applications_guard` (before insert, 3 pengecekan): (1) `new.amount ≤ ar_customer_credit_remaining(credit_id)`; (2) credit & invoice customer harus sama (pola sama guard DP, gak ada FK natural yang nyegah ini); (3) digabung sama `ar_payment_allocations` + `ar_deposit_applications` yang udah ada buat cek over-collect ke invoice yang sama (3 jalur independen sekarang, semua harus keitung bareng).
-
-Trigger `ar_customer_credit_refunds_guard` (before insert, 1 pengecekan): `new.amount ≤ ar_customer_credit_remaining(credit_id)` doang — refund gak nyentuh invoice, gak butuh cek sisi itu.
-
-### RPC: `apply_ar_customer_credit`, `refund_ar_customer_credit`
-
-`security invoker`, pola sama RPC AR lain — reuse `create_journal_entry`, gak insert manual ke `journal_entries`/`journal_lines`. `apply_ar_customer_credit` insert `ar_customer_credit_applications` (Debit Saldo Kredit Customer / Kredit Piutang Usaha). `refund_ar_customer_credit` insert `ar_customer_credit_refunds` (Debit Saldo Kredit Customer / Kredit Kas/Bank). Nominal keduanya input eksplisit dari caller (bukan dihitung RPC), konsisten sama pola RPC AR lain.
-
-Full body: `supabase/migrations/0027_ar_customer_credits.sql`.
-
-### 4 fungsi existing yang ikut diperluas (`create or replace` di `0027`, bukan tabel baru)
-
-Sekarang ada 3 jalur independen yang sama-sama bisa ngurangin outstanding 1 invoice — `ar_payment_allocations`, `ar_deposit_applications`, `ar_customer_credit_applications` — jadi 3 fungsi guard-nya semua di-extend biar konsisten jumlahin ketiganya, SEMUA exclude application yang udah di-reverse (`not exists (... je.reverses_entry_id = ...)`):
-- **`ar_payment_allocations_no_over_allocation`** (0007, di-extend 0024) — tambah `v_invoice_credited` (SUM `ar_customer_credit_applications` aktif per invoice) ke perhitungan.
-- **`ar_deposit_applications_guard`** (0024) — tambah `v_already_credited_to_invoice` ke perhitungan poin 5-nya.
-- **`ar_customer_credit_applications_guard`** (0027) — jumlahin ketiganya, PLUS cek invoice belum dibatalkan (poin yang kelewat di draft awal, ketauan `schema-reviewer` — lihat di bawah).
-
-**`cancel_ar_invoice`** (0009, di-extend 0024 buat DP) ikut di-extend lagi di `0027`: setelah reverse jurnal invoice + jurnal `ar_deposit_applications` aktif (perilaku 0024, gak berubah), sekarang loop juga semua `ar_customer_credit_applications` aktif buat invoice itu dan ikut `reverse_journal_entry`-in. **Kenapa perlu, ketauan lewat `schema-reviewer` bukan dari awal**: draft pertama `0027` cuma nambah `ar_customer_credit_applications` ke perhitungan no-over-allocation, tapi lupa extend `cancel_ar_invoice` — akibatnya invoice yang udah dipotong saldo kredit terus dibatalkan bikin jurnal invoice ke-reverse tapi jurnal application-nya kagak, Piutang Usaha nyasar minus dan saldo kreditnya abis kepakai permanen tanpa invoice yang beneran nutup (kelas bug sama persis yang komentar 0024 udah jelasin buat DP, luput karena gak eksplisit diperiksa waktu nulis). `ar_customer_credit_remaining()` (dipanggil 2 trigger guard di atas) exclude application yang udah di-reverse dari perhitungan sisa saldo — konsisten sama fix ini, biar saldo yang application-nya di-unwind balik "belum dipakai" lagi (mirror behavior `ar_deposit`, bukan "hangus kepakai" permanen).
-
-**`create_ar_invoice`** (0007, di-extend 0020 buat credit hold, 0024 buat DP) di-extend lagi: outstanding calc buat credit hold sekarang ikut ngurangin `ar_customer_credit_applications` aktif juga (union ke-3 di subquery `alloc`, sama pola `ar_deposit_applications`). Ini juga ketauan lewat `schema-reviewer` (re-review, bukan review pertama) — draft sebelumnya sengaja skip fungsi ini dengan alasan "saldo kredit bukan piutang yang belum ditagih", tapi itu salah: kalau saldo kredit udah dipakai motong invoice X, outstanding invoice X beneran berkurang, jadi credit hold yang ngitung outstanding tanpa itu jadi overly conservative (bukan celah duit, tapi tetap salah — kelas bug sama persis yang 0024 jelasin buat DP).
-
-### RLS & Grant
-
-Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
+Sempat ada mekanisme "customer transfer lebih dari total invoice yang dilunasin, excess-nya jadi saldo kredit" — tabel `ar_customer_credits`/`ar_customer_credit_applications`/`ar_customer_credit_refunds` (migration `0027`), RPC `apply_ar_customer_credit`/`refund_ar_customer_credit`, akun liability `Saldo Kredit Customer` (`2400`). Semuanya dicabut total (tabel di-drop, RPC di-drop) begitu keputusan bisnis "payment wajib persis 1 invoice" jalan — gak ada lagi jalur buat kelebihan bayar "nyantol", `record_ar_payment` `raise exception` langsung kalau amount gak pas. Rationale: `docs/domain/accounts-receivable.md` bagian "Kenapa Payment Wajib Persis 1 Invoice".
 
 ## AR Bad Debt Write-off (Piutang Tak Tertagih) — migration `0029_ar_bad_debt_writeoffs.sql` + `0030_seed_demo_ar_bad_debt_writeoffs.sql`
 
@@ -752,7 +630,7 @@ create table ar_bad_debt_writeoffs (
 
 ### Trigger `ar_bad_debt_writeoffs_no_over_writeoff`
 
-Beda dari `ar_credit_notes_no_over_return` (sengaja independen, boleh bikin outstanding negatif) — write-off gak boleh ngelebihin **sisa outstanding riil** invoice: `amount` dikurangi SEMUA reducer lain yang udah ada (`ar_payment_allocations`, `ar_credit_notes`, `ar_deposit_applications` aktif, `ar_customer_credit_applications` aktif, write-off lain yang udah ada) — gak masuk akal "menghapus" uang yang udah lunas/diretur/dikreditkan duluan lewat jalur lain. Juga nolak kalau invoice-nya udah dibatalkan (exists reversal), pola sama `ar_deposit_applications_guard`/`ar_customer_credit_applications_guard`.
+Beda dari `ar_credit_notes_no_over_return` (sengaja independen, boleh bikin outstanding negatif) — write-off gak boleh ngelebihin **sisa outstanding riil** invoice, dihitung lewat `ar_invoice_remaining()` (payment, retur, DP aktif, write-off lain yang udah ada) — gak masuk akal "menghapus" uang yang udah lunas/diretur duluan lewat jalur lain. Juga nolak kalau invoice-nya udah dibatalkan (exists reversal), pola sama `ar_deposit_applications_guard`.
 
 ### RPC `write_off_ar_invoice`
 
@@ -782,11 +660,11 @@ Sebelum migration ini, 5 fungsi beda (`ar_payment_allocations_no_over_allocation
 
 **Fix**: 1 fungsi SQL `stable` — `ar_invoice_remaining(p_invoice_id uuid) returns numeric` — jadi satu-satunya sumber kebenaran, menjumlahkan SEMUA 6 reducer (5 lama + `ar_return_credit_applications` yang baru ditambah migration ini) dengan exclude-reversed filter yang konsisten (`ar_payment_allocations`/`ar_credit_notes` gak pernah punya reversal, 4 lainnya exclude `not exists (... reverses_entry_id ...)`). Ke-5 fungsi existing di atas di-`create or replace` buat manggil ini alih-alih ngitung ulang — badan fungsinya jauh lebih pendek sekarang (`create_ar_invoice` khususnya: query union 4-cabang lama diganti `cross join lateral (select ar_invoice_remaining(ai.id) as remaining) r`).
 
-**Reducer baru ke depan** cuma perlu ubah 1 tempat (`ar_invoice_remaining`), otomatis kepakai semua guard yang manggilnya — gak perlu nyisir N fungsi satu-satu lagi.
+**Reducer baru ke depan** cuma perlu ubah 1 tempat (`ar_invoice_remaining`), otomatis kepakai semua guard yang manggilnya — gak perlu nyisir N fungsi satu-satu lagi. Terbukti 2x: migration `0040_ar_payment_strict_invoice_match.sql` — reducer #1 (`ar_payment_allocations`) diganti jadi cek langsung `ar_payments.invoice_id` (unique), reducer #4 (`ar_customer_credit_applications`) dihapus total (fitur dicabut). Migration `0041_ar_return_credit_resolution.sql` — reducer #5 (`ar_return_credit_applications`) ikut dihapus total (jalur "titip ke invoice lain" dicabut, lihat "AR Return Credit" di bawah). **Kedua kali cuma 1 fungsi yang perlu diubah**, semua guard/RPC yang manggil `ar_invoice_remaining()` otomatis ikut kebenerin tanpa disentuh — TAPI perlu diinget eksplisit tiap kali nge-drop tabel sumber reducer, karena `create or replace function` gak otomatis ke-trigger cuma karena tabelnya ilang (ketauan pas nulis `0041`, sempat lupa sebelum keburu diperbaiki di migration yang sama). Sekarang tinggal **4 reducer**: payment (langsung, bukan SUM lagi), retur, DP application aktif, write-off aktif.
 
-## AR Return Credit (Saldo Kredit dari Retur) — migration `0031_ar_return_credits_and_remaining_refactor.sql` + `0032_seed_demo_ar_return_credits.sql`
+## AR Return Credit (Saldo Kredit dari Retur) — migration `0031_ar_return_credits_and_remaining_refactor.sql` + `0032_seed_demo_ar_return_credits.sql`, resolusi disederhanakan `0041_ar_return_credit_resolution.sql`
 
-Retur yang kejadian **setelah** invoice lunas bikin outstanding negatif (lihat "AR Credit Note" — `ar_credit_notes_no_over_return` sengaja independen, cuma cek terhadap `amount` invoice, gak peduli status bayar). Excess-nya sekarang otomatis "dicairkan" jadi saldo resmi — pola sama `ar_customer_credits` (overpayment), akun beda karena beda asal jurnal (`Saldo Kredit Retur Customer`, kode `2500`, bukan `Saldo Kredit Customer` `2400`). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Saldo Kredit dari Retur".
+Retur yang kejadian **setelah** invoice lunas bikin outstanding negatif (lihat "AR Credit Note" — `ar_credit_notes_no_over_return` sengaja independen, cuma cek terhadap `amount` invoice, gak peduli status bayar). Excess-nya sekarang otomatis "dicairkan" jadi saldo resmi, dicatat ke akun liability `Saldo Kredit Retur Customer` (kode `2500`). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Saldo Kredit dari Retur".
 
 ### `ar_return_credits` — saldo kredit lahir (selalu dari `ar_credit_notes` yang bikin invoice minus)
 
@@ -804,63 +682,37 @@ create table ar_return_credits (
 );
 ```
 
-### `ar_return_credit_applications` + `ar_return_credit_refunds` — 2 disposisi, partial-capable & berulang
+### `ar_return_credit_refunds` — 1 dari 2 disposisi (refund tunai)
 
-Pola identik `ar_customer_credit_applications`/`ar_customer_credit_refunds` (0027) — bukan disposisi tunggal kayak DP. `ar_return_credit_remaining(credit_id)` (fungsi `stable`, pola sama `ar_customer_credit_remaining`) ngitung sisa: `amount - SUM(applications aktif) - SUM(refunds)`.
+**(`0041`, disederhanakan)** Sempat ada juga `ar_return_credit_applications` (2 disposisi, pola identik `ar_customer_credit_applications`/`ar_customer_credit_refunds` 0027) — dicabut total. Sekarang cuma 1 tabel disposisi: `ar_return_credit_refunds`, ditambah settlement via barang yang disimpan di `warranty_replacements.return_credit_settled_amount` (bukan tabel terpisah, lihat bagian "Warranty Replacement" di atas — Opsi C dari 3 opsi yang dipertimbangkan, dipilih karena niru pola `discount_reversed_amount` yang udah ada di tabel yang sama).
+
+`ar_return_credit_remaining(credit_id)` (fungsi `stable`, terakhir didefinisi `0041`) ngitung sisa: `amount - SUM(warranty_replacements.return_credit_settled_amount via credit_note_id) - SUM(refunds)`.
 
 ### RPC `create_ar_credit_note` diperluas (bugfix 0022 jadi baseline)
 
 Ini keputusan desain paling penting di fitur ini. Sebelum insert baris `ar_credit_notes`, RPC nangkep `v_remaining_before := ar_invoice_remaining(p_invoice_id)` (state SEBELUM retur ini masuk). Setelah insert, hitung `v_excess := greatest(0, p_amount - greatest(0, v_remaining_before))` — cuma bagian retur yang beneran "kelebihan" dari sisa yang ada (bukan seluruh nominal retur), dan kalau invoice udah negatif dari retur sebelumnya (`v_remaining_before < 0`), seluruh retur baru ini jadi excess. Kalau `v_excess > 0`, bikin jurnal reklasifikasi (`Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer`) + insert `ar_return_credits`.
 
-Parameter baru `p_return_credit_liability_account_id` ditaro **paling akhir dengan default `null`** (wajib diisi caller cuma kalau beneran ada excess, `raise exception` kalau NULL pas dibutuhkan) — signature call existing (0023 seed) yang gak isi param ini tetep jalan. `drop function if exists create_ar_credit_note(<signature 9-param lama>)` ditambahin duluan — pelajaran dari bug `record_ar_payment` di 0027 (nambah parameter lewat `create or replace` bikin overload baru kalau gak di-drop eksplisit signature lama).
+Parameter `p_return_credit_liability_account_id` ditaro **paling akhir dengan default `null`** (wajib diisi caller cuma kalau beneran ada excess, `raise exception` kalau NULL pas dibutuhkan) — signature call existing (0023 seed) yang gak isi param ini tetep jalan. `drop function if exists create_ar_credit_note(<signature 9-param lama>)` ditambahin duluan — pelajaran dari bug `record_ar_payment` di 0027 (nambah parameter lewat `create or replace` bikin overload baru kalau gak di-drop eksplisit signature lama). Signature ini gak berubah lagi di `0041` (settlement-nya ada di `create_warranty_replacement`, bukan di sini).
 
-### RPC: `apply_ar_return_credit`, `refund_ar_return_credit`
+### RPC `apply_ar_return_credit` — dicabut total (`0041`)
 
-Pola identik `apply_ar_customer_credit`/`refund_ar_customer_credit` (0027) — reuse `create_journal_entry`, nominal input eksplisit dari caller.
+Dulu pola identik `apply_ar_customer_credit` (0027) — Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha ke invoice lain, insert `ar_return_credit_applications`. Dihapus bareng tabelnya — gak ada lagi jalur manual "pakai saldo kredit retur ke invoice lain". `refund_ar_return_credit` (refund tunai) **gak berubah**, tetap ada.
 
-### `cancel_ar_invoice` diperluas lagi
+### `cancel_ar_invoice` — loop ketiga dihapus (`0041`)
 
-Loop ketiga ditambahin (setelah unwind `ar_deposit_applications` dan `ar_customer_credit_applications`, urutan gak berubah): reverse jurnal `ar_return_credit_applications` aktif buat invoice yang dibatalin — auto-unwind (bukan ditolak keras kayak `ar_bad_debt_writeoffs`), karena ini reklasifikasi sederhana yang aman dibalik, sama alasan DP & customer credit.
+Sempat ada loop ketiga (setelah unwind `ar_deposit_applications`, sebelum `ar_customer_credit_applications` juga dihapus di `0040`) yang reverse jurnal `ar_return_credit_applications` aktif buat invoice yang dibatalin. Dihapus total bareng tabelnya — gak ada lagi apa pun buat di-unwind di sisi ini (settlement via barang & refund tunai berdiri independen dari status invoice manapun, gak pernah "diterapkan ke" invoice tertentu yang bisa dibatalkan).
 
 ### Backfill data lama — migration `0032`
 
-Retur Warung Kang Ade (`0023_seed_demo_ar_credit_notes.sql`, sebelum fitur ini ada) udah lebih dulu bikin invoice-nya minus tanpa lewat jalur otomatis di atas — migration seed `0032` manual insert jurnal reklasifikasi + baris `ar_return_credits` yang SEHARUSNYA otomatis kebentuk kalau fitur ini udah ada waktu itu, lalu demo `refund_ar_return_credit` buat nunjukin disposisinya. Detail skenario: `docs/story/accounts-receivable.md` Skenario 13.
+Retur Warung Kang Ade (`0023_seed_demo_ar_credit_notes.sql`, sebelum fitur ini ada) udah lebih dulu bikin invoice-nya minus tanpa lewat jalur otomatis di atas — migration seed `0032` manual insert jurnal reklasifikasi + baris `ar_return_credits` yang SEHARUSNYA otomatis kebentuk kalau fitur ini udah ada waktu itu, lalu demo `refund_ar_return_credit` buat nunjukin disposisinya. Kompatibel apa adanya sama `0041` (gak pernah insert ke `ar_return_credit_applications`, gak perlu diedit). Detail skenario: `docs/story/accounts-receivable.md` Skenario 11.
 
 ### RLS & Grant
 
 Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
 
-## Batas Hari Retur per Customer — migration `0033_ar_customer_return_window.sql` + `0034_seed_demo_ar_customer_return_window.sql`
+## Batas Waktu Retur — dicabut total (migration `0039_ar_remove_return_window.sql`)
 
-Toleransi dagang (trade term) berapa hari 1 customer boleh ngajuin retur, snapshot ke invoice pas dibuat — pola identik `due_date` dari `payment_term_days`. **Coexist** sama `items.return_window_days` (0021, soal sifat fisik barang) — 2 axis independen, gak saling gantiin. Detail rationale: `docs/domain/accounts-receivable.md` bagian "Retur Barang" > "Batas waktu retur".
-
-### Kolom baru (bukan tabel baru)
-
-```sql
-alter table customers
-  add column return_window_days int check (return_window_days is null or return_window_days > 0);
-
-alter table ar_invoices
-  add column return_window_days int check (return_window_days is null or return_window_days > 0);
-```
-
-`customers.return_window_days` — master data, nullable, `NULL` = gak dibatasi (biar customer existing gak otomatis kena batas begitu migration diapply, pola sama `credit_limit`/`overdue_threshold_days`). `ar_invoices.return_window_days` — **snapshot**, diisi sekali di `create_ar_invoice` pas invoice dibuat, bukan dihitung ulang tiap kali dicek — perubahan `customers.return_window_days` belakangan gak retroaktif ngubah invoice lama.
-
-### `create_ar_invoice` diperluas (signature gak berubah)
-
-Tinggal nambah `return_window_days` ke `select` yang udah ngambil `payment_term_days`/`credit_limit`/`overdue_threshold_days`, terus disisipin ke `insert into ar_invoices` bareng `due_date`. Gak ada parameter baru — customer selalu jadi sumber, bukan input caller.
-
-### `create_ar_credit_note` diperluas (signature gak berubah)
-
-Cek baru ditaro **paling awal fungsi**, sebelum `ar_invoice_remaining()` dipanggil dan sebelum jurnal apa pun dibuat (fail-fast, pola sama credit hold di `create_ar_invoice`) — kalau `ar_invoices.return_window_days` gak null dan `p_credit_note_date - v_invoice_date > v_return_window_days`, `raise exception` sebelum ada efek samping apa pun.
-
-**Berlaku ke SEMUA jalur** (full + financial-only) — beda dari `items.return_window_days` (trigger `inventory_return_lines_guard`, 0021) yang cuma jalan di jalur full karena butuh `item_id`. Ini yang nutup gap nyata: sebelum migration ini, retur financial-only gak punya batas waktu sama sekali.
-
-**Dua cek independen, retur ditolak kalau salah satu kelampaui** (OR-to-reject, pola sama credit hold `create_ar_invoice`) — item-level (`inventory_return_lines_guard`) sama sekali gak disentuh/diubah migration ini, tetap jalan sendiri di tempatnya.
-
-### Seed — migration `0034`
-
-Cuma `update customers set return_window_days = 14 where name = 'Warung Bu Imas'` — customer lain sengaja dibiarin `NULL`. Skenario retur yang DITOLAK (Bu Imas lewat batas 14 hari) sengaja gak dieksekusi sebagai SQL (bakal ngegagalin migration) — cuma didokumentasikan naratif, pola sama skenario credit hold. Detail: `docs/story/accounts-receivable.md` Skenario 14.
+Sempat ada 2 lapis (window per item `items.return_window_days` dari `0021`, window per customer `customers.return_window_days`/`ar_invoices.return_window_days` dari `0033`+seed `0034`) — keduanya dicabut total, kolom di-drop, cek di trigger `inventory_return_lines_guard` dan RPC `create_ar_credit_note` dihapus. Retur diterima/ditolak sekarang murni keputusan manual owner/staff di luar sistem. Rationale: `docs/domain/accounts-receivable.md` bagian "Retur Barang" > "Batas waktu retur", `memory/domain/accounts-receivable.md`.
 
 ## Belum termasuk (dependency / di luar scope fase ini)
 

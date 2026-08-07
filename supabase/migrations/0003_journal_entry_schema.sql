@@ -1,5 +1,6 @@
--- Journal Entry & General Ledger schema (Fase 2)
--- Ref: docs/architecture/data/journal-entry-schema.md
+-- Journal Entry & General Ledger schema.
+-- Konsolidasi dari migration historis 0004 + 0006 — lihat git log untuk riwayat evolusi.
+-- Ref: docs/architecture/journal-entry-schema.md
 
 create table journal_entries (
   id uuid primary key default gen_random_uuid(),
@@ -72,6 +73,7 @@ create constraint trigger journal_lines_balance_check_trigger
 
 -- Trigger: journal_entries/journal_lines gak pernah bisa diedit/dihapus (jaring kedua
 -- selain RLS yang sengaja gak ada policy UPDATE/DELETE). Koreksi cuma via reversing entry.
+-- block_edit_delete dipakai ulang oleh tabel-tabel append-only di modul lain juga.
 
 create function block_edit_delete() returns trigger as $$
 begin
@@ -87,15 +89,15 @@ create trigger journal_lines_block_edit_delete
   before update or delete on journal_lines
   for each row execute function block_edit_delete();
 
--- Trigger di accounts (Fase 1): published lock, ditunda sampai journal_lines ada.
--- Begitu akun dipakai di journal_lines, code/category/normal_balance/parent_id terkunci.
+-- Trigger di accounts (modul COA): published lock, taruh di sini karena butuh journal_lines.
+-- Begitu akun dipakai di journal_lines, code/category/normal_balance/parent_id/is_contra terkunci.
 
 create function accounts_published_lock() returns trigger as $$
 begin
-  if (old.code, old.category, old.normal_balance, old.parent_id)
-     is distinct from (new.code, new.category, new.normal_balance, new.parent_id) then
+  if (old.code, old.category, old.normal_balance, old.parent_id, old.is_contra)
+     is distinct from (new.code, new.category, new.normal_balance, new.parent_id, new.is_contra) then
     if exists (select 1 from journal_lines where account_id = old.id) then
-      raise exception 'Akun % sudah dipakai di jurnal — code/category/normal_balance/parent_id terkunci', old.code;
+      raise exception 'Akun % sudah dipakai di jurnal — code/category/normal_balance/parent_id/is_contra terkunci', old.code;
     end if;
   end if;
   return new;
@@ -187,6 +189,9 @@ $$;
 
 grant select, insert on journal_entries to authenticated;
 grant select, insert on journal_lines to authenticated;
+
+grant execute on function create_journal_entry(date, text, text, jsonb) to authenticated;
+grant execute on function reverse_journal_entry(uuid, date, text) to authenticated;
 
 -- RLS
 

@@ -1,32 +1,12 @@
--- Fixed Assets (Fase 6). Ref docs/architecture/data/fixed-assets-schema.md.
+-- Fixed Assets schema.
+-- Konsolidasi dari migration historis 0014 — lihat git log untuk riwayat evolusi.
+-- Ref: docs/architecture/fixed-assets-schema.md
+--
+-- accounts.is_contra + normal_balance generated column (yang tadinya diubah migration ini)
+-- sudah masuk langsung ke bentuk final accounts di 0001_coa_schema.sql. accounts_published_lock
+-- (trigger accounts yang tadinya direvisi migration ini buat ikut cek is_contra) ada di
+-- 0003_journal_entry_schema.sql (butuh journal_lines).
 
--- 1. accounts.is_contra + regenerate normal_balance generated column
-alter table accounts add column is_contra boolean not null default false;
-
-alter table accounts drop column normal_balance;
-
-alter table accounts add column normal_balance balance_side generated always as (
-  case
-    when category in ('asset','expense') then
-      case when is_contra then 'credit'::balance_side else 'debit'::balance_side end
-    else
-      case when is_contra then 'debit'::balance_side else 'credit'::balance_side end
-  end
-) stored;
-
-create or replace function accounts_published_lock() returns trigger as $$
-begin
-  if (old.code, old.category, old.normal_balance, old.parent_id, old.is_contra)
-     is distinct from (new.code, new.category, new.normal_balance, new.parent_id, new.is_contra) then
-    if exists (select 1 from journal_lines where account_id = old.id) then
-      raise exception 'Akun % sudah dipakai di jurnal — code/category/normal_balance/parent_id/is_contra terkunci', old.code;
-    end if;
-  end if;
-  return new;
-end;
-$$ language plpgsql;
-
--- 2. fixed_assets + depreciation_entries
 create type depreciation_method as enum ('straight_line', 'declining_balance');
 
 create table fixed_assets (
@@ -70,8 +50,6 @@ create table depreciation_entries (
 );
 
 create index depreciation_entries_fixed_asset_id_idx on depreciation_entries(fixed_asset_id);
-
--- 3. Trigger
 
 create function fixed_assets_validate_accounts() returns trigger as $$
 declare
@@ -157,8 +135,6 @@ create trigger fixed_assets_published_lock_trigger
   before update on fixed_assets
   for each row execute function fixed_assets_published_lock();
 
--- 4. RPC
-
 create function create_fixed_asset(
   p_name text,
   p_asset_account_id uuid,
@@ -227,7 +203,7 @@ begin
     v_amount := v_book_value * v_asset.depreciation_rate;
   end if;
 
-  -- potong otomatis kalau lewat cap (lihat catatan teknis declining balance, docs/domain/human/fixed-assets.md)
+  -- potong otomatis kalau lewat cap (lihat catatan teknis declining balance, docs/domain/fixed-assets.md)
   if v_accumulated + v_amount > v_cap then
     v_amount := v_cap - v_accumulated;
   end if;
@@ -248,7 +224,7 @@ begin
 end;
 $$;
 
--- 5. RLS
+-- RLS
 
 alter table fixed_assets enable row level security;
 
@@ -278,7 +254,7 @@ create policy depreciation_entries_insert on depreciation_entries
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
 
--- 6. Grant
+-- Grant
 
 grant select, insert, update on fixed_assets to authenticated;
 grant select, insert on depreciation_entries to authenticated;

@@ -6,25 +6,20 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario n
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `customers` | Master data pelanggan (nama, kontak, termin pembayaran, batas kredit, toleransi telat, toleransi hari retur) | — |
+| `customers` | Master data pelanggan (nama, kontak, termin pembayaran, batas kredit, toleransi telat) | — |
 | `ar_invoices` | Tagihan yang diterbitkan ke pelanggan | `customers`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ar_payments` | Pembayaran yang diterima dari pelanggan | `customers`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ar_payment_allocations` | Jembatan: "pembayaran X melunasi invoice Y sejumlah Z" | Menghubungkan `ar_payments` ↔ `ar_invoices` |
+| `ar_payments` | Pembayaran yang diterima dari pelanggan — wajib persis melunasi 1 invoice penuh (`invoice_id` langsung, bukan tabel jembatan) | `customers`, `ar_invoices` (1:1), dan ke transaksi jurnal yang otomatis dibuat |
 | `ar_credit_notes` | Retur barang — kejadian nyata barang balik, bukan koreksi salah input | `ar_invoices` (1 invoice bisa punya banyak retur), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
 | `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue (barang jadi yang stoknya dilacak) | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
 | `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `customers`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) yang otomatis dibuat |
 | `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
 | `ar_deposit_forfeitures` | DP hangus — order dibatalin sebelum invoice pernah ada | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Pendapatan Lain-lain) |
-| `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — bukan gratis, tanpa invoice baru, TAPI wajib membalikkan diskon retur yang sudah diberikan (proporsional) supaya piutang gak berkurang gara-gara penukaran (gak dobel kompensasi) | `ar_credit_notes` (wajib retur fisik yang sudah ada dulu), dan ke 2 transaksi jurnal (HPP → Persediaan Barang Jadi, dan pembalikan Piutang Usaha → Retur & Potongan Penjualan) |
-| `ar_customer_credits` | Kelebihan bayar — pelanggan transfer lebih dari yang dialokasikan ke invoice dalam satu pembayaran | `customers`, `ar_payments` (sumbernya), dan ke transaksi jurnal pembayaran yang sama |
-| `ar_customer_credit_applications` | Saldo kredit dipakai memotong invoice lain | Menghubungkan `ar_customer_credits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
-| `ar_customer_credit_refunds` | Saldo kredit dikembalikan tunai ke pelanggan | `ar_customer_credits`, dan ke transaksi jurnal (Saldo Kredit Customer → Kas) |
+| `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — bukan gratis, tanpa invoice baru, wajib membalikkan diskon retur yang sudah diberikan (proporsional), DAN kalau retur sumbernya punya saldo kredit retur aktif, ikut menyelesaikan saldo itu | `ar_credit_notes` (wajib retur fisik yang sudah ada dulu), `ar_return_credits` (via `ar_credit_notes`, kalau ada), dan ke sampai 3 transaksi jurnal (HPP → Persediaan Barang Jadi, pembalikan diskon, penyelesaian saldo kredit retur) |
 | `ar_bad_debt_writeoffs` | Piutang yang benar-benar tidak akan tertagih, dihapusbukukan | `ar_invoices` (1 invoice bisa punya lebih dari satu write-off parsial), dan ke transaksi jurnal (Beban Piutang Tak Tertagih → Piutang Usaha) |
-| `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi (Piutang Usaha → Saldo Kredit Retur Customer) |
-| `ar_return_credit_applications` | Saldo kredit retur dipakai memotong invoice lain | Menghubungkan `ar_return_credits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
+| `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — cuma bisa diselesaikan refund tunai atau ganti barang, tidak bisa dititip ke invoice lain | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi (Piutang Usaha → Saldo Kredit Retur Customer) |
 | `ar_return_credit_refunds` | Saldo kredit retur dikembalikan tunai ke pelanggan | `ar_return_credits`, dan ke transaksi jurnal (Saldo Kredit Retur Customer → Kas) |
 
-Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invoice satu pembayaran: satu pembayaran bisa melunasi beberapa invoice sekaligus (bayar gabungan), dan satu invoice bisa dilunasi lewat beberapa pembayaran (dicicil). Hubungannya banyak-ke-banyak, jadi butuh tabel sendiri yang mencatat tiap pasangan pembayaran-invoice beserta jumlahnya.
+Kenapa cukup satu invoice satu pembayaran (bukan tabel jembatan banyak-ke-banyak) — kebijakan penagihan sekarang mewajibkan tiap pembayaran melunasi persis 1 invoice penuh: gak boleh bayar gabungan (1 pembayaran nutup beberapa invoice), gak boleh dicicil, dan gak boleh kelebihan bayar. Desain sebelumnya mendukung ketiganya lewat tabel jembatan `ar_payment_allocations` — dicabut total karena kebijakan ini, sekarang `ar_payments` langsung punya kolom `invoice_id` (unik, jadi 1 invoice paling banyak 1 pembayaran).
 
 **Struktur `ar_invoices`:**
 
@@ -32,39 +27,36 @@ Kenapa perlu tabel jembatan (`ar_payment_allocations`) — bukan cukup satu invo
 |---|---|---|
 | pelanggan | Siapa yang berutang | |
 | tanggal invoice, jatuh tempo | Kapan diterbitkan, kapan harus lunas | Jatuh tempo dihitung sekali dari termin pelanggan **saat invoice dibuat**, lalu disimpan permanen — kalau termin pelanggan berubah belakangan, invoice lama tidak ikut berubah |
-| batas hari retur | Toleransi hari pelanggan ini boleh mengajukan retur | Sama pola jatuh tempo — disalin sekali dari toleransi pelanggan **saat invoice dibuat**, disimpan permanen. Kosong = tidak dibatasi |
 | jumlah | Nilai tagihan | |
-| status (lunas/sebagian/belum/dibatalkan) | — | **Tidak disimpan**, selalu dihitung ulang dari total pembayaran yang sudah dialokasikan dibanding nilai invoice |
+| status (lunas/belum/dibatalkan) | — | **Tidak disimpan**, selalu dihitung ulang dari ada-tidaknya pembayaran yang tercatat buat invoice ini dibanding nilai invoice |
 
 ## Aturan Otomatis yang Dijaga Sistem
 
-1. **Alokasi pembayaran tidak boleh melebihi yang tersedia.** Sistem menolak alokasi yang membuat total pelunasan sebuah invoice melebihi nilai invoice itu, atau yang membuat total penggunaan sebuah pembayaran melebihi jumlah uang yang diterima.
+1. **Pembayaran wajib persis sama dengan sisa tagihan invoice yang dituju.** Sistem menolak keras kalau nominalnya kurang (coba dicicil) maupun lebih (coba kelebihan bayar) — gak ada lagi ruang buat bayar sebagian atau kelebihan yang "nyantol".
 2. **Invoice dan pembayaran tidak pernah bisa diedit atau dihapus** — sama seperti transaksi jurnal biasa (dua lapis pengamanan). Data pelanggan sendiri (nama, kontak, termin) boleh diubah kapan saja karena itu bukan catatan transaksi, cuma master data.
-3. **Invoice hanya bisa dibatalkan kalau belum ada pembayaran yang mengalokasikan ke situ.** Kalau sudah ada pelunasan (meski sebagian), pembatalan lewat jalur biasa ditolak — harus ditangani lewat proses yang lebih hati-hati (di luar cakupan saat ini). **Kalau invoice itu punya uang muka atau saldo kredit yang sudah diterapkan**, pembatalan tetap diizinkan — sistem otomatis membalik transaksi jurnal uang muka/saldo kredit itu juga, bukan cuma jurnal invoice-nya, supaya uang muka/saldo kreditnya kembali berstatus "belum dipakai" (lihat "Uang Muka / DP" dan "Kelebihan Bayar" di bawah).
+3. **Invoice hanya bisa dibatalkan kalau belum ada pembayaran yang melunasi.** Kalau sudah ada pelunasan, pembatalan lewat jalur biasa ditolak — harus ditangani lewat proses yang lebih hati-hati (di luar cakupan saat ini). **Kalau invoice itu punya uang muka yang sudah diterapkan**, pembatalan tetap diizinkan — sistem otomatis membalik transaksi jurnal uang muka itu juga, bukan cuma jurnal invoice-nya, supaya uang mukanya kembali berstatus "belum dipakai" (lihat "Uang Muka / DP" di bawah).
 4. **Setiap invoice dan pembayaran otomatis membuat transaksi jurnal yang sepadan** — tidak mungkin ada invoice tanpa jurnal Piutang/Pendapatan, atau pembayaran tanpa jurnal Kas/Piutang. Ini dijamin karena satu-satunya cara membuat invoice/pembayaran adalah lewat proses gabungan yang disebut di bawah.
 5. **Invoice baru ditolak kalau pelanggan kena "credit hold".** Dicek dua hal, cukup salah satu terpenuhi: total piutang belum lunas pelanggan (ditambah invoice baru ini) melebihi batas kreditnya, atau ada piutang lama yang telatnya sudah melebihi toleransi hari yang diizinkan buat pelanggan itu. Kalau batas kredit atau toleransi telatnya tidak diisi (kosong), pelanggan itu tidak pernah kena hold dari sisi itu. Pelanggan yang kena hold tetap bisa dilayani asal bayar tunai langsung — itu dicatat sebagai penjualan tunai biasa, bukan lewat invoice.
-6. **Retur tidak boleh melebihi nilai invoice, dan (kalau retur fisik) tidak boleh melebihi qty yang pernah terjual maupun batas waktu retur item itu.** Retur boleh dibuat kapan pun terlepas status bayar invoice — kalau invoicenya sudah lunas, retur membuat saldo pelanggan jadi negatif (kelebihan bayar), yang otomatis dicairkan jadi saldo kredit (lihat "Saldo Kredit dari Retur" di bawah).
+6. **Retur tidak boleh melebihi nilai invoice, dan (kalau retur fisik) tidak boleh melebihi qty yang pernah terjual.** Retur boleh dibuat kapan pun terlepas status bayar invoice maupun sudah berapa lama sejak invoice diterbitkan (sengaja tidak ada batas waktu retur — keputusan itu diserahkan ke pemilik/staf di luar sistem) — kalau invoicenya sudah lunas, retur membuat saldo pelanggan jadi negatif, yang otomatis dicairkan jadi saldo kredit (lihat "Saldo Kredit dari Retur" di bawah).
 7. **Satu uang muka cuma boleh punya satu nasib akhir** — diterapkan ke invoice, atau dihanguskan. Sistem menolak kalau uang muka yang sudah dihanguskan dicoba diterapkan, atau sebaliknya. Jumlah yang diterapkan juga tidak boleh melebihi sisa uang muka maupun nilai invoice tujuannya.
 8. **Penukaran barang wajib nunjuk retur yang sudah ada, dan jumlahnya dibatasi.** Tidak bisa dibuat berdiri sendiri — harus terhubung ke retur fisik yang sudah tercatat. Total yang ditukar tidak boleh melebihi jumlah yang benar-benar diretur untuk item itu.
-9. **Kelebihan bayar otomatis jadi saldo kredit, dalam pembayaran yang sama.** Kalau nominal yang dibayar melebihi total yang dialokasikan ke invoice, selisihnya langsung tercatat sebagai saldo kredit pelanggan — bukan pembayaran terpisah, tapi bagian dari transaksi jurnal pembayaran itu juga (satu bukti transfer, satu transaksi).
-10. **Saldo kredit boleh dipakai atau dikembalikan sebagian-sebagian, berkali-kali** — beda dari uang muka yang cuma boleh punya satu nasib akhir. Total yang dipakai + dikembalikan tidak boleh melebihi nominal saldo kredit awalnya, dan pemakaiannya ikut dihitung bareng alokasi pembayaran + penerapan uang muka supaya satu invoice tidak bisa "kelunasan" dari gabungan tiga jalur itu.
-11. **Write-off tidak boleh melebihi sisa piutang yang benar-benar masih outstanding.** Beda dari retur (yang boleh bikin saldo negatif) — write-off ikut menghitung SEMUA pengurang lain yang sudah ada buat invoice itu (pembayaran, retur, uang muka, saldo kredit), supaya tidak "menghapus" uang yang sebenarnya sudah lunas/diretur/dikreditkan lewat jalur lain. Invoice yang sudah punya write-off tidak bisa dibatalkan lewat jalur biasa — sama seperti invoice yang sudah ada pembayarannya.
-12. **Retur yang membuat saldo invoice jadi negatif otomatis "dicairkan" jadi saldo kredit resmi.** Bagian yang melebihi sisa outstanding (bukan seluruh nilai retur) dicatat sebagai saldo kredit terpisah milik pelanggan itu — bisa dipakai memotong invoice lain atau dikembalikan tunai, sama pola kelebihan bayar tapi beda akun (biar riwayatnya tetap bisa ditelusuri balik ke retur yang jadi sumbernya).
-13. **Retur ditolak kalau melebihi toleransi hari yang diperbolehkan** — dicek dari **dua sisi independen**, keduanya harus lolos: batas per barang (soal umur simpan fisik, cuma berlaku kalau retur menyebut barang spesifik) dan batas per pelanggan (toleransi dagang yang disepakati, disalin ke invoice saat dibuat, berlaku ke semua jenis retur termasuk yang tidak menyebut barang spesifik). Mana pun yang lebih ketat, itu yang menang — sama logikanya dengan credit hold (aturan #5) yang juga cukup salah satu syarat terpenuhi untuk menolak.
+9. **Write-off tidak boleh melebihi sisa piutang yang benar-benar masih outstanding.** Beda dari retur (yang boleh bikin saldo negatif) — write-off ikut menghitung SEMUA pengurang lain yang sudah ada buat invoice itu (pembayaran, retur, uang muka), supaya tidak "menghapus" uang yang sebenarnya sudah lunas/diretur lewat jalur lain. Invoice yang sudah punya write-off tidak bisa dibatalkan lewat jalur biasa — sama seperti invoice yang sudah ada pembayarannya.
+10. **Retur yang membuat saldo invoice jadi negatif otomatis "dicairkan" jadi saldo kredit resmi.** Bagian yang melebihi sisa outstanding (bukan seluruh nilai retur) dicatat sebagai saldo kredit terpisah milik pelanggan itu, ke akun tersendiri (biar riwayatnya tetap bisa ditelusuri balik ke retur yang jadi sumbernya).
+11. **Saldo kredit dari retur cuma boleh diselesaikan refund tunai atau ganti barang — tidak bisa dititip ke invoice lain.** Kalau retur yang bikin saldo ini nanti diselesaikan lewat penukaran barang, sistem otomatis menyelesaikan saldo itu sejumlah persis porsi diskon retur yang dibalik di penukaran itu — tidak ada jalur manual "pakai ke invoice lain". Kalau porsi itu ternyata lebih besar dari sisa saldo yang ada (misal sebagian sudah kadung dikembalikan tunai lebih dulu), sistem menolak transaksinya sama sekali, bukan menyelesaikan sebagian lalu membiarkan sisanya menggantung tanpa penjelasan.
 
 ## Cara Kerja "Buat Invoice", "Catat Pembayaran", dan "Batalkan Invoice"
 
 - **Buat invoice** — sistem menghitung tanggal jatuh tempo dari termin pelanggan, membuat transaksi jurnal (Debit Piutang Usaha, Kredit Pendapatan), lalu mencatat invoice yang menunjuk ke transaksi jurnal itu — semua sebagai satu langkah gabungan.
-- **Catat pembayaran** — sistem membuat transaksi jurnal (Debit Kas/Bank, Kredit Piutang Usaha) untuk total yang dibayar, mencatat pembayarannya, lalu mengalokasikan jumlah itu ke satu atau beberapa invoice sekaligus (bisa bayar gabungan atau cicilan) — semua dalam satu langkah gabungan.
+- **Catat pembayaran** — pelanggan wajib pilih 1 invoice, dan nominalnya wajib persis sisa tagihan invoice itu. Sistem membuat transaksi jurnal (Debit Kas/Bank, Kredit Piutang Usaha) untuk nominal itu dan mencatat pembayarannya langsung menunjuk ke invoice itu — semua dalam satu langkah gabungan, ditolak keras kalau nominalnya gak pas.
 - **Batalkan invoice** — sistem memeriksa dulu apakah invoice sudah punya pelunasan; kalau belum, sistem membuat transaksi pembalik (debit/kredit ditukar) memakai akun yang sama persis dengan invoice aslinya. Kalau invoice itu punya uang muka yang sudah diterapkan, transaksi jurnal uang muka itu ikut dibalik juga dalam langkah yang sama. Invoice aslinya sendiri tidak diubah sama sekali — status "dibatalkan" murni dibaca dari keberadaan transaksi pembalik itu.
 - **Catat retur barang** — sistem mendeteksi sendiri invoicenya lahir dari Goods Issue (ada stok yang dilacak) atau tidak. Kalau tidak, cukup satu transaksi jurnal (mengurangi piutang lewat akun kontra "Retur & Potongan Penjualan"). Kalau iya, ada dua transaksi jurnal sekaligus — satu buat mengurangi piutang, satu lagi membalik sebagian biaya pokok penjualan yang sudah diakui — plus barangnya dikembalikan ke catatan stok. Invoice aslinya tetap tidak diubah, retur selalu berupa catatan tambahan.
-- **Catat penukaran barang pasca-retur/garansi** — hanya bisa dilakukan kalau retur fisiknya sudah ada (barang beneran balik ke gudang). Sistem membuat transaksi jurnal cost (Debit HPP, Kredit Persediaan Barang Jadi) dan mengeluarkan barang pengganti dari stok yang aktif — tidak ada invoice baru, TAPI diskon retur yang sudah diberikan dibalik proporsional (Debit Piutang Usaha, Kredit Retur & Potongan Penjualan) supaya piutang tidak berkurang gara-gara penukaran ini. Jumlah yang ditukar (ditotal, bisa lebih dari satu kali) tidak boleh melebihi jumlah yang benar-benar diretur.
+- **Catat penukaran barang pasca-retur/garansi** — hanya bisa dilakukan kalau retur fisiknya sudah ada (barang beneran balik ke gudang). Sistem membuat transaksi jurnal cost (Debit HPP, Kredit Persediaan Barang Jadi) dan mengeluarkan barang pengganti dari stok yang aktif — tidak ada invoice baru, TAPI diskon retur yang sudah diberikan dibalik proporsional (Debit Piutang Usaha, Kredit Retur & Potongan Penjualan) supaya piutang tidak berkurang gara-gara penukaran ini. Jumlah yang ditukar (ditotal, bisa lebih dari satu kali) tidak boleh melebihi jumlah yang benar-benar diretur. **Kalau retur sumbernya punya saldo kredit retur aktif** (invoice-nya udah lunas duluan sebelum retur, lihat "Saldo Kredit dari Retur" di bawah), sistem otomatis membuat transaksi jurnal ketiga yang menyelesaikan saldo itu sejumlah persis porsi diskon yang dibalik (Debit Saldo Kredit Retur Customer, Kredit Piutang Usaha) — menetralkan efek pembalikan diskon ke Piutang Usaha, jadi invoice tetap keliatan lunas. Kalau porsi itu lebih besar dari sisa saldo yang ada, transaksinya ditolak sama sekali.
 
 ## Uang Muka / DP
 
 Pelanggan kadang bayar duluan sebelum ada invoice — biasanya buat pesanan custom yang belum dikerjakan (misal kue ulang tahun). Ini beda dari pembayaran biasa: pembayaran biasa selalu melunasi invoice yang sudah ada, sementara uang muka diterima **sebelum** piutangnya ada sama sekali.
 
-Karena piutangnya belum ada dan barang/jasanya belum diserahkan, uang muka **bukan pendapatan** — itu kewajiban (CV Barokah "berutang" barang atau uang itu balik ke pelanggan), dicatat ke akun baru "Uang Muka Penjualan" (bukan mengurangi Piutang Usaha, dan bukan menambah Pendapatan).
+Karena piutangnya belum ada dan barang/jasanya belum diserahkan, uang muka **bukan pendapatan** — itu kewajiban (perusahaan "berutang" barang atau uang itu balik ke pelanggan), dicatat ke akun baru "Uang Muka Penjualan" (bukan mengurangi Piutang Usaha, dan bukan menambah Pendapatan).
 
 Tiga kejadian yang bisa terjadi ke satu uang muka:
 
@@ -74,20 +66,7 @@ Tiga kejadian yang bisa terjadi ke satu uang muka:
 
 Status satu uang muka (belum dipakai / diterapkan / hangus) tidak disimpan sebagai kolom — selalu dihitung ulang dari ada-tidaknya catatan "diterapkan" atau "dihangus" yang terkait dengannya, sama seperti status invoice.
 
-## Kelebihan Bayar (Saldo Kredit Pelanggan)
-
-Pelanggan kadang transfer lebih besar dari yang seharusnya untuk melunasi invoice (salah nominal, pembulatan). Beda dari uang muka: piutangnya **sudah ada** dan **sudah dilunasi** (invoice yang dituju tetap tertutup penuh lewat alokasi normal) — sisa lebihnya yang tidak punya invoice untuk "nempel".
-
-Kelebihan ini tercatat **dalam pembayaran yang sama** (satu bukti transfer bank = satu transaksi jurnal), bukan pembayaran kedua yang terpisah — transaksi jurnalnya jadi tiga baris: Debit Kas/Bank (total transfer), Kredit Piutang Usaha (porsi yang melunasi invoice), Kredit Saldo Kredit Customer (sisanya).
-
-Dua cara saldo kredit ini "dihabiskan", boleh sebagian-sebagian dan berkali-kali:
-
-1. **Dipakai memotong invoice lain** (kapan pun ke depannya, tidak harus invoice berikutnya langsung) — Debit Saldo Kredit Customer, Kredit Piutang Usaha.
-2. **Dikembalikan tunai** (pelanggan minta balik, bukan dipakai) — Debit Saldo Kredit Customer, Kredit Kas/Bank.
-
-Sisa saldo kredit tidak disimpan sebagai kolom — dihitung dari nominal awal dikurangi total yang sudah dipakai dan dikembalikan, sama pola dengan status invoice/uang muka.
-
-Kalau invoice yang sudah dipotong saldo kredit ternyata dibatalkan (aturan #3 di atas), transaksi jurnal pemakaian saldo kreditnya ikut dibalik otomatis — saldo kreditnya kembali tersedia buat dipakai/dikembalikan lagi, bukan hilang percuma.
+*(Catatan: sistem sempat punya mekanisme "Kelebihan Bayar jadi Saldo Kredit Pelanggan" — kalau pembayaran melebihi invoice yang dituju, excess-nya dicairkan jadi saldo yang bisa dipakai/dikembalikan. Dicabut total — sekarang pembayaran yang gak persis sama sisa tagihan langsung ditolak, gak ada lagi jalur buat kelebihan bayar "nyantol".)*
 
 ## Piutang Tak Tertagih (Write-off)
 
@@ -101,9 +80,13 @@ Write-off boleh sebagian (tidak wajib menghapus penuh nilai outstanding invoice)
 
 ## Saldo Kredit dari Retur
 
-Retur boleh dibuat kapan pun terlepas status bayar invoice (lihat "Cara Kerja" di atas) — kalau invoicenya sudah lunas, retur membuat saldo invoice itu jadi **negatif**. Secara bisnis, itu artinya CV Barokah "berutang" ke pelanggan sejumlah itu, sama persis situasinya dengan kelebihan bayar — bedanya cuma asal kejadian (barang balik, bukan kelebihan transfer).
+Retur boleh dibuat kapan pun terlepas status bayar invoice (lihat "Cara Kerja" di atas) — kalau invoicenya sudah lunas, retur membuat saldo invoice itu jadi **negatif**. Secara bisnis, itu artinya perusahaan "berutang" ke pelanggan sejumlah itu.
 
-Sistem sekarang otomatis mendeteksi ini tiap kali retur dicatat: bagian yang melebihi sisa outstanding sebelum retur itu (bukan seluruh nilai returnya) langsung dicatat sebagai saldo kredit terpisah — akunnya beda dari kelebihan bayar biasa ("Saldo Kredit Retur Customer", bukan "Saldo Kredit Customer"), supaya riwayatnya tetap jelas ketelusur balik ke retur mana yang jadi sumbernya. Sama seperti kelebihan bayar, saldo ini bisa dipakai memotong invoice lain atau dikembalikan tunai, boleh sebagian-sebagian dan berkali-kali. Kalau invoice yang sudah dipotong saldo kredit retur ternyata dibatalkan, transaksi jurnal pemakaiannya ikut dibalik otomatis — sama pola kelebihan bayar.
+Sistem sekarang otomatis mendeteksi ini tiap kali retur dicatat: bagian yang melebihi sisa outstanding sebelum retur itu (bukan seluruh nilai returnya) langsung dicatat sebagai saldo kredit terpisah ("Saldo Kredit Retur Customer"), supaya riwayatnya tetap jelas ketelusur balik ke retur mana yang jadi sumbernya.
+
+**Cuma dua cara nyelesaiin saldo ini, boleh sebagian-sebagian dan berkali-kali** — tidak bisa dititip/dipakai motong invoice lain:
+1. **Dikembalikan tunai** — lewat aksi "Refund Tunai" di halaman detail saldo kredit retur.
+2. **Diselesaikan lewat ganti barang** — kalau retur ini nanti ditindaklanjuti pakai penukaran barang pasca-retur/garansi (lihat "Cara Kerja" di atas), sistem otomatis menyelesaikan saldo bareng penukarannya (sejumlah persis porsi diskon yang dibalik, bisa bertahap kalau penukarannya juga bertahap), tanpa aksi manual terpisah. Kalau porsi yang mau diselesaikan lebih besar dari sisa saldo, penukaran barangnya ditolak.
 
 ## Siapa Boleh Apa
 
@@ -111,7 +94,7 @@ Sistem sekarang otomatis mendeteksi ini tiap kali retur dicatat: bagian yang mel
 |---|---|
 | Melihat pelanggan, invoice, pembayaran, uang muka | Semua user yang sudah login |
 | Menambah pelanggan baru, mengubah data pelanggan | Role `admin` atau `accountant` |
-| Membuat invoice, mencatat pembayaran, mencatat/menerapkan/menghanguskan uang muka, mencatat write-off, memakai/refund saldo kredit retur | Role `admin` atau `accountant` |
+| Membuat invoice, mencatat pembayaran, mencatat/menerapkan/menghanguskan uang muka, mencatat write-off, refund saldo kredit retur, mencatat penukaran barang | Role `admin` atau `accountant` |
 | Mengedit atau menghapus invoice/pembayaran/retur/uang muka/write-off/saldo kredit retur | **Tidak ada seorang pun** — hanya pembatalan/retur lewat jalur resmi yang diizinkan |
 | Menghapus data pelanggan secara permanen | **Tidak ada seorang pun** — hanya bisa diarsipkan |
 

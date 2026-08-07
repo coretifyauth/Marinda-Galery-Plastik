@@ -55,7 +55,7 @@ Sama semua yang di AR (`memory/domain/accounts-receivable.md`), arah kebalik. Ta
 
 ## Belum termasuk (di luar scope fase ini)
 
-Detail: `memory/scope-debt/ap-diskon-bayar-cepat.md` (gak ada padanan di AR), `memory/scope-debt/ap-uang-muka-dp.md`, `memory/scope-debt/ap-bill-compound.md`, `memory/scope-debt/kerugian-barang-rusak.md` (barang rusak tanpa kompensasi dari supplier — lintas modul AR & AP). Batas waktu retur (mirror `return_window_days` AR) sengaja gak dimasukkan ke fitur ini dan gak akan digarap.
+Detail: `memory/scope-debt/ap-diskon-bayar-cepat.md` (gak ada padanan di AR), `memory/scope-debt/ap-uang-muka-dp.md`, `memory/scope-debt/ap-bill-compound.md`, `memory/scope-debt/kerugian-barang-rusak.md` (barang rusak tanpa kompensasi dari supplier — lintas modul AR & AP). Batas waktu retur sengaja gak dimasukkan ke fitur ini — AR sendiri sempat punya validasi serupa (`return_window_days`) tapi udah dicabut total (migration `0039`), jadi gak ada lagi padanan buat di-mirror.
 
 ## Glossary
 

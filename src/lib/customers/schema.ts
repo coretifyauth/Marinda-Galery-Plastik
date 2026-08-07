@@ -10,11 +10,6 @@ export const createCustomerSchema = z.object({
     .int()
     .positive("Toleransi telat harus > 0 hari")
     .optional(),
-  return_window_days: z.coerce
-    .number()
-    .int()
-    .positive("Toleransi retur harus > 0 hari")
-    .optional(),
 });
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
@@ -26,6 +21,5 @@ export type Customer = {
   payment_term_days: number;
   credit_limit: number | null;
   overdue_threshold_days: number | null;
-  return_window_days: number | null;
   archived_at: string | null;
 };

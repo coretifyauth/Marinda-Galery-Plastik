@@ -368,7 +368,7 @@ grant select, insert on goods_issue_lines to authenticated;
 
 ## Catatan lintas modul: AR Credit Note (retur, migration `0021_ar_credit_notes_schema.sql`)
 
-`items.return_window_days` (kolom baru, nullable int) ditambah buat fitur retur AR — awalnya `inventory_lots.source_type` juga dapat value baru `'SALES_RETURN'` (check constraint), tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur — lihat `memory/scope-debt/kerugian-barang-rusak.md`). Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
+`inventory_lots.source_type` sempat dapat value baru `'SALES_RETURN'` (check constraint) buat fitur retur AR, tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur — lihat `memory/scope-debt/kerugian-barang-rusak.md`). Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Sempat ada juga `items.return_window_days` (batas hari retur per item, nullable) — dicabut total lewat migration `0039_ar_remove_return_window.sql`. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
 
 ## Belum Termasuk (dependency / di luar scope fase ini)
 

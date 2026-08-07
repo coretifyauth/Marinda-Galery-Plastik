@@ -1,12 +1,11 @@
--- Period Closing (Fase 7, sisa scope-debt dari Fase 2). Ref
--- memory/architecture/data/financial-reports-schema.md, docs/domain/general-ledger.md
--- bagian "Period Closing".
+-- Period Closing schema.
+-- Konsolidasi dari migration historis 0016 — lihat git log untuk riwayat evolusi.
+-- Ref: docs/domain/general-ledger.md bagian "Period Closing".
 
--- 1. period_closings — ledger append-only rentang tanggal yang udah ditutup.
--- Gak ada tabel "periods" terpisah dengan status open/closed — "terbuka" cuma
--- berarti "belum ada baris di sini yang nyakup tanggal itu". journal_entry_id
--- nullable karena periode tanpa aktivitas revenue/expense gak butuh closing
--- entry sama sekali (gak ada yang perlu di-nol-in).
+-- period_closings — ledger append-only rentang tanggal yang udah ditutup. Gak ada tabel
+-- "periods" terpisah dengan status open/closed — "terbuka" cuma berarti "belum ada baris
+-- di sini yang nyakup tanggal itu". journal_entry_id nullable karena periode tanpa aktivitas
+-- revenue/expense gak butuh closing entry sama sekali (gak ada yang perlu di-nol-in).
 create table period_closings (
   id uuid primary key default gen_random_uuid(),
   start_date date not null,
@@ -19,29 +18,23 @@ create table period_closings (
 
 create index period_closings_range_idx on period_closings(start_date, end_date);
 
--- Jaring kedua buat overlap, DI LEVEL DATABASE (bukan cuma dicek di plpgsql
--- close_period di bawah) — 2 pemanggilan close_period yang balapan (mis.
--- double-submit, atau 2 admin nutup periode bersamaan) sama-sama bisa lolos
--- SELECT-cek-overlap sebelum salah satunya commit (classic TOCTOU race).
--- Constraint ini bikin overlap gak mungkin ke-INSERT sama sekali, terlepas
--- dari race apapun di level aplikasi — pola "2 lapis" yang sama kayak
--- immutability (RLS + trigger) di journal-entry-schema.md, cuma di sini
--- lapisannya CHECK-di-plpgsql + EXCLUDE constraint.
+-- Jaring kedua buat overlap, DI LEVEL DATABASE (bukan cuma dicek di plpgsql close_period
+-- di bawah) — 2 pemanggilan close_period yang balapan sama-sama bisa lolos SELECT-cek-overlap
+-- sebelum salah satunya commit (classic TOCTOU race). Constraint ini bikin overlap gak
+-- mungkin ke-INSERT sama sekali, terlepas dari race apapun di level aplikasi.
 create extension if not exists btree_gist;
 
 alter table period_closings add constraint period_closings_no_overlap
   exclude using gist (daterange(start_date, end_date, '[]') with &&);
 
--- 2. Trigger di journal_entries — tolak entry baru yang bertanggal masuk ke
--- rentang yang udah ditutup. Ini yang menegakkan "gak boleh nyelundup balik
--- ke periode lama" (docs/domain/general-ledger.md). Sengaja BEFORE INSERT
--- doang (bukan UPDATE, karena journal_entries emang udah gak bisa di-UPDATE
--- sama sekali sejak block_edit_delete di journal-entry-schema.md).
+-- Trigger di journal_entries (modul journal_entry, 0003) — tolak entry baru yang bertanggal
+-- masuk ke rentang yang udah ditutup. Taruh di sini (bukan file journal_entry) karena
+-- butuh period_closings. Sengaja BEFORE INSERT doang (bukan UPDATE, karena journal_entries
+-- emang udah gak bisa di-UPDATE sama sekali sejak block_edit_delete).
 --
--- Urutan pemanggilan penting: closing entry-nya sendiri (dibuat RPC
--- close_period di bawah) diinsert SEBELUM baris period_closings terkait
--- ditambahkan — jadi trigger ini belum "melihat" rentang itu sebagai
--- tertutup pas closing entry-nya sendiri lagi diproses.
+-- Urutan pemanggilan penting: closing entry-nya sendiri (dibuat RPC close_period di bawah)
+-- diinsert SEBELUM baris period_closings terkait ditambahkan — jadi trigger ini belum
+-- "melihat" rentang itu sebagai tertutup pas closing entry-nya sendiri lagi diproses.
 create function journal_entries_block_retroactive_into_closed_period() returns trigger as $$
 begin
   if exists (
@@ -58,22 +51,17 @@ create trigger journal_entries_block_retroactive_into_closed_period_trigger
   before insert on journal_entries
   for each row execute function journal_entries_block_retroactive_into_closed_period();
 
--- 3. close_period — hitung saldo Revenue/Expense periode itu LANGSUNG dari
--- journal_lines (gak percaya angka dari client — beda dari beberapa RPC lain
--- yang terima amount dari luar, closing entry ini terlalu sensitif buat itu:
--- kalau angkanya salah, akun Revenue/Expense gak beneran ke-nol-in), bikin
--- closing entry lewat create_journal_entry yang udah ada (reuse balance-check
--- & atomicity-nya), baru catat rentangnya sebagai tertutup.
+-- close_period — hitung saldo Revenue/Expense periode itu LANGSUNG dari journal_lines (gak
+-- percaya angka dari client), bikin closing entry lewat create_journal_entry yang udah ada
+-- (reuse balance-check & atomicity-nya), baru catat rentangnya sebagai tertutup.
 --
--- Risiko residual yang SENGAJA belum ditutup (skala UMKM project ini,
--- frekuensi closing rendah): entry biasa (bukan close_period) yang lagi
--- di-INSERT bertanggal di rentang yang lagi ditutup, pas persis di window
--- antara SELECT saldo Revenue/Expense di bawah selesai dan baris
--- period_closings ini commit, teorinya bisa kelewat kehitung atau enggak
--- tergantung timing snapshot — advisory lock di atas cuma nyerialize
--- ANTAR-close_period, gak ngunci insert journal_entries biasa. Solusi
--- penuh butuh SERIALIZABLE isolation atau lock yang lebih agresif, belum
--- ada preseden itu di project ini, jadi sengaja ditunda.
+-- Risiko residual yang SENGAJA belum ditutup (skala UMKM project ini, frekuensi closing
+-- rendah): entry biasa (bukan close_period) yang lagi di-INSERT bertanggal di rentang yang
+-- lagi ditutup, pas persis di window antara SELECT saldo Revenue/Expense di bawah selesai
+-- dan baris period_closings ini commit, teorinya bisa kelewat kehitung atau enggak
+-- tergantung timing snapshot — advisory lock di atas cuma nyerialize ANTAR-close_period, gak
+-- ngunci insert journal_entries biasa. Solusi penuh butuh SERIALIZABLE isolation atau lock
+-- yang lebih agresif, belum ada preseden itu di project ini, jadi sengaja ditunda.
 create function close_period(
   p_start_date date,
   p_end_date date,
@@ -94,10 +82,9 @@ declare
   v_closing_id uuid;
   rec record;
 begin
-  -- Serialize semua pemanggilan close_period lintas transaksi — tanpa ini,
-  -- 2 closing yang balapan bisa sama-sama lolos cek overlap/kontiguitas di
-  -- bawah sebelum salah satunya commit. Lock dilepas otomatis pas transaksi
-  -- ini selesai (commit atau rollback), gak perlu di-unlock manual.
+  -- Serialize semua pemanggilan close_period lintas transaksi — tanpa ini, 2 closing yang
+  -- balapan bisa sama-sama lolos cek overlap/kontiguitas di bawah sebelum salah satunya
+  -- commit. Lock dilepas otomatis pas transaksi ini selesai (commit atau rollback).
   perform pg_advisory_xact_lock(hashtext('period_closings'));
 
   if p_end_date < p_start_date then
@@ -111,8 +98,8 @@ begin
     raise exception 'Rentang % s/d % tumpang tindih sama periode yang udah ditutup', p_start_date, p_end_date;
   end if;
 
-  -- Wajib berurutan & bersambung — cegah ada rentang yang kelewat (gap)
-  -- atau ditutup gak sesuai urutan waktu.
+  -- Wajib berurutan & bersambung — cegah ada rentang yang kelewat (gap) atau ditutup gak
+  -- sesuai urutan waktu.
   select max(end_date) into v_last_end from period_closings;
   if v_last_end is not null and p_start_date <> v_last_end + 1 then
     raise exception 'start_date (%) harus persis sehari setelah periode terakhir ditutup (%)', p_start_date, v_last_end;
@@ -126,11 +113,9 @@ begin
     raise exception 'p_retained_earnings_account_id harus akun kategori equity (biasanya Laba Ditahan)';
   end if;
 
-  -- Saldo bersih (debit-kredit) tiap akun Revenue/Expense DALAM rentang ini
-  -- doang (bukan kumulatif) — karena closing sebelumnya udah nge-nol-in
-  -- saldo s/d tanggal itu, rentang ini otomatis representasi "sejak closing
-  -- terakhir", persis kayak Income Statement (memory/architecture/data/
-  -- financial-reports-schema.md).
+  -- Saldo bersih (debit-kredit) tiap akun Revenue/Expense DALAM rentang ini doang (bukan
+  -- kumulatif) — karena closing sebelumnya udah nge-nol-in saldo s/d tanggal itu, rentang
+  -- ini otomatis representasi "sejak closing terakhir", persis kayak Income Statement.
   for rec in
     select jl.account_id, sum(jl.debit) - sum(jl.credit) as net
     from journal_lines jl
@@ -150,9 +135,8 @@ begin
     end if;
   end loop;
 
-  -- Selisihnya = Laba Bersih periode ini (positif = laba, negatif = rugi) —
-  -- pindah ke Laba Ditahan biar entry balance, sekaligus itu ADALAH closing
-  -- entry-nya (docs/domain/general-ledger.md bagian "Period Closing").
+  -- Selisihnya = Laba Bersih periode ini (positif = laba, negatif = rugi) — pindah ke Laba
+  -- Ditahan biar entry balance, sekaligus itu ADALAH closing entry-nya.
   v_net := v_total_debit - v_total_credit;
   if v_net > 0 then
     v_lines := v_lines || jsonb_build_object('account_id', p_retained_earnings_account_id, 'debit', 0, 'credit', v_net);
@@ -160,8 +144,8 @@ begin
     v_lines := v_lines || jsonb_build_object('account_id', p_retained_earnings_account_id, 'debit', -v_net, 'credit', 0);
   end if;
 
-  -- Rentang tanpa aktivitas Revenue/Expense sama sekali -> gak ada yang
-  -- perlu di-nol-in, cukup dicatat tertutup tanpa closing entry.
+  -- Rentang tanpa aktivitas Revenue/Expense sama sekali -> gak ada yang perlu di-nol-in,
+  -- cukup dicatat tertutup tanpa closing entry.
   if jsonb_array_length(v_lines) > 0 then
     v_entry_id := create_journal_entry(
       p_end_date,
@@ -179,9 +163,9 @@ begin
 end;
 $$;
 
--- 4. RLS — pola identik journal_entries: select terbuka authenticated,
--- insert cuma admin/accountant, gak ada update/delete (immutable, sama
--- filosofi "periode yang udah ditutup gak boleh diutak-atik").
+-- RLS — pola identik journal_entries: select terbuka authenticated, insert cuma
+-- admin/accountant, gak ada update/delete (immutable, sama filosofi "periode yang udah
+-- ditutup gak boleh diutak-atik").
 alter table period_closings enable row level security;
 
 create policy period_closings_select on period_closings

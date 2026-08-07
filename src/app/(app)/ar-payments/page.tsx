@@ -13,12 +13,6 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 
-type AllocationInput = { invoice_id: string; amount: string };
-
-function emptyAllocation(): AllocationInput {
-  return { invoice_id: "", amount: "" };
-}
-
 export default function ArPaymentsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
@@ -31,13 +25,12 @@ export default function ArPaymentsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [customerId, setCustomerId] = useState("");
+  const [invoiceId, setInvoiceId] = useState("");
   const [paymentDate, setPaymentDate] = useState("");
   const [amount, setAmount] = useState("");
   const [sourceRef, setSourceRef] = useState("");
   const [cashAccountId, setCashAccountId] = useState("");
   const [receivableAccountId, setReceivableAccountId] = useState("");
-  const [customerCreditAccountId, setCustomerCreditAccountId] = useState("");
-  const [allocations, setAllocations] = useState<AllocationInput[]>([emptyAllocation()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -48,7 +41,7 @@ export default function ArPaymentsPage() {
     const { data, error } = await supabase
       .from("ar_payments")
       .select(
-        "id, customer_id, payment_date, amount, source_ref, journal_entry_id, created_at, customers(name), ar_payment_allocations(id, amount, ar_invoices(source_ref))"
+        "id, customer_id, invoice_id, payment_date, amount, source_ref, journal_entry_id, created_at, customers(name), ar_invoices(source_ref)"
       )
       .order("payment_date", { ascending: false });
     if (error) {
@@ -63,7 +56,7 @@ export default function ArPaymentsPage() {
     const { data } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, return_window_days, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payment_allocations(amount), ar_deposit_applications(amount), ar_customer_credit_applications(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_deposit_applications(amount)"
       )
       .order("invoice_date");
     setInvoices((data ?? []) as unknown as ArInvoice[]);
@@ -127,24 +120,7 @@ export default function ArPaymentsPage() {
     .map((inv) => ({ invoice: inv, ...invoiceStatus(inv, reversedEntryIds.has(inv.journal_entry_id)) }))
     .filter((x) => x.status !== "lunas" && x.status !== "dibatalkan");
 
-  function updateAllocation(index: number, patch: Partial<AllocationInput>) {
-    setAllocations((prev) => prev.map((a, i) => (i === index ? { ...a, ...patch } : a)));
-  }
-
-  function addAllocation() {
-    setAllocations((prev) => [...prev, emptyAllocation()]);
-  }
-
-  function removeAllocation(index: number) {
-    setAllocations((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
-  }
-
-  const totalAllocated = allocations.reduce((sum, a) => sum + (parseFloat(a.amount) || 0), 0);
-  const amountNumber = parseFloat(amount) || 0;
-  const excess = amountNumber - totalAllocated;
-  const hasExcess = excess > 0.005;
-  const isBalanced =
-    amountNumber > 0 && totalAllocated <= amountNumber + 0.005 && (!hasExcess || !!customerCreditAccountId);
+  const selectedInvoice = outstandingInvoices.find((x) => x.invoice.id === invoiceId);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -157,8 +133,7 @@ export default function ArPaymentsPage() {
       source_ref: sourceRef,
       cash_account_id: cashAccountId,
       receivable_account_id: receivableAccountId,
-      allocations: allocations.map((a) => ({ invoice_id: a.invoice_id, amount: a.amount })),
-      customer_credit_account_id: customerCreditAccountId || undefined,
+      invoice_id: invoiceId,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -173,8 +148,7 @@ export default function ArPaymentsPage() {
       p_source_ref: parsed.data.source_ref,
       p_cash_account_id: parsed.data.cash_account_id,
       p_receivable_account_id: parsed.data.receivable_account_id,
-      p_allocations: parsed.data.allocations,
-      p_customer_credit_account_id: parsed.data.customer_credit_account_id ?? null,
+      p_invoice_id: parsed.data.invoice_id,
     });
     setSubmitting(false);
     if (error) {
@@ -183,13 +157,12 @@ export default function ArPaymentsPage() {
     }
 
     setCustomerId("");
+    setInvoiceId("");
     setPaymentDate("");
     setAmount("");
     setSourceRef("");
     setCashAccountId("");
     setReceivableAccountId("");
-    setCustomerCreditAccountId("");
-    setAllocations([emptyAllocation()]);
     setShowForm(false);
     await Promise.all([loadInvoices(), loadPayments()]);
   }
@@ -237,7 +210,7 @@ export default function ArPaymentsPage() {
               <th className="px-4 py-2">Customer</th>
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Alokasi ke Invoice</th>
+              <th className="px-4 py-2">Invoice</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
             </tr>
           </thead>
@@ -251,15 +224,7 @@ export default function ArPaymentsPage() {
                 <td className="px-4 py-2 font-medium text-black">{p.customers.name}</td>
                 <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
                 <td className="px-4 py-2">{p.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {p.ar_payment_allocations.map((a) => (
-                      <li key={a.id}>
-                        {a.ar_invoices.source_ref} — {a.amount.toLocaleString("id-ID")}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
+                <td className="px-4 py-2">{p.ar_invoices.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {p.amount.toLocaleString("id-ID")}
                 </td>
@@ -285,6 +250,10 @@ export default function ArPaymentsPage() {
               ketolak RLS.
             </p>
           )}
+          <p className="mb-4 text-sm text-slate-500">
+            Payment wajib persis nutup 1 invoice penuh — gak ada cicilan, gabung invoice, atau
+            kelebihan bayar. Pilih invoice dulu, jumlah otomatis keisi sisa outstanding-nya.
+          </p>
           <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
@@ -294,13 +263,34 @@ export default function ArPaymentsPage() {
                   value={customerId}
                   onChange={(e) => {
                     setCustomerId(e.target.value);
-                    setAllocations([emptyAllocation()]);
+                    setInvoiceId("");
+                    setAmount("");
                   }}
                 >
                   <option value="">Pilih customer...</option>
                   {customers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="invoice">Invoice</Label>
+                <Select
+                  id="invoice"
+                  value={invoiceId}
+                  disabled={!customerId}
+                  onChange={(e) => {
+                    setInvoiceId(e.target.value);
+                    const found = outstandingInvoices.find((x) => x.invoice.id === e.target.value);
+                    setAmount(found ? String(found.outstanding) : "");
+                  }}
+                >
+                  <option value="">Pilih invoice...</option>
+                  {outstandingInvoices.map(({ invoice, outstanding }) => (
+                    <option key={invoice.id} value={invoice.id}>
+                      {invoice.source_ref} — sisa {outstanding.toLocaleString("id-ID")}
                     </option>
                   ))}
                 </Select>
@@ -324,7 +314,7 @@ export default function ArPaymentsPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="amount">Jumlah dibayar</Label>
+                <Label htmlFor="amount">Jumlah dibayar (wajib persis sisa outstanding)</Label>
                 <Input
                   id="amount"
                   type="number"
@@ -360,92 +350,31 @@ export default function ArPaymentsPage() {
                   ))}
                 </Select>
               </div>
-              {hasExcess && (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="customer_credit_account">Akun Saldo Kredit Customer (kredit, buat kelebihan bayar)</Label>
-                  <Select
-                    id="customer_credit_account"
-                    value={customerCreditAccountId}
-                    onChange={(e) => setCustomerCreditAccountId(e.target.value)}
-                  >
-                    <option value="">Pilih akun...</option>
-                    {leafAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} — {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              )}
             </div>
 
-            <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
-                <span>Invoice outstanding</span>
-                <span>Alokasi</span>
-                <span />
+            {selectedInvoice && (
+              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                <span>
+                  Sisa outstanding invoice terpilih:{" "}
+                  <strong className="font-mono">{selectedInvoice.outstanding.toLocaleString("id-ID")}</strong>
+                </span>
+                <span
+                  className={
+                    Math.abs((parseFloat(amount) || 0) - selectedInvoice.outstanding) < 0.005
+                      ? "font-medium text-emerald-600"
+                      : "font-medium text-red-600"
+                  }
+                >
+                  {Math.abs((parseFloat(amount) || 0) - selectedInvoice.outstanding) < 0.005
+                    ? "Cocok ✓"
+                    : "Belum cocok"}
+                </span>
               </div>
-              {!customerId && (
-                <p className="text-sm text-slate-400">Pilih customer dulu buat lihat invoice outstanding.</p>
-              )}
-              {allocations.map((alloc, i) => (
-                <div key={i} className="grid grid-cols-[1fr_8rem_2.5rem] gap-2">
-                  <Select
-                    value={alloc.invoice_id}
-                    onChange={(e) => updateAllocation(i, { invoice_id: e.target.value })}
-                    disabled={!customerId}
-                  >
-                    <option value="">Pilih invoice...</option>
-                    {outstandingInvoices.map(({ invoice, outstanding }) => (
-                      <option key={invoice.id} value={invoice.id}>
-                        {invoice.source_ref} — sisa {outstanding.toLocaleString("id-ID")}
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={alloc.amount}
-                    onChange={(e) => updateAllocation(i, { amount: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeAllocation(i)}
-                    disabled={allocations.length <= 1}
-                    className="text-slate-400 hover:text-red-600 disabled:opacity-30"
-                    aria-label="Hapus alokasi"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-              <Button type="button" variant="secondary" onClick={addAllocation} className="w-fit" disabled={!customerId}>
-                + Tambah alokasi
-              </Button>
-            </div>
-
-            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-              <span>
-                Total alokasi:{" "}
-                <strong className="font-mono">{totalAllocated.toLocaleString("id-ID")}</strong> — Jumlah
-                dibayar: <strong className="font-mono">{amountNumber.toLocaleString("id-ID")}</strong>
-                {hasExcess && (
-                  <>
-                    {" "}
-                    — Sisa jadi saldo kredit:{" "}
-                    <strong className="font-mono">{excess.toLocaleString("id-ID")}</strong>
-                  </>
-                )}
-              </span>
-              <span className={isBalanced ? "font-medium text-emerald-600" : "font-medium text-red-600"}>
-                {isBalanced ? "Cocok ✓" : "Belum cocok"}
-              </span>
-            </div>
+            )}
 
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting || !isBalanced} className="w-fit">
+            <Button type="submit" disabled={submitting} className="w-fit">
               {submitting ? "Menyimpan..." : "Simpan Payment"}
             </Button>
           </form>

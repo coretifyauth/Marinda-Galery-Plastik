@@ -17,36 +17,35 @@ export type ArInvoice = {
   customer_id: string;
   invoice_date: string;
   due_date: string;
-  return_window_days: number | null;
   description: string | null;
   source_ref: string;
   amount: number;
   journal_entry_id: string;
   created_at: string;
   customers: { name: string };
-  ar_payment_allocations: { amount: number }[];
+  ar_payments: { amount: number }[];
   ar_credit_notes?: { amount: number }[];
   ar_deposit_applications?: { amount: number }[];
-  ar_customer_credit_applications?: { amount: number }[];
   ar_bad_debt_writeoffs?: { amount: number }[];
-  ar_return_credit_applications?: { amount: number }[];
 };
 
 export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "dihapusbukukan";
 
 /**
- * Status derived dari SUM(allocations) - SUM(retur) - SUM(deposit applications) -
- * SUM(customer credit applications) - SUM(write-offs) vs amount, plus cek reversal —
- * bukan kolom, ref ar-schema.md. Outstanding boleh negatif (saldo kredit) kalau retur
+ * Status derived dari SUM(payment) - SUM(retur) - SUM(deposit applications) -
+ * SUM(write-offs) vs amount, plus cek reversal — bukan kolom, ref ar-schema.md.
+ * `ar_payments.invoice_id` unique (payment wajib persis 1 invoice, no partial/gabung),
+ * jadi `ar_payments` di sini paling banyak 1 baris, tapi tetap array biar konsisten sama
+ * pola embed relasi Supabase lainnya. Outstanding boleh negatif (saldo kredit) kalau retur
  * kejadian setelah invoice lunas — ref docs/domain/accounts-receivable.md bagian "Retur
- * Barang".
- * `ar_deposit_applications`, `ar_customer_credit_applications`, `ar_return_credit_applications`,
- * dan `ar_bad_debt_writeoffs` selalu aktif kalau invoice-nya masih hidup (belum
+ * Barang". Retur kayak gitu gak lagi bisa "dititip" motong invoice lain (dicabut, lihat
+ * "Saldo Kredit dari Retur"), jadi gak ada reducer return-credit di sini — cuma
+ * ngurangin outstanding invoice sumbernya sendiri lewat `ar_credit_notes`.
+ * `ar_deposit_applications` selalu aktif kalau invoice-nya masih hidup (belum
  * dibatalkan) — begitu invoice dibatalkan, `cancel_ar_invoice` nolak keras kalau udah ada
  * write-off (gak bisa dibatalkan lewat jalur itu), jadi gak perlu exclude yang di-reverse
- * buat write-off di sini (beda dari deposit/customer-credit/return-credit application
- * yang auto-unwind, lihat "Uang Muka / DP", "Kelebihan Bayar (Overpayment)", dan "Saldo
- * Kredit dari Retur" di ar-schema.md).
+ * buat write-off di sini (beda dari deposit yang auto-unwind, lihat "Uang Muka / DP" di
+ * ar-schema.md).
  * Nilai-nilai reducer ini (dan rumus outstanding) sekarang mirror `ar_invoice_remaining()`
  * di database — kalau ada reducer baru ditambah server-side, tambahin di sini juga.
  * `isCancelled` dihitung caller dari query terpisah (journal_entries.reverses_entry_id
@@ -56,44 +55,28 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "d
  * "Piutang Tak Tertagih").
  */
 export function invoiceStatus(
-  invoice: Pick<
-    ArInvoice,
-    | "amount"
-    | "ar_payment_allocations"
-    | "ar_credit_notes"
-    | "ar_deposit_applications"
-    | "ar_customer_credit_applications"
-    | "ar_bad_debt_writeoffs"
-    | "ar_return_credit_applications"
-  >,
+  invoice: Pick<ArInvoice, "amount" | "ar_payments" | "ar_credit_notes" | "ar_deposit_applications" | "ar_bad_debt_writeoffs">,
   isCancelled = false
 ): {
   status: ArInvoiceStatus;
   allocated: number;
   returned: number;
   depositApplied: number;
-  creditApplied: number;
   writtenOff: number;
-  returnCreditApplied: number;
   outstanding: number;
 } {
-  const allocated = invoice.ar_payment_allocations.reduce((sum, a) => sum + a.amount, 0);
+  const allocated = invoice.ar_payments.reduce((sum, p) => sum + p.amount, 0);
   const returned = (invoice.ar_credit_notes ?? []).reduce((sum, c) => sum + c.amount, 0);
   const depositApplied = (invoice.ar_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const creditApplied = (invoice.ar_customer_credit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
   const writtenOff = (invoice.ar_bad_debt_writeoffs ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const returnCreditApplied = (invoice.ar_return_credit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const outstanding =
-    invoice.amount - allocated - returned - depositApplied - creditApplied - writtenOff - returnCreditApplied;
+  const outstanding = invoice.amount - allocated - returned - depositApplied - writtenOff;
   if (isCancelled) {
     return {
       status: "dibatalkan",
       allocated,
       returned,
       depositApplied,
-      creditApplied,
       writtenOff,
-      returnCreditApplied,
       outstanding: 0,
     };
   }
@@ -102,8 +85,8 @@ export function invoiceStatus(
       ? "dihapusbukukan"
       : outstanding <= 0.005
         ? "lunas"
-        : allocated > 0 || depositApplied > 0 || creditApplied > 0 || returnCreditApplied > 0
+        : allocated > 0 || depositApplied > 0
           ? "sebagian"
           : "belum";
-  return { status, allocated, returned, depositApplied, creditApplied, writtenOff, returnCreditApplied, outstanding };
+  return { status, allocated, returned, depositApplied, writtenOff, outstanding };
 }

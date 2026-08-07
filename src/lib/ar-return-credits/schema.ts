@@ -1,16 +1,5 @@
 import { z } from "zod";
 
-export const applyArReturnCreditSchema = z.object({
-  credit_id: z.string().uuid("Pilih saldo kredit retur"),
-  invoice_id: z.string().uuid("Pilih invoice"),
-  amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
-  entry_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
-  return_credit_liability_account_id: z.string().uuid("Pilih akun Saldo Kredit Retur Customer"),
-  receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
-});
-export type ApplyArReturnCreditInput = z.infer<typeof applyArReturnCreditSchema>;
-
 export const refundArReturnCreditSchema = z.object({
   credit_id: z.string().uuid("Pilih saldo kredit retur"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
@@ -29,14 +18,16 @@ export type ArReturnCredit = {
   journal_entry_id: string;
   created_at: string;
   customers: { name: string };
-  ar_credit_notes: { source_ref: string; credit_note_date: string };
-  ar_return_credit_applications: {
-    id: string;
-    amount: number;
+  ar_credit_notes: {
     source_ref: string;
-    journal_entry_id: string;
-    ar_invoices: { source_ref: string };
-  }[];
+    credit_note_date: string;
+    warranty_replacements: {
+      id: string;
+      replacement_date: string;
+      source_ref: string;
+      return_credit_settled_amount: number;
+    }[];
+  };
   ar_return_credit_refunds: {
     id: string;
     amount: number;
@@ -47,20 +38,21 @@ export type ArReturnCredit = {
 };
 
 /**
- * Sisa saldo kredit retur derived dari applications/refunds — bukan kolom, pola sama
- * customerCreditRemaining() di ar-customer-credits/schema.ts. Application bisa
- * di-reverse (invoice-nya dibatalkan lewat cancel_ar_invoice) makanya exclude via
- * reversedEntryIds. Refund TIDAK PERNAH direverse oleh fitur ini, selalu keitung penuh.
+ * Sisa saldo kredit retur derived dari settlement (warranty_replacement via barang) +
+ * refunds — bukan kolom. Cuma 2 cara nyelesain (refund kas atau ganti barang), gak ada
+ * lagi jalur "dipakai motong invoice lain" (memory/scope-debt/ar-return-credit-resolution.md,
+ * sudah diimplementasi). Baik settlement maupun refund gak pernah punya jalur reversal di
+ * fitur ini (beda dari deposit/write-off application yang bisa di-unwind lewat
+ * cancel_ar_invoice), jadi gak butuh exclude berdasar reversedEntryIds.
  */
 export function returnCreditRemaining(
-  credit: Pick<ArReturnCredit, "amount" | "ar_return_credit_applications" | "ar_return_credit_refunds">,
-  reversedEntryIds: Set<string>
+  credit: Pick<ArReturnCredit, "amount" | "ar_credit_notes" | "ar_return_credit_refunds">
 ): { used: number; remaining: number } {
-  const activeApplications = credit.ar_return_credit_applications.filter(
-    (a) => !reversedEntryIds.has(a.journal_entry_id)
+  const settledAmount = credit.ar_credit_notes.warranty_replacements.reduce(
+    (sum, w) => sum + w.return_credit_settled_amount,
+    0
   );
-  const appliedAmount = activeApplications.reduce((sum, a) => sum + a.amount, 0);
   const refundedAmount = credit.ar_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
-  const used = appliedAmount + refundedAmount;
+  const used = settledAmount + refundedAmount;
   return { used, remaining: credit.amount - used };
 }

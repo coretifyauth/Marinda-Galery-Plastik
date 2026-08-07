@@ -11,25 +11,14 @@ export default function ArReturnCreditsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [credits, setCredits] = useState<ArReturnCredit[]>([]);
-  const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  const loadReversedEntryIds = useCallback(async () => {
-    const { data } = await supabase
-      .from("journal_entries")
-      .select("reverses_entry_id")
-      .not("reverses_entry_id", "is", null);
-    setReversedEntryIds(
-      new Set(((data ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
-    );
-  }, []);
 
   const loadCredits = useCallback(async () => {
     const { data, error } = await supabase
       .from("ar_return_credits")
       .select(
-        "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, customers(name), ar_credit_notes(source_ref, credit_note_date), ar_return_credit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+        "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, customers(name), ar_credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
       )
       .order("created_at", { ascending: false });
     if (error) {
@@ -53,13 +42,13 @@ export default function ArReturnCreditsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadCredits(), loadReversedEntryIds()]);
+      await loadCredits();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCredits, loadReversedEntryIds]);
+  }, [router, loadCredits]);
 
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
@@ -97,13 +86,13 @@ export default function ArReturnCreditsPage() {
               <th className="px-4 py-2">Source Retur</th>
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2 text-right">Jumlah Awal</th>
-              <th className="px-4 py-2 text-right">Sudah Dipakai</th>
+              <th className="px-4 py-2 text-right">Sudah Diselesaikan</th>
               <th className="px-4 py-2 text-right">Sisa</th>
             </tr>
           </thead>
           <tbody>
             {credits.map((credit) => {
-              const { used, remaining } = returnCreditRemaining(credit, reversedEntryIds);
+              const { used, remaining } = returnCreditRemaining(credit);
               return (
                 <tr
                   key={credit.id}

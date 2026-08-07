@@ -75,5 +75,5 @@ Catatan implementasi: fitur ini untuk sekarang baru menangani barang dengan meto
 - **Diskon bayar cepat (early payment discount)** — kasus ini tidak ada padanannya di AR; pemasok kadang menawarkan potongan harga kalau dibayar lebih awal dari jatuh tempo.
 - **Uang muka/DP ke pemasok** — pembayaran di muka sebelum ada bill resmi.
 - **Bill dengan kategori campuran (compound)** — satu nota pemasok yang isinya campuran, misalnya sebagian barang (masuk Persediaan) dan sebagian ongkos kirim (langsung Beban), dalam satu bill yang sama.
-- **Batas waktu retur ke pemasok** — belum ada batas hari sejak barang diterima untuk boleh diretur (padanan `return_window_days` di AR).
+- **Batas waktu retur ke pemasok** — belum ada batas hari sejak barang diterima untuk boleh diretur. AR sendiri sempat punya validasi serupa tapi udah dicabut total (lihat `docs/domain/accounts-receivable.md`).
 - **Barang rusak yang pemasok tolak ganti sama sekali** — kasus lintas modul (berlaku juga di AR): barang rusak tanpa kompensasi apa pun dari pihak lain seharusnya diakui sebagai kerugian murni, bukan lewat jalur retur.

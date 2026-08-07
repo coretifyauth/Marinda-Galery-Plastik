@@ -1,5 +1,7 @@
--- Chart of Accounts schema (Fase 1)
--- Ref: docs/architecture/data/coa-schema.md
+-- Chart of Accounts schema.
+-- Konsolidasi dari migration historis 0001-0002 + kolom is_contra/normal_balance dari 0014 (fixed assets) --
+-- lihat git log untuk riwayat evolusi asli.
+-- Ref: docs/architecture/coa-schema.md
 
 create type account_category as enum ('asset','liability','equity','revenue','expense');
 create type balance_side as enum ('debit','credit');
@@ -25,9 +27,13 @@ create table accounts (
   code text not null unique,
   name text not null,
   category account_category not null,
+  is_contra boolean not null default false,
   normal_balance balance_side generated always as (
-    case when category in ('asset','expense') then 'debit'::balance_side
-         else 'credit'::balance_side
+    case
+      when category in ('asset','expense') then
+        case when is_contra then 'credit'::balance_side else 'debit'::balance_side end
+      else
+        case when is_contra then 'debit'::balance_side else 'credit'::balance_side end
     end
   ) stored,
   parent_id uuid references accounts(id),
@@ -70,3 +76,20 @@ alter table user_roles enable row level security;
 
 create policy user_roles_select_self on user_roles
   for select using (user_id = auth.uid());
+
+-- roles = lookup table (nama role & deskripsi). Read-only buat authenticated,
+-- gak ada policy insert/update/delete -> RLS default deny, assign role baru
+-- tetap lewat migration/service role manual.
+alter table roles enable row level security;
+
+create policy roles_select on roles
+  for select using (auth.role() = 'authenticated');
+
+-- Grant: "Automatically expose new tables" dimatikan di project settings (sengaja,
+-- kontrol akses manual). Tabel baru gak dapat grant privilege ke anon/authenticated
+-- secara otomatis. RLS policy tetap jadi penentu akses per baris, tapi grant di bawah
+-- wajib ada duluan biar PostgREST gak nolak request sebelum sempat ngecek RLS.
+
+grant select, insert, update on accounts to authenticated;
+grant select on user_roles to authenticated;
+grant select on roles to authenticated;
