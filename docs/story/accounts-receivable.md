@@ -38,7 +38,7 @@ Jurnal: Piutang Usaha (D) 900.000 | Pendapatan Penjualan Grosir (K) 900.000
 26 Juli 2026: Kang Ade lunasin Rp900.000 sekaligus.
 Jurnal: Kas di Bank (D) 900.000 | Piutang Usaha (K) 900.000. Status: **lunas**.
 
-*(Catatan: skenario ini sebelumnya "bayar sebagian/cicil" — Rp500.000 tanggal 19 Juli, disusul Rp400.000 tanggal 26 Juli. Diubah jadi 1x lunas penuh Rp900.000 karena keputusan bisnis belakangan: payment wajib persis nutup 1 invoice, gak boleh dicicil — lihat migration `0040_ar_payment_strict_invoice_match.sql`.)*
+*(Catatan: skenario ini sebelumnya "bayar sebagian/cicil" — Rp500.000 tanggal 19 Juli, disusul Rp400.000 tanggal 26 Juli. Sempat diubah jadi 1x lunas penuh Rp900.000 pas migration `0040_ar_payment_strict_invoice_match.sql` (payment wajib persis, gak boleh dicicil). Cicilan dibalikin lagi migration `0010_ar_allow_partial_payment.sql` — versi cicil aslinya sah lagi sebagai skenario, seed data di sini tetap dibiarkan versi lunas-sekaligus karena udah kadung jadi cerita, bukan berarti cicil gak didukung.)*
 
 ## Skenario 3 — Piutang lama, telat bayar (Warung Pak Budi — lanjutan dari `general-ledger.md`)
 
@@ -182,7 +182,7 @@ Hasil akhir: Piutang Usaha customer ini balik ke **0**, Uang Muka Penjualan bali
 
 Invoice yang benar (Rp1.000.000) diterbitkan ulang, DP Rp300.000 yang sama diterapkan lagi ke invoice baru ini. Outstanding: 700.000.
 
-*(Catatan: sistem sempat punya mekanisme "Kelebihan Bayar jadi Saldo Kredit Customer" — dulu Skenario 10 & 11 di sini nyeritain Bu Imas transfer Rp750.000 buat invoice Rp700.000 (excess Rp50.000 jadi saldo kredit), lalu saldo itu dipakai motong invoice berikutnya. Dicabut total lewat migration `0040_ar_payment_strict_invoice_match.sql` — payment sekarang wajib persis nutup 1 invoice, gak ada lagi jalur kelebihan bayar. Seed data skenario ini juga udah dihapus dari migration.)*
+*(Catatan: sistem sempat punya mekanisme "Kelebihan Bayar jadi Saldo Kredit Customer" — dulu Skenario 10 & 11 di sini nyeritain Bu Imas transfer Rp750.000 buat invoice Rp700.000 (excess Rp50.000 jadi saldo kredit), lalu saldo itu dipakai motong invoice berikutnya. Dicabut total lewat migration `0040_ar_payment_strict_invoice_match.sql` — TETAP dicabut sampai sekarang, payment yang melebihi sisa outstanding invoice tetap ditolak, gak ada lagi jalur kelebihan bayar "nyantol". Seed data skenario ini juga udah dihapus dari migration. Cicilan/bayar sebagian beda kasus — sempat ikut dilarang `0040`, dibalikin lagi migration `0010_ar_allow_partial_payment.sql`.)*
 
 ## Skenario 10 — Piutang tak tertagih (write-off), pesanan custom yang kabur (Bu Rina)
 
@@ -226,7 +226,7 @@ Saldo kredit retur Kang Ade: **Rp0** (habis, direfund tunai).
 
 ## Simulasi Interface (rencana)
 
-Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar — pilih 1 invoice outstanding, nominal otomatis keisi sisa outstanding-nya, wajib persis biar bisa disubmit), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Halaman `/ar-return-credits` (list+detail) buat saldo kredit yang lahir dari retur negatif — lahir otomatis, gak ada form "bikin baru". Detail flow menyusul pas fase UI dikerjakan.
+Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar — pilih 1 invoice outstanding, nominal otomatis keisi sisa outstanding-nya, boleh dikurangi buat cicil tapi gak boleh lebih), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/hanguskan). Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Halaman `/ar-return-credits` (list+detail) buat saldo kredit yang lahir dari retur negatif — lahir otomatis, gak ada form "bikin baru". Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

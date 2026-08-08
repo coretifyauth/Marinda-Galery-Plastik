@@ -11,25 +11,14 @@ export default function ApReturnCreditsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [credits, setCredits] = useState<ApReturnCredit[]>([]);
-  const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  const loadReversedEntryIds = useCallback(async () => {
-    const { data } = await supabase
-      .from("journal_entries")
-      .select("reverses_entry_id")
-      .not("reverses_entry_id", "is", null);
-    setReversedEntryIds(
-      new Set(((data ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
-    );
-  }, []);
 
   const loadCredits = useCallback(async () => {
     const { data, error } = await supabase
       .from("ap_return_credits")
       .select(
-        "id, supplier_id, credit_note_id, amount, journal_entry_id, created_at, suppliers(name), ap_credit_notes(source_ref, credit_note_date), ap_return_credit_applications(id, amount, source_ref, journal_entry_id, ap_bills(source_ref)), ap_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+        "id, supplier_id, credit_note_id, amount, journal_entry_id, created_at, suppliers(name), ap_credit_notes(source_ref, credit_note_date), ap_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
       )
       .order("created_at", { ascending: false });
     if (error) {
@@ -53,13 +42,13 @@ export default function ApReturnCreditsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadCredits(), loadReversedEntryIds()]);
+      await loadCredits();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCredits, loadReversedEntryIds]);
+  }, [router, loadCredits]);
 
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
@@ -103,7 +92,7 @@ export default function ApReturnCreditsPage() {
           </thead>
           <tbody>
             {credits.map((credit) => {
-              const { used, remaining } = returnCreditRemaining(credit, reversedEntryIds);
+              const { used, remaining } = returnCreditRemaining(credit);
               return (
                 <tr
                   key={credit.id}

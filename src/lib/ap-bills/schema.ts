@@ -23,45 +23,38 @@ export type ApBill = {
   journal_entry_id: string;
   created_at: string;
   suppliers: { name: string };
-  ap_payment_allocations: { amount: number }[];
+  ap_payments: { amount: number }[];
   ap_credit_notes?: { amount: number }[];
-  ap_return_credit_applications?: { amount: number }[];
 };
 
 export type ApBillStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
 
 /**
- * Status derived dari SUM(allocations) - SUM(retur/ap_credit_notes) - SUM(return-credit
- * applications) vs amount, plus cek reversal — bukan kolom, ref ap-schema.md. Mirror
- * `invoiceStatus()` di ar-invoices/schema.ts, dan sekarang mirror `ap_bill_remaining()` di
- * database (0035) — kalau ada reducer baru ditambah server-side, tambahin di sini juga.
- * `ap_return_credit_applications` gak perlu exclude via reversedEntryIds di sini (beda dari
- * `returnCreditRemaining()` di ap-return-credits/schema.ts yang emang perlu) — satu-satunya
- * jalur yang me-reverse jurnal application yang MENARGET bill ini adalah `cancel_ap_bill`
- * pas bill ini sendiri yang dibatalkan (lihat 0035 komentar cancel_ap_bill), jadi begitu
- * `isCancelled` true di sini, status udah short-circuit ke "dibatalkan" duluan — persis pola
- * `invoiceStatus()` di AR yang juga gak exclude ar_return_credit_applications.
+ * Status derived dari SUM(ap_payments) - SUM(retur/ap_credit_notes) vs amount, plus cek
+ * reversal — bukan kolom, ref ap-schema.md. Mirror `invoiceStatus()` di ar-invoices/schema.ts,
+ * dan mirror `ap_bill_remaining()` di database — kalau ada reducer baru ditambah server-side,
+ * tambahin di sini juga. Reducer ke-3 (return-credit applications) dicabut migration 0009
+ * bareng fitur "dipakai motong bill lain" (bukan fondasi AP). Sejak migration 0011,
+ * `ap_payments` nunjuk `bill_id` langsung (gak lewat tabel jembatan `ap_payment_allocations`
+ * lagi) — 1 bill boleh punya banyak baris payment (cicil), makanya tetap di-`reduce`.
  * `isCancelled` dihitung caller dari query terpisah (journal_entries.reverses_entry_id yang
  * nunjuk ke bill.journal_entry_id), karena bukan relasi langsung dari ap_bills.
  */
 export function billStatus(
-  bill: Pick<ApBill, "amount" | "ap_payment_allocations" | "ap_credit_notes" | "ap_return_credit_applications">,
+  bill: Pick<ApBill, "amount" | "ap_payments" | "ap_credit_notes">,
   isCancelled = false
 ): {
   status: ApBillStatus;
   allocated: number;
   returned: number;
-  returnCreditApplied: number;
   outstanding: number;
 } {
-  const allocated = bill.ap_payment_allocations.reduce((sum, a) => sum + a.amount, 0);
+  const allocated = bill.ap_payments.reduce((sum, a) => sum + a.amount, 0);
   const returned = (bill.ap_credit_notes ?? []).reduce((sum, c) => sum + c.amount, 0);
-  const returnCreditApplied = (bill.ap_return_credit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const outstanding = bill.amount - allocated - returned - returnCreditApplied;
+  const outstanding = bill.amount - allocated - returned;
   if (isCancelled) {
-    return { status: "dibatalkan", allocated, returned, returnCreditApplied, outstanding: 0 };
+    return { status: "dibatalkan", allocated, returned, outstanding: 0 };
   }
-  const status: ApBillStatus =
-    outstanding <= 0.005 ? "lunas" : allocated > 0 || returnCreditApplied > 0 ? "sebagian" : "belum";
-  return { status, allocated, returned, returnCreditApplied, outstanding };
+  const status: ApBillStatus = outstanding <= 0.005 ? "lunas" : allocated > 0 ? "sebagian" : "belum";
+  return { status, allocated, returned, outstanding };
 }

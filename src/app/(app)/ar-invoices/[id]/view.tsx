@@ -91,7 +91,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
-  const [payment, setPayment] = useState<PaymentDetail | null>(null);
+  const [payments, setPayments] = useState<PaymentDetail[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
   const [writeoffs, setWriteoffs] = useState<WriteoffDetail[]>([]);
   const [depositApplications, setDepositApplications] = useState<DepositApplicationDetail[]>([]);
@@ -198,7 +198,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .from("ar_payments")
         .select("id, payment_date, source_ref, amount")
         .eq("invoice_id", id)
-        .maybeSingle(),
+        .order("payment_date"),
       supabase
         .from("ar_credit_notes")
         .select(
@@ -249,7 +249,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     );
     setReversedEntryIds(reversedSet);
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
-    setPayment((pay ?? null) as unknown as PaymentDetail | null);
+    setPayments((pay ?? []) as unknown as PaymentDetail[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setWriteoffs((wos ?? []) as unknown as WriteoffDetail[]);
     setReplacements((reps ?? []) as unknown as WarrantyReplacement[]);
@@ -755,14 +755,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             </tr>
           </thead>
           <tbody>
-            {payment && (
-              <tr className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{payment.payment_date}</td>
-                <td className="px-4 py-2">{payment.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{payment.amount.toLocaleString("id-ID")}</td>
+            {payments.map((p) => (
+              <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
+                <td className="px-4 py-2">{p.source_ref}</td>
+                <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
               </tr>
-            )}
-            {!payment && (
+            ))}
+            {payments.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
                   Belum ada pembayaran.

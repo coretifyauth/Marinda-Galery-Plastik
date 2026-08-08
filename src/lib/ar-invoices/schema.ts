@@ -34,9 +34,10 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "d
 /**
  * Status derived dari SUM(payment) - SUM(retur) - SUM(deposit applications) -
  * SUM(write-offs) vs amount, plus cek reversal — bukan kolom, ref ar-schema.md.
- * `ar_payments.invoice_id` unique (payment wajib persis 1 invoice, no partial/gabung),
- * jadi `ar_payments` di sini paling banyak 1 baris, tapi tetap array biar konsisten sama
- * pola embed relasi Supabase lainnya. Outstanding boleh negatif (saldo kredit) kalau retur
+ * `ar_payments.invoice_id` gak unique lagi sejak migration 0010 — 1 invoice boleh punya
+ * banyak baris payment dari waktu ke waktu (cicil), makanya `ar_payments` di sini array &
+ * di-`reduce` (bukan ambil 1 baris). Masih 1 payment = 1 invoice (gak ada gabung invoice).
+ * Outstanding boleh negatif (saldo kredit) kalau retur
  * kejadian setelah invoice lunas — ref docs/domain/accounts-receivable.md bagian "Retur
  * Barang". Retur kayak gitu gak lagi bisa "dititip" motong invoice lain (dicabut, lihat
  * "Saldo Kredit dari Retur"), jadi gak ada reducer return-credit di sini — cuma

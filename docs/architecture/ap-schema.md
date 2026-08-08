@@ -8,13 +8,12 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Skenario nyat
 |---|---|---|
 | `suppliers` | Master data pemasok (nama, kontak, termin pembayaran) | — |
 | `ap_bills` | Tagihan yang diterima dari pemasok | `suppliers`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ap_payments` | Pembayaran yang dikirim ke pemasok | `suppliers`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ap_payment_allocations` | Jembatan: "pembayaran X melunasi bill Y sejumlah Z" | Menghubungkan `ap_payments` ↔ `ap_bills` |
+| `ap_payments` | Pembayaran yang dikirim ke pemasok — selalu menunjuk 1 bill spesifik, boleh cicil (1 bill bisa punya banyak pembayaran), gak boleh kelebihan bayar | `suppliers`, `ap_bills` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
 | `ap_credit_notes` | Retur barang ke pemasok, jalur "kurangi utang" (Opsi A) | `ap_bills`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian barang yang diretur per item (cuma kalau bill-nya diterima lewat penerimaan barang bertahap) | `ap_credit_notes` |
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — **berdiri sendiri**, tidak menyambung ke `ap_credit_notes` | `ap_bills` |
 | `ap_return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `ap_credit_notes` |
-| `ap_return_credit_applications` + `ap_return_credit_refunds` | Saldo di atas dipakai motong bill lain, atau dicairkan tunai | `ap_return_credits`, `ap_bills` |
+| `ap_return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" dicabut 2026-08-08, bukan fondasi AP) | `ap_return_credits` |
 
 Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik — di Piutang, kita yang menetapkan termin ke pelanggan; di Utang, pemasok yang menetapkan termin ke kita. Kolom & cara kerjanya identik, cuma makna bisnisnya kebalik.
 
@@ -33,7 +32,7 @@ Beda dari invoice AR yang sisi debitnya selalu tetap (Piutang Usaha), bill AP bi
 
 Sama persis dengan Accounts Receivable, arah kebalik:
 
-1. **Alokasi pembayaran tidak boleh melebihi yang tersedia** — baik terhadap sisa utang di satu bill, maupun terhadap sisa dana yang belum dipakai dari satu pembayaran.
+1. **Pembayaran boleh kurang dari sisa tagihan bill (cicil), tapi gak boleh lebih.** Sistem menolak keras kalau nominalnya melebihi sisa outstanding (coba kelebihan bayar) — gak ada ruang buat kelebihan yang "nyantol". Cicilan boleh; bayar gabungan (1 pembayaran nutup beberapa bill sekaligus) tidak — setiap pembayaran selalu menunjuk 1 bill spesifik.
 2. **Bill dan pembayaran tidak pernah bisa diedit atau dihapus** (dua lapis pengamanan). Data pemasok (nama, kontak, termin) boleh diubah kapan saja.
 3. **Bill hanya bisa dibatalkan kalau belum ada pembayaran yang mengalokasikan ke situ** — pengaman ini diterapkan sejak awal di modul AP (di AR, pengaman yang sama baru ditambahkan belakangan setelah terbukti dibutuhkan).
 4. **Setiap bill dan pembayaran otomatis membuat transaksi jurnal yang sepadan** — dijamin lewat proses gabungan yang sama seperti di AR.
@@ -41,8 +40,8 @@ Sama persis dengan Accounts Receivable, arah kebalik:
 ## Cara Kerja "Buat Bill", "Catat Pembayaran", dan "Batalkan Bill"
 
 - **Buat bill** — sistem menghitung tanggal jatuh tempo dari termin pemasok, membuat transaksi jurnal (Debit akun yang dipilih — Persediaan atau Beban, Kredit Utang Usaha), lalu mencatat bill yang menunjuk ke transaksi jurnal itu — satu langkah gabungan.
-- **Catat pembayaran** — sistem membuat transaksi jurnal (Debit Utang Usaha, Kredit Kas/Bank), mencatat pembayarannya, lalu mengalokasikan ke satu atau beberapa bill sekaligus — satu langkah gabungan.
-- **Batalkan bill** — sama seperti pembatalan invoice AR: dicek dulu belum ada pelunasan, lalu dibuat transaksi pembalik memakai akun yang sama persis dengan bill aslinya. Sejak fitur retur ada, ada 2 pengecekan tambahan: bill yang sudah pernah diretur (Opsi A) **tidak bisa** dibatalkan lewat jalur ini (sama alasan bill yang sudah ada pelunasan — sudah "tersentuh" transaksi lain); kalau bill ini pernah jadi tujuan pemakaian saldo Piutang Retur Pemasok dari bill lain, penerapan itu otomatis ikut dibatalkan juga.
+- **Catat pembayaran** — pemasok wajib pilih 1 bill, dan nominalnya boleh kurang dari sisa tagihan (cicil) tapi gak boleh lebih. Sistem membuat transaksi jurnal (Debit Utang Usaha, Kredit Kas/Bank) untuk nominal itu dan mencatat pembayarannya langsung menunjuk ke bill itu — satu langkah gabungan, ditolak keras cuma kalau nominalnya melebihi sisa.
+- **Batalkan bill** — sama seperti pembatalan invoice AR: dicek dulu belum ada pelunasan, lalu dibuat transaksi pembalik memakai akun yang sama persis dengan bill aslinya. Sejak fitur retur ada, ada pengecekan tambahan: bill yang sudah pernah diretur (Opsi A) **tidak bisa** dibatalkan lewat jalur ini (sama alasan bill yang sudah ada pelunasan — sudah "tersentuh" transaksi lain).
 
 ## Retur Barang ke Pemasok — 2 Jalur, Dipilih Manual
 
@@ -50,9 +49,7 @@ Begitu barang rusak dari pemasok ketauan, orang yang input transaksi harus pilih
 
 - **Opsi A — Kurangi Utang**
   - Bill belum lunas/sebagian → jurnal langsung mengurangi Utang Usaha, tanpa lewat akun perantara (beda dari AR yang pakai akun kontra "Retur & Potongan Penjualan" — di sini Persediaan boleh langsung dikurangi karena itu akun neraca, bukan akun pendapatan).
-  - Bill sudah lunas penuh → jurnal yang sama tetap jalan (utang jadi minus sesaat), lalu kelebihannya otomatis dipindah jadi saldo baru **Piutang Retur Pemasok** — pemasok yang sekarang "berutang" balik ke kita. Saldo ini bisa:
-    - Dipakai motong bill lain ke pemasok yang sama.
-    - Dicairkan tunai.
+  - Bill sudah lunas penuh → jurnal yang sama tetap jalan (utang jadi minus sesaat), lalu kelebihannya otomatis dipindah jadi saldo baru **Piutang Retur Pemasok** — pemasok yang sekarang "berutang" balik ke kita. Saldo ini dicairkan tunai (satu-satunya cara — opsi "dipakai motong bill lain" sempat ada, dicabut karena bukan fondasi AP).
 - **Opsi B — Tukar Barang**
   - Berlaku sama persis di semua status bayar — Utang Usaha **tidak pernah tersentuh**, baik bill-nya lunas, sebagian, maupun belum dibayar sama sekali.
   - Barang rusak keluar, barang baik masuk sejumlah sama — murni pemindahan pencatatan Persediaan, tidak ada nilai yang hilang atau bertambah.

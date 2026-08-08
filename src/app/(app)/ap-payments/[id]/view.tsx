@@ -14,7 +14,7 @@ type ApPaymentDetail = {
   journal_entry_id: string;
   created_at: string;
   suppliers: { name: string };
-  ap_payment_allocations: { id: string; amount: number; ap_bills: { source_ref: string; amount: number } }[];
+  ap_bills: { id: string; source_ref: string; amount: number };
 };
 
 type JournalEntryDetail = {
@@ -36,7 +36,7 @@ export function ApPaymentDetailView({ id }: { id: string }) {
     const { data: pay, error: payErr } = await supabase
       .from("ap_payments")
       .select(
-        "id, payment_date, amount, source_ref, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(id, amount, ap_bills(source_ref, amount))"
+        "id, payment_date, amount, source_ref, journal_entry_id, created_at, suppliers(name), ap_bills(id, source_ref, amount)"
       )
       .eq("id", id)
       .single();
@@ -150,34 +150,22 @@ export function ApPaymentDetailView({ id }: { id: string }) {
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Alokasi ke Bill</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {payment.ap_payment_allocations.length}
-          </span>
+          <span className="text-sm font-medium text-black">Bill yang Dilunasi</span>
         </div>
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Bill</th>
-              <th className="px-4 py-2 text-right">Jumlah Bill</th>
-              <th className="px-4 py-2 text-right">Dialokasikan</th>
+              <th className="px-4 py-2 text-right">Nominal Bill</th>
+              <th className="px-4 py-2 text-right">Dibayar</th>
             </tr>
           </thead>
           <tbody>
-            {payment.ap_payment_allocations.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{a.ap_bills.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.ap_bills.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {payment.ap_payment_allocations.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada alokasi.
-                </td>
-              </tr>
-            )}
+            <tr className="border-b border-slate-100 hover:bg-slate-50">
+              <td className="px-4 py-2">{payment.ap_bills.source_ref}</td>
+              <td className="px-4 py-2 text-right font-mono">{payment.ap_bills.amount.toLocaleString("id-ID")}</td>
+              <td className="px-4 py-2 text-right font-mono">{payment.amount.toLocaleString("id-ID")}</td>
+            </tr>
           </tbody>
         </table>
       </div>

@@ -251,8 +251,10 @@ export default function ArPaymentsPage() {
             </p>
           )}
           <p className="mb-4 text-sm text-slate-500">
-            Payment wajib persis nutup 1 invoice penuh — gak ada cicilan, gabung invoice, atau
-            kelebihan bayar. Pilih invoice dulu, jumlah otomatis keisi sisa outstanding-nya.
+            Payment selalu nutup 1 invoice spesifik (gak bisa digabung ke invoice lain), boleh
+            cicil (kurang dari sisa outstanding), tapi gak boleh lebih (overpay ditolak). Pilih
+            invoice dulu, jumlah otomatis keisi sisa outstanding-nya — boleh dikurangi kalau mau
+            cicil.
           </p>
           <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -314,7 +316,7 @@ export default function ArPaymentsPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="amount">Jumlah dibayar (wajib persis sisa outstanding)</Label>
+                <Label htmlFor="amount">Jumlah dibayar (boleh cicil, maks sisa outstanding)</Label>
                 <Input
                   id="amount"
                   type="number"
@@ -358,17 +360,20 @@ export default function ArPaymentsPage() {
                   Sisa outstanding invoice terpilih:{" "}
                   <strong className="font-mono">{selectedInvoice.outstanding.toLocaleString("id-ID")}</strong>
                 </span>
-                <span
-                  className={
-                    Math.abs((parseFloat(amount) || 0) - selectedInvoice.outstanding) < 0.005
-                      ? "font-medium text-emerald-600"
-                      : "font-medium text-red-600"
-                  }
-                >
-                  {Math.abs((parseFloat(amount) || 0) - selectedInvoice.outstanding) < 0.005
-                    ? "Cocok ✓"
-                    : "Belum cocok"}
-                </span>
+                {(() => {
+                  const paid = parseFloat(amount) || 0;
+                  const isOverpay = paid - selectedInvoice.outstanding > 0.005;
+                  const remainingAfter = selectedInvoice.outstanding - paid;
+                  return (
+                    <span className={isOverpay ? "font-medium text-red-600" : "font-medium text-emerald-600"}>
+                      {isOverpay
+                        ? "Melebihi sisa outstanding — ditolak"
+                        : remainingAfter > 0.005
+                          ? `Cicil — sisa setelah ini: ${remainingAfter.toLocaleString("id-ID")}`
+                          : "Lunas ✓"}
+                    </span>
+                  );
+                })()}
               </div>
             )}
 

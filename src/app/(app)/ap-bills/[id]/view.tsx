@@ -43,18 +43,11 @@ type JournalEntryDetail = {
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
 };
 
-type PaymentAllocationDetail = {
+type PaymentDetail = {
   id: string;
-  amount: number;
-  ap_payments: { id: string; payment_date: string; source_ref: string; amount: number };
-};
-
-type ReturnCreditApplicationDetail = {
-  id: string;
-  amount: number;
+  payment_date: string;
   source_ref: string;
-  journal_entry_id: string;
-  ap_return_credits: { ap_credit_notes: { source_ref: string } };
+  amount: number;
 };
 
 type CreditNoteDetail = {
@@ -98,10 +91,9 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
-  const [allocations, setAllocations] = useState<PaymentAllocationDetail[]>([]);
+  const [payments, setPayments] = useState<PaymentDetail[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
   const [replacements, setReplacements] = useState<ReplacementDetail[]>([]);
-  const [returnCreditApplications, setReturnCreditApplications] = useState<ReturnCreditApplicationDetail[]>([]);
   const [goodsReceipt, setGoodsReceipt] = useState<GoodsReceiptForBill | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -134,7 +126,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("ap_bills")
       .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(amount), ap_credit_notes(amount), ap_return_credit_applications(amount)"
+        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount)"
       )
       .eq("id", id)
       .single();
@@ -149,10 +141,9 @@ export function ApBillDetailView({ id }: { id: string }) {
       { data: accs },
       { data: reversedRows },
       { data: entries, error: entriesErr },
-      { data: allocs, error: allocErr },
+      { data: pays, error: paysErr },
       { data: cns, error: cnErr },
       { data: reps, error: repErr },
-      { data: returnCreditApps, error: returnCreditAppErr },
       { data: grn },
     ] = await Promise.all([
       supabase
@@ -171,9 +162,10 @@ export function ApBillDetailView({ id }: { id: string }) {
         .or(`id.eq.${loadedBill.journal_entry_id},reverses_entry_id.eq.${loadedBill.journal_entry_id}`)
         .order("entry_date"),
       supabase
-        .from("ap_payment_allocations")
-        .select("id, amount, ap_payments(id, payment_date, source_ref, amount)")
-        .eq("bill_id", id),
+        .from("ap_payments")
+        .select("id, payment_date, source_ref, amount")
+        .eq("bill_id", id)
+        .order("payment_date"),
       supabase
         .from("ap_credit_notes")
         .select(
@@ -189,10 +181,6 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("bill_id", id)
         .order("replacement_date"),
       supabase
-        .from("ap_return_credit_applications")
-        .select("id, amount, source_ref, journal_entry_id, ap_return_credits(ap_credit_notes(source_ref))")
-        .eq("bill_id", id),
-      supabase
         .from("goods_receipt_notes")
         .select("id, goods_receipt_lines(item_id, qty_received, unit_cost, items(name, uom))")
         .eq("bill_id", id)
@@ -204,12 +192,11 @@ export function ApBillDetailView({ id }: { id: string }) {
       new Set(((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
     );
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
-    setAllocations((allocs ?? []) as unknown as PaymentAllocationDetail[]);
+    setPayments((pays ?? []) as unknown as PaymentDetail[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setReplacements((reps ?? []) as unknown as ReplacementDetail[]);
-    setReturnCreditApplications((returnCreditApps ?? []) as unknown as ReturnCreditApplicationDetail[]);
     setGoodsReceipt((grn ?? null) as unknown as GoodsReceiptForBill | null);
-    setLoadError(entriesErr?.message ?? allocErr?.message ?? cnErr?.message ?? repErr?.message ?? returnCreditAppErr?.message ?? null);
+    setLoadError(entriesErr?.message ?? paysErr?.message ?? cnErr?.message ?? repErr?.message ?? null);
   }, [id]);
 
   useEffect(() => {
@@ -442,7 +429,7 @@ export function ApBillDetailView({ id }: { id: string }) {
   }
 
   const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
-  const { status, outstanding, allocated, returned, returnCreditApplied } = billStatus(bill, isCancelled);
+  const { status, outstanding, allocated, returned } = billStatus(bill, isCancelled);
   const overdue = status !== "lunas" && status !== "dibatalkan" && bill.due_date < new Date().toISOString().slice(0, 10);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canRetur = canWrite && !isCancelled;
@@ -498,7 +485,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       {cancelError && <FormError>{cancelError}</FormError>}
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-5">
+        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <div>
             <dt className="text-xs uppercase text-slate-400">Jumlah Bill</dt>
             <dd className="font-mono text-black">{bill.amount.toLocaleString("id-ID")}</dd>
@@ -510,10 +497,6 @@ export function ApBillDetailView({ id }: { id: string }) {
           <div>
             <dt className="text-xs uppercase text-slate-400">Retur</dt>
             <dd className="font-mono text-black">{returned.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Kredit Retur Diterapkan</dt>
-            <dd className="font-mono text-black">{returnCreditApplied.toLocaleString("id-ID")}</dd>
           </div>
           <div>
             <dt className="text-xs uppercase text-slate-400">Outstanding</dt>
@@ -576,7 +559,7 @@ export function ApBillDetailView({ id }: { id: string }) {
         <div className="border-b border-slate-100 px-4 py-2">
           <span className="text-sm font-medium text-black">Pembayaran</span>
           <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {allocations.length}
+            {payments.length}
           </span>
         </div>
         <table className="w-full text-left text-sm">
@@ -584,57 +567,21 @@ export function ApBillDetailView({ id }: { id: string }) {
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Total Pembayaran</th>
-              <th className="px-4 py-2 text-right">Dialokasikan ke Bill Ini</th>
+              <th className="px-4 py-2 text-right">Jumlah</th>
             </tr>
           </thead>
           <tbody>
-            {allocations.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{a.ap_payments.payment_date}</td>
-                <td className="px-4 py-2">{a.ap_payments.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.ap_payments.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
+            {payments.map((p) => (
+              <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
+                <td className="px-4 py-2">{p.source_ref}</td>
+                <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
               </tr>
             ))}
-            {allocations.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada pembayaran.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Saldo Kredit Retur Diterapkan</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {returnCreditApplications.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Dari Retur</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {returnCreditApplications.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{a.source_ref}</td>
-                <td className="px-4 py-2">{a.ap_return_credits.ap_credit_notes.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {returnCreditApplications.length === 0 && (
+            {payments.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada saldo kredit retur yang diterapkan.
+                  Belum ada pembayaran.
                 </td>
               </tr>
             )}

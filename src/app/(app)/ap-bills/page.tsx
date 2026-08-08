@@ -56,7 +56,7 @@ export default function ApBillsPage() {
     const { data, error } = await supabase
       .from("ap_bills")
       .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(amount), ap_credit_notes(amount), ap_return_credit_applications(amount)"
+        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount)"
       )
       .order("bill_date", { ascending: false });
     if (error) {

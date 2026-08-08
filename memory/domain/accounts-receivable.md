@@ -6,8 +6,8 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 
 - **customer** — master data (bukan transaksional). Kolom kunci: `payment_term_days` (default termin, dipakai ngitung `due_date` invoice baru), `credit_limit` (nullable, batas nominal piutang open sebelum hold), `overdue_threshold_days` (nullable, toleransi hari telat sebelum hold — default di-prefill = `payment_term_days` pas customer dibuat, tapi kolom independen). Boleh di-`UPDATE` di tempat kalau termin/limit berubah — gak ngaruh ke invoice lama karena `due_date` udah di-snapshot.
 - **ar_invoice** — piutang timbul. Jurnal: Debit Piutang Usaha, Kredit Pendapatan. `due_date = invoice_date + customer.payment_term_days`, dihitung & disimpan **sekali** pas insert (bukan generated column dinamis).
-- **ar_payment** — piutang berkurang, kejadian bayar nyata (bukan jadwal terjadwal). Jurnal: Debit Kas/Bank, Kredit Piutang Usaha. `invoice_id` kolom langsung + `unique` (migration `0040`, bukan tabel jembatan lagi) — 1 payment wajib nutup **persis** 1 invoice, `record_ar_payment` `raise exception` kalau `amount` gak persis sama `ar_invoice_remaining(invoice_id)` (gak boleh kurang/cicilan, gak boleh lebih/overpay).
-- **Status invoice** (lunas/sebagian/belum) — derived dari ada/gaknya baris `ar_payment` buat invoice itu (paling banyak 1) dibanding `invoice.amount`. Bukan kolom manual (pola sama kayak `archived_at`/"published" di modul lain).
+- **ar_payment** — piutang berkurang, kejadian bayar nyata (bukan jadwal terjadwal). Jurnal: Debit Kas/Bank, Kredit Piutang Usaha. `invoice_id` kolom langsung (migration `0040`, bukan tabel jembatan lagi) — 1 payment wajib nutup 1 invoice spesifik (gak ada gabung invoice), tapi sejak `0010` **gak lagi unique** — boleh cicil (kurang dari sisa), `record_ar_payment` `raise exception` cuma kalau `amount > ar_invoice_remaining(invoice_id)` (overpay).
+- **Status invoice** (lunas/sebagian/belum) — derived dari `SUM(ar_payment.amount)` buat invoice itu (bisa banyak baris sejak `0010`) dibanding `invoice.amount`. Bukan kolom manual (pola sama kayak `archived_at`/"published" di modul lain).
 - **ar_credit_note** — retur barang (bukan koreksi salah input). Beda `cancel_ar_invoice`: partial-capable, tetap bisa dibuat walau invoice udah ada alokasi payment, invoice asli gak diedit/dibatalkan. Dua jalur, auto-detect dari ada-gaknya baris `goods_issues.invoice_id`:
   - **Financial-only** (invoice gak lewat `create_goods_issue`): 1 jurnal, Debit `Retur & Potongan Penjualan` (akun kontra-revenue baru, `is_contra=true`) / Kredit Piutang Usaha.
   - **Full** (invoice lewat `create_goods_issue`): 2 jurnal — kontra-revenue di atas + Debit Persediaan Barang Jadi / Kredit HPP sejumlah cost proporsional dari `goods_issue_lines.total_cost` snapshot asli (bukan harga sekarang). Barang balik masuk nambah `inventory_balances` (Weighted Average) — sebelum migration `0038`, item FIFO malah masuk lot baru terpisah (`source_type = SALES_RETURN`), sekarang FIFO sudah dihapus total jadi semua item lewat jalur `inventory_balances` yang sama, gak ada lagi segregasi lot retur.
@@ -26,7 +26,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 
 - **Journal-backed**: tiap `ar_invoice`/`ar_payment` wajib punya `journal_entry_id` yang nunjuk entry balance beneran — dibuat via RPC atomik (pola sama kayak `create_journal_entry`), bukan insert AR + insert GL terpisah dari client.
 - **Immutability**: invoice/payment gak bisa di-UPDATE/DELETE setelah dibuat (RLS default-deny + trigger jaring kedua, pola sama `journal_entries`/`journal_lines`). Koreksi = reversing entry, bukan edit.
-- **Payment exact-match**: `record_ar_payment` `raise exception` kalau `p_amount != ar_invoice_remaining(p_invoice_id)` — gak boleh kurang (cicilan) atau lebih (overpay). `ar_payments.invoice_id` juga `unique` (hard guard tambahan di level kolom, bukan cuma dicek RPC).
+- **Payment no-overpay (boleh cicil, `0010`)**: `record_ar_payment` `raise exception` kalau `p_amount > ar_invoice_remaining(p_invoice_id)` — kurang (cicilan) boleh, lebih (overpay) tetap ditolak. `ar_payments.invoice_id` gak lagi `unique` — 1 invoice boleh punya banyak baris payment.
 - **`due_date` snapshot**: dihitung dari `payment_term_days` customer **pas invoice insert**, disimpan permanen. Perubahan `payment_term_days` customer setelahnya TIDAK boleh retroaktif ngubah `due_date` invoice lama.
 - **Cancellation guard**: invoice cuma boleh dibatalkan (reversing entry via `cancel_ar_invoice`) kalau `ar_payments` buat invoice itu masih 0 baris. Begitu ada payment, pembatalan ditolak — piutang udah kesentuh transaksi lain, nasib pembayarannya jadi keputusan bisnis terpisah (belum di-scope).
 - **Credit hold**: `create_ar_invoice` hard-reject kalau customer kelampaui `credit_limit` (total outstanding open) ATAU ada invoice open yang overdue lebih dari `overdue_threshold_days`-nya (OR, bukan AND). Status hold gak disimpan, derived tiap kali RPC dipanggil. NULL di salah satu kolom = batas itu gak berlaku buat customer itu. Cash sale ke customer on-hold gak lewat `ar_invoices` sama sekali (langsung jurnal Debit Kas/Kredit Pendapatan, di luar scope AR).
@@ -45,7 +45,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 
 | # | Kasus | Pola |
 |---|---|---|
-| 1 | Lunas tepat waktu | 1 payment → 1 invoice, persis penuh |
+| 1 | Lunas tepat waktu | 1 payment → 1 invoice, penuh sekaligus |
 | 2 | Telat bayar (aging) | Query read-side: `due_date < now()` dan belum lunas — gak butuh kolom/job baru |
 | 3 | Invoice dibatalkan (belum ada payment) | Reversing entry via `cancel_ar_invoice`, invoice asli tetap ada di histori |
 | 4 | Credit hold | `create_ar_invoice` ditolak: outstanding > `credit_limit` ATAU overdue terlama > `overdue_threshold_days` |
@@ -55,16 +55,17 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 | 8 | DP hangus (order dibatalin sebelum invoice ada) | 1 jurnal, Uang Muka Penjualan → Pendapatan Lain-lain, gak pernah ada invoice |
 | 9 | Invoice dengan DP-application dibatalkan | `cancel_ar_invoice` reverse jurnal invoice + jurnal application, DP balik "belum dipakai" |
 | 10 | Penukaran barang pasca-retur/garansi | 2 jurnal (HPP/Persediaan Barang Jadi + pembalikan diskon proporsional ke Piutang Usaha), referensi credit note jalur full, gak nyentuh Pendapatan |
-| 11 | Payment ditolak — nominal gak persis sisa outstanding | `record_ar_payment` `raise exception`, baik kurang (cicil) maupun lebih (overpay) |
-| 12 | Piutang tak tertagih (write-off) | 1 jurnal, Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik |
-| 13 | Saldo kredit dari retur, direfund tunai | Retur setelah lunas bikin outstanding negatif, excess-nya otomatis jurnal Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer, lalu Debit Saldo Kredit Retur Customer / Kredit Kas |
-| 14 | Saldo kredit dari retur, diselesaikan via barang | `create_warranty_replacement` buat credit note yang punya `ar_return_credits` aktif — jurnal ketiga Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha sejumlah porsi diskon dibalik, `raise exception` kalau itu ngelebihin sisa saldo |
+| 11 | Cicil (`0010`) | 2+ payment ke invoice yang sama, masing-masing < sisa outstanding, status "sebagian" sampai baris terakhir |
+| 12 | Payment ditolak — overpay | `record_ar_payment` `raise exception` kalau `amount > ar_invoice_remaining` |
+| 13 | Piutang tak tertagih (write-off) | 1 jurnal, Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik |
+| 14 | Saldo kredit dari retur, direfund tunai | Retur setelah lunas bikin outstanding negatif, excess-nya otomatis jurnal Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer, lalu Debit Saldo Kredit Retur Customer / Kredit Kas |
+| 15 | Saldo kredit dari retur, diselesaikan via barang | `create_warranty_replacement` buat credit note yang punya `ar_return_credits` aktif — jurnal ketiga Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha sejumlah porsi diskon dibalik, `raise exception` kalau itu ngelebihin sisa saldo |
 
 ## Common mistakes to guard against
 
 - `due_date` dihitung ulang tiap baca dari `payment_term_days` customer saat ini (bukan snapshot) — invoice lama ikut geser kalau termin berubah.
 - Status lunas/belum sebagai kolom manual yang di-`UPDATE` tiap payment — resiko gak sinkron. Harus derived query.
-- Terima payment dengan nominal kurang (partial) atau lebih (overpay) dari sisa outstanding invoice — kebijakan sekarang wajib persis, `record_ar_payment` harus `raise exception`.
+- Terima payment dengan nominal lebih (overpay) dari sisa outstanding invoice — `record_ar_payment` harus `raise exception`. Kurang (cicil) boleh, itu bukan mistake sejak `0010`.
 - Insert AR tanpa lewat RPC yang juga bikin journal entry — AR dan GL jadi dua sumber angka gak sinkron.
 - Batalin invoice yang udah ada payment tanpa guard — GL balance tapi duit customer yang udah masuk jadi nyantol gak jelas.
 - Cek credit hold cuma di UI (skippable) — harus hard-reject di RPC.
@@ -93,7 +94,7 @@ AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa be
 
 - **Customer**: master data pihak yang berutang ke perusahaan.
 - **AR Invoice**: piutang timbul dari 1 kejadian kirim barang/jasa dengan termin.
-- **AR Payment**: 1 kejadian bayar nyata dari customer, wajib persis nutup 1 invoice penuh (`invoice_id` unique di `ar_payments`).
+- **AR Payment**: 1 kejadian bayar nyata dari customer, selalu nutup 1 invoice spesifik, boleh cicil (kurang dari sisa) tapi gak boleh overpay (`invoice_id` gak unique lagi sejak `0010`).
 - **Credit Hold**: kondisi derived, customer ditolak bikin invoice baru karena outstanding/keterlambatan kelampaui batasnya.
 - **Aging**: invoice yang `due_date`-nya udah lewat dan belum lunas.
 - **AR Credit Note**: retur barang yang udah diinvoice — ngurangin outstanding invoice tanpa ubah `amount` asli, beda dari `cancel_ar_invoice`.

@@ -40,14 +40,14 @@ export function SupplierDetailView({ id }: { id: string }) {
       supabase
         .from("ap_bills")
         .select(
-          "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(amount)"
+          "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount)"
         )
         .eq("supplier_id", id)
         .order("bill_date", { ascending: false }),
       supabase
         .from("ap_payments")
         .select(
-          "id, supplier_id, payment_date, amount, source_ref, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(id, amount, ap_bills(source_ref))"
+          "id, supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_at, suppliers(name), ap_bills(source_ref)"
         )
         .eq("supplier_id", id)
         .order("payment_date", { ascending: false }),
@@ -187,7 +187,7 @@ export function SupplierDetailView({ id }: { id: string }) {
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Source Ref</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
-              <th className="px-4 py-2">Dialokasikan ke</th>
+              <th className="px-4 py-2">Bill</th>
             </tr>
           </thead>
           <tbody>
@@ -196,15 +196,7 @@ export function SupplierDetailView({ id }: { id: string }) {
                 <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
                 <td className="px-4 py-2">{p.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {p.ap_payment_allocations.map((a) => (
-                      <li key={a.id}>
-                        {a.ap_bills.source_ref} — {a.amount.toLocaleString("id-ID")}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
+                <td className="px-4 py-2">{p.ap_bills.source_ref}</td>
               </tr>
             ))}
             {payments.length === 0 && (

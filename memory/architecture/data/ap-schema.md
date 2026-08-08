@@ -4,7 +4,7 @@ Fase 4 roadmap. Ref konsep bisnis: `docs/domain/accounts-payable.md` + `memory/d
 
 ## Keputusan
 
-- **Struktur DDL mirror persis AR** — `suppliers` ganti `customers`, `ap_bills` ganti `ar_invoices`, `ap_payments` ganti `ar_payments`, `ap_payment_allocations` ganti `ar_payment_allocations`. Alasan yang sama semua berlaku (immutability, due_date snapshot, status derived, anti over-allocation) — gak diulang detail di sini, cuma bagian yang beda yang dijelasin.
+- **Struktur DDL mirror persis AR** — `suppliers` ganti `customers`, `ap_bills` ganti `ar_invoices`, `ap_payments` ganti `ar_payments`. Alasan yang sama semua berlaku (immutability, due_date snapshot, status derived, anti overpay) — gak diulang detail di sini, cuma bagian yang beda yang dijelasin. `ap_payment_allocations` (tabel jembatan many-to-many) sempat ada dari desain awal, **dicabut migration `0011_ap_payment_single_bill.sql`** — lihat bagian "AP Payment — Selaras AR (0011)" di bawah.
 - **`payment_term_days` di `suppliers` maknanya kebalik dari `customers`** — di AR itu syarat yang KITA tetapkan; di AP itu syarat yang KITA TERIMA dari supplier. Kolom & mekanisme snapshot `due_date`-nya identik, cuma konteks bisnisnya beda (ref `docs/domain/accounts-payable.md`).
 - **`create_ap_bill` terima akun debit sebagai parameter, gak di-hardcode ke 1 kategori** — beda dari AR yang debit-nya selalu ke akun Piutang Usaha (fixed secara konsep), bill di AP bisa debit ke Persediaan (beli bahan baku) ATAU Beban (beli jasa/sewa/utility) tergantung jenis pembelian. Parameter `p_debit_account_id` generik, sama pola `create_journal_entry`.
 - **Cancellation guard (`cancel_ap_bill`) diterapkan dari awal**, bukan ditambah belakangan — beda dari AR yang nambahnya belakangan setelah kebukti perlu lewat diskusi. Di AP langsung include karena polanya udah teruji.
@@ -58,12 +58,13 @@ create index ap_bills_journal_entry_id_idx on ap_bills(journal_entry_id);
 
 ### `ap_payments` — utang berkurang
 
-Identik `ar_payments`, arah kebalik (Debit Utang Usaha, Kredit Kas/Bank alih-alih Debit Kas, Kredit Piutang).
+Identik `ar_payments` pasca-`0010` (`bill_id` FK langsung, bukan lewat tabel jembatan; gak `unique` — 1 bill boleh punya banyak baris payment buat cicil), arah kebalik (Debit Utang Usaha, Kredit Kas/Bank alih-alih Debit Kas, Kredit Piutang). `bill_id` ditambah belakangan lewat `0011` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel.
 
 ```sql
 create table ap_payments (
   id uuid primary key default gen_random_uuid(),
   supplier_id uuid not null references suppliers(id),
+  bill_id uuid not null references ap_bills(id),
   payment_date date not null,
   amount numeric(14,2) not null check (amount > 0),
   source_ref text not null,
@@ -73,65 +74,12 @@ create table ap_payments (
 );
 
 create index ap_payments_supplier_id_idx on ap_payments(supplier_id);
+create index ap_payments_bill_id_idx on ap_payments(bill_id);
 ```
 
-### `ap_payment_allocations` — jembatan payment ↔ bill
-
-Identik `ar_payment_allocations`.
-
-```sql
-create table ap_payment_allocations (
-  id uuid primary key default gen_random_uuid(),
-  payment_id uuid not null references ap_payments(id) on delete cascade,
-  bill_id uuid not null references ap_bills(id),
-  amount numeric(14,2) not null check (amount > 0),
-  created_at timestamptz not null default now()
-);
-
-create index ap_payment_allocations_payment_id_idx on ap_payment_allocations(payment_id);
-create index ap_payment_allocations_bill_id_idx on ap_payment_allocations(bill_id);
-```
+Tabel jembatan `ap_payment_allocations` (many-to-many payment↔bill) sempat ada di sini — **dicabut total migration `0011_ap_payment_single_bill.sql`**, lihat bagian "AP Payment — Selaras AR (0011)" di bawah.
 
 ## Trigger
-
-### `ap_payment_allocations_no_over_allocation` — cegah alokasi ngelebihin
-
-Identik `ar_payment_allocations_no_over_allocation`, ganti nama tabel/kolom.
-
-```sql
-create function ap_payment_allocations_no_over_allocation() returns trigger as $$
-declare
-  v_bill_amount numeric;
-  v_bill_allocated numeric;
-  v_payment_amount numeric;
-  v_payment_allocated numeric;
-begin
-  select amount into v_bill_amount from ap_bills where id = new.bill_id;
-  select coalesce(sum(amount), 0) into v_bill_allocated
-    from ap_payment_allocations where bill_id = new.bill_id;
-
-  if v_bill_allocated + new.amount > v_bill_amount then
-    raise exception 'Alokasi ke bill % melebihi sisa utang (sisa %, coba alokasi %)',
-      new.bill_id, v_bill_amount - v_bill_allocated, new.amount;
-  end if;
-
-  select amount into v_payment_amount from ap_payments where id = new.payment_id;
-  select coalesce(sum(amount), 0) into v_payment_allocated
-    from ap_payment_allocations where payment_id = new.payment_id;
-
-  if v_payment_allocated + new.amount > v_payment_amount then
-    raise exception 'Alokasi dari payment % melebihi sisa yang belum teralokasi (sisa %, coba alokasi %)',
-      new.payment_id, v_payment_amount - v_payment_allocated, new.amount;
-  end if;
-
-  return new;
-end;
-$$ language plpgsql;
-
-create trigger ap_payment_allocations_no_over_allocation_trigger
-  before insert on ap_payment_allocations
-  for each row execute function ap_payment_allocations_no_over_allocation();
-```
 
 ### Immutability — reuse `block_edit_delete()`
 
@@ -142,10 +90,6 @@ create trigger ap_bills_block_edit_delete
 
 create trigger ap_payments_block_edit_delete
   before update or delete on ap_payments
-  for each row execute function block_edit_delete();
-
-create trigger ap_payment_allocations_block_edit_delete
-  before update or delete on ap_payment_allocations
   for each row execute function block_edit_delete();
 ```
 
@@ -194,9 +138,9 @@ end;
 $$;
 ```
 
-### `record_ap_payment` — bikin payment + journal entry + alokasi ke bill sekaligus
+### `record_ap_payment` — bikin payment + journal entry sekaligus, langsung ke 1 bill (terakhir didefinisi `0011`)
 
-Identik `record_ar_payment`, arah kebalik (Debit Utang Usaha, Kredit Kas/Bank).
+Identik `record_ar_payment` pasca-`0010` — `p_bill_id` tunggal (bukan `p_allocations jsonb` array lagi, dicabut `0011`), guard cuma nolak kalau `p_amount` **melebihi** `ap_bill_remaining(p_bill_id)` (boleh kurang = cicil, gak boleh lebih = overpay).
 
 ```sql
 create function record_ap_payment(
@@ -206,16 +150,23 @@ create function record_ap_payment(
   p_source_ref text,
   p_payable_account_id uuid,
   p_cash_account_id uuid,
-  p_allocations jsonb -- array of {"bill_id": uuid, "amount": numeric}
+  p_bill_id uuid
 ) returns uuid
 language plpgsql
 security invoker
 as $$
 declare
+  v_remaining numeric;
   v_entry_id uuid;
   v_payment_id uuid;
-  v_alloc jsonb;
 begin
+  select ap_bill_remaining(p_bill_id) into v_remaining;
+
+  if p_amount > v_remaining then
+    raise exception 'Payment % melebihi sisa utang bill % (sisa %, coba bayar %) -- gak boleh overpay',
+      p_source_ref, p_bill_id, v_remaining, p_amount;
+  end if;
+
   v_entry_id := create_journal_entry(
     p_payment_date, 'Pelunasan utang', p_source_ref,
     jsonb_build_array(
@@ -224,27 +175,21 @@ begin
     )
   );
 
-  insert into ap_payments (supplier_id, payment_date, amount, source_ref, journal_entry_id, created_by)
-  values (p_supplier_id, p_payment_date, p_amount, p_source_ref, v_entry_id, auth.uid())
+  insert into ap_payments (supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_by)
+  values (p_supplier_id, p_bill_id, p_payment_date, p_amount, p_source_ref, v_entry_id, auth.uid())
   returning id into v_payment_id;
-
-  for v_alloc in select * from jsonb_array_elements(p_allocations)
-  loop
-    insert into ap_payment_allocations (payment_id, bill_id, amount)
-    values (v_payment_id, (v_alloc->>'bill_id')::uuid, (v_alloc->>'amount')::numeric);
-  end loop;
 
   return v_payment_id;
 end;
 $$;
 ```
 
-### `cancel_ap_bill` — batalkan bill salah input (reversing entry, dengan guard)
+### `cancel_ap_bill` — batalkan bill salah input (reversing entry, dengan guard) (terakhir didefinisi `0011`)
 
-Identik `cancel_ar_invoice`. Diterapkan dari awal (bukan ditambah belakangan kayak AR), karena guard-nya udah kebukti perlu.
+Identik `cancel_ar_invoice`. Diterapkan dari awal (bukan ditambah belakangan kayak AR), karena guard-nya udah kebukti perlu. Guard payment sekarang cek `ap_payments` langsung (bukan lewat tabel jembatan yang udah gak ada sejak `0011`).
 
 ```sql
-create function cancel_ap_bill(
+create or replace function cancel_ap_bill(
   p_bill_id uuid,
   p_entry_date date,
   p_source_ref text
@@ -254,14 +199,22 @@ security invoker
 as $$
 declare
   v_allocated_count int;
+  v_credit_note_count int;
   v_original_entry_id uuid;
   v_new_entry_id uuid;
 begin
   select count(*) into v_allocated_count
-  from ap_payment_allocations where bill_id = p_bill_id;
+  from ap_payments where bill_id = p_bill_id;
 
   if v_allocated_count > 0 then
-    raise exception 'Bill % udah punya % alokasi payment — gak bisa dibatalkan lewat jalur ini', p_bill_id, v_allocated_count;
+    raise exception 'Bill % udah punya % payment -- gak bisa dibatalkan lewat jalur ini', p_bill_id, v_allocated_count;
+  end if;
+
+  select count(*) into v_credit_note_count
+  from ap_credit_notes where bill_id = p_bill_id;
+
+  if v_credit_note_count > 0 then
+    raise exception 'Bill % udah punya % retur (credit note) -- gak bisa dibatalkan lewat jalur ini', p_bill_id, v_credit_note_count;
   end if;
 
   select journal_entry_id into v_original_entry_id from ap_bills where id = p_bill_id;
@@ -317,18 +270,7 @@ create policy ap_payments_insert on ap_payments
     exists (select 1 from user_roles ur
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
-
-alter table ap_payment_allocations enable row level security;
-
-create policy ap_payment_allocations_select on ap_payment_allocations
-  for select using (auth.role() = 'authenticated');
-
-create policy ap_payment_allocations_insert on ap_payment_allocations
-  for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
-  );
--- sengaja gak ada policy UPDATE/DELETE di 3 tabel AP transaksional -> RLS default deny
+-- sengaja gak ada policy UPDATE/DELETE di tabel AP transaksional -> RLS default deny
 ```
 
 ## Grant
@@ -337,12 +279,11 @@ create policy ap_payment_allocations_insert on ap_payment_allocations
 grant select, insert, update on suppliers to authenticated;
 grant select, insert on ap_bills to authenticated;
 grant select, insert on ap_payments to authenticated;
-grant select, insert on ap_payment_allocations to authenticated;
 ```
 
 ## AP Credit Note (Retur Barang ke Supplier, migration `0035_ap_credit_notes_schema.sql`)
 
-Ref bisnis: `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier". Ref DDL yang di-reuse: `journal-entry-schema.md` (`create_journal_entry`, `block_edit_delete`), `inventory-schema.md` (`consume_weighted_average`, `goods_receipt_notes`/`goods_receipt_lines`). 0 perubahan struktur ke `ap_bills`/`ap_payments`/`suppliers` (gak ada kolom baru) — tapi 2 fungsi existing dari `0010` diperluas (`create or replace`): `ap_payment_allocations_no_over_allocation` dan `cancel_ap_bill`, lihat bagian `ap_bill_remaining` di bawah.
+Ref bisnis: `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier". Ref DDL yang di-reuse: `journal-entry-schema.md` (`create_journal_entry`, `block_edit_delete`), `inventory-schema.md` (`consume_weighted_average`, `goods_receipt_notes`/`goods_receipt_lines`). 0 perubahan struktur ke `ap_bills`/`ap_payments`/`suppliers` (gak ada kolom baru) — tapi 2 fungsi existing dari `0010 pra-squash` diperluas (`create or replace`): `ap_payment_allocations_no_over_allocation` (fungsi ini sendiri sudah di-drop total migration `0011`, lihat "AP Payment — Selaras AR (0011)" di bawah) dan `cancel_ap_bill`, lihat bagian `ap_bill_remaining` di bawah.
 
 **Beda mendasar dari AR Credit Note (`ar-schema.md`)**: 2 resolusi retur yang **saling eksklusif**, dipilih manual, bukan additive kayak AR. Ketauan lewat proses ngajarin fitur ini bahwa `warranty_replacement` di AR justru punya cacat desain (kompensasi ganda) — sudah diperbaiki lewat migration `0037_ar_warranty_replacement_discount_reversal.sql` (`warranty_replacement` sekarang wajib membalikkan diskon retur proporsional, bukan jadi saling eksklusif seperti AP), lihat `ar-schema.md`.
 
@@ -432,9 +373,9 @@ $$ language sql stable;
 
 Dipakai 2 trigger insert (`purchase_return_lines_no_over_return_trigger`, `purchase_replacement_lines_no_over_return_trigger`) yang keduanya juga nge-lookup `goods_receipt_lines.qty_received` lewat `goods_receipt_notes.bill_id`.
 
-### `ap_return_credits` + `ap_return_credit_applications` + `ap_return_credit_refunds`
+### `ap_return_credits` + `ap_return_credit_refunds`
 
-Mirror `ar_return_credits` (0031) persis, arah asset kebalik (di AR liability kita ke customer, di sini asset kita ke supplier).
+Mirror `ar_return_credits` (0031) persis, arah asset kebalik (di AR liability kita ke customer, di sini asset kita ke supplier). Tabel jembatan ketiga (`ap_return_credit_applications`, disposisi "dipakai motong bill lain") sempat ada dari desain awal fitur ini, **dicabut total migration `0009_ap_remove_return_credit_apply.sql`** — lihat bagian "Pencabutan `apply_ap_return_credit`" di bawah.
 
 ```sql
 create table ap_return_credits (
@@ -442,17 +383,6 @@ create table ap_return_credits (
   supplier_id uuid not null references suppliers(id),
   credit_note_id uuid not null references ap_credit_notes(id),
   amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-
-create table ap_return_credit_applications (
-  id uuid primary key default gen_random_uuid(),
-  credit_id uuid not null references ap_return_credits(id),
-  bill_id uuid not null references ap_bills(id),
-  amount numeric(14,2) not null check (amount > 0),
-  source_ref text not null,
   journal_entry_id uuid not null references journal_entries(id),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
@@ -469,30 +399,23 @@ create table ap_return_credit_refunds (
 );
 ```
 
-Guard `ap_return_credit_applications_guard` cek: supplier match, bill belum dibatalkan, amount ≤ `ap_bill_remaining(bill_id)`. Guard `ap_return_credit_refunds_guard` cek amount ≤ `ap_return_credit_remaining(credit_id)`. Pola identik `ar_return_credit_applications_guard`/`ar_return_credit_refunds_guard`.
+Guard `ap_return_credit_refunds_guard` cek amount ≤ `ap_return_credit_remaining(credit_id)`. Pola identik `ar_return_credit_refunds_guard`.
 
-### `ap_bill_remaining(bill_id)` — disentralisasi dari AWAL, 3 reducer
+### `ap_bill_remaining(bill_id)` — disentralisasi dari AWAL, sekarang 2 reducer (terakhir didefinisi `0011`)
 
-Beda dari AR yang baru disentralisasi belakangan (0031, setelah bug over-allocation berulang kebukti) — di AP langsung dibangun dari awal karena polanya udah kenal. **3 reducer**: `ap_payment_allocations` + `ap_credit_notes` + `ap_return_credit_applications` **aktif** (belum di-reverse). Reducer ke-3 ini awalnya kelewat (ketauan `schema-reviewer`) — tanpa dia, bill yang udah "dibayar" pakai saldo kredit retur masih bisa dialokasikan payment tunai lagi ngelebihin sisa riil, exploit konkret: bill 100, `apply_ap_return_credit` 100 (guard lolos karena `ap_bill_remaining` belum ngitung applications), lalu `record_ap_payment` 100 lagi ke bill yang sama juga lolos (guard yang sama, cek yang sama) → total "pelunasan" 200 buat bill 100.
+Beda dari AR yang baru disentralisasi belakangan (0031, setelah bug over-allocation berulang kebukti) — di AP langsung dibangun dari awal karena polanya udah kenal. **2 reducer**: `ap_payments` (langsung, bukan lewat tabel jembatan lagi sejak `0011`) + `ap_credit_notes`. Sempat ada reducer ke-3 (`ap_return_credit_applications` aktif) dari desain awal fitur retur (0035 pra-squash) — dicabut `0009` bareng tabelnya.
 
 ```sql
 create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
   select ab.amount
-    - coalesce((select sum(amount) from ap_payment_allocations where bill_id = p_bill_id), 0)
+    - coalesce((select sum(amount) from ap_payments where bill_id = p_bill_id), 0)
     - coalesce((select sum(amount) from ap_credit_notes where bill_id = p_bill_id), 0)
-    - coalesce((
-        select sum(arca.amount) from ap_return_credit_applications arca
-        where arca.bill_id = p_bill_id
-          and not exists (
-            select 1 from journal_entries je where je.reverses_entry_id = arca.journal_entry_id
-          )
-      ), 0)
   from ap_bills ab
   where ab.id = p_bill_id;
 $$ language sql stable;
 ```
 
-**`ap_payment_allocations_no_over_allocation` (0010) diperbarui** pakai fungsi ini alih-alih ngecek langsung ke `ap_bills.amount`. **`cancel_ap_bill` (0010) juga diperbarui** — hard-block tambahan kalau bill udah punya `ap_credit_notes` (pola sama guard payment-allocation: bill udah "kesentuh" transaksi lain), plus auto-reverse loop buat `ap_return_credit_applications` aktif yang nunjuk ke bill itu (reklasifikasi sederhana, aman dibalik — mirror perluasan `cancel_ar_invoice` di 0031 pas `ar_return_credit_applications` ditambahkan). Awalnya `cancel_ap_bill` gak disentuh sama sekali di migration ini (ketauan `schema-reviewer` sebagai blocker) — pelajarannya: migration yang nambah reducer baru wajib langsung revisit RPC cancel yang berkaitan, jangan ditunda.
+**`record_ap_payment` (`0011`)** pakai fungsi ini alih-alih ngecek langsung ke `ap_bills.amount`, mirror `record_ar_payment` pasca-`0010`. **`cancel_ap_bill`** hard-block tambahan kalau bill udah punya `ap_credit_notes` (pola sama guard payment: bill udah "kesentuh" transaksi lain) — sempat juga punya auto-reverse loop buat `ap_return_credit_applications` aktif, dihapus `0009` bareng tabelnya (gak ada lagi apa pun buat di-unwind di sisi itu).
 
 ### RPC `create_ap_credit_note` (Opsi A)
 
@@ -510,25 +433,53 @@ Konsumsi barang rusak pakai `consume_weighted_average` (fungsi yang sama dipakai
 
 Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
 
-### RPC `apply_ap_return_credit` / `refund_ap_return_credit`
+### RPC `refund_ap_return_credit`
 
-Mirror `apply_ar_return_credit`/`refund_ar_return_credit` (0031) persis, arah jurnal kebalik (Debit Utang Usaha bukan Kredit Piutang Usaha; Debit Kas bukan konsisten — lihat body lengkap).
+Mirror `refund_ar_return_credit` (0031) persis, arah jurnal kebalik (Debit Kas/Bank / Kredit Piutang Retur Supplier). Sempat ada pasangan `apply_ap_return_credit` (Debit Utang Usaha / Kredit Piutang Retur Supplier, motong bill lain) — dicabut `0009`, lihat bagian di bawah.
 
-Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
+Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql` (bentuk awal), `supabase/migrations/0009_ap_remove_return_credit_apply.sql` (fungsi terkait di-`create or replace`, `apply_ap_return_credit`-nya di-drop).
 
 ### RLS Policy
 
-Pola identik semua tabel transaksional AP/AR lain: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `update`/`delete` di 7 tabel baru (RLS default-deny + `block_edit_delete` jaring kedua).
+Pola identik semua tabel transaksional AP/AR lain: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `update`/`delete` di tabel baru (RLS default-deny + `block_edit_delete` jaring kedua).
 
 ### Seed demo
 
 `supabase/migrations/0036_seed_demo_ap_credit_notes.sql` — skenario 6-10 di `docs/story/accounts-payable.md`, lanjutan cross-modul dari `docs/story/inventory.md` (bill Toko Gula Sejahtera Tahap 3 `GRN-GULA-001` & Tahap 5 `GRN-GULA-002`).
 
+## Pencabutan `apply_ap_return_credit` (dipakai motong bill lain) — migration `0009_ap_remove_return_credit_apply.sql`
+
+Sempat ada disposisi kedua buat `ap_return_credits`: **dipakai motong bill lain** ke supplier yang sama (`ap_return_credit_applications` + RPC `apply_ap_return_credit`, opsional & gak terikat urutan bill — bisa ke bill mana pun milik supplier yang sama, bukan cuma "bill berikutnya"). Dicabut total lewat keputusan bisnis (2026-08-08, dibahas interaktif — bukan diusulkan agent): mekanisme ini **bukan fondasi AP** — `ap_return_credits` tetap tertelusuri & terselesaikan penuh lewat 1 disposisi yang tersisa (refund tunai, `refund_ap_return_credit`, gak berubah).
+
+**Beda dari alasan AR mencabut mekanisme setara** (`apply_ar_return_credit`, dicabut `0041` — lihat `ar-schema.md` bagian "AR Return Credit"): AR mencabutnya demi konsistensi kebijakan penagihan yang lebih ketat (`0040`, larangan overpay-jadi-saldo-ngambang — bukan larangan cicil, itu bagian yang belakangan dikoreksi lagi lewat `0010`). AP **gak** pernah ikut kebijakan overpay-jadi-saldo-ngambang itu ke `ap_return_credits` (mekanismenya beda: excess di AP otomatis jadi asset "Piutang Retur Supplier", bukan hasil overpay customer), jadi pencabutan `ap_return_credit_applications` di sini murni soal kesederhanaan/gak ada bukti kebutuhan — bukan konsistensi kebijakan. *(Catatan historis: pas paragraf ini ditulis, `ap_payment_allocations` many-to-many masih ada dari awal, jadi perbandingannya waktu itu valid — tabel itu sendiri belakangan ikut dicabut migration `0011`, lihat "AP Payment — Selaras AR (0011)" di bawah, tapi alasannya beda: bukan soal return-credit, melainkan soal payment "bayar gabungan".)*
+
+**Verifikasi sebelum drop**: tabel `ap_return_credit_applications` di database live berisi 0 baris (`supabase db query --linked`), gak ada seed/demo data yang manggil `apply_ap_return_credit` — pencabutan bersih, gak ada data yang hilang.
+
+Perubahan: drop RPC `apply_ap_return_credit`, drop tabel `ap_return_credit_applications` (cascade trigger/index/RLS/grant), drop fungsi guard `ap_return_credit_applications_guard`, `create or replace` 3 fungsi (`ap_bill_remaining`, `ap_return_credit_remaining`, `cancel_ap_bill`) buang reducer/loop yang nunjuk ke tabel itu — signature ketiganya gak berubah, jadi gak perlu `drop function` duluan. Direview `schema-reviewer` sebelum apply (blocker awal: UI/type di `src/` masih query tabel yang mau di-drop — diperbaiki bareng di PR yang sama sebelum migration di-push).
+
+## AP Payment — Selaras AR (0011) — migration `0011_ap_payment_single_bill.sql`
+
+Menyusul migration `0010_ar_allow_partial_payment.sql` (AR boleh cicil tapi tetap gak boleh overpay/bayar gabungan), keputusan bisnis (2026-08-08) minta AP disamakan filosofinya: **payment boleh cicil, tapi wajib fokus nunjuk 1 bill tertentu** — gak boleh "bebas nyebar ke bill mana pun sesukanya" dalam 1 transaksi. Sebelum ini AP justru **lebih longgar** dari AR — tabel jembatan `ap_payment_allocations` (many-to-many, ada dari desain awal Fase 4) ngizinin 1 payment dipecah ke banyak bill sekaligus ("bayar gabungan"). Itu yang dicabut di sini, bukan cicilnya (cicil per 1 bill tetap boleh, gak berubah).
+
+**Beda dari pencabutan `apply_ap_return_credit` (`0009`) yang murni soal kesederhanaan**: pencabutan `ap_payment_allocations` ini soal **konsistensi filosofi antar-modul** — AR dan AP sekarang sama-sama nganut "payment taat ke 1 obligasi spesifik, boleh kurang (cicil) gak boleh lebih (overpay), gak pernah disebar ke banyak obligasi dalam 1 transaksi".
+
+**Verifikasi sebelum drop**: `ap_payments` dan `ap_payment_allocations` di database live sama-sama 0 baris (`supabase db query --linked`) — pencabutan bersih, gak ada data yang hilang.
+
+Perubahan:
+- `drop function if exists record_ap_payment(uuid, date, numeric, text, uuid, uuid, jsonb);` — signature lama (param terakhir `p_allocations jsonb`) di-drop duluan karena signature barunya beda tipe (`p_bill_id uuid`), kalau gak di-drop bakal jadi overload berbahaya (pelajaran dari bug `record_ar_payment` di `0027` pra-squash).
+- `drop table if exists ap_payment_allocations;` — cascade trigger `ap_payment_allocations_no_over_allocation_trigger`, 2 index, trigger `block_edit_delete`, RLS policies, grant.
+- `drop function if exists ap_payment_allocations_no_over_allocation();` — fungsi trigger yang jadi orphan setelah tabelnya hilang.
+- `alter table ap_payments add column bill_id uuid not null references ap_bills(id);` + `create index ap_payments_bill_id_idx on ap_payments(bill_id);` — FK langsung, gak `unique` (1 bill boleh punya banyak baris payment buat cicil, mirror persis `ar_payments.invoice_id` pasca-`0010`). `not null` tanpa `default` aman langsung karena tabelnya 0 baris.
+- `ap_bill_remaining()` reducer #1: `sum(amount) from ap_payment_allocations` jadi `sum(amount) from ap_payments` langsung.
+- `record_ap_payment(...)` signature baru: `p_bill_id uuid` gantiin `p_allocations jsonb`. Guard sama persis pola `record_ar_payment` pasca-`0010` — `if p_amount > v_remaining then raise exception` (cuma tolak overpay).
+- `cancel_ap_bill`: guard payment-count balik ke `ap_payments` langsung.
+
+Direview `schema-reviewer` sebelum apply — gak ada blocker. UI (`/ap-payments` form + list + detail, `/ap-bills/[id]` tabel "Pembayaran", `/suppliers/[id]` tabel "AP Payments") disederhanakan bareng di sesi yang sama — pilih 1 bill langsung (bukan lagi form multi-baris alokasi), field `ApBill.ap_payment_allocations` di `src/lib/ap-bills/schema.ts` diganti `ap_payments`.
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
 Detail lengkap tiap item: `memory/scope-debt/`.
 
-- **Diskon bayar cepat** — `memory/scope-debt/ap-diskon-bayar-cepat.md`.
 - **Uang muka/DP ke supplier** — `memory/scope-debt/ap-uang-muka-dp.md`.
 - **Bill kepisah kategori (compound debit)** — `memory/scope-debt/ap-bill-compound.md`.
 - **Barang rusak tanpa kompensasi supplier sama sekali** — `memory/scope-debt/kerugian-barang-rusak.md` (lintas modul AR & AP).

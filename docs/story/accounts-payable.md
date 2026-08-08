@@ -42,6 +42,8 @@ Jurnal: Utang Usaha (D) 400.000 | Kas di Bank (K) 400.000. Status: **lunas**.
 1 payment, 1 jurnal (Utang Usaha (D) 270.000 | Kas di Bank (K) 270.000), 3 baris alokasi.
 Ketiga bill sekarang lunas.
 
+*(Catatan: skenario ini sebelumnya 1 payment lewat tabel jembatan `ap_payment_allocations`, 3 baris alokasi ke 3 bill sekaligus — "bayar gabungan". Migration `0011_ap_payment_single_bill.sql` (2026-08-08) mencabut kemampuan itu demi selaras filosofi AR: payment sekarang wajib nunjuk 1 bill spesifik. Skenario yang sama sekarang jadi 3 payment terpisah — 27 Juli 2026: Rp100.000 ke bill 20 Juli, Rp80.000 ke bill 22 Juli, Rp90.000 ke bill 24 Juli, masing-masing 1 jurnal sendiri — hasil akhirnya identik (ketiga bill lunas, total kas keluar Rp270.000), cuma jejak transaksinya 3 baris bukan 1.)*
+
 ## Skenario 4 — Bill lama, telat bayar (Toko Tepung Makmur — lanjutan dari `general-ledger.md`)
 
 10 Juli 2026 (sudah tercatat di Fase 2): ambil tepung & gula dari Toko Tepung Makmur, bill Rp800.000, `due_date` = 10+14 = **24 Juli 2026**.

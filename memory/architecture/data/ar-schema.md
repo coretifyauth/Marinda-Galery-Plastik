@@ -76,9 +76,9 @@ Index di `customer_id` buat query "semua invoice 1 customer" (histori piutang pe
 
 ### `ar_payments` — piutang berkurang
 
-Satu baris = satu kejadian bayar nyata dari customer (bukan jadwal), wajib persis nutup **1 invoice penuh** (migration `0040_ar_payment_strict_invoice_match.sql`, regresi disengaja dari desain tabel jembatan many-to-many yang sempat ada — lihat "AR Payment (Kelebihan Bayar, dst)" di bawah buat riwayatnya). Yang perlu diperhatiin:
-- `invoice_id` — **unique**, langsung nunjuk ke 1 invoice (bukan lewat tabel jembatan) — hard guard di level kolom: 1 invoice paling banyak 1 payment.
-- `amount` — wajib **persis** sama `ar_invoice_remaining(invoice_id)` pas `record_ar_payment` dipanggil, ditegakkan RPC (`raise exception` kalau gak pas), bukan constraint DB (butuh bandingin ke tabel lain, gak bisa jadi `CHECK`).
+Satu baris = satu kejadian bayar nyata dari customer (bukan jadwal), **selalu nutup 1 invoice spesifik** (gak ada gabung ke invoice lain) — tapi sejak `0010_ar_allow_partial_payment.sql` boleh **cicil** (kurang dari sisa outstanding), 1 invoice bisa punya banyak baris payment dari waktu ke waktu. Riwayat: `0040_ar_payment_strict_invoice_match.sql` (pra-squash) sempat mewajibkan EXACT match (gak boleh cicil ATAUpun overpay) — ternyata itu kelewat ketat, larangan yang dimaksud aslinya cuma soal overpay yang jadi saldo ngambang (`ar_customer_credits`, TETAP dicabut, gak dibalikin), bukan cicil. `0010` melonggarkan itu — lihat "AR Payment — Cicil Dibalikin" di bawah buat detail lengkap. Yang perlu diperhatiin:
+- `invoice_id` — **bukan unique lagi** sejak `0010` — langsung nunjuk ke 1 invoice (bukan lewat tabel jembatan), tapi 1 invoice boleh punya banyak baris payment.
+- `amount` — gak boleh **melebihi** `ar_invoice_remaining(invoice_id)` pas `record_ar_payment` dipanggil (boleh kurang = cicil, gak boleh lebih = overpay tetap ditolak), ditegakkan RPC (`raise exception`), bukan constraint DB.
 - `journal_entry_id` — wajib, pola sama `ar_invoices`.
 - **Gak ada `updated_at`/`archived_at`** — sama alasan `ar_invoices`.
 
@@ -97,10 +97,9 @@ create table ar_payments (
 
 create index ar_payments_customer_id_idx on ar_payments(customer_id);
 create index ar_payments_invoice_id_idx on ar_payments(invoice_id);
-alter table ar_payments add constraint ar_payments_invoice_id_unique unique (invoice_id);
 ```
 
-`invoice_id` ditambah belakangan lewat `0040` (`alter table`, backfill dari `ar_payment_allocations` yang lama sebelum tabel itu di-drop) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel.
+`invoice_id` ditambah belakangan lewat `0040` (`alter table`, backfill dari `ar_payment_allocations` yang lama sebelum tabel itu di-drop) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel. Constraint `unique (invoice_id)` yang sempat ditambah `0040` **dicabut lagi `0010`**.
 
 ## Trigger
 ```
@@ -199,15 +198,12 @@ end;
 $$;
 ```
 
-### `record_ar_payment` — bikin payment + journal entry sekaligus, langsung ke 1 invoice (terakhir didefinisi `0040`)
+### `record_ar_payment` — bikin payment + journal entry sekaligus, langsung ke 1 invoice (terakhir didefinisi `0010`)
 
-Signature 7 param, `p_invoice_id` tunggal — bukan lagi `p_allocations` jsonb array (dicabut migration `0040_ar_payment_strict_invoice_match.sql`, riwayat: `0007` versi awal 7 param beda bentuk, `0027` diperluas jadi 8 param `p_allocations`+`p_customer_credit_account_id`). `p_amount` wajib **persis** sama `ar_invoice_remaining(p_invoice_id)` — `raise exception` sebelum jurnal apa pun dibuat kalau gak pas (baik kurang maupun lebih).
+Signature 7 param, `p_invoice_id` tunggal — bukan `p_allocations` jsonb array (riwayat: `0007` versi awal 7 param beda bentuk, `0027` diperluas jadi 8 param `p_allocations`+`p_customer_credit_account_id`, `0040` balik ke 7 param + wajib exact-match, `0010` signature TETAP SAMA cuma guard-nya dilonggarkan). `p_amount` gak boleh **melebihi** `ar_invoice_remaining(p_invoice_id)` — boleh kurang (cicil), gak boleh lebih (overpay) — `raise exception` sebelum jurnal apa pun dibuat kalau overpay.
 
 ```sql
-drop function if exists record_ar_payment(uuid, date, numeric, text, uuid, uuid, jsonb, uuid);
-drop function if exists record_ar_payment(uuid, date, numeric, text, uuid, uuid, jsonb);
-
-create function record_ar_payment(
+create or replace function record_ar_payment(
   p_customer_id uuid,
   p_payment_date date,
   p_amount numeric,
@@ -226,8 +222,8 @@ declare
 begin
   select ar_invoice_remaining(p_invoice_id) into v_remaining;
 
-  if p_amount != v_remaining then
-    raise exception 'Payment % harus persis sama dengan sisa piutang invoice % (sisa %, coba bayar %) — gak boleh cicilan/kurang/lebih',
+  if p_amount > v_remaining then
+    raise exception 'Payment % melebihi sisa piutang invoice % (sisa %, coba bayar %) — gak boleh overpay',
       p_source_ref, p_invoice_id, v_remaining, p_amount;
   end if;
 
@@ -605,7 +601,24 @@ Pola identik AR/Inventory lain — `select` semua `authenticated`, `insert` cuma
 
 ## AR Customer Credit (Kelebihan Bayar) — dicabut total (migration `0040_ar_payment_strict_invoice_match.sql`)
 
-Sempat ada mekanisme "customer transfer lebih dari total invoice yang dilunasin, excess-nya jadi saldo kredit" — tabel `ar_customer_credits`/`ar_customer_credit_applications`/`ar_customer_credit_refunds` (migration `0027`), RPC `apply_ar_customer_credit`/`refund_ar_customer_credit`, akun liability `Saldo Kredit Customer` (`2400`). Semuanya dicabut total (tabel di-drop, RPC di-drop) begitu keputusan bisnis "payment wajib persis 1 invoice" jalan — gak ada lagi jalur buat kelebihan bayar "nyantol", `record_ar_payment` `raise exception` langsung kalau amount gak pas. Rationale: `docs/domain/accounts-receivable.md` bagian "Kenapa Payment Wajib Persis 1 Invoice".
+Sempat ada mekanisme "customer transfer lebih dari total invoice yang dilunasin, excess-nya jadi saldo kredit" — tabel `ar_customer_credits`/`ar_customer_credit_applications`/`ar_customer_credit_refunds` (migration `0027`), RPC `apply_ar_customer_credit`/`refund_ar_customer_credit`, akun liability `Saldo Kredit Customer` (`2400`). Semuanya dicabut total (tabel di-drop, RPC di-drop) begitu keputusan bisnis "payment gak boleh overpay" jalan — gak ada lagi jalur buat kelebihan bayar "nyantol", `record_ar_payment` `raise exception` kalau amount ngelebihin sisa. Rationale: `docs/domain/accounts-receivable.md` bagian "Kenapa Payment Boleh Cicil Tapi Gak Boleh Overpay". **Tetap dicabut permanen** — lihat bagian di bawah, cicil dibalikin (`0010`) tapi overpay-jadi-saldo-ngambang ini TIDAK dibalikin.
+
+## AR Payment — Cicil Dibalikin (migration `0010_ar_allow_partial_payment.sql`)
+
+Diskusi bisnis (2026-08-08) mengoreksi `0040`: larangan yang dimaksud aslinya cuma soal **overpay yang jadi saldo ngambang** (mekanisme `ar_customer_credits` di atas — customer bisa bayar berapa aja, kelebihannya "nyantol" bisa dipakai kapan aja ke invoice mana aja, itu yang dianggap "seenaknya"), **bukan** cicilan/pembayaran sebagian terhadap 1 invoice yang sama. `0040` kelewat ketat karena menghapus dua-duanya sekaligus (exact-match wajib, gak boleh kurang ATAU lebih).
+
+`0010` melonggarkan tepat sebagian: `record_ar_payment` sekarang cuma nolak kalau `p_amount > ar_invoice_remaining(invoice_id)` (overpay) — kurang dari sisa (cicil) sekarang lolos. **Bukan** restore penuh ke desain pra-`0040`:
+- **Tetap 1 payment = 1 invoice** — gak ada tabel jembatan `ar_payment_allocations` many-to-many lagi, jadi "bayar gabungan lintas invoice" (1 payment nutup beberapa invoice sekaligus) TETAP gak didukung. Bedanya dari `0040`: sekarang 1 invoice boleh punya **banyak baris payment** dari waktu ke waktu (`ar_payments.invoice_id` gak unique lagi), bukan 1 payment nutup banyak invoice.
+- **`ar_customer_credits` TETAP dicabut** — overpay tetap hard-reject, gak ada saldo ngambang yang dibalikin.
+
+Perubahan konkret ke `0005_ar_schema.sql` (`create or replace`, signature semua fungsi gak berubah):
+- `alter table ar_payments drop constraint ar_payments_invoice_id_key;` + `create index ar_payments_invoice_id_idx on ar_payments(invoice_id);` (index eksplisit pengganti — sebelumnya numpang di unique constraint yang sekarang dihapus, ketauan `schema-reviewer` sebagai warning sebelum apply, index-nya jadi hilang kalau gak ditambah manual).
+- `ar_invoice_remaining()` reducer #1: dari `select amount from ar_payments where invoice_id = ...` (asumsi 1 baris) jadi `select sum(amount) from ar_payments where invoice_id = ...` — karena disentralisasi (`0031`), semua konsumen lain (`create_ar_invoice` credit-hold, `ar_deposit_applications_guard`, `ar_bad_debt_writeoffs_no_over_writeoff`, `create_ar_credit_note`) otomatis benar tanpa disentuh.
+- `record_ar_payment`: guard `!=` (exact) jadi `>` (cuma tolak overpay).
+
+`cancel_ar_invoice` gak berubah (masih `count(*) from ar_payments where invoice_id = ...` — invoice yang udah kesentuh payment SEBAGIAN pun tetap gak bisa dibatalkan lewat jalur ini, konsisten sama guard yang udah ada).
+
+Sisi UI: `/ar-payments` (form create) dan `/ar-invoices/[id]` (tabel "Pembayaran", sebelumnya `.maybeSingle()` diasumsikan maks 1 baris) diperbarui bareng — bukan cuma migration DB, per aturan "schema -> API -> UI" gak boleh timpang jalan sendiri-sendiri (lihat pelajaran dari migration `0009` AP yang awalnya kelewat langkah ini).
 
 ## AR Bad Debt Write-off (Piutang Tak Tertagih) — migration `0029_ar_bad_debt_writeoffs.sql` + `0030_seed_demo_ar_bad_debt_writeoffs.sql`
 

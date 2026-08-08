@@ -13,12 +13,6 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 
-type AllocationInput = { bill_id: string; amount: string };
-
-function emptyAllocation(): AllocationInput {
-  return { bill_id: "", amount: "" };
-}
-
 export default function ApPaymentsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
@@ -31,12 +25,12 @@ export default function ApPaymentsPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [supplierId, setSupplierId] = useState("");
+  const [billId, setBillId] = useState("");
   const [paymentDate, setPaymentDate] = useState("");
   const [amount, setAmount] = useState("");
   const [sourceRef, setSourceRef] = useState("");
   const [payableAccountId, setPayableAccountId] = useState("");
   const [cashAccountId, setCashAccountId] = useState("");
-  const [allocations, setAllocations] = useState<AllocationInput[]>([emptyAllocation()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -47,7 +41,7 @@ export default function ApPaymentsPage() {
     const { data, error } = await supabase
       .from("ap_payments")
       .select(
-        "id, supplier_id, payment_date, amount, source_ref, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(id, amount, ap_bills(source_ref))"
+        "id, supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_at, suppliers(name), ap_bills(source_ref)"
       )
       .order("payment_date", { ascending: false });
     if (error) {
@@ -62,7 +56,7 @@ export default function ApPaymentsPage() {
     const { data } = await supabase
       .from("ap_bills")
       .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payment_allocations(amount)"
+        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount)"
       )
       .order("bill_date");
     setBills((data ?? []) as unknown as ApBill[]);
@@ -126,21 +120,7 @@ export default function ApPaymentsPage() {
     .map((bill) => ({ bill, ...billStatus(bill, reversedEntryIds.has(bill.journal_entry_id)) }))
     .filter((x) => x.status !== "lunas" && x.status !== "dibatalkan");
 
-  function updateAllocation(index: number, patch: Partial<AllocationInput>) {
-    setAllocations((prev) => prev.map((a, i) => (i === index ? { ...a, ...patch } : a)));
-  }
-
-  function addAllocation() {
-    setAllocations((prev) => [...prev, emptyAllocation()]);
-  }
-
-  function removeAllocation(index: number) {
-    setAllocations((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
-  }
-
-  const totalAllocated = allocations.reduce((sum, a) => sum + (parseFloat(a.amount) || 0), 0);
-  const amountNumber = parseFloat(amount) || 0;
-  const isBalanced = amountNumber > 0 && Math.abs(totalAllocated - amountNumber) < 0.005;
+  const selectedBill = outstandingBills.find((x) => x.bill.id === billId);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -153,7 +133,7 @@ export default function ApPaymentsPage() {
       source_ref: sourceRef,
       payable_account_id: payableAccountId,
       cash_account_id: cashAccountId,
-      allocations: allocations.map((a) => ({ bill_id: a.bill_id, amount: a.amount })),
+      bill_id: billId,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -168,7 +148,7 @@ export default function ApPaymentsPage() {
       p_source_ref: parsed.data.source_ref,
       p_payable_account_id: parsed.data.payable_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
-      p_allocations: parsed.data.allocations,
+      p_bill_id: parsed.data.bill_id,
     });
     setSubmitting(false);
     if (error) {
@@ -177,12 +157,12 @@ export default function ApPaymentsPage() {
     }
 
     setSupplierId("");
+    setBillId("");
     setPaymentDate("");
     setAmount("");
     setSourceRef("");
     setPayableAccountId("");
     setCashAccountId("");
-    setAllocations([emptyAllocation()]);
     setShowForm(false);
     await Promise.all([loadBills(), loadPayments()]);
   }
@@ -230,7 +210,7 @@ export default function ApPaymentsPage() {
               <th className="px-4 py-2">Supplier</th>
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Alokasi ke Bill</th>
+              <th className="px-4 py-2">Bill</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
             </tr>
           </thead>
@@ -244,15 +224,7 @@ export default function ApPaymentsPage() {
                 <td className="px-4 py-2 font-medium text-black">{p.suppliers.name}</td>
                 <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
                 <td className="px-4 py-2">{p.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {p.ap_payment_allocations.map((a) => (
-                      <li key={a.id}>
-                        {a.ap_bills.source_ref} — {a.amount.toLocaleString("id-ID")}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
+                <td className="px-4 py-2">{p.ap_bills.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">
                   {p.amount.toLocaleString("id-ID")}
                 </td>
@@ -278,6 +250,10 @@ export default function ApPaymentsPage() {
               ketolak RLS.
             </p>
           )}
+          <p className="mb-4 text-sm text-slate-500">
+            Payment selalu nutup 1 bill spesifik (gak bisa disebar ke bill lain), boleh cicil
+            (kurang dari sisa outstanding), tapi gak boleh lebih (overpay ditolak).
+          </p>
           <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
@@ -287,13 +263,34 @@ export default function ApPaymentsPage() {
                   value={supplierId}
                   onChange={(e) => {
                     setSupplierId(e.target.value);
-                    setAllocations([emptyAllocation()]);
+                    setBillId("");
+                    setAmount("");
                   }}
                 >
                   <option value="">Pilih supplier...</option>
                   {suppliers.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="bill">Bill</Label>
+                <Select
+                  id="bill"
+                  value={billId}
+                  disabled={!supplierId}
+                  onChange={(e) => {
+                    setBillId(e.target.value);
+                    const found = outstandingBills.find((x) => x.bill.id === e.target.value);
+                    setAmount(found ? String(found.outstanding) : "");
+                  }}
+                >
+                  <option value="">Pilih bill...</option>
+                  {outstandingBills.map(({ bill, outstanding }) => (
+                    <option key={bill.id} value={bill.id}>
+                      {bill.source_ref} — sisa {outstanding.toLocaleString("id-ID")}
                     </option>
                   ))}
                 </Select>
@@ -317,7 +314,7 @@ export default function ApPaymentsPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="amount">Jumlah dibayar</Label>
+                <Label htmlFor="amount">Jumlah dibayar (boleh cicil, maks sisa outstanding)</Label>
                 <Input
                   id="amount"
                   type="number"
@@ -355,66 +352,32 @@ export default function ApPaymentsPage() {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
-                <span>Bill outstanding</span>
-                <span>Alokasi</span>
-                <span />
+            {selectedBill && (
+              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+                <span>
+                  Sisa outstanding bill terpilih:{" "}
+                  <strong className="font-mono">{selectedBill.outstanding.toLocaleString("id-ID")}</strong>
+                </span>
+                {(() => {
+                  const paid = parseFloat(amount) || 0;
+                  const isOverpay = paid - selectedBill.outstanding > 0.005;
+                  const remainingAfter = selectedBill.outstanding - paid;
+                  return (
+                    <span className={isOverpay ? "font-medium text-red-600" : "font-medium text-emerald-600"}>
+                      {isOverpay
+                        ? "Melebihi sisa outstanding — ditolak"
+                        : remainingAfter > 0.005
+                          ? `Cicil — sisa setelah ini: ${remainingAfter.toLocaleString("id-ID")}`
+                          : "Lunas ✓"}
+                    </span>
+                  );
+                })()}
               </div>
-              {!supplierId && (
-                <p className="text-sm text-slate-400">Pilih supplier dulu buat lihat bill outstanding.</p>
-              )}
-              {allocations.map((alloc, i) => (
-                <div key={i} className="grid grid-cols-[1fr_8rem_2.5rem] gap-2">
-                  <Select
-                    value={alloc.bill_id}
-                    onChange={(e) => updateAllocation(i, { bill_id: e.target.value })}
-                    disabled={!supplierId}
-                  >
-                    <option value="">Pilih bill...</option>
-                    {outstandingBills.map(({ bill, outstanding }) => (
-                      <option key={bill.id} value={bill.id}>
-                        {bill.source_ref} — sisa {outstanding.toLocaleString("id-ID")}
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={alloc.amount}
-                    onChange={(e) => updateAllocation(i, { amount: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeAllocation(i)}
-                    disabled={allocations.length <= 1}
-                    className="text-slate-400 hover:text-red-600 disabled:opacity-30"
-                    aria-label="Hapus alokasi"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-              <Button type="button" variant="secondary" onClick={addAllocation} className="w-fit" disabled={!supplierId}>
-                + Tambah alokasi
-              </Button>
-            </div>
-
-            <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-              <span>
-                Total alokasi:{" "}
-                <strong className="font-mono">{totalAllocated.toLocaleString("id-ID")}</strong> — Jumlah
-                dibayar: <strong className="font-mono">{amountNumber.toLocaleString("id-ID")}</strong>
-              </span>
-              <span className={isBalanced ? "font-medium text-emerald-600" : "font-medium text-red-600"}>
-                {isBalanced ? "Cocok ✓" : "Belum cocok"}
-              </span>
-            </div>
+            )}
 
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting || !isBalanced} className="w-fit">
+            <Button type="submit" disabled={submitting} className="w-fit">
               {submitting ? "Menyimpan..." : "Simpan Payment"}
             </Button>
           </form>
