@@ -14,10 +14,16 @@ AP = kebalikan AR: CV Barokah berutang ke supplier, bukan piutang dari customer.
     - Bill udah lunas penuh (atau retur ngelebihin sisa outstanding) → jurnal yang sama tetap jalan dulu (outstanding jadi minus) → excess-nya **otomatis** direklasifikasi jadi `ap_return_credits` (pola sama `ar_return_credits`, arah aset kebalik).
   - **Opsi B — Tukar Barang** (`create_purchase_replacement`) — **berdiri sendiri, gak lewat `ap_credit_notes` sama sekali** (beda dari AR `warranty_replacement` yang wajib nunjuk credit note dulu — AP sengaja gak niru pola itu karena kalau Opsi A dan B jalan bareng jadi kompensasi ganda dari sisi supplier). Berlaku sama persis di semua status bayar — Utang Usaha **gak pernah kesentuh**. Jurnal: Debit Persediaan Bahan Baku (barang baru) / Kredit Persediaan Bahan Baku (barang rusak) — net zero, murni reklasifikasi fisik.
   - **Cuma nanganin item Weighted Average** — bukan lagi "sementara", FIFO sudah dihapus total dari sistem (migration `0038_remove_fifo_costing.sql`), jadi Weighted Average satu-satunya jalur yang ada. Retur/tukar barang kurangin `inventory_balances.qty_on_hand` langsung (reuse pola `consume_weighted_average`), pakai `avg_cost` **saat itu** (bukan harga asal GRN — WA emang gak nyimpen asal-usul per lot).
-- **ap_return_credits** — asset **"Piutang Retur Supplier"** (akun baru `1350`), mirror `ar_return_credits` tapi arah kebalik (di AR itu liability kita ke customer; di sini asset kita ke supplier — supplier "berutang" balik ke kita). **Sengaja akun terpisah dari rencana `Uang Muka Pembelian`** (`memory/scope-debt/ap-uang-muka-dp.md`) walau sekilas sama-sama "nilai kita di supplier" — beda asal jurnal (DP = bayar duluan sebelum barang datang; return credit = kelebihan setelah retur pada bill yang udah lunas), harus bisa ditelusuri balik terpisah. Partial-capable, **1 disposisi**:
+- **ap_return_credits** — asset **"Piutang Retur Supplier"** (akun baru `1350`), mirror `ar_return_credits` tapi arah kebalik (di AR itu liability kita ke customer; di sini asset kita ke supplier — supplier "berutang" balik ke kita). **Sengaja akun terpisah dari `Uang Muka Pembelian`** (akun `1360`, lihat `ap_deposit` di bawah) walau sekilas sama-sama "nilai kita di supplier" — beda asal jurnal (DP = bayar duluan sebelum barang datang; return credit = kelebihan setelah retur pada bill yang udah lunas), harus bisa ditelusuri balik terpisah. Partial-capable, **1 disposisi**:
   - **ap_return_credit_refunds** — dicairkan tunai: Debit Kas/Bank / Kredit Piutang Retur Supplier.
   - Guard no-over-use: `SUM(refunds.amount)` per `ap_return_credits` ≤ `amount`.
   - Sempat ada disposisi kedua ("dipakai motong bill lain", `ap_return_credit_applications`) — dicabut migration `0009_ap_remove_return_credit_apply.sql`, keputusan bisnis (2026-08-08): bukan fondasi AP, saldo tetap tertelusuri lewat refund tunai.
+- **ap_deposit** — uang muka/DP dibayar ke supplier sebelum bill ada (migration `0013_ap_deposits_schema.sql`). Mirror `ar_deposit` tapi arah kebalik: **asset** `Uang Muka Pembelian` (akun baru), bukan liability — supplier yang berutang balik ke kita, bukan sebaliknya. Jurnal: Debit Uang Muka Pembelian / Kredit Kas. 4 kejadian turunan, **partial-capable dari awal** (beda dari AR yang baru partial-capable belakangan lewat `0012`):
+  - **ap_deposit_application** — DP diterapkan ke bill. Jurnal: Debit Utang Usaha / Kredit Uang Muka Pembelian.
+  - **ap_deposit_refund** — DP dibalikin tunai (supplier yang mutusin, bukan kita — beda dari AR di mana KITA yang nentuin kebijakan ke customer). Jurnal: Debit Kas/Bank / Kredit Uang Muka Pembelian — gak ada dampak Laba Rugi.
+  - **ap_deposit_forfeiture** — DP hangus (supplier gak mau balikin). Jurnal: Debit **Beban Kerugian Uang Muka** (akun baru, expense) / Kredit Uang Muka Pembelian — ada dampak Laba Rugi.
+  - Guard terpusat `ap_deposit_remaining(deposit_id) = amount − SUM(applications) − SUM(refunds) − SUM(forfeitures)`, dipakai di ketiga tabel transaksional sekaligus — gak ada aturan "1 disposisi aktif", bisa campur kombinasi ketiganya.
+  - **`ap_bill_remaining()` diperluas** — reducer ke-3 (`ap_deposit_applications`), mirror `ar_invoice_remaining()`. **`cancel_ap_bill` diperluas** — auto-unwind `ap_deposit_applications` aktif, mirror `cancel_ar_invoice`.
 
 ## Constraints (wajib ditegakkan di implementasi)
 
@@ -28,6 +34,7 @@ AP = kebalikan AR: CV Barokah berutang ke supplier, bukan piutang dari customer.
 - **Cancellation guard**: `cancel_ap_bill` nolak kalau `ap_payments` bill itu udah ≥1 baris — **diterapkan dari awal** (beda dari AR yang nambah guard ini belakangan setelah kebukti perlu).
 - **No over-return (kombinasi Opsi A + B)**: total qty retur (`purchase_return_lines`, jalur Opsi A full) + total qty tukar (`purchase_replacement_lines`, Opsi B) per item per bill gak boleh ngelebihin `goods_receipt_lines.qty_received` bill itu — guard trigger baru (checks gabungan 2 tabel), karena item Weighted Average gak punya proteksi otomatis per-lot (beda dari zaman FIFO masih ada, `inventory_lot_consumptions_no_over_consumption` sudah dihapus bareng FIFO di migration `0038`).
 - **No over-use `ap_return_credits`**: `SUM(ap_return_credit_refunds.amount)` per `ap_return_credits` ≤ `amount`.
+- **No over-use `ap_deposits`**: `SUM(applications) + SUM(refunds) + SUM(forfeitures)` per `ap_deposits` ≤ `amount`, dijaga `ap_deposit_remaining()`.
 
 ## Skenario referensi (detail angka: `docs/story/accounts-payable.md`)
 
@@ -42,6 +49,10 @@ AP = kebalikan AR: CV Barokah berutang ke supplier, bukan piutang dari customer.
 | 7 | Retur (Opsi A), bill udah lunas | Jurnal sama + reklas excess ke `ap_return_credits` (Piutang Retur Supplier) |
 | 8 | Retur (Opsi B) — tukar barang | Berdiri sendiri, Utang Usaha gak kesentuh, independen dari status bayar |
 | 9 | Piutang Retur Supplier dicairkan tunai | Debit Kas/Bank / Kredit Piutang Retur Supplier |
+| 10 | DP dibayar lalu diterapkan ke bill | **Arah kebalik** — Debit Uang Muka Pembelian (asset) bukan liability |
+| 11 | DP dibatalkan, direfund tunai | **Gak ada padanan AR** (AR gak punya refund sampai `0012`) — supplier yang mutusin refund, bukan kita |
+| 12 | DP dibatalkan, hangus | Identik konsep, arah kebalik — Beban Kerugian Uang Muka (expense) bukan Pendapatan Lain-lain (revenue) |
+| 13 | DP diselesaikan campuran (partial: applied+refund+forfeiture) | Identik — partial-capable dari awal di AP, baru partial-capable belakangan di AR (`0012`) |
 
 ## Common mistakes to guard against
 
@@ -50,10 +61,11 @@ Sama semua yang di AR (`memory/domain/accounts-receivable.md`), arah kebalik. Ta
 - Opsi A dan Opsi B (retur) dianggap bisa jalan bareng buat 1 kejadian retur yang sama — itu kompensasi ganda dari sisi supplier, harus pilih SALAH SATU.
 - Excess dari retur (Opsi A pada bill lunas) dianggap otomatis berarti barang harus diganti (Opsi B) — dua-duanya independen, pilihan resolusi bukan konsekuensi status bayar.
 - Barang rusak yang gak dapat kompensasi sama sekali (supplier nolak ganti/kurangi utang) dicatat lewat jalur retur — itu kasus terpisah (write-off/spoilage), lihat `memory/scope-debt/kerugian-barang-rusak.md`.
+- DP refund dicatat lewat forfeiture (atau sebaliknya) — beda dampak Laba Rugi, harus lewat tabel yang tepat.
 
 ## Belum termasuk (di luar scope fase ini)
 
-Detail: `memory/scope-debt/ap-uang-muka-dp.md`, `memory/scope-debt/ap-bill-compound.md`, `memory/scope-debt/kerugian-barang-rusak.md` (barang rusak tanpa kompensasi dari supplier — lintas modul AR & AP). Batas waktu retur sengaja gak dimasukkan ke fitur ini — AR sendiri sempat punya validasi serupa (`return_window_days`) tapi udah dicabut total (migration `0039`), jadi gak ada lagi padanan buat di-mirror.
+Detail: `memory/scope-debt/ap-bill-compound.md`, `memory/scope-debt/kerugian-barang-rusak.md` (barang rusak tanpa kompensasi dari supplier — lintas modul AR & AP). Batas waktu retur sengaja gak dimasukkan ke fitur ini — AR sendiri sempat punya validasi serupa (`return_window_days`) tapi udah dicabut total (migration `0039`), jadi gak ada lagi padanan buat di-mirror.
 
 ## Glossary
 
@@ -63,5 +75,7 @@ Detail: `memory/scope-debt/ap-uang-muka-dp.md`, `memory/scope-debt/ap-bill-compo
 - **AP Credit Note**: retur barang ke supplier — 2 jalur resolusi independen (Opsi A kurangi utang, Opsi B tukar barang), beda dari AR yang cuma 1 jalur (+ replacement sebagai tambahan, bukan alternatif).
 - **Piutang Retur Supplier**: asset baru (`1350`), saldo yang supplier "berutang" ke kita dari retur pada bill yang udah lunas — partial-capable, dicairkan tunai.
 - **Purchase Replacement**: tukar barang rusak dengan barang baik dari supplier, gak nyentuh Utang Usaha sama sekali — berdiri sendiri, gak butuh credit note.
+- **AP Deposit**: uang muka yang KITA bayar ke supplier sebelum bill ada — asset `Uang Muka Pembelian`, mirror `AR Deposit` arah kebalik. Diselesaikan lewat 3 jalur partial-capable: diterapkan ke bill, refund tunai, atau hangus.
+- **Uang Muka Pembelian**: akun asset baru, DP yang kita bayar ke supplier — sengaja terpisah dari `Piutang Retur Supplier` (`1350`) walau sekilas mirip, beda asal jurnal (DP = bayar duluan sebelum barang datang; return credit = kelebihan setelah retur pada bill yang udah lunas).
 
 Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`.

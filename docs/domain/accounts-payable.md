@@ -38,6 +38,25 @@ Begitu barang rusak ketauan, ada **2 resolusi** yang bisa disepakati sama suppli
 
 **Catatan implementasi**: fitur ini nanganin item dengan metode costing **Weighted Average** — satu-satunya metode yang ada, FIFO sudah dihapus total dari sistem (migration `0038_remove_fifo_costing.sql`). Nilai barang yang diretur/ditukar dihitung dari harga rata-rata (`avg_cost`) **saat retur terjadi**, bukan harga asal pas barang diterima — konsisten dengan cara Weighted Average bekerja di modul Inventory (gak nyimpen asal-usul per batch).
 
+## Uang Muka / DP ke Supplier (migration `0013_ap_deposits_schema.sql`)
+
+CV Barokah kadang harus bayar duluan ke supplier **sebelum** ada bill — supplier baru yang belum kasih kepercayaan termin, atau bahan baku custom/pesanan besar yang mensyaratkan DP dulu. Mirror `AR Deposit` (`docs/domain/accounts-receivable.md` bagian "Uang Muka / DP"), tapi arahnya **kebalik**: di AR, DP yang **diterima** dari customer itu **liability** (kita berutang barang ke mereka); di AP, DP yang **dibayar** ke supplier itu **asset** (`Uang Muka Pembelian`, akun baru) — supplier yang berutang barang/uang balik ke kita.
+
+**Kenapa gak langsung dicatat sebagai Beban atau pengurang Utang Usaha**: matching principle — barangnya belum diterima, belum ada manfaat yang diakui. DP itu klaim ke supplier, bukan biaya yang udah terjadi, dan belum ada bill/utang yang timbul di titik itu.
+
+**Empat kejadian, empat jurnal berbeda** (semuanya partial-capable dari awal, dijaga fungsi terpusat `ap_deposit_remaining(deposit_id) = amount − SUM(applications) − SUM(refunds) − SUM(forfeitures)`, sama pola `ar_deposit_remaining()` pasca-`0012`):
+
+1. **DP dibayar** — Debit Uang Muka Pembelian / Kredit Kas/Bank. Belum nyentuh Utang Usaha sama sekali — belum ada bill.
+2. **DP diterapkan ke bill** (begitu barang datang & bill diterbitkan) — Debit Utang Usaha / Kredit Uang Muka Pembelian. Reklasifikasi, ngurangin outstanding bill itu.
+3. **DP direfund tunai** (order dibatalin, supplier mau balikin uangnya) — Debit Kas/Bank / Kredit Uang Muka Pembelian. **Gak ada dampak Laba Rugi** — murni aset balik jadi kas.
+4. **DP hangus** (order dibatalin, supplier gak mau/gak bisa balikin) — Debit **Beban Kerugian Uang Muka** (akun baru) / Kredit Uang Muka Pembelian. **Ada dampak Laba Rugi** — kita beneran rugi sejumlah itu.
+
+**Beda mendasar dari AR Deposit soal siapa nentuin kebijakan refund**: di AR, DP dari customer defaultnya **gak direfund** (kebijakan yang KITA tetapkan ke customer kita — makanya `ar_deposit_refunds` gak ada sampai `0012`, cuma forfeiture). Di AP, refund-tidaknya DP kita ke supplier itu **supplier** yang nentuin, bukan kita — makanya sejak awal AP butuh 2 jalur (refund DAN forfeiture), gak cuma 1. Ini juga alasan kenapa `ap_deposit_refunds` dibangun bareng `ap_deposit_forfeitures` dari awal (bukan ditambah belakangan kayak `ar_deposit_refunds`).
+
+**Dampak ke `ap_bills`**: `ap_bill_remaining()` nambah reducer ke-3 (`ap_deposit_applications`), mirror `ar_invoice_remaining()`. `cancel_ap_bill` nambah auto-unwind `ap_deposit_applications` aktif kalau bill yang DP-nya udah diterapkan dibatalin, mirror `cancel_ar_invoice`.
+
+**Akun baru**: `Uang Muka Pembelian` (asset) dan `Beban Kerugian Uang Muka` (expense) — di-insert di migration seed, pola sama semua akun baru lain.
+
 ## Constraint Wajib
 
 **1. Bill & Payment tetap masuk General Ledger lewat jalur yang sama**
@@ -61,6 +80,9 @@ Total qty yang diklaim retur (Opsi A) **plus** total qty yang ditukar (Opsi B) b
 **7. No over-use Piutang Retur Supplier**
 Total saldo yang dicairkan tunai gak boleh ngelebihin nominal awal saldo itu.
 
+**8. No over-use Uang Muka Pembelian (DP ke supplier)**
+Total dari 3 jalur (diterapkan ke bill + refund + hangus) gak boleh ngelebihin nominal DP awal — dijaga `ap_deposit_remaining()`, partial-capable dari awal.
+
 ## Skenario (lihat detail angka lengkap di `docs/story/accounts-payable.md`)
 
 1. Bill lunas tepat waktu — 1 payment nutup 1 bill penuh sekaligus, pola identik AR skenario 1.
@@ -72,6 +94,10 @@ Total saldo yang dicairkan tunai gak boleh ngelebihin nominal awal saldo itu.
 7. Retur (Opsi A), bill udah lunas — outstanding jadi minus, otomatis jadi Piutang Retur Supplier.
 8. Retur (Opsi B — tukar barang) — berdiri sendiri, Utang Usaha gak kesentuh, independen dari status bayar.
 9. Piutang Retur Supplier dicairkan tunai.
+10. DP dibayar lalu diterapkan penuh ke bill — 2 jurnal terpisah (bayar DP, terapkan ke bill), outstanding bill berkurang sejumlah DP.
+11. DP dibatalkan, direfund tunai penuh — supplier mau balikin, gak ada dampak Laba Rugi.
+12. DP dibatalkan, hangus penuh — supplier gak mau balikin, jadi Beban Kerugian Uang Muka.
+13. DP diselesaikan campuran — sebagian diterapkan ke bill, sebagian direfund, sisanya hangus (3 jurnal terpisah, partial-capable).
 
 ## Common Mistakes
 
@@ -80,11 +106,12 @@ Total saldo yang dicairkan tunai gak boleh ngelebihin nominal awal saldo itu.
 - **Retur**: Opsi A dan Opsi B dianggap bisa jalan bareng buat 1 kejadian retur yang sama — itu kompensasi ganda dari sisi supplier, cuma boleh pilih salah satu.
 - **Retur**: excess dari Opsi A (bill udah lunas) dianggap otomatis berarti barang harus diganti (Opsi B) — dua-duanya independen, resolusi yang dipilih adalah keputusan bisnis, bukan konsekuensi status bayar.
 - **Retur**: barang rusak yang gak dapat kompensasi sama sekali (supplier nolak) dicatat lewat jalur retur — itu kasus terpisah (kerugian/write-off), lihat "Belum Termasuk".
+- **DP**: refund DP dicatat lewat jalur forfeiture (atau sebaliknya) — dua-duanya beda dampak Laba Rugi (refund netral, forfeiture jadi Beban), harus lewat tabel yang tepat.
+- **DP**: DP yang udah diterapkan ke bill dianggap masih bisa direfund/dihanguskan sejumlah penuh — `ap_deposit_remaining()` udah ngurangin bagian yang kepake, cuma sisanya yang bisa diselesaikan lewat refund/hangus.
 
 ## Belum Termasuk (di luar scope fase ini)
 
 Detail lengkap tiap item ada di `memory/scope-debt/`:
 
-- **Uang muka/DP ke supplier** — `memory/scope-debt/ap-uang-muka-dp.md`.
 - **Bill kepisah kategori (compound debit)** — `memory/scope-debt/ap-bill-compound.md`. Nota supplier yang isinya campuran (misal barang + ongkos kirim) butuh RPC yang nerima array baris debit, bukan 1 akun tetap.
 - **Kerugian barang rusak tanpa kompensasi supplier** — `memory/scope-debt/kerugian-barang-rusak.md`. Lintas modul AR & AP — barang rusak yang gak diganti maupun gak dikurangin utangnya (atau di AR, gak dikurangin piutangnya) harus diakui sebagai kerugian (Beban Kerugian Barang Rusak), bukan lewat jalur retur.

@@ -21,8 +21,19 @@ export const applyArDepositSchema = z.object({
 });
 export type ApplyArDepositInput = z.infer<typeof applyArDepositSchema>;
 
+export const refundArDepositSchema = z.object({
+  deposit_id: z.string().uuid("Pilih deposit"),
+  amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
+  refund_date: z.string().min(1, "Tanggal wajib diisi"),
+  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
+  deposit_liability_account_id: z.string().uuid("Pilih akun Uang Muka Penjualan"),
+  cash_account_id: z.string().uuid("Pilih akun Kas/Bank"),
+});
+export type RefundArDepositInput = z.infer<typeof refundArDepositSchema>;
+
 export const forfeitArDepositSchema = z.object({
   deposit_id: z.string().uuid("Pilih deposit"),
+  amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
   forfeiture_date: z.string().min(1, "Tanggal wajib diisi"),
   source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   deposit_liability_account_id: z.string().uuid("Pilih akun Uang Muka Penjualan"),
@@ -46,35 +57,45 @@ export type ArDeposit = {
     journal_entry_id: string;
     ar_invoices: { source_ref: string };
   }[];
+  ar_deposit_refunds: {
+    id: string;
+    amount: number;
+    refund_date: string;
+    source_ref: string;
+    journal_entry_id: string;
+  }[];
   ar_deposit_forfeitures: {
     id: string;
+    amount: number;
     forfeiture_date: string;
     source_ref: string;
     journal_entry_id: string;
   }[];
 };
 
-export type ArDepositStatus = "belum_dipakai" | "diterapkan" | "hangus";
+export type ArDepositStatus = "belum_dipakai" | "sebagian" | "selesai";
 
 /**
- * Status derived dari ar_deposit_applications/ar_deposit_forfeitures — bukan kolom, sama
- * pola invoiceStatus(). Application yang journal_entry_id-nya udah di-reverse (invoice-nya
- * dibatalkan lewat cancel_ar_invoice) dianggap gak aktif lagi — deposit balik "belum
- * dipakai". `reversedEntryIds` sama persis Set yang dipakai invoiceStatus() (dari
- * journal_entries.reverses_entry_id), reuse query yang sama, jangan query ulang.
+ * Status derived dari SUM(applications aktif) + SUM(refunds) + SUM(forfeitures) vs amount —
+ * bukan kolom, sama pola invoiceStatus()/billStatus(). Sejak migration 0012, ketiga disposisi
+ * partial-capable & bisa dicampur (gak ada lagi aturan "1 disposisi aktif") — mirror
+ * ar_deposit_remaining() di database. Application yang journal_entry_id-nya udah di-reverse
+ * (invoice-nya dibatalkan lewat cancel_ar_invoice) dianggap gak aktif lagi. `reversedEntryIds`
+ * sama persis Set yang dipakai invoiceStatus() (dari journal_entries.reverses_entry_id), reuse
+ * query yang sama, jangan query ulang. Refund/forfeiture gak pernah punya jalur reversal.
  */
 export function depositStatus(
-  deposit: Pick<ArDeposit, "amount" | "ar_deposit_applications" | "ar_deposit_forfeitures">,
+  deposit: Pick<ArDeposit, "amount" | "ar_deposit_applications" | "ar_deposit_refunds" | "ar_deposit_forfeitures">,
   reversedEntryIds: Set<string>
-): { status: ArDepositStatus; applied: number; remaining: number } {
-  if (deposit.ar_deposit_forfeitures.length > 0) {
-    return { status: "hangus", applied: 0, remaining: 0 };
-  }
+): { status: ArDepositStatus; applied: number; refunded: number; forfeited: number; used: number; remaining: number } {
   const activeApplications = deposit.ar_deposit_applications.filter(
     (a) => !reversedEntryIds.has(a.journal_entry_id)
   );
   const applied = activeApplications.reduce((sum, a) => sum + a.amount, 0);
-  const remaining = deposit.amount - applied;
-  const status: ArDepositStatus = applied > 0 ? "diterapkan" : "belum_dipakai";
-  return { status, applied, remaining };
+  const refunded = deposit.ar_deposit_refunds.reduce((sum, r) => sum + r.amount, 0);
+  const forfeited = deposit.ar_deposit_forfeitures.reduce((sum, f) => sum + f.amount, 0);
+  const used = applied + refunded + forfeited;
+  const remaining = deposit.amount - used;
+  const status: ArDepositStatus = remaining <= 0.005 ? "selesai" : used > 0 ? "sebagian" : "belum_dipakai";
+  return { status, applied, refunded, forfeited, used, remaining };
 }

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
-import { forfeitArDepositSchema, refundArDepositSchema, depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
+import { forfeitApDepositSchema, refundApDepositSchema, depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -33,10 +33,10 @@ const statusStyle: Record<string, string> = {
   selesai: "bg-emerald-50 text-emerald-700",
 };
 
-export function ArDepositDetailView({ id }: { id: string }) {
+export function ApDepositDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [deposit, setDeposit] = useState<ArDeposit | null>(null);
+  const [deposit, setDeposit] = useState<ApDeposit | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
@@ -47,8 +47,8 @@ export function ArDepositDetailView({ id }: { id: string }) {
   const [refundAmount, setRefundAmount] = useState("");
   const [refundDate, setRefundDate] = useState("");
   const [refundSourceRef, setRefundSourceRef] = useState("");
-  const [refundDepositLiabilityAccountId, setRefundDepositLiabilityAccountId] = useState("");
   const [refundCashAccountId, setRefundCashAccountId] = useState("");
+  const [refundDepositAssetAccountId, setRefundDepositAssetAccountId] = useState("");
   const [refundError, setRefundError] = useState<string | null>(null);
   const [refundSubmitting, setRefundSubmitting] = useState(false);
 
@@ -56,8 +56,8 @@ export function ArDepositDetailView({ id }: { id: string }) {
   const [forfeitAmount, setForfeitAmount] = useState("");
   const [forfeitDate, setForfeitDate] = useState("");
   const [forfeitSourceRef, setForfeitSourceRef] = useState("");
-  const [forfeitDepositLiabilityAccountId, setForfeitDepositLiabilityAccountId] = useState("");
-  const [forfeitOtherRevenueAccountId, setForfeitOtherRevenueAccountId] = useState("");
+  const [forfeitLossExpenseAccountId, setForfeitLossExpenseAccountId] = useState("");
+  const [forfeitDepositAssetAccountId, setForfeitDepositAssetAccountId] = useState("");
   const [forfeitError, setForfeitError] = useState<string | null>(null);
   const [forfeitSubmitting, setForfeitSubmitting] = useState(false);
 
@@ -65,9 +65,9 @@ export function ArDepositDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: dep, error: depErr } = await supabase
-      .from("ar_deposits")
+      .from("ap_deposits")
       .select(
-        "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+        "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
       )
       .eq("id", id)
       .single();
@@ -75,7 +75,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
       setLoadError(depErr?.message ?? "Deposit gak ditemukan.");
       return;
     }
-    const loadedDeposit = dep as unknown as ArDeposit;
+    const loadedDeposit = dep as unknown as ApDeposit;
     setDeposit(loadedDeposit);
 
     const [{ data: accs }, { data: reversedRows }, { data: entries, error: entriesErr }] = await Promise.all([
@@ -130,8 +130,8 @@ export function ArDepositDetailView({ id }: { id: string }) {
     setRefundAmount("");
     setRefundDate("");
     setRefundSourceRef("");
-    setRefundDepositLiabilityAccountId("");
     setRefundCashAccountId("");
+    setRefundDepositAssetAccountId("");
     setShowRefundForm(true);
   }
 
@@ -140,13 +140,13 @@ export function ArDepositDetailView({ id }: { id: string }) {
     if (!deposit) return;
     setRefundError(null);
 
-    const parsed = refundArDepositSchema.safeParse({
+    const parsed = refundApDepositSchema.safeParse({
       deposit_id: deposit.id,
       amount: refundAmount,
       refund_date: refundDate,
       source_ref: refundSourceRef,
-      deposit_liability_account_id: refundDepositLiabilityAccountId,
       cash_account_id: refundCashAccountId,
+      deposit_asset_account_id: refundDepositAssetAccountId,
     });
     if (!parsed.success) {
       setRefundError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -154,13 +154,13 @@ export function ArDepositDetailView({ id }: { id: string }) {
     }
 
     setRefundSubmitting(true);
-    const { error } = await supabase.rpc("refund_ar_deposit", {
+    const { error } = await supabase.rpc("refund_ap_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_amount: parsed.data.amount,
       p_refund_date: parsed.data.refund_date,
       p_source_ref: parsed.data.source_ref,
-      p_deposit_liability_account_id: parsed.data.deposit_liability_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
+      p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
     });
     setRefundSubmitting(false);
     if (error) {
@@ -177,8 +177,8 @@ export function ArDepositDetailView({ id }: { id: string }) {
     setForfeitAmount("");
     setForfeitDate("");
     setForfeitSourceRef("");
-    setForfeitDepositLiabilityAccountId("");
-    setForfeitOtherRevenueAccountId("");
+    setForfeitLossExpenseAccountId("");
+    setForfeitDepositAssetAccountId("");
     setShowForfeitForm(true);
   }
 
@@ -187,13 +187,13 @@ export function ArDepositDetailView({ id }: { id: string }) {
     if (!deposit) return;
     setForfeitError(null);
 
-    const parsed = forfeitArDepositSchema.safeParse({
+    const parsed = forfeitApDepositSchema.safeParse({
       deposit_id: deposit.id,
       amount: forfeitAmount,
       forfeiture_date: forfeitDate,
       source_ref: forfeitSourceRef,
-      deposit_liability_account_id: forfeitDepositLiabilityAccountId,
-      other_revenue_account_id: forfeitOtherRevenueAccountId,
+      loss_expense_account_id: forfeitLossExpenseAccountId,
+      deposit_asset_account_id: forfeitDepositAssetAccountId,
     });
     if (!parsed.success) {
       setForfeitError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -201,13 +201,13 @@ export function ArDepositDetailView({ id }: { id: string }) {
     }
 
     setForfeitSubmitting(true);
-    const { error } = await supabase.rpc("forfeit_ar_deposit", {
+    const { error } = await supabase.rpc("forfeit_ap_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_amount: parsed.data.amount,
       p_forfeiture_date: parsed.data.forfeiture_date,
       p_source_ref: parsed.data.source_ref,
-      p_deposit_liability_account_id: parsed.data.deposit_liability_account_id,
-      p_other_revenue_account_id: parsed.data.other_revenue_account_id,
+      p_loss_expense_account_id: parsed.data.loss_expense_account_id,
+      p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
     });
     setForfeitSubmitting(false);
     if (error) {
@@ -230,21 +230,21 @@ export function ArDepositDetailView({ id }: { id: string }) {
   const { status, applied, refunded, forfeited, remaining } = depositStatus(deposit, reversedEntryIds);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canSpend = canWrite && remaining > 0.005;
-  const activeApplications = deposit.ar_deposit_applications.filter(
+  const activeApplications = deposit.ap_deposit_applications.filter(
     (a) => !reversedEntryIds.has(a.journal_entry_id)
   );
-  const reversedApplications = deposit.ar_deposit_applications.filter((a) =>
+  const reversedApplications = deposit.ap_deposit_applications.filter((a) =>
     reversedEntryIds.has(a.journal_entry_id)
   );
 
   return (
     <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
-      <BackLink href="/ar-deposits" label="Kembali ke AR Deposits" />
+      <BackLink href="/ap-deposits" label="Kembali ke AP Deposits" />
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold text-black">
-              {deposit.customers.name} — {deposit.source_ref}
+              {deposit.suppliers.name} — {deposit.source_ref}
             </h1>
             <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>
               {statusLabel[status]}
@@ -355,16 +355,16 @@ export function ArDepositDetailView({ id }: { id: string }) {
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Diterapkan ke Invoice</span>
+          <span className="text-sm font-medium text-black">Diterapkan ke Bill</span>
           <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {deposit.ar_deposit_applications.length}
+            {deposit.ap_deposit_applications.length}
           </span>
         </div>
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Invoice</th>
+              <th className="px-4 py-2">Bill</th>
               <th className="px-4 py-2 text-right">Nominal</th>
               <th className="px-4 py-2">Status</th>
             </tr>
@@ -373,7 +373,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
             {activeApplications.map((a) => (
               <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-2">{a.source_ref}</td>
-                <td className="px-4 py-2">{a.ar_invoices.source_ref}</td>
+                <td className="px-4 py-2">{a.ap_bills.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
                 <td className="px-4 py-2">
                   <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">Aktif</span>
@@ -383,18 +383,18 @@ export function ArDepositDetailView({ id }: { id: string }) {
             {reversedApplications.map((a) => (
               <tr key={a.id} className="border-b border-slate-100 text-slate-400 hover:bg-slate-50">
                 <td className="px-4 py-2 line-through">{a.source_ref}</td>
-                <td className="px-4 py-2 line-through">{a.ar_invoices.source_ref}</td>
+                <td className="px-4 py-2 line-through">{a.ap_bills.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono line-through">
                   {a.amount.toLocaleString("id-ID")}
                 </td>
                 <td className="px-4 py-2">
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                    Dibatalkan (invoice-nya dibatalkan)
+                    Dibatalkan (bill-nya dibatalkan)
                   </span>
                 </td>
               </tr>
             ))}
-            {deposit.ar_deposit_applications.length === 0 && (
+            {deposit.ap_deposit_applications.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
                   Belum pernah diterapkan.
@@ -409,7 +409,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
         <div className="border-b border-slate-100 px-4 py-2">
           <span className="text-sm font-medium text-black">Refund Tunai</span>
           <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {deposit.ar_deposit_refunds.length}
+            {deposit.ap_deposit_refunds.length}
           </span>
         </div>
         <table className="w-full text-left text-sm">
@@ -421,14 +421,14 @@ export function ArDepositDetailView({ id }: { id: string }) {
             </tr>
           </thead>
           <tbody>
-            {deposit.ar_deposit_refunds.map((r) => (
+            {deposit.ap_deposit_refunds.map((r) => (
               <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="whitespace-nowrap px-4 py-2">{r.refund_date}</td>
                 <td className="px-4 py-2">{r.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">{r.amount.toLocaleString("id-ID")}</td>
               </tr>
             ))}
-            {deposit.ar_deposit_refunds.length === 0 && (
+            {deposit.ap_deposit_refunds.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
                   Belum pernah direfund.
@@ -443,7 +443,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
         <div className="border-b border-slate-100 px-4 py-2">
           <span className="text-sm font-medium text-black">Hangus</span>
           <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {deposit.ar_deposit_forfeitures.length}
+            {deposit.ap_deposit_forfeitures.length}
           </span>
         </div>
         <table className="w-full text-left text-sm">
@@ -455,14 +455,14 @@ export function ArDepositDetailView({ id }: { id: string }) {
             </tr>
           </thead>
           <tbody>
-            {deposit.ar_deposit_forfeitures.map((f) => (
+            {deposit.ap_deposit_forfeitures.map((f) => (
               <tr key={f.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="whitespace-nowrap px-4 py-2">{f.forfeiture_date}</td>
                 <td className="px-4 py-2">{f.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">{f.amount.toLocaleString("id-ID")}</td>
               </tr>
             ))}
-            {deposit.ar_deposit_forfeitures.length === 0 && (
+            {deposit.ap_deposit_forfeitures.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
                   Belum pernah hangus.
@@ -477,9 +477,8 @@ export function ArDepositDetailView({ id }: { id: string }) {
         <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
           <h2 className="mb-4 font-semibold text-black">Refund Tunai Uang Muka</h2>
           <p className="mb-4 text-sm text-slate-600">
-            Balikin sisa deposit ini ke customer dalam bentuk kas/bank — gak ada dampak Laba
-            Rugi, murni reklasifikasi aset. Boleh sebagian (sisanya bisa diterapkan/direfund
-            lagi/hangus belakangan).
+            Terima kembali sisa deposit ini dari supplier dalam bentuk kas/bank — gak ada
+            dampak Laba Rugi, murni reklasifikasi aset. Boleh sebagian.
           </p>
           <form onSubmit={handleRefundSubmit} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -508,11 +507,11 @@ export function ArDepositDetailView({ id }: { id: string }) {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_deposit_liability_account">Akun Uang Muka Penjualan (debit)</Label>
+                <Label htmlFor="refund_cash_account">Akun Kas/Bank (debit)</Label>
                 <Select
-                  id="refund_deposit_liability_account"
-                  value={refundDepositLiabilityAccountId}
-                  onChange={(e) => setRefundDepositLiabilityAccountId(e.target.value)}
+                  id="refund_cash_account"
+                  value={refundCashAccountId}
+                  onChange={(e) => setRefundCashAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (
@@ -523,11 +522,11 @@ export function ArDepositDetailView({ id }: { id: string }) {
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_cash_account">Akun Kas/Bank (kredit)</Label>
+                <Label htmlFor="refund_deposit_asset_account">Akun Uang Muka Pembelian (kredit)</Label>
                 <Select
-                  id="refund_cash_account"
-                  value={refundCashAccountId}
-                  onChange={(e) => setRefundCashAccountId(e.target.value)}
+                  id="refund_deposit_asset_account"
+                  value={refundDepositAssetAccountId}
+                  onChange={(e) => setRefundDepositAssetAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (
@@ -552,8 +551,8 @@ export function ArDepositDetailView({ id }: { id: string }) {
         <div className="rounded-xl border border-red-200 bg-red-50/40 p-6 shadow-sm">
           <h2 className="mb-4 font-semibold text-black">Hanguskan Deposit</h2>
           <p className="mb-4 text-sm text-slate-600">
-            Sisa deposit dihanguskan — jadi Pendapatan Lain-lain, bukan Pendapatan Penjualan.
-            Boleh sebagian.
+            Sisa deposit dianggap hangus (supplier gak mau/gak bisa balikin) — jadi Beban
+            Kerugian Uang Muka. Boleh sebagian.
           </p>
           <form onSubmit={handleForfeitSubmit} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -587,11 +586,11 @@ export function ArDepositDetailView({ id }: { id: string }) {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forfeit_deposit_liability_account">Akun Uang Muka Penjualan (debit)</Label>
+                <Label htmlFor="forfeit_loss_expense_account">Akun Beban Kerugian Uang Muka (debit)</Label>
                 <Select
-                  id="forfeit_deposit_liability_account"
-                  value={forfeitDepositLiabilityAccountId}
-                  onChange={(e) => setForfeitDepositLiabilityAccountId(e.target.value)}
+                  id="forfeit_loss_expense_account"
+                  value={forfeitLossExpenseAccountId}
+                  onChange={(e) => setForfeitLossExpenseAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (
@@ -602,11 +601,11 @@ export function ArDepositDetailView({ id }: { id: string }) {
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forfeit_other_revenue_account">Akun Pendapatan Lain-lain (kredit)</Label>
+                <Label htmlFor="forfeit_deposit_asset_account">Akun Uang Muka Pembelian (kredit)</Label>
                 <Select
-                  id="forfeit_other_revenue_account"
-                  value={forfeitOtherRevenueAccountId}
-                  onChange={(e) => setForfeitOtherRevenueAccountId(e.target.value)}
+                  id="forfeit_deposit_asset_account"
+                  value={forfeitDepositAssetAccountId}
+                  onChange={(e) => setForfeitDepositAssetAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
                   {leafAccounts.map((a) => (

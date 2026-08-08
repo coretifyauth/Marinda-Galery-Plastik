@@ -13,13 +13,16 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario n
 | `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue (barang jadi yang stoknya dilacak) | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
 | `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `customers`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) yang otomatis dibuat |
 | `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
-| `ar_deposit_forfeitures` | DP hangus — order dibatalin sebelum invoice pernah ada | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Pendapatan Lain-lain) |
+| `ar_deposit_refunds` | DP dicairkan tunai kembali ke pelanggan (kasus khusus, kebijakan default DP tetap gak direfund) — tidak berdampak Laba Rugi | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Kas) |
+| `ar_deposit_forfeitures` | DP dianggap hangus — order dibatalin sebelum invoice pernah ada, sekarang boleh sebagian | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Pendapatan Lain-lain) |
 | `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — bukan gratis, tanpa invoice baru, wajib membalikkan diskon retur yang sudah diberikan (proporsional), DAN kalau retur sumbernya punya saldo kredit retur aktif, ikut menyelesaikan saldo itu | `ar_credit_notes` (wajib retur fisik yang sudah ada dulu), `ar_return_credits` (via `ar_credit_notes`, kalau ada), dan ke sampai 3 transaksi jurnal (HPP → Persediaan Barang Jadi, pembalikan diskon, penyelesaian saldo kredit retur) |
 | `ar_bad_debt_writeoffs` | Piutang yang benar-benar tidak akan tertagih, dihapusbukukan | `ar_invoices` (1 invoice bisa punya lebih dari satu write-off parsial), dan ke transaksi jurnal (Beban Piutang Tak Tertagih → Piutang Usaha) |
 | `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — cuma bisa diselesaikan refund tunai atau ganti barang, tidak bisa dititip ke invoice lain | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi (Piutang Usaha → Saldo Kredit Retur Customer) |
 | `ar_return_credit_refunds` | Saldo kredit retur dikembalikan tunai ke pelanggan | `ar_return_credits`, dan ke transaksi jurnal (Saldo Kredit Retur Customer → Kas) |
 
 Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke-banyak) — kebijakan penagihan tetap gak izinin **bayar gabungan** (1 pembayaran nutup beberapa invoice sekaligus) maupun **kelebihan bayar** (yang jadi saldo bebas dipakai kapan saja). Tapi **cicilan boleh** — 1 invoice sekarang bisa punya banyak baris pembayaran dari waktu ke waktu, `ar_payments.invoice_id` gak lagi unik. Desain sebelumnya sempat mendukung ketiga hal itu lewat tabel jembatan `ar_payment_allocations`, lalu sempat dicabut total (semua tiga sekaligus) — belakangan dikoreksi: yang dianggap masalah cuma kelebihan bayar yang "nyantol", bukan cicilan.
+
+Deposit juga sempat kaku — dulu 1 deposit cuma boleh 1 nasib (diterapkan ATAU hangus, hangus selalu penuh sekali jalan). Sekarang ketiganya (diterapkan/refund/hangus) partial-capable dan boleh dicampur — misalnya sebagian diterapkan ke invoice, sebagian direfund, sisanya hangus, semuanya buat 1 deposit yang sama, dijaga 1 aturan gabungan bukan per-jalur sendiri-sendiri.
 
 **Struktur `ar_invoices`:**
 

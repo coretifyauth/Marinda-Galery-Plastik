@@ -96,18 +96,25 @@ Lanjutan Tahap 5 di `inventory.md` (20 Agustus 2026: GRN+Bill 20kg Gula Pasir @ 
 
 Jurnal: `Debit Persediaan Bahan Baku 37.500 (gula baru) / Kredit Persediaan Bahan Baku 37.500 (gula rusak)` — **net nol**, **Utang Usaha bill ini tetap penuh Rp240.000** (gak berubah sama sekali, Barokah tetap wajib bayar penuh pas jatuh tempo 27 Agustus). `inventory_balances` Gula Pasir: 3kg keluar + 3kg masuk → qty_on_hand tetap **35kg**, avg_cost tetap Rp12.500/kg.
 
-## Skenario 9 & 10 — Piutang Retur Supplier dipakai sebagian + dicairkan sebagian (Toko Gula Sejahtera)
+## Skenario 9 — Piutang Retur Supplier dicairkan tunai (Toko Gula Sejahtera)
 
-2 September 2026: Barokah beli lagi 10kg Gula Pasir dari Toko Gula Sejahtera, bill baru Rp120.000 (due 9 September). Saldo `ap_return_credits` dari **Skenario 7** (Rp50.000) dipakai **sebagian**:
+2 September 2026: saldo `ap_return_credits` dari **Skenario 7** (Rp50.000) dicairkan tunai penuh: `Debit Kas di Bank 50.000 / Kredit Piutang Retur Supplier 50.000`.
 
-- **Diterapkan Rp30.000** ke bill baru ini: `Debit Utang Usaha 30.000 / Kredit Piutang Retur Supplier 30.000` → sisa utang bill baru jadi **Rp90.000** (masih harus dibayar cash/transfer biasa).
-- **Sisa Rp20.000 dicairkan tunai**: `Debit Kas di Bank 20.000 / Kredit Piutang Retur Supplier 20.000`.
+*(Catatan: skenario ini sebelumnya juga punya opsi "dipakai motong bill lain" — Rp30.000 diterapkan ke bill baru, Rp20.000 sisanya dicairkan. Opsi itu dicabut migration `0009_ap_remove_return_credit_apply.sql` (2026-08-08) — bukan fondasi AP, gak ada bukti kebutuhan bisnis konkret. Sekarang cuma 1 disposisi: dicairkan tunai.)*
 
-Saldo `ap_return_credits` dari Skenario 7 sekarang **habis** (Rp30.000 + Rp20.000 = Rp50.000, pas nominal awalnya) — guard no-over-use mencegah dipakai/dicairkan lebih dari itu.
+## Skenario 10 — DP dibayar ke supplier baru, diselesaikan campuran (Toko Kelapa Makmur, supplier baru)
+
+10 September 2026: CV Barokah mulai kerja sama sama Toko Kelapa Makmur (supplier santan bubuk), tapi belum dipercaya dapat termin — supplier minta DP 50% duluan buat pesanan 50kg santan bubuk @ Rp15.000 = Rp750.000, DP-nya Rp375.000.
+
+- **DP dibayar**: `Debit Uang Muka Pembelian 375.000 / Kredit Kas di Bank 375.000`. Utang Usaha belum kesentuh sama sekali.
+- **20 September**: cuma 30kg yang beneran dikirim (bukan 50kg — supplier kehabisan stok), bill diterbitkan Rp450.000 (30kg × Rp15.000, due 4 Oktober). DP Rp300.000 (sejumlah proporsional) diterapkan: `Debit Utang Usaha 300.000 / Kredit Uang Muka Pembelian 300.000` → sisa utang bill jadi **Rp150.000** (dibayar cash biasa lewat `record_ap_payment`).
+- **Sisa DP Rp75.000**: 20kg sisanya gak jadi dikirim (dibatalkan). Toko Kelapa Makmur mau balikin sebagian sebagai itikad baik — **Rp50.000 direfund tunai**: `Debit Kas di Bank 50.000 / Kredit Uang Muka Pembelian 50.000`. **Rp25.000 sisanya dianggap hangus** (biaya admin yang udah dikeluarkan supplier): `Debit Beban Kerugian Uang Muka 25.000 / Kredit Uang Muka Pembelian 25.000`.
+
+Total penyelesaian: 300.000 (diterapkan) + 50.000 (refund) + 25.000 (hangus) = **Rp375.000**, pas nominal DP awal — `ap_deposit_remaining()` sekarang 0, guard no-over-use mencegah penyelesaian lebih dari itu.
 
 ## Simulasi Interface (rencana)
 
-Sama pola AR: setelah schema (`ap-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/suppliers` (CRUD supplier + termin), `/ap-bills` (list + form bikin bill, pilih akun debit manual — Persediaan atau Beban tergantung jenis pembelian), dan `/ap-payments` (form bayar dengan pilih 1+ bill outstanding buat dialokasikan). Detail flow menyusul pas fase UI dikerjakan.
+Sama pola AR: setelah schema (`ap-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/suppliers` (CRUD supplier + termin), `/ap-bills` (list + form bikin bill, pilih akun debit manual — Persediaan atau Beban tergantung jenis pembelian), `/ap-payments` (form bayar — pilih 1 bill outstanding, boleh cicil tapi gak boleh overpay), dan `/ap-deposits` (catat DP masuk + aksi terapkan ke bill/refund tunai/hanguskan, ketiganya partial-capable). Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

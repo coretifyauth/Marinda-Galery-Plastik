@@ -287,7 +287,7 @@ Ref bisnis: `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier".
 
 **Beda mendasar dari AR Credit Note (`ar-schema.md`)**: 2 resolusi retur yang **saling eksklusif**, dipilih manual, bukan additive kayak AR. Ketauan lewat proses ngajarin fitur ini bahwa `warranty_replacement` di AR justru punya cacat desain (kompensasi ganda) — sudah diperbaiki lewat migration `0037_ar_warranty_replacement_discount_reversal.sql` (`warranty_replacement` sekarang wajib membalikkan diskon retur proporsional, bukan jadi saling eksklusif seperti AP), lihat `ar-schema.md`.
 
-Akun baru: `1350` **Piutang Retur Supplier** (asset) — di-insert di migration **seed** (`0036_seed_demo_ap_credit_notes.sql`), bukan di migration schema, pola sama semua akun baru lain (`2400`/`2500` dst) — bukan bagian dari `0035_ap_credit_notes_schema.sql` itu sendiri. Sengaja terpisah dari rencana akun `Uang Muka Pembelian` (`ap-uang-muka-dp.md`, belum dibangun), beda asal jurnal.
+Akun baru: `1350` **Piutang Retur Supplier** (asset) — di-insert di migration **seed** (`0036_seed_demo_ap_credit_notes.sql`), bukan di migration schema, pola sama semua akun baru lain (`2400`/`2500` dst) — bukan bagian dari `0035_ap_credit_notes_schema.sql` itu sendiri. Sengaja terpisah dari akun `Uang Muka Pembelian` (`1360`, dibangun belakangan lewat migration `0013_ap_deposits_schema.sql` — lihat bagian "AP Deposit" di bawah), beda asal jurnal (DP = bayar duluan sebelum barang datang; return credit = kelebihan setelah retur pada bill yang udah lunas).
 
 **Ketahuan lewat `schema-reviewer` sebelum diapply** (2 blocker + 1 warning, sudah diperbaiki di file final): (1) `ap_bill_remaining()` awalnya cuma 2 reducer, kelewat `ap_return_credit_applications` — bisa bikin over-allocation nyata (bill yang udah "dibayar" pakai saldo kredit retur masih bisa dialokasikan payment lagi ngelebihin sisa riil); (2) `cancel_ap_bill` (0010) awalnya gak diperbarui sama sekali buat 2 reducer baru — sekarang diperluas; (3) `create_ap_credit_note` jalur full awalnya nerima `p_amount` independen dari cost fisik yang dihitung `consume_weighted_average` — bisa divergen tanpa ketauan. Detail perbaikan di masing-masing bagian di bawah.
 
@@ -476,10 +476,119 @@ Perubahan:
 
 Direview `schema-reviewer` sebelum apply — gak ada blocker. UI (`/ap-payments` form + list + detail, `/ap-bills/[id]` tabel "Pembayaran", `/suppliers/[id]` tabel "AP Payments") disederhanakan bareng di sesi yang sama — pilih 1 bill langsung (bukan lagi form multi-baris alokasi), field `ApBill.ap_payment_allocations` di `src/lib/ap-bills/schema.ts` diganti `ap_payments`.
 
+## AP Deposit (Uang Muka ke Supplier) — migration `0013_ap_deposits_schema.sql` + `0014_seed_ap_deposit_accounts.sql`
+
+Mirror `ar_deposits` (arah kebalik — asset `Uang Muka Pembelian`, bukan liability, karena supplier yang "berutang" balik ke kita). Beda dari AR: dibangun **partial-capable DAN dengan 2 disposisi (refund + hangus) dari AWAL** — bukan retrofit belakangan kayak AR (`0012`) — karena kebijakan refund-tidaknya DP ke supplier itu **supplier** yang nentuin (bukan kita), beda dari kebijakan DP ke customer yang kita sendiri tetapkan (default non-refundable). Rationale bisnis: `docs/domain/accounts-payable.md` bagian "Uang Muka / DP ke Supplier".
+
+### `ap_deposits` — DP dibayar (selalu dibuat)
+
+Satu baris = satu kejadian bayar uang muka ke supplier. `journal_entry_id` nunjuk jurnal Debit Uang Muka Pembelian / Kredit Kas/Bank (`create_journal_entry`, reuse). Immutable, pola sama `ap_bills`/`ap_payments`.
+
+```sql
+create table ap_deposits (
+  id uuid primary key default gen_random_uuid(),
+  supplier_id uuid not null references suppliers(id),
+  deposit_date date not null,
+  source_ref text not null,
+  amount numeric(14,2) not null check (amount > 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### `ap_deposit_applications` — DP diterapkan ke bill
+
+Jurnal: Debit Utang Usaha / Kredit Uang Muka Pembelian (reklasifikasi). Struktur identik `ar_deposit_applications`, field `invoice_id` diganti `bill_id`.
+
+```sql
+create table ap_deposit_applications (
+  id uuid primary key default gen_random_uuid(),
+  deposit_id uuid not null references ap_deposits(id),
+  bill_id uuid not null references ap_bills(id),
+  amount numeric(14,2) not null check (amount > 0),
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### `ap_deposit_refunds` + `ap_deposit_forfeitures` — 2 disposisi lain, keduanya partial-capable dari awal
+
+`ap_deposit_refunds`: Debit Kas/Bank / Kredit Uang Muka Pembelian — supplier balikin uangnya, **gak ada dampak Laba Rugi**. `ap_deposit_forfeitures`: Debit **Beban Kerugian Uang Muka** (akun baru `5800`, expense) / Kredit Uang Muka Pembelian — supplier gak mau/gak bisa balikin, **ada dampak Laba Rugi**. Struktur identik `ar_deposit_refunds`/`ar_deposit_forfeitures` pasca-`0012` (keduanya udah punya kolom `amount` dari awal, gak perlu `alter table` belakangan kayak AR).
+
+```sql
+create table ap_deposit_refunds (
+  id uuid primary key default gen_random_uuid(),
+  deposit_id uuid not null references ap_deposits(id),
+  amount numeric(14,2) not null check (amount > 0),
+  refund_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table ap_deposit_forfeitures (
+  id uuid primary key default gen_random_uuid(),
+  deposit_id uuid not null references ap_deposits(id),
+  amount numeric(14,2) not null check (amount > 0),
+  forfeiture_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### `ap_deposit_remaining(deposit_id)` — sumber kebenaran tunggal, mirror `ar_deposit_remaining()` (`0012`)
+
+Gak ada aturan "1 disposisi aktif" sama sekali — beda dari AR yang punya riwayat itu sebelum `0012`. Dari awal, ketiga jalur (applications/refunds/forfeitures) boleh dicampur bebas:
+
+```sql
+create function ap_deposit_remaining(p_deposit_id uuid) returns numeric as $$
+  select ad.amount
+    - coalesce((
+        select sum(ada.amount) from ap_deposit_applications ada
+        where ada.deposit_id = p_deposit_id
+          and not exists (
+            select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
+          )
+      ), 0)
+    - coalesce((select sum(amount) from ap_deposit_refunds where deposit_id = p_deposit_id), 0)
+    - coalesce((select sum(amount) from ap_deposit_forfeitures where deposit_id = p_deposit_id), 0)
+  from ap_deposits ad
+  where ad.id = p_deposit_id;
+$$ language sql stable;
+```
+
+Guard tiap tabel transaksional (`ap_deposit_applications_guard`, `ap_deposit_refunds_guard`, `ap_deposit_forfeitures_guard`) semuanya cek `new.amount > ap_deposit_remaining(new.deposit_id)`. `ap_deposit_applications_guard` juga cek supplier match (deposit vs bill), bill belum dibatalkan, dan `ap_bill_remaining(new.bill_id)` — pola identik `ar_deposit_applications_guard`.
+
+### 2 fungsi existing yang diperluas (`create or replace` di `0013`, bukan tabel baru)
+
+- **`ap_bill_remaining()`** — reducer ke-3 (`ap_deposit_applications` aktif), mirror `ar_invoice_remaining()` yang udah punya reducer ini dari awal. Guard soundness: dipanggil dari `ap_deposit_applications_guard()` di dalam trigger `BEFORE INSERT` — baris baru belum ke-commit pas fungsi ini jalan, jadi gak ada double-count, pola yang sama persis kayak `ar_deposit_applications_guard()` → `ar_invoice_remaining()` yang udah lama jalan di AR.
+- **`cancel_ap_bill()`** — auto-unwind loop `ap_deposit_applications` aktif, mirror `cancel_ar_invoice`. **Bukan regresi** dari sisa loop lama (`0006` versi awal sempat punya loop unwind buat `ap_return_credit_applications`, tapi itu udah dihapus total di `0009` bareng tabelnya, dan `0011` juga udah nyederhanain `cancel_ap_bill` jadi cuma 2 guard tanpa loop apa pun) — jadi loop `ap_deposit_applications` di `0013` murni tambahan baru.
+
+### RPC: `create_ap_deposit`, `apply_ap_deposit`, `refund_ap_deposit`, `forfeit_ap_deposit`
+
+`security invoker`, pola sama RPC AP lain — semua reuse `create_journal_entry`. Ke-4 RPC dibangun bareng dari awal (beda dari AR yang `refund_ar_deposit` nyusul belakangan lewat `0012`). Nominal selalu diinput eksplisit dari caller.
+
+Full body: `supabase/migrations/0013_ap_deposits_schema.sql`.
+
+### Akun baru — migration seed `0014_seed_ap_deposit_accounts.sql`
+
+`1360` **Uang Muka Pembelian** (asset) dan `5800` **Beban Kerugian Uang Muka** (expense) — pola sama semua akun baru lain (di migration seed terpisah, bukan migration schema).
+
+### RLS & Grant
+
+Pola identik AP/AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`) di keempat tabel baru.
+
+**Catatan non-blocker dari `schema-reviewer`** (pre-existing, bukan diperkenalkan `0013`): `cancel_ap_bill` (dan `cancel_ar_invoice`) gak ngecek apakah `journal_entry_id` bill/invoice-nya udah pernah di-reverse sebelumnya — kalau RPC ini dipanggil 2x buat bill/invoice yang sama, bisa double-reversal. Gap lama sejak `0006`/`0005`, ikut kewarisin ke loop unwind deposit juga — di luar scope migration ini, dicatat sebagai potensi scope-debt kalau belum ada.
+
 ## Belum termasuk (dependency / di luar scope fase ini)
 
 Detail lengkap tiap item: `memory/scope-debt/`.
 
-- **Uang muka/DP ke supplier** — `memory/scope-debt/ap-uang-muka-dp.md`.
 - **Bill kepisah kategori (compound debit)** — `memory/scope-debt/ap-bill-compound.md`.
 - **Barang rusak tanpa kompensasi supplier sama sekali** — `memory/scope-debt/kerugian-barang-rusak.md` (lintas modul AR & AP).

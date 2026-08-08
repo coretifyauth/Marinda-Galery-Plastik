@@ -10,6 +10,7 @@ import {
   type GoodsReceiptForBill,
 } from "@/lib/ap-credit-notes/schema";
 import { createPurchaseReplacementSchema } from "@/lib/purchase-replacements/schema";
+import { applyApDepositSchema, depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -77,6 +78,14 @@ type ReplacementDetail = {
   }[];
 };
 
+type DepositApplicationDetail = {
+  id: string;
+  amount: number;
+  source_ref: string;
+  journal_entry_id: string;
+  ap_deposits: { source_ref: string };
+};
+
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
   sebagian: "bg-amber-50 text-amber-700",
@@ -95,6 +104,8 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
   const [replacements, setReplacements] = useState<ReplacementDetail[]>([]);
   const [goodsReceipt, setGoodsReceipt] = useState<GoodsReceiptForBill | null>(null);
+  const [depositApplications, setDepositApplications] = useState<DepositApplicationDetail[]>([]);
+  const [supplierDeposits, setSupplierDeposits] = useState<ApDeposit[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -119,6 +130,16 @@ export function ApBillDetailView({ id }: { id: string }) {
 
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+
+  const [showApplyForm, setShowApplyForm] = useState(false);
+  const [applyDepositId, setApplyDepositId] = useState("");
+  const [applyAmount, setApplyAmount] = useState("");
+  const [applyDate, setApplyDate] = useState("");
+  const [applySourceRef, setApplySourceRef] = useState("");
+  const [applyPayableAccountId, setApplyPayableAccountId] = useState("");
+  const [applyDepositAssetAccountId, setApplyDepositAssetAccountId] = useState("");
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [applySubmitting, setApplySubmitting] = useState(false);
 
   const leafAccounts = getLeafAccounts(accounts);
 
@@ -145,6 +166,8 @@ export function ApBillDetailView({ id }: { id: string }) {
       { data: cns, error: cnErr },
       { data: reps, error: repErr },
       { data: grn },
+      { data: depApps, error: depAppErr },
+      { data: supDeposits, error: supDepositsErr },
     ] = await Promise.all([
       supabase
         .from("accounts")
@@ -185,6 +208,17 @@ export function ApBillDetailView({ id }: { id: string }) {
         .select("id, goods_receipt_lines(item_id, qty_received, unit_cost, items(name, uom))")
         .eq("bill_id", id)
         .maybeSingle(),
+      supabase
+        .from("ap_deposit_applications")
+        .select("id, amount, source_ref, journal_entry_id, ap_deposits(source_ref)")
+        .eq("bill_id", id),
+      supabase
+        .from("ap_deposits")
+        .select(
+          "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+        )
+        .eq("supplier_id", loadedBill.supplier_id)
+        .order("deposit_date"),
     ]);
 
     setAccounts((accs ?? []) as Account[]);
@@ -196,7 +230,11 @@ export function ApBillDetailView({ id }: { id: string }) {
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setReplacements((reps ?? []) as unknown as ReplacementDetail[]);
     setGoodsReceipt((grn ?? null) as unknown as GoodsReceiptForBill | null);
-    setLoadError(entriesErr?.message ?? paysErr?.message ?? cnErr?.message ?? repErr?.message ?? null);
+    setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
+    setSupplierDeposits((supDeposits ?? []) as unknown as ApDeposit[]);
+    setLoadError(
+      entriesErr?.message ?? paysErr?.message ?? cnErr?.message ?? repErr?.message ?? depAppErr?.message ?? supDepositsErr?.message ?? null
+    );
   }, [id]);
 
   useEffect(() => {
@@ -420,6 +458,56 @@ export function ApBillDetailView({ id }: { id: string }) {
     await load();
   }
 
+  function openApplyForm() {
+    setApplyError(null);
+    setApplyDepositId("");
+    setApplyAmount("");
+    setApplyDate("");
+    setApplySourceRef("");
+    setApplyPayableAccountId("");
+    setApplyDepositAssetAccountId("");
+    setShowApplyForm(true);
+  }
+
+  async function handleApplySubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!bill) return;
+    setApplyError(null);
+
+    const parsed = applyApDepositSchema.safeParse({
+      deposit_id: applyDepositId,
+      bill_id: bill.id,
+      amount: applyAmount,
+      entry_date: applyDate,
+      source_ref: applySourceRef,
+      payable_account_id: applyPayableAccountId,
+      deposit_asset_account_id: applyDepositAssetAccountId,
+    });
+    if (!parsed.success) {
+      setApplyError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setApplySubmitting(true);
+    const { error } = await supabase.rpc("apply_ap_deposit", {
+      p_deposit_id: parsed.data.deposit_id,
+      p_bill_id: parsed.data.bill_id,
+      p_amount: parsed.data.amount,
+      p_entry_date: parsed.data.entry_date,
+      p_source_ref: parsed.data.source_ref,
+      p_payable_account_id: parsed.data.payable_account_id,
+      p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
+    });
+    setApplySubmitting(false);
+    if (error) {
+      setApplyError(error.message);
+      return;
+    }
+
+    setShowApplyForm(false);
+    await load();
+  }
+
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -435,6 +523,12 @@ export function ApBillDetailView({ id }: { id: string }) {
   const canRetur = canWrite && !isCancelled;
   const canReplace = canWrite && !isCancelled && goodsReceipt !== null;
   const canCancel = canWrite && !isCancelled && allocated === 0;
+  const availableDeposits = supplierDeposits.filter(
+    (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
+  );
+  const canApplyDeposit = canWrite && !isCancelled && outstanding > 0 && availableDeposits.length > 0;
+  const selectedDeposit = availableDeposits.find((dep) => dep.id === applyDepositId) ?? null;
+  const selectedDepositRemaining = selectedDeposit ? depositStatus(selectedDeposit, reversedEntryIds).remaining : 0;
 
   return (
     <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
@@ -470,6 +564,11 @@ export function ApBillDetailView({ id }: { id: string }) {
                 onClick={() => (showReplaceForm ? setShowReplaceForm(false) : openReplaceForm())}
               >
                 {showReplaceForm ? "Batal Tukar Barang" : "Tukar Barang"}
+              </Button>
+            )}
+            {canApplyDeposit && (
+              <Button variant="toolbar" onClick={() => (showApplyForm ? setShowApplyForm(false) : openApplyForm())}>
+                {showApplyForm ? "Batal Terapkan DP" : "Terapkan DP"}
               </Button>
             )}
             {canCancel && (
@@ -582,6 +681,40 @@ export function ApBillDetailView({ id }: { id: string }) {
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
                   Belum ada pembayaran.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="border-b border-slate-100 px-4 py-2">
+          <span className="text-sm font-medium text-black">DP Diterapkan</span>
+          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+            {depositApplications.length}
+          </span>
+        </div>
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Dari Deposit</th>
+              <th className="px-4 py-2 text-right">Nominal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {depositApplications.map((a) => (
+              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="px-4 py-2">{a.source_ref}</td>
+                <td className="px-4 py-2">{a.ap_deposits.source_ref}</td>
+                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
+              </tr>
+            ))}
+            {depositApplications.length === 0 && (
+              <tr>
+                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                  Belum ada DP yang diterapkan.
                 </td>
               </tr>
             )}
@@ -886,6 +1019,107 @@ export function ApBillDetailView({ id }: { id: string }) {
 
             <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0} className="w-fit">
               {replaceSubmitting ? "Menyimpan..." : "Simpan Tukar Barang"}
+            </Button>
+          </form>
+        </div>
+      )}
+
+      {showApplyForm && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
+          <h2 className="mb-4 font-semibold text-black">Terapkan DP ke Bill Ini</h2>
+          <p className="mb-4 text-sm text-slate-600">
+            Reklasifikasi uang muka yang udah dibayar ke supplier ini jadi pengurang utang bill
+            ini — bukan pembayaran baru.
+          </p>
+          <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="apply_deposit">Deposit</Label>
+                <Select
+                  id="apply_deposit"
+                  value={applyDepositId}
+                  onChange={(e) => {
+                    setApplyDepositId(e.target.value);
+                    const dep = availableDeposits.find((d) => d.id === e.target.value);
+                    if (dep) {
+                      const remaining = depositStatus(dep, reversedEntryIds).remaining;
+                      setApplyAmount(String(Math.min(remaining, outstanding)));
+                    }
+                  }}
+                >
+                  <option value="">Pilih deposit...</option>
+                  {availableDeposits.map((dep) => {
+                    const remaining = depositStatus(dep, reversedEntryIds).remaining;
+                    return (
+                      <option key={dep.id} value={dep.id}>
+                        {dep.source_ref} (sisa {remaining.toLocaleString("id-ID")})
+                      </option>
+                    );
+                  })}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="apply_amount">
+                  Nominal Diterapkan {selectedDeposit && `(maks ${Math.min(selectedDepositRemaining, outstanding).toLocaleString("id-ID")})`}
+                </Label>
+                <Input
+                  id="apply_amount"
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  value={applyAmount}
+                  onChange={(e) => setApplyAmount(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="apply_date">Tanggal</Label>
+                <Input id="apply_date" type="date" value={applyDate} onChange={(e) => setApplyDate(e.target.value)} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="apply_source_ref">Rujukan dokumen</Label>
+                <Input
+                  id="apply_source_ref"
+                  placeholder="mis. Nota Bahan Baku #001"
+                  value={applySourceRef}
+                  onChange={(e) => setApplySourceRef(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="apply_payable_account">Akun Utang Usaha (debit)</Label>
+                <Select
+                  id="apply_payable_account"
+                  value={applyPayableAccountId}
+                  onChange={(e) => setApplyPayableAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="apply_deposit_asset_account">Akun Uang Muka Pembelian (kredit)</Label>
+                <Select
+                  id="apply_deposit_asset_account"
+                  value={applyDepositAssetAccountId}
+                  onChange={(e) => setApplyDepositAssetAccountId(e.target.value)}
+                >
+                  <option value="">Pilih akun...</option>
+                  {leafAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} — {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            {applyError && <FormError>{applyError}</FormError>}
+
+            <Button type="submit" disabled={applySubmitting} className="w-fit">
+              {applySubmitting ? "Menyimpan..." : "Terapkan DP"}
             </Button>
           </form>
         </div>

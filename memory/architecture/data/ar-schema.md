@@ -503,12 +503,13 @@ create table ar_deposit_applications (
 
 ### `ar_deposit_forfeitures` — DP hangus
 
-Satu baris = satu kejadian DP hangus (order dibatalin **sebelum** invoice ada — beda dari `ar_credit_note` yang buat barang yang udah diinvoice). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (`4300`, akun baru — **bukan** `Pendapatan Penjualan`, karena bukan hasil jualan, biar Laba Rugi gak nyampur). Trigger `ar_deposit_forfeitures_guard` (before insert): deposit belum pernah dihanguskan DAN gak lagi punya application aktif (belum di-reverse) — 1 deposit cuma boleh 1 disposisi aktif (diterapkan ATAU hangus).
+Satu baris = satu kejadian DP hangus, **partial-capable sejak migration `0012_ar_deposit_refund_and_partial.sql`** (order dibatalin **sebelum** invoice ada — beda dari `ar_credit_note` yang buat barang yang udah diinvoice). Jurnal: Debit Uang Muka Penjualan / Kredit `Pendapatan Lain-lain` (`4300`, **bukan** `Pendapatan Penjualan`, karena bukan hasil jualan, biar Laba Rugi gak nyampur).
 
 ```sql
 create table ar_deposit_forfeitures (
   id uuid primary key default gen_random_uuid(),
   deposit_id uuid not null references ar_deposits(id),
+  amount numeric(14,2) not null check (amount > 0),
   forfeiture_date date not null,
   source_ref text not null,
   journal_entry_id uuid not null references journal_entries(id),
@@ -517,13 +518,55 @@ create table ar_deposit_forfeitures (
 );
 ```
 
-Status 1 deposit (belum dipakai / diterapkan / hangus) **derived** dari 2 tabel anak di atas, bukan kolom — konsisten sama pola status invoice/status "dibatalkan" (cek reversal).
+`amount` ditambah `0012` (`alter table`) — sebelumnya kolom ini gak ada, nominal selalu diambil langsung dari `ar_deposits.amount` (hangus selalu penuh sekali jalan, gak ada forfeiture parsial). Ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel.
 
-### RPC: `create_ar_deposit`, `apply_ar_deposit`, `forfeit_ar_deposit`
+### `ar_deposit_refunds` — DP direfund tunai (baru, migration `0012`)
 
-`security invoker`, pola sama RPC AR lain — semua reuse `create_journal_entry`, gak pernah insert manual ke `journal_entries`/`journal_lines`. `create_ar_deposit` insert `ar_deposits`. `apply_ar_deposit` insert `ar_deposit_applications` (nominal diinput eksplisit dari caller, bukan dihitung RPC — konsisten sama pola RPC AR lain). `forfeit_ar_deposit` ngambil `amount` dari `ar_deposits.amount` (deposit yang hangus selalu hangus **penuh**, gak ada forfeiture parsial), insert `ar_deposit_forfeitures`.
+Satu baris = satu kejadian refund tunai sebagian/seluruh sisa deposit ke customer — kasus khusus (kebijakan default DP tetap non-refundable, forfeiture yang jadi jalur utama), tapi didukung buat kejadian di mana perusahaan sendiri yang memutuskan balikin uangnya. Jurnal: Debit Uang Muka Penjualan / Kredit Kas/Bank — **gak ada dampak Laba Rugi**, beda dari forfeiture yang jadi Pendapatan Lain-lain.
 
-Full body: `supabase/migrations/0024_ar_deposits_schema.sql`.
+```sql
+create table ar_deposit_refunds (
+  id uuid primary key default gen_random_uuid(),
+  deposit_id uuid not null references ar_deposits(id),
+  amount numeric(14,2) not null check (amount > 0),
+  refund_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+```
+
+### `ar_deposit_remaining(deposit_id)` — sumber kebenaran tunggal sisa DP (baru, migration `0012`)
+
+Sebelum `0012`, status 1 deposit itu boolean-based: "1 disposisi aktif" (diterapkan ATAU hangus, gak dua-duanya — dijaga 2 guard yang saling cek keberadaan lawan). Migration `0012` menghapus aturan itu — sekarang partial-capable, 1 deposit boleh dicampur kombinasi ketiga jalur (applications + refunds + forfeitures), dijaga 1 fungsi terpusat:
+
+```sql
+create function ar_deposit_remaining(p_deposit_id uuid) returns numeric as $$
+  select ad.amount
+    - coalesce((
+        select sum(ada.amount) from ar_deposit_applications ada
+        where ada.deposit_id = p_deposit_id
+          and not exists (
+            select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
+          )
+      ), 0)
+    - coalesce((select sum(amount) from ar_deposit_refunds where deposit_id = p_deposit_id), 0)
+    - coalesce((select sum(amount) from ar_deposit_forfeitures where deposit_id = p_deposit_id), 0)
+  from ar_deposits ad
+  where ad.id = p_deposit_id;
+$$ language sql stable;
+```
+
+`ar_deposit_applications_guard` dan `ar_deposit_forfeitures_guard` (`create or replace` di `0012`, signature trigger-function gak berubah jadi trigger existing otomatis kepakai versi baru) sekarang cuma cek `new.amount > ar_deposit_remaining(new.deposit_id)`, ganti 2 cek boolean lama. `ar_deposit_refunds_guard` (baru) pola sama persis.
+
+Status 1 deposit (belum dipakai / sebagian / selesai) **derived** dari `ar_deposit_remaining()` vs `amount`, bukan kolom — konsisten sama pola status invoice/status "dibatalkan" (cek reversal).
+
+### RPC: `create_ar_deposit`, `apply_ar_deposit`, `refund_ar_deposit`, `forfeit_ar_deposit`
+
+`security invoker`, pola sama RPC AR lain — semua reuse `create_journal_entry`, gak pernah insert manual ke `journal_entries`/`journal_lines`. `create_ar_deposit` insert `ar_deposits`. `apply_ar_deposit` insert `ar_deposit_applications` (nominal diinput eksplisit dari caller). `refund_ar_deposit` (**baru `0012`**) insert `ar_deposit_refunds`. `forfeit_ar_deposit` (**signature baru `0012`**, nambah `p_amount` — sebelumnya gak nerima nominal, `drop function` dulu buat signature lama karena beda jumlah param) insert `ar_deposit_forfeitures` pakai nominal eksplisit, bukan `ar_deposits.amount` langsung lagi.
+
+Full body: `supabase/migrations/0024_ar_deposits_schema.sql` (bentuk awal), `supabase/migrations/0012_ar_deposit_refund_and_partial.sql` (partial-capable + refund).
 
 ### `cancel_ar_invoice` diperluas — auto-unwind `ar_deposit_applications`
 

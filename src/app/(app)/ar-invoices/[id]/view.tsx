@@ -230,7 +230,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("ar_deposits")
         .select(
-          "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_forfeitures(id, forfeiture_date, source_ref, journal_entry_id)"
+          "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
         .eq("customer_id", loadedInvoice.customer_id)
         .order("deposit_date"),
@@ -597,7 +597,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const canRetur = canWrite && !isCancelled;
   const canWriteOff = canWrite && !isCancelled && outstanding > 0.005;
   const availableDeposits = customerDeposits.filter(
-    (dep) => depositStatus(dep, reversedEntryIds).status === "belum_dipakai"
+    (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
   );
   const canApplyDeposit = canWrite && !isCancelled && outstanding > 0 && availableDeposits.length > 0;
   const selectedDeposit = availableDeposits.find((dep) => dep.id === applyDepositId) ?? null;

@@ -14,6 +14,10 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Skenario nyat
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — **berdiri sendiri**, tidak menyambung ke `ap_credit_notes` | `ap_bills` |
 | `ap_return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `ap_credit_notes` |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" dicabut 2026-08-08, bukan fondasi AP) | `ap_return_credits` |
+| `ap_deposits` | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) | `suppliers`, dan ke transaksi jurnal yang otomatis dibuat |
+| `ap_deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan | `ap_deposits`, `ap_bills` |
+| `ap_deposit_refunds` | DP dicairkan tunai kembali (pemasok yang mutuskan, bukan kita) — tidak berdampak Laba Rugi | `ap_deposits` |
+| `ap_deposit_forfeitures` | DP dianggap hangus (pemasok tidak mau/tidak bisa balikin) — jadi Beban Kerugian Uang Muka | `ap_deposits` |
 
 Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik — di Piutang, kita yang menetapkan termin ke pelanggan; di Utang, pemasok yang menetapkan termin ke kita. Kolom & cara kerjanya identik, cuma makna bisnisnya kebalik.
 
@@ -70,7 +74,6 @@ Catatan implementasi: fitur ini untuk sekarang baru menangani barang dengan meto
 ## Belum Termasuk
 
 - **Diskon bayar cepat (early payment discount)** — kasus ini tidak ada padanannya di AR; pemasok kadang menawarkan potongan harga kalau dibayar lebih awal dari jatuh tempo.
-- **Uang muka/DP ke pemasok** — pembayaran di muka sebelum ada bill resmi.
 - **Bill dengan kategori campuran (compound)** — satu nota pemasok yang isinya campuran, misalnya sebagian barang (masuk Persediaan) dan sebagian ongkos kirim (langsung Beban), dalam satu bill yang sama.
 - **Batas waktu retur ke pemasok** — belum ada batas hari sejak barang diterima untuk boleh diretur. AR sendiri sempat punya validasi serupa tapi udah dicabut total (lihat `docs/domain/accounts-receivable.md`).
 - **Barang rusak yang pemasok tolak ganti sama sekali** — kasus lintas modul (berlaku juga di AR): barang rusak tanpa kompensasi apa pun dari pihak lain seharusnya diakui sebagai kerugian murni, bukan lewat jalur retur.

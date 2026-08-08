@@ -140,15 +140,22 @@ Customer bayar duluan sebelum ada invoice — biasanya buat pesanan/produk custo
 
 **Kenapa gak langsung dicatat sebagai pengurang Piutang Usaha** kayak pembayaran biasa: karena piutangnya belum ada. Prinsip pengakuan pendapatan (matching principle) bilang pendapatan diakui pas barang/jasa diserahkan, bukan pas duit diterima — jadi DP itu bukan pendapatan perusahaan, itu **kewajiban** (perusahaan "berutang" barang/jasa atau uang balik ke customer sampai pesanannya jadi). Dicatat ke akun liability baru: **Uang Muka Penjualan**.
 
-**Tiga kejadian, tiga jurnal berbeda:**
+**Empat kejadian, empat jurnal berbeda** (`ar_deposit_refunds` ditambah migration `0012_ar_deposit_refund_and_partial.sql`, lihat "Kenapa Deposit Sekarang Partial-Capable" di bawah):
 
 1. **DP diterima** — Debit Kas/Bank, Kredit Uang Muka Penjualan. Belum nyentuh Piutang Usaha atau Pendapatan sama sekali.
-2. **DP diterapkan ke invoice** (begitu barang jadi & invoice diterbitkan penuh) — Debit Uang Muka Penjualan, Kredit Piutang Usaha. Ini reklasifikasi, bukan pembayaran baru — ngurangin outstanding invoice itu.
+2. **DP diterapkan ke invoice** (begitu barang jadi & invoice diterbitkan) — Debit Uang Muka Penjualan, Kredit Piutang Usaha. Ini reklasifikasi, bukan pembayaran baru — ngurangin outstanding invoice itu.
 3. **DP hangus** (order dibatalin SEBELUM invoice ada, kebijakan non-refundable deposit — umum dipakai kalau ada biaya yang udah kadung dikeluarkan buat penuhin pesanan custom itu) — Debit Uang Muka Penjualan, Kredit **Pendapatan Lain-lain** (BUKAN Pendapatan Penjualan — ini bukan hasil jual roti, jadi harus kepisah biar Laba Rugi gak nyampur "penjualan beneran" sama "DP hangus").
+4. **DP direfund tunai** (order dibatalin, tapi *kali ini kita* yang memutuskan balikin duitnya ke customer — kasus khusus, kebijakan defaultnya tetap non-refundable) — Debit Uang Muka Penjualan, Kredit Kas/Bank. **Gak ada dampak Laba Rugi sama sekali** — murni uang balik ke customer, beda dari hangus yang jadi Pendapatan Lain-lain.
 
-Status 1 deposit (belum dipakai / diterapkan / hangus) **derived**, bukan kolom — sama pola kayak status invoice. Satu deposit cuma boleh punya **satu** disposisi aktif (diterapkan ATAU hangus), ditegakkan trigger.
+## Kenapa Deposit Sekarang Partial-Capable
 
-**Interaksi sama pembatalan invoice**: kalau invoice yang DP-nya udah diterapkan ternyata perlu dibatalin (misal salah input), `cancel_ar_invoice` **ikut membalikkan jurnal DP-application-nya juga** (reversing entry kedua, bukan cuma jurnal invoice-nya doang) — biar DP-nya otomatis balik jadi "belum dipakai" lagi (siap dipakai ulang/dihanguskan), bukan nyangkut jadi piutang minus yang gak jelas asalnya. Tanpa ini, cuma nolak pembatalan (kayak guard yang hard-reject kalau invoice udah ada payment) gak nyelesain apa-apa — orangnya cuma kejebak, DP-nya tetep nyangkut gak jelas statusnya.
+Desain awal (`0024_ar_deposits_schema.sql`) nganut **"1 deposit cuma boleh 1 disposisi aktif"** — sekali diterapkan (walau cuma sebagian) gak bisa dihanguskan lagi, dan hangus itu selalu **penuh** sekali jalan (`forfeit_ar_deposit` ambil `ar_deposits.amount` langsung, gak nerima parameter nominal).
+
+**Migration `0012` melonggarkan ini** setelah didiskusikan: di dunia nyata, penyelesaian 1 DP jarang "sekali putus" — bisa aja sebagian barang tetap dikirim (diterapkan ke invoice), sebagian duit dibalikin sebagai itikad baik (refund), sisanya baru dianggap hangus. Sekarang ketiga jalur (`applications`/`refunds`/`forfeitures`) sama-sama **partial-capable**, dijaga 1 fungsi terpusat `ar_deposit_remaining(deposit_id) = amount − SUM(applications) − SUM(refunds) − SUM(forfeitures)` — gak ada lagi aturan "1 disposisi aktif doang", bisa campur kombinasi ketiganya asal totalnya gak ngelebihin DP awal.
+
+Contoh: DP Rp600.000 — Rp300.000 diterapkan ke invoice, Rp150.000 direfund, Rp150.000 sisanya hangus. 3 jurnal terpisah, totalnya pas 600.000.
+
+**Interaksi sama pembatalan invoice** (gak berubah dari desain awal): kalau invoice yang DP-nya udah diterapkan ternyata perlu dibatalin (misal salah input), `cancel_ar_invoice` **ikut membalikkan jurnal DP-application-nya juga** (reversing entry kedua, bukan cuma jurnal invoice-nya doang) — biar DP-nya otomatis balik ke `ar_deposit_remaining()`-nya (siap dipakai ulang/direfund/dihanguskan), bukan nyangkut jadi piutang minus yang gak jelas asalnya.
 
 *(Catatan: sistem sempat punya mekanisme "Kelebihan Bayar jadi Saldo Kredit Customer" — kalau payment melebihi invoice yang dituju, excess-nya dicairkan jadi saldo `Saldo Kredit Customer` yang bisa dipakai/direfund. Dicabut total lewat migration `0040_ar_payment_strict_invoice_match.sql` — sekarang payment yang gak persis sama sisa outstanding langsung `raise exception`, gak ada lagi jalur buat kelebihan bayar "nyantol".)*
 
