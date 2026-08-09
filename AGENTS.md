@@ -34,6 +34,7 @@ Ada 2 folder dokumentasi terpisah, buat 2 pembaca berbeda — jangan tercampur:
     /ui                    <- preferensi UI/UX & behavior design
   /rules                  <- mental model wajib agent SEBELUM bangun fitur
   /scope-debt             <- keputusan desain yang sengaja ditunda, 1 file per konsep
+  /special-case           <- kondisi grey area yang butuh keputusan OWNER (bisnis), beda dari scope-debt (bukan utang teknis), 1 file per konsep
 
 /docs                      <- knowledge base buat USER, naratif & non-teknis
   brief.md                <- entry point, peta seluruh /docs

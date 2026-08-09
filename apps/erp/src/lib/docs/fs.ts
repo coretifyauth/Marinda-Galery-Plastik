@@ -13,7 +13,11 @@ import {
 // di-resolve di browser bundle. Konstanta & tipe yang aman diimpor
 // dari client ada di categories.ts.
 
-const DOCS_ROOT = path.join(process.cwd(), "docs");
+// apps/erp jadi 1 app di monorepo (apps/erp + apps/pos) -- docs/ tetap 1 folder
+// bersama di root repo, bukan didup per-app, jadi naik 2 level dari process.cwd()
+// (apps/erp) buat nyampe ke root. Lihat memory/architecture/app/tech-stack-decisions.md
+// > "App Structure: Monorepo".
+const DOCS_ROOT = path.join(process.cwd(), "..", "..", "docs");
 
 export function isValidSlug(value: string): boolean {
   return /^[a-z0-9-]+$/.test(value);

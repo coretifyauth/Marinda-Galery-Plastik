@@ -35,6 +35,7 @@ import {
   PiggyBank,
   RotateCcw,
   ClipboardCheck,
+  ShoppingCart,
 } from "lucide-react";
 
 const navGroups = [
@@ -82,6 +83,11 @@ const navGroups = [
       { href: "/goods-issues", label: "Goods Issues", icon: PackageMinus },
       { href: "/stock-opnames", label: "Stock Opname", icon: ClipboardCheck },
     ],
+  },
+  {
+    label: "POS / Retail",
+    icon: ShoppingCart,
+    items: [{ href: "/pos-sales", label: "POS Sales", icon: ShoppingCart }],
   },
   {
     label: "Fixed Assets",
