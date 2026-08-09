@@ -112,7 +112,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Catat retur | `create_ar_credit_note` | Deteksi otomatis financial-only vs full (cek `goods_issues` terkait invoice); insert `ar_credit_notes` + jurnal kontra-revenue (Debit Retur & Potongan Penjualan, Kredit Piutang Usaha); kalau full, insert `inventory_return_lines` + jurnal reversal HPP + stok masuk lagi ke `inventory_balances` | Trigger `ar_credit_notes_no_over_return` (total retur ≤ `ar_invoices.amount`); trigger `inventory_return_lines_guard` (qty retur ≤ `goods_issue_lines.qty_issued`, jalur full) |
+| Catat retur | `create_ar_credit_note` | Deteksi otomatis financial-only vs full (cek `goods_issues` terkait invoice); insert `ar_credit_notes` + jurnal kontra-revenue (Debit Retur & Potongan Penjualan, Kredit Piutang Usaha); kalau full, insert `inventory_return_lines` per baris (tiap baris punya `condition` — baris Layak Jual masuk lagi ke `inventory_balances`, baris Rusak TIDAK, cost-nya jadi Debit Beban Kerugian Barang Rusak) + jurnal reversal HPP | Trigger `ar_credit_notes_no_over_return` (total retur ≤ `ar_invoices.amount`); trigger `inventory_return_lines_guard` (qty retur ≤ `goods_issue_lines.qty_issued`, jalur full) |
 | Deteksi & cairkan excess jadi saldo kredit | `create_ar_credit_note` (lanjutan aksi di atas, 1 pemanggilan) | Hitung `v_remaining_before := ar_invoice_remaining(invoice_id)` sebelum retur masuk; `v_excess := greatest(0, amount − greatest(0, v_remaining_before))`; kalau `> 0`, jurnal tambahan Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer + insert `ar_return_credits` | Param akun liability wajib diisi kalau ada excess |
 | Refund tunai saldo kredit retur | `refund_ar_return_credit` | Jurnal Debit Saldo Kredit Retur Customer, Kredit Kas/Bank; insert `ar_return_credit_refunds` | `amount > ar_return_credit_remaining(credit_id)` → tolak |
 
@@ -128,6 +128,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 | Saldo kredit retur cuma bisa refund tunai atau ganti barang, gak bisa dipakai motong invoice lain | Cuma 2 RPC yang bisa mengurangi saldo: `refund_ar_return_credit` dan `create_warranty_replacement` (submodule "Penukaran Barang Pasca-Retur") — tidak ada RPC "terapkan ke invoice lain" |
 | Total yang dicairkan/disettle dari saldo kredit retur ≤ sisa saldo | Fungsi `ar_return_credit_remaining(credit_id) = amount − SUM(warranty_replacements.return_credit_settled_amount) − SUM(refunds)` |
 | Gak ada batas waktu retur (umur invoice vs tanggal retur) | Sengaja dicabut total — validasi ini sempat ada (per item & per customer), sekarang murni keputusan manual staf di luar sistem |
+| Barang Rusak gak boleh balik jadi stok bernilai — kompensasi ke customer tetap jalan, cost-nya jadi kerugian | Kolom `inventory_return_lines.condition` — baris `DAMAGED` skip update `inventory_balances`, cost masuk Debit Beban Kerugian Barang Rusak; kontra-revenue tidak terpengaruh `condition` |
 
 **Interaksi Antar Tabel**
 
@@ -163,7 +164,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 | Wajib menunjuk retur yang sudah ada (retur fisik) | `create_warranty_replacement` — parameter `credit_note_id` wajib, cek eksplisit `exists (select 1 from inventory_returns where credit_note_id = ...)` |
 | Reversal diskon gak boleh melebihi diskon asli | Trigger `warranty_replacements_no_over_reverse` (akumulasi per `credit_note_id` ≤ `ar_credit_notes.amount`) |
 | Settlement saldo kredit retur gak boleh melebihi sisa saldo | Trigger `warranty_replacements_no_over_settle_return_credit` — `raise exception`, bukan `least()` dipotong diam-diam |
-| Barang pengganti dari stok aktif, bukan barang bekas retur | Konsumsi via `inventory_balances` (Weighted Average) — belum ada segregasi pool sejak FIFO dihapus (`memory/scope-debt/kerugian-barang-rusak.md`) |
+| Barang pengganti dari stok aktif, bukan barang bekas retur | Konsumsi via `inventory_balances` (Weighted Average) — segregasi dijaga logis lewat `condition` di AR Credit Note (baris `DAMAGED` gak pernah masuk pool ini) |
 
 **Interaksi Antar Tabel**
 

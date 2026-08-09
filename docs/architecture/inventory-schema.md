@@ -15,6 +15,10 @@ erDiagram
   ITEMS ||--o| BOM_HEADERS : "jadi hasil resep"
   ITEMS ||--o{ PRODUCTION_ORDER_LINES : dikonsumsi
   ITEMS ||--o{ GOODS_ISSUE_LINES : keluar
+  ITEMS ||--o{ ITEM_UNITS : "satuan jual"
+  ITEMS ||--o{ STOCK_OPNAME_LINES : dihitung
+
+  STOCK_OPNAMES ||--|{ STOCK_OPNAME_LINES : ""
 
   SUPPLIERS ||--o{ PURCHASE_ORDERS : ""
 
@@ -36,12 +40,14 @@ erDiagram
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `items` | Master data barang yang dilacak — bahan baku atau barang jadi. Semua barang pakai metode hitung biaya yang sama: Rata-Rata Bergerak | `accounts` (akun kontrol Persediaan) |
+| `item_units` | Satuan jual per barang (boleh lebih dari 1, misal per pieces atau per pack) — masing-masing punya faktor konversi ke satuan dasar & harga sendiri | `items` |
 | `inventory_balances` | Posisi stok tersimpan per barang — qty tersedia + harga rata-rata berjalan, satu-satunya state costing yang hidup di modul ini | `items` (1:1) |
 | `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok — belum ada transaksi jurnal | `suppliers`, `items` |
 | `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima — dibuat bersamaan dengan bill (tagihan) pemasok, memicu penambahan Persediaan | `purchase_orders`, tagihan pemasok (`ap_bills`), `items`, `inventory_balances` |
 | `bom_headers` + `bom_lines` | Resep produksi: 1 barang jadi butuh bahan baku apa saja, berapa takarannya per 1 batch. Boleh direvisi kapan saja tanpa mengubah histori produksi yang sudah terjadi | `items` |
 | `production_orders` + `production_order_lines` | Satu kejadian produksi nyata: mengonsumsi bahan baku sesuai resep, menghasilkan barang jadi, dan ke transaksi jurnal yang otomatis dibuat | `bom_headers`, `items`, `inventory_balances`, transaksi jurnal |
 | `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`ar_invoices`), `items`, `inventory_balances`, transaksi jurnal |
+| `stock_opnames` + `stock_opname_lines` | Sesi hitung fisik gudang — posisi stok disesuaikan langsung ke hasil hitung, selisih diakui sebagai beban/pendapatan | `items`, `inventory_balances`, transaksi jurnal (1 per baris yang ada selisih) |
 
 ## Konsep Inti
 
@@ -57,10 +63,10 @@ erDiagram
 | Kolom | Isinya | Catatan |
 |---|---|---|
 | tipe barang | Bahan baku atau barang jadi | |
-| satuan | Satuan tampilan (kg, pcs, dst) | Murni informasi, tidak ada konversi antar-satuan |
+| satuan dasar | Satuan tampilan (kg, pcs, dst), dipakai semua pelacakan stok/biaya | Murni informasi, tidak ada konversi antar-satuan di kolom ini — satuan JUAL yang beda-beda ada di `item_units`, lihat submodule "Satuan Jual & Harga" |
 | akun Persediaan | Akun kontrol di COA yang menaungi barang ini | 1 akun bisa menaungi banyak barang — detail per-barang hidup di modul Inventory sendiri, bukan akun terpisah per barang |
 | qty tersedia | Sisa stok saat ini | Berkurang tiap konsumsi/penjualan, bukan angka yang dihitung ulang dari histori tiap dibaca — **satu-satunya posisi di seluruh modul ini yang disimpan langsung**, bukan derived, karena harga rata-rata berjalan itu rekursif (tergantung nilai sebelumnya), tidak bisa diringkas jadi satu query agregat sederhana |
-| harga rata-rata berjalan | Biaya per unit saat ini | Berubah tiap ada penerimaan barang baru (dihitung ulang dari campuran stok lama + stok masuk), tetap tidak berubah pas barang keluar/dikonsumsi |
+| harga rata-rata berjalan | Biaya per unit saat ini (di satuan dasar) | Berubah tiap ada penerimaan barang baru (dihitung ulang dari campuran stok lama + stok masuk), tetap tidak berubah pas barang keluar/dikonsumsi |
 
 **Metode costing: Rata-Rata Bergerak (Weighted Average), satu-satunya, berlaku ke semua barang** — sempat ada 2 metode (FIFO per-lot dan Rata-Rata Bergerak, dipilih per barang), FIFO sudah dihapus total dari sistem. Semua barang sekarang lewat mekanisme konsumsi stok yang sama.
 
@@ -181,6 +187,68 @@ erDiagram
 | `goods_issue_lines` | tiap baris didahului konsumsi dari | `inventory_balances` |
 | Retur barang (modul Piutang Usaha) | banyak-ke-satu, kebalikan pemakaian | `goods_issues` — detail penuh: `docs/architecture/ar-schema.md` |
 
+## Satuan Jual & Harga (Multi Unit of Measure)
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `item_units` | Satuan jual per barang — boleh 0 (barang gak dijual langsung, misal bahan baku) sampai berapa pun baris. Persis 1 baris jadi "satuan dasar" per barang | `items` |
+
+**Alur Teknis (RPC)**
+
+Gak ada RPC baru — `item_units` murni data master, CRUD langsung lewat tabel (sama pola `items`/`bom_lines`), bukan lewat proses keuangan.
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Jual barang pakai satuan bukan-dasar (misal lusin) | `create_goods_issue` (**tidak berubah**) | UI mengonversi qty ke satuan dasar & menghitung nominal saran dari harga satuan yang dipilih SEBELUM RPC dipanggil — RPC tetap menerima qty di satuan dasar & nominal final apa adanya, persis seperti sebelum fitur ini ada | — |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Satuan dasar (dipakai stok/HPP) tetap 1 per barang, gak berubah oleh satuan jual tambahan | `items.uom` tidak disentuh sama sekali — satuan jual cuma lapisan tambahan di `item_units` |
+| Qty yang dikonsumsi dari stok selalu di satuan dasar, gak peduli satuan jual yang dipilih | Konversi terjadi di UI sebelum RPC dipanggil — `goods_issue_lines` cuma pernah menyimpan qty satuan dasar |
+| Harga per satuan jual independen, tidak wajib proporsional ke harga satuan dasar | `item_units.price` diisi manual per baris, gak ada perhitungan otomatis dari harga satuan lain |
+| Harga cuma saran, gak retroaktif ngubah invoice yang udah terbit | Sama prinsip snapshot seperti sebelumnya — `item_units` cuma dibaca UI pas invoice BARU dibuat |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `item_units` | banyak-ke-satu | `items` |
+
+## Stock Opname (Penyesuaian Stok Fisik)
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `stock_opnames` | Header 1 sesi hitung fisik — dokumen sumbernya sesi itu sendiri, bukan menunjuk ke transaksi lain | — |
+| `stock_opname_lines` | 1 baris = 1 barang yang ADA selisihnya (barang yang hasil hitungnya pas gak menghasilkan baris apa pun) | `stock_opnames`, `items`, `inventory_balances`, transaksi jurnal (1 per baris) |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Catat hasil hitung fisik | `record_stock_opname` | Per barang: hitung selisih (hasil hitung − catatan sistem). Selisih kurang → jurnal Debit Beban Selisih Persediaan / Kredit Persediaan; selisih lebih → Debit Persediaan / Kredit Pendapatan Selisih Persediaan. Posisi stok disesuaikan langsung ke hasil hitung (harga rata-rata TIDAK berubah) | Barang tanpa selisih dilewati, gak dicatat. Kalau seluruh sesi ternyata gak ada selisih sama sekali, seluruh percobaan ditolak |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Selisih kurang dan lebih diakui ke akun terpisah, gak digabung jadi 1 angka bersih | 2 akun beda (Beban vs Pendapatan Selisih Persediaan), dipilih otomatis sesuai arah selisih tiap barang |
+| Nilai selisih dihitung dari harga rata-rata berjalan SAAT opname, bukan harga historis | Nilai per barang diambil dari posisi stok yang berlaku persis saat RPC dipanggil |
+| Barang tanpa selisih gak menghasilkan pencatatan apa pun | Barang yang hasil hitungnya sama dengan catatan sistem dilewati begitu saja |
+| Opname gak boleh masuk periode tertutup | Reuse aturan umum block-retroactive-period dari General Ledger |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `stock_opname_lines` | banyak-ke-satu | `stock_opnames` |
+| `stock_opname_lines` | tiap baris menyesuaikan | `inventory_balances` |
+
 ## Aturan Otomatis yang Dijaga Sistem (ringkasan)
 
 1. Penerimaan barang tidak boleh melebihi jumlah yang dipesan di Purchase Order.
@@ -194,5 +262,5 @@ erDiagram
 |---|---|
 | Melihat semua data (barang, resep, pesanan, penerimaan, produksi, penjualan) | Semua user yang sudah login |
 | Mengubah data barang & resep | Role `admin` atau `accountant` |
-| Membuat Purchase Order, mencatat penerimaan, mencatat produksi, mencatat penjualan | Role `admin` atau `accountant` |
+| Membuat Purchase Order, mencatat penerimaan, mencatat produksi, mencatat penjualan, mencatat opname | Role `admin` atau `accountant` |
 | Mengedit/menghapus transaksi yang sudah tercatat | **Tidak ada seorang pun** |

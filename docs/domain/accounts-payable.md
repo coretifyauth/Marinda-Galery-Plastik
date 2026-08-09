@@ -49,26 +49,32 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
     - **Berdiri sendiri, gak lewat retur Opsi A sama sekali** — beda dari AR (penukaran barang di AR WAJIB nunjuk retur yang udah dibuat duluan, jadi tambahan DI ATAS retur; kalau AP niru pola itu tanpa penyeimbang, supplier jadi ngasih 2 kompensasi sekaligus — kurangi utang DAN kirim barang pengganti tanpa nagih balik — buat 1 kejadian rusak yang sama, gak masuk akal secara bisnis. AR sendiri sempat kena bug serupa ini, sekarang sudah diperbaiki lewat pembalikan diskon proporsional).
     - **Berlaku sama persis di semua status bayar** — Utang Usaha **gak pernah kesentuh**, mau bill-nya lunas, sebagian, atau belum dibayar sama sekali.
     - Jurnal: **Debit Persediaan Bahan Baku** (barang baru masuk) **/ Kredit Persediaan Bahan Baku** (barang rusak keluar) — net nol, murni reklasifikasi fisik (barang keluar-masuk dicatat biar jejak audit per-kejadian lengkap), tanpa baris Beban — karena Barokah gak kehilangan nilai apa pun (dapat gantinya senilai sama).
+  - **Opsi C — Tulis-jadi-Beban (Write-off)**, buat kasus supplier **nolak kompensasi sama sekali** (gak mau kurangi utang, gak mau kirim pengganti):
+    - **Berdiri sendiri, sama pola Opsi B** — gak lewat retur Opsi A. Bedanya dari Opsi B: bukan reklasifikasi net-nol (gak ada barang pengganti yang masuk), barangnya beneran hilang nilainya dari Barokah — murni kerugian.
+    - **Utang Usaha gak pernah kesentuh**, mau bill-nya lunas, sebagian, atau belum dibayar — Barokah tetap wajib bayar penuh nilai bill walau sebagian barangnya udah gak ada gunanya.
+    - Jurnal: **Debit Beban Kerugian Barang Rusak / Kredit Persediaan Bahan Baku** — kerugian ini eksplisit muncul di laporan laba-rugi periode saat ketauan, bukan ketimbun diam-diam sebagai pengurang Persediaan biasa.
 - Sengaja gak ada batas waktu retur (umur bill vs tanggal retur) — sama keputusan yang udah diambil buat AR (sempat ada, dicabut karena angkanya gak pernah punya dasar/justifikasi kuat). Retur ke supplier diterima/ditolak sekarang murni keputusan manual staf di luar sistem — gak ada lagi padanan validasi yang perlu di-mirror dari AR, karena AR sendiri udah nyabut validasi itu total.
-- **Beda dari barang rusak yang GAK dapat kompensasi sama sekali** (supplier nolak ganti maupun kurangi utang) — itu bukan retur, itu kerugian murni yang ditanggung Barokah sendiri (Beban Kerugian Barang Rusak). Ini kasus lintas modul (berlaku juga di sisi retur customer di AR) yang belum digarap — catatan terbuka, lihat scope-debt kerugian barang rusak.
-- Catatan implementasi: fitur ini nanganin item dengan metode costing Rata-Rata Tertimbang — satu-satunya metode yang ada sekarang (FIFO sudah dihapus total dari sistem). Nilai barang yang diretur/ditukar dihitung dari harga rata-rata **saat retur terjadi**, bukan harga asal pas barang diterima — konsisten dengan cara Rata-Rata Tertimbang bekerja di modul Inventory (gak nyimpen asal-usul per batch).
+- **Ketiga opsi berbagi 1 batas fisik yang sama**: total qty yang diklaim lewat opsi mana pun (A, B, atau C), buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu. Karena batasnya di level fisik (bukan per-mekanisme), 1 bill boleh dipecah campuran — sebagian qty diretur (Opsi A), sebagian ditukar (Opsi B), sebagian ditulis-jadi-beban (Opsi C) — sesuai hasil negosiasi nyata per porsi barangnya, gak harus 1 kejadian = 1 resolusi seragam buat seluruh bill.
+- Catatan implementasi: fitur ini nanganin item dengan metode costing Rata-Rata Tertimbang — satu-satunya metode yang ada sekarang (FIFO sudah dihapus total dari sistem). Nilai barang yang diretur/ditukar/ditulis-jadi-beban dihitung dari harga rata-rata **saat kejadiannya terjadi**, bukan harga asal pas barang diterima — konsisten dengan cara Rata-Rata Tertimbang bekerja di modul Inventory (gak nyimpen asal-usul per batch).
 
 **Aturan Bisnis**
-- Opsi A dan Opsi B saling eksklusif buat 1 kejadian retur yang sama — cuma boleh pilih salah satu, gak boleh jalan bareng (itu kompensasi ganda dari sisi supplier).
-- Total qty yang diklaim lewat Opsi A **plus** total qty yang ditukar lewat Opsi B, buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu.
+- Opsi A, Opsi B, dan Opsi C saling eksklusif **per porsi barang yang sama** — 1 unit barang cuma bisa diklaim lewat salah satu opsi, gak boleh jalan bareng buat porsi yang sama (itu kompensasi ganda atau kerugian ganda dari sisi supplier). Porsi yang beda dalam 1 bill yang sama boleh pakai opsi berbeda-beda.
+- Total qty yang diklaim lewat Opsi A, Opsi B, dan Opsi C sekaligus, buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu.
 - Total saldo Piutang Retur Supplier yang dicairkan tunai gak boleh ngelebihin nominal awal saldo itu.
-- Retur gak boleh dicatat ke periode akuntansi yang udah ditutup — soal integritas pembukuan umum, bukan aturan khusus retur.
+- Retur/write-off gak boleh dicatat ke periode akuntansi yang udah ditutup — soal integritas pembukuan umum, bukan aturan khusus retur.
 
 **Skenario**
 - Retur (Opsi A), bill belum lunas — utang beneran berkurang.
 - Retur (Opsi A), bill udah lunas — jurnal sama tetap jalan (outstanding jadi minus), otomatis direklasifikasi jadi saldo Piutang Retur Supplier.
 - Retur (Opsi B) — tukar barang, berdiri sendiri, Utang Usaha gak kesentuh, independen dari status bayar.
 - Saldo Piutang Retur Supplier dicairkan tunai.
+- Kerugian Barang Rusak (Opsi C) — supplier nolak kompensasi sama sekali, Debit Beban Kerugian Barang Rusak / Kredit Persediaan Bahan Baku, Utang Usaha gak kesentuh sama sekali.
+- 1 bill dipecah campuran — sebagian qty diretur (Opsi A, dapat potongan utang), sebagian qty lain dari bill yang sama ternyata rusak juga tapi supplier udah gak mau nambah kompensasi (Opsi C, ditanggung sendiri) — dua kejadian independen, sama-sama dibatasi qty fisik yang diterima.
 
 **Common Mistakes**
-- Opsi A dan Opsi B dianggap bisa jalan bareng buat 1 kejadian retur yang sama — itu kompensasi ganda dari sisi supplier, cuma boleh pilih salah satu.
+- Opsi A, Opsi B, dan Opsi C dianggap bisa jalan bareng buat porsi barang yang sama — itu kompensasi ganda (atau kerugian ganda) dari sisi supplier, cuma boleh pilih salah satu per porsi.
 - Excess dari Opsi A (bill udah lunas) dianggap otomatis berarti barang harus diganti (Opsi B) — dua-duanya independen, resolusi yang dipilih adalah keputusan bisnis, bukan konsekuensi status bayar.
-- Barang rusak yang gak dapat kompensasi sama sekali (supplier nolak) dicatat lewat jalur retur — itu kasus terpisah (kerugian/write-off), bukan retur.
+- Barang rusak yang gak dapat kompensasi sama sekali (supplier nolak) dicatat lewat jalur retur Opsi A — Utang Usaha gak boleh ikut dikurangi kalau supplier gak beneran ngasih kompensasi apa pun. Harus lewat Opsi C (write-off), yang gak nyentuh Utang Usaha sama sekali.
 
 ### Uang Muka / DP ke Supplier
 

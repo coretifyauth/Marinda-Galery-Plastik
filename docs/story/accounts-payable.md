@@ -102,7 +102,23 @@ Jurnal: `Debit Persediaan Bahan Baku 37.500 (gula baru) / Kredit Persediaan Baha
 
 *(Catatan: skenario ini sebelumnya juga punya opsi "dipakai motong bill lain" — Rp30.000 diterapkan ke bill baru, Rp20.000 sisanya dicairkan. Opsi itu dicabut migration `0009_ap_remove_return_credit_apply.sql` (2026-08-08) — bukan fondasi AP, gak ada bukti kebutuhan bisnis konkret. Sekarang cuma 1 disposisi: dicairkan tunai.)*
 
-## Skenario 10 — DP dibayar ke supplier baru, diselesaikan campuran (Toko Kelapa Makmur, supplier baru)
+## Skenario 10 — Kerugian Barang Rusak, supplier nolak ganti (Opsi C, Toko Gula Sejahtera, lanjutan Skenario 6)
+
+5 September 2026: pas cek ulang sisa kiriman Tahap 3 (bill 8 Agustus, sudah pernah diretur 4kg lewat Opsi A di Skenario 6), ternyata ada 2kg lagi yang menggumpal kena lembap — ketauan belakangan, bukan pas pengecekan pertama. Kali ini Toko Gula Sejahtera **menolak** kompensasi apa pun — alasan mereka, kompensasi buat kiriman itu udah dianggap selesai lewat Opsi A sebelumnya. Barokah harus menanggung sendiri kerugian ini.
+
+RPC write-off dipanggil (`bill_id` = bill Tahap 3, `qty = 2kg`). Cek qty gabungan Opsi A+B+C: klaim sebelumnya (Opsi A, Skenario 6) 4kg + klaim baru (Opsi C) 2kg = 6kg, masih ≤ 20kg yang diterima di GRN itu → lolos — inilah yang bikin partial-capable: 1 GRN yang sama boleh dipecah campur Opsi A dan Opsi C, dibatasi qty fisik yang diterima, bukan per-mekanisme.
+
+Nilai = 2kg × avg_cost Gula Pasir saat itu (Rp12.500/kg, gak berubah sejak Skenario 6/8/9 — gak ada penerimaan baru di antaranya) = **Rp25.000**.
+
+Jurnal:
+```
+Debit Beban Kerugian Barang Rusak   25.000
+  Kredit Persediaan Bahan Baku             25.000
+```
+
+Utang Usaha bill ini **gak kesentuh sama sekali** — tetap **Rp210.000** (sisa dari Skenario 6), beda dari Opsi A yang beneran ngurangin utang. `inventory_balances` Gula Pasir: qty_on_hand 35kg → **33kg** (avg_cost tetap Rp12.500/kg — write-off cuma ngurangin qty, sama kayak konsumsi biasa, gak ngubah rata-rata).
+
+## Skenario 11 — DP dibayar ke supplier baru, diselesaikan campuran (Toko Kelapa Makmur, supplier baru)
 
 10 September 2026: CV Barokah mulai kerja sama sama Toko Kelapa Makmur (supplier santan bubuk), tapi belum dipercaya dapat termin — supplier minta DP 50% duluan buat pesanan 50kg santan bubuk @ Rp15.000 = Rp750.000, DP-nya Rp375.000.
 
@@ -114,7 +130,7 @@ Total penyelesaian: 300.000 (diterapkan) + 50.000 (refund) + 25.000 (hangus) = *
 
 ## Simulasi Interface (rencana)
 
-Sama pola AR: setelah schema (`ap-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/suppliers` (CRUD supplier + termin), `/ap-bills` (list + form bikin bill, pilih akun debit manual — Persediaan atau Beban tergantung jenis pembelian), `/ap-payments` (form bayar — pilih 1 bill outstanding, boleh cicil tapi gak boleh overpay), dan `/ap-deposits` (catat DP masuk + aksi terapkan ke bill/refund tunai/hanguskan, ketiganya partial-capable). Detail flow menyusul pas fase UI dikerjakan.
+Sama pola AR: setelah schema (`ap-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/suppliers` (CRUD supplier + termin), `/ap-bills` (list + form bikin bill, pilih akun debit manual — Persediaan atau Beban tergantung jenis pembelian), `/ap-payments` (form bayar — pilih 1 bill outstanding, boleh cicil tapi gak boleh overpay), dan `/ap-deposits` (catat DP masuk + aksi terapkan ke bill/refund tunai/hanguskan, ketiganya partial-capable). Panel "Retur Barang" inline di `/ap-bills/[id]` dapat 3 opsi resolusi (Kurangi Utang/Tukar Barang/Tulis-jadi-Beban), boleh dipanggil berkali-kali buat qty berbeda dari GRN yang sama (partial-capable lewat batas qty fisik). Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

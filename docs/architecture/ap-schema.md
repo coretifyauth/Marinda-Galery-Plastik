@@ -12,6 +12,7 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Skenario nyat
 | `ap_credit_notes` | Retur barang ke pemasok, jalur "kurangi utang" (Opsi A) | `ap_bills`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian barang yang diretur per item (cuma kalau bill-nya diterima lewat penerimaan barang bertahap) | `ap_credit_notes` |
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — berdiri sendiri, tidak menyambung ke `ap_credit_notes` | `ap_bills` |
+| `purchase_writeoffs` + `purchase_writeoff_lines` | Barang rusak yang pemasok tolak kompensasi sama sekali, jalur "tulis-jadi-beban" (Opsi C) — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `ap_bills` |
 | `ap_return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `ap_credit_notes` |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" sudah dicabut, bukan fondasi AP) | `ap_return_credits` |
 | `ap_deposits` | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) | `suppliers`, dan ke transaksi jurnal yang otomatis dibuat |
@@ -79,10 +80,11 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 | `ap_credit_notes` | Retur barang, Opsi A ("kurangi utang") | `ap_bills`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian item retur, cuma jalur full (bill lewat penerimaan barang) | `ap_credit_notes` |
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang, Opsi B — berdiri sendiri, gak menyambung ke `ap_credit_notes` | `ap_bills` |
+| `purchase_writeoffs` + `purchase_writeoff_lines` | Tulis-jadi-beban, Opsi C — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `ap_bills` |
 | `ap_return_credits` | Saldo "Piutang Retur Supplier" — lahir otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `suppliers`, `ap_credit_notes` (sumbernya) |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai — satu-satunya disposisi | `ap_return_credits` |
 
-Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-satunya metode yang ada sekarang, FIFO sudah dihapus total). Sengaja gak ada batas waktu retur (umur bill vs tanggal retur) — keputusan final, mirror AR yang juga sudah mencabut validasi serupa total. Barang rusak yang sama sekali gak dapat kompensasi dari supplier (gak dikurangin utang, gak diganti barang) di luar cakupan tabel-tabel di atas — itu kerugian murni (Beban Kerugian Barang Rusak), bukan retur; belum digarap, lintas modul AR & AP.
+Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-satunya metode yang ada sekarang, FIFO sudah dihapus total). Sengaja gak ada batas waktu retur (umur bill vs tanggal retur) — keputusan final, mirror AR yang juga sudah mencabut validasi serupa total. Barang rusak yang sama sekali gak dapat kompensasi dari supplier (gak dikurangin utang, gak diganti barang) ditangani Opsi C (`purchase_writeoffs`) — kerugian murni (Beban Kerugian Barang Rusak), bukan retur.
 
 **Alur Teknis (RPC)**
 
@@ -91,19 +93,21 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | Retur, Opsi A (kurangi utang) | `create_ap_credit_note` | Kalau financial-only: 1 jurnal (Debit Utang Usaha, Kredit Persediaan Bahan Baku). Kalau full (bill lewat penerimaan barang): konsumsi stok dulu lewat fungsi Rata-Rata Tertimbang buat dapetin nilai cost fisik, baru jurnal + insert `ap_credit_notes` + `purchase_return_lines` | Trigger no-over-return (total retur ≤ nilai bill, independen status bayar) |
 | Deteksi & cairkan excess jadi Piutang Retur Supplier | `create_ap_credit_note` (lanjutan aksi di atas, 1 pemanggilan) | Kalau sisa outstanding sebelum retur ini udah minus/kurang dari nominal retur, bagian excess-nya dijurnal ulang (Debit Piutang Retur Supplier, Kredit Utang Usaha) + insert `ap_return_credits` | Parameter akun asset wajib diisi kalau ada excess |
 | Retur, Opsi B (tukar barang) | `create_purchase_replacement` | Konsumsi barang rusak + terima barang baru pakai harga rata-rata yang sama (net nol ke nilai Persediaan); insert `purchase_replacements` + `purchase_replacement_lines` | Guard qty gabungan (baris di bawah); Utang Usaha gak pernah disentuh |
-| Guard qty gabungan Opsi A + B | Trigger di `purchase_return_lines` dan `purchase_replacement_lines` | — | Total qty retur (Opsi A) + total qty tukar (Opsi B) per item per bill ≤ qty yang diterima di bill itu |
+| Retur, Opsi C (tulis-jadi-beban) | `create_purchase_writeoff` | Konsumsi barang rusak lewat fungsi Rata-Rata Tertimbang, jurnal Debit Beban Kerugian Barang Rusak / Kredit Persediaan Bahan Baku (BUKAN net-nol seperti Opsi B); insert `purchase_writeoffs` + `purchase_writeoff_lines` | Guard qty gabungan (baris di bawah); Utang Usaha gak pernah disentuh |
+| Guard qty gabungan Opsi A + B + C | Trigger di `purchase_return_lines`, `purchase_replacement_lines`, dan `purchase_writeoff_lines` | — | Total qty retur (Opsi A) + total qty tukar (Opsi B) + total qty tulis-jadi-beban (Opsi C) per item per bill ≤ qty yang diterima di bill itu |
 | Refund tunai Piutang Retur Supplier | `refund_ap_return_credit` | Jurnal Debit Kas/Bank, Kredit Piutang Retur Supplier; insert `ap_return_credit_refunds` | `amount` melebihi sisa saldo → tolak |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Opsi A dan Opsi B saling eksklusif per kejadian retur | Keputusan manual orang yang input — `create_ap_credit_note` dan `create_purchase_replacement` adalah 2 RPC independen, gak saling memanggil |
-| Total qty retur (A) + tukar (B) per item per bill ≤ qty diterima | Trigger guard qty gabungan, jumlahin `purchase_return_lines` + `purchase_replacement_lines` |
+| Opsi A, Opsi B, dan Opsi C saling eksklusif per porsi barang yang sama | Keputusan manual orang yang input — `create_ap_credit_note`, `create_purchase_replacement`, `create_purchase_writeoff` adalah 3 RPC independen, gak saling memanggil |
+| Total qty retur (A) + tukar (B) + tulis-jadi-beban (C) per item per bill ≤ qty diterima | Trigger guard qty gabungan, jumlahin `purchase_return_lines` + `purchase_replacement_lines` + `purchase_writeoff_lines` — batasnya di level fisik, bukan per-mekanisme, jadi 1 bill boleh dipecah campuran antar opsi |
 | Excess dari Opsi A pada bill lunas otomatis jadi saldo resmi | `create_ap_credit_note` — bagian yang melebihi sisa outstanding sebelum retur ini, bukan seluruh nominal retur |
 | Saldo Piutang Retur Supplier cuma bisa dicairkan tunai | Cuma 1 RPC yang bisa mengurangi saldo ini: `refund_ap_return_credit` |
 | Retur gak boleh masuk periode tertutup | Reuse aturan umum block-retroactive-period dari General Ledger |
 | Retur gak boleh ngelebihin nilai bill (Opsi A) | Trigger no-over-return, cap ke nilai bill (independen dari status bayar) |
+| Barang rusak yang gak dapat kompensasi sama sekali gak boleh lewat jalur Opsi A | Opsi C (`create_purchase_writeoff`) — gak nyentuh Utang Usaha sama sekali, beda dari Opsi A yang selalu mengurangi utang |
 
 **Interaksi Antar Tabel**
 
@@ -112,6 +116,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | `ap_credit_notes` | banyak-ke-satu | `ap_bills` |
 | `purchase_return_lines` | banyak-ke-satu | `ap_credit_notes` |
 | `purchase_replacements` | banyak-ke-satu | `ap_bills` (langsung, tanpa lewat `ap_credit_notes`) |
+| `purchase_writeoffs` | banyak-ke-satu | `ap_bills` (langsung, tanpa lewat `ap_credit_notes`) |
 | `ap_return_credits` | satu-ke-satu | `ap_credit_notes` (sumbernya) |
 | `ap_return_credits` | banyak-ke-satu | `suppliers` |
 | `ap_return_credit_refunds` | banyak-ke-satu | `ap_return_credits` |

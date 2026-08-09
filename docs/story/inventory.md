@@ -8,11 +8,20 @@ Timeline cerita ini: **Agustus 2026** (bulan setelah AR/AP per 30 Juli 2026).
 
 ## Item Master Data
 
-| Item | Tipe | Satuan | Metode Costing | Akun Persediaan |
+| Item | Tipe | Satuan Dasar | Metode Costing | Akun Persediaan |
 |---|---|---|---|---|
 | Tepung Terigu | Bahan Baku | kg | **Weighted Average** — harganya sering naik-turun, tapi sekarang cukup rata-rata tertimbang, gak perlu jejak per-batch | Persediaan Bahan Baku |
 | Gula Pasir | Bahan Baku | kg | **Weighted Average** — harga relatif stabil, cukup rata-rata | Persediaan Bahan Baku |
 | Roti Tawar | Barang Jadi | buah | **Weighted Average** — ngikutin hasil produksi, avg_cost dihitung ulang tiap ada penambahan qty | Persediaan Barang Jadi |
+
+## Satuan Jual Roti Tawar (`item_units`)
+
+| Satuan Jual | Faktor Konversi (ke "buah") | Harga | Catatan |
+|---|---|---|---|
+| buah (base) | 1 | Rp2.000/buah | Satuan dasar, dipakai semua pelacakan stok/HPP |
+| lusin (isi 12) | 12 | Rp22.000/lusin | Diskon grosir — 12 × Rp2.000 = Rp24.000 kalau beli lepasan, lusin lebih murah Rp2.000 |
+
+Harga-harga ini cuma dipakai buat **menyarankan** nominal pas bikin Goods Issue baru — semua invoice di skenario bawah tetap tercatat pakai nominal yang benar-benar disepakati saat itu, gak pernah berubah retroaktif kalau harganya diubah belakangan (lihat Tahap 8).
 
 ## Resep (BOM)
 
@@ -106,9 +115,78 @@ Dua jurnal jalan bersamaan (titik HPP akhirnya diakui):
 
 Total Persediaan = Rp997.500 + Rp487.500 + Rp26.000 = **Rp1.511.000**, ini yang muncul di Neraca. HPP Rp39.000 muncul di Laporan Laba Rugi bulan Agustus.
 
+## Tahap 8 — Jual pakai satuan "lusin" (Goods Issue + Invoice, 30 Agustus 2026)
+
+Lanjutan cross-modul: antara 25–30 Agustus, 3 buah Roti Tawar dari Tahap 7 sempat diretur rusak lalu ditukar garansi (`docs/story/accounts-receivable.md` Skenario 6 & 6b) — qty Roti Tawar per 30 Agustus jadi **17 buah @ Rp1.300** (gak berubah dari avg_cost, cuma qty yang turun karena penukaran barang).
+
+Barokah mulai nawarin satuan **lusin** (isi 12) buat pembelian grosir. Warung Bu Imas beli **1 lusin**.
+
+RPC `create_goods_issue` dipanggil — **qty yang dikirim tetap di satuan dasar** (`buah`), bukan "1" (maksudnya 1 lusin). Konversi terjadi di UI sebelum RPC dipanggil: 1 lusin × 12 (faktor konversi) = **12 buah**.
+
+```
+Qty dikonsumsi dari stok = 12 buah
+HPP = 12 buah × Rp1.300 (avg_cost berlaku)     = Rp15.600
+Pendapatan = 1 lusin × Rp22.000 (harga/lusin)  = Rp22.000
+```
+
+Dua jurnal jalan bersamaan (persis pola Tahap 7, cuma nominalnya dari harga per-lusin, bukan per-buah):
+```
+Debit Piutang Usaha        22.000
+  Kredit Pendapatan Penjualan     22.000
+
+Debit Harga Pokok Penjualan (HPP)  15.600
+  Kredit Persediaan Barang Jadi           15.600
+```
+
+**Laba kotor: Rp22.000 − Rp15.600 = Rp6.400.** Kalau dijual lepasan 12 buah @ Rp2.000 = Rp24.000, laba kotornya akan Rp24.000−15.600=Rp8.400 — lebih besar, tapi itu konsekuensi diskon grosir yang memang disengaja (harga per lusin bukan hasil kali otomatis dari harga per buah).
+
+`inventory_balances` Roti Tawar: qty_on_hand 17 → **5 buah** (avg_cost tetap Rp1.300, konsumsi gak ngubah rata-rata).
+
+## Tahap 9 — Stock Opname (Penyesuaian Stok Fisik, 10 September 2026)
+
+Lanjutan cross-modul: Gula Pasir sempat kena Opsi A retur (4kg, `docs/story/accounts-payable.md` Skenario 6) dan Opsi C write-off (2kg, Skenario 10) — posisi per 5 September jadi **33kg @ Rp12.500**.
+
+Awal bulan, Bu Nur hitung fisik seluruh gudang (bukan dipicu kejadian tertentu — cuma rutinitas bulanan) dan bandingin ke catatan sistem:
+
+| Item | Catatan Sistem | Hasil Hitung Fisik | Selisih |
+|---|---|---|---|
+| Tepung Terigu | 95kg | **90kg** | **Kurang 5kg** — kemungkinan lembap/susut, gak ketauan sebabnya persis |
+| Gula Pasir | 33kg | **36kg** | **Lebih 3kg** — kemungkinan ada penerimaan lama yang kelewat dicatat |
+
+RPC `record_stock_opname` dipanggil 1 kali buat kedua item sekaligus (1 sesi opname). Nilai selisih dihitung dari `avg_cost` masing-masing item **saat opname** (bukan harga historis):
+
+```
+Tepung Terigu: selisih 5kg × Rp10.500 (avg_cost berlaku) = Rp52.500 (kurang, jadi beban)
+Gula Pasir:    selisih 3kg × Rp12.500 (avg_cost berlaku) = Rp37.500 (lebih, jadi pendapatan)
+```
+
+Dua jurnal terpisah (BUKAN di-netting jadi 1 angka Rp15.000):
+
+```
+Tepung Terigu (kurang):
+Debit Beban Selisih Persediaan       52.500
+  Kredit Persediaan Bahan Baku              52.500
+
+Gula Pasir (lebih):
+Debit Persediaan Bahan Baku          37.500
+  Kredit Pendapatan Selisih Persediaan       37.500
+```
+
+`inventory_balances` disesuaikan langsung ke hasil hitung fisik — Tepung Terigu qty_on_hand 95 → **90kg** (avg_cost tetap Rp10.500, gak berubah), Gula Pasir qty_on_hand 33 → **36kg** (avg_cost tetap Rp12.500). Roti Tawar gak dihitung ulang sesi ini (hasil hitungnya pas 5 buah, sesuai catatan) — gak ada baris/jurnal buat item itu sama sekali.
+
+## Posisi Akhir per 10 September 2026
+
+| Item | Sisa Qty | Nilai Persediaan |
+|---|---|---|
+| Tepung Terigu (Weighted Avg) | 90kg @ Rp10.500 | **Rp945.000** |
+| Gula Pasir (Weighted Avg) | 36kg @ Rp12.500 | **Rp450.000** |
+| Roti Tawar (barang jadi, Weighted Avg) | 5 buah @ Rp1.300 | **Rp6.500** |
+
+Total Persediaan = Rp945.000 + Rp450.000 + Rp6.500 = **Rp1.401.500**. Laporan Laba Rugi bulan September kena tambahan 2 baris: Beban Selisih Persediaan Rp52.500 dan Pendapatan Selisih Persediaan Rp37.500 — net-nya rugi Rp15.000, tapi keduanya tetap keliatan terpisah, gak ketimbun jadi 1 angka.
+
 ## Simulasi Interface (rencana)
 
-Sama pola modul lain: setelah DDL (`inventory-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/items` (master data barang + metode costing), `/purchase-orders` (bikin PO), `/goods-receipts` (terima barang, cocokkan ke PO, sekaligus bikin bill), `/bom` (kelola resep), `/production-orders` (jalankan produksi), dan integrasi di `/ar-invoices` buat sekaligus bikin goods issue pas invoice dibuat. Detail flow menyusul pas fase UI dikerjakan.
+Sama pola modul lain: setelah DDL (`inventory-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/items` (master data barang + metode costing + kelola satuan jual & harga per satuan), `/purchase-orders` (bikin PO), `/goods-receipts` (terima barang, cocokkan ke PO, sekaligus bikin bill), `/bom` (kelola resep), `/production-orders` (jalankan produksi), `/stock-opnames` (list+create sesi hitung fisik, tiap baris input qty hasil hitung per item, selisih & jurnal dihitung otomatis pas submit), dan integrasi di `/ar-invoices` buat sekaligus bikin goods issue pas invoice dibuat. Form Goods Issue punya pemilih satuan jual per baris item (bukan cuma qty) — begitu satuan+qty dipilih, UI otomatis konversi ke satuan dasar & saranin nominal dari harga satuan itu. Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

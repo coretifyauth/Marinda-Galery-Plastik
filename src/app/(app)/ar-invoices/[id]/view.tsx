@@ -23,7 +23,14 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 
-type ReturnLineInput = { item_id: string; name: string; uom: string; qty_available: number; qty_returned: string };
+type ReturnLineInput = {
+  item_id: string;
+  name: string;
+  uom: string;
+  qty_available: number;
+  qty_returned: string;
+  condition: "RESALABLE" | "DAMAGED";
+};
 type ReplacementLineInput = { item_id: string; name: string; uom: string; qty_remaining: number; qty: string };
 
 type JournalEntryDetail = {
@@ -71,6 +78,7 @@ type CreditNoteDetail = {
       item_id: string;
       qty_returned: number;
       total_cost: number;
+      condition: "RESALABLE" | "DAMAGED";
       items: { name: string; uom: string };
     }[];
   }[];
@@ -123,6 +131,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [returHppAccountId, setReturHppAccountId] = useState("");
   const [returFinishedGoodAccountId, setReturFinishedGoodAccountId] = useState("");
   const [returCreditLiabilityAccountId, setReturCreditLiabilityAccountId] = useState("");
+  const [returLossExpenseAccountId, setReturLossExpenseAccountId] = useState("");
   const [returLines, setReturLines] = useState<ReturnLineInput[]>([]);
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
@@ -202,7 +211,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("ar_credit_notes")
         .select(
-          "id, credit_note_date, source_ref, amount, created_at, inventory_returns(id, return_date, inventory_return_lines(item_id, qty_returned, total_cost, items(name, uom)))"
+          "id, credit_note_date, source_ref, amount, created_at, inventory_returns(id, return_date, inventory_return_lines(item_id, qty_returned, total_cost, condition, items(name, uom)))"
         )
         .eq("invoice_id", id)
         .order("credit_note_date"),
@@ -301,6 +310,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setReturHppAccountId("");
     setReturFinishedGoodAccountId("");
     setReturCreditLiabilityAccountId("");
+    setReturLossExpenseAccountId("");
     setReturLines(
       goodsIssue
         ? goodsIssue.goods_issue_lines.map((l) => ({
@@ -309,6 +319,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             uom: l.items.uom,
             qty_available: l.qty_issued,
             qty_returned: "",
+            condition: "RESALABLE" as const,
           }))
         : []
     );
@@ -319,6 +330,10 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setReturLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, qty_returned: qty } : l)));
   }
 
+  function updateReturLineCondition(itemId: string, condition: "RESALABLE" | "DAMAGED") {
+    setReturLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, condition } : l)));
+  }
+
   async function handleReturSubmit(e: FormEvent) {
     e.preventDefault();
     if (!invoice) return;
@@ -326,7 +341,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
     const activeLines = returLines
       .filter((l) => l.qty_returned.trim() !== "")
-      .map((l) => ({ item_id: l.item_id, qty_returned: l.qty_returned }));
+      .map((l) => ({ item_id: l.item_id, qty_returned: l.qty_returned, condition: l.condition }));
 
     const parsed = createArCreditNoteSchema.safeParse({
       invoice_id: invoice.id,
@@ -339,6 +354,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       hpp_account_id: returHppAccountId || undefined,
       finished_good_account_id: returFinishedGoodAccountId || undefined,
       return_credit_liability_account_id: returCreditLiabilityAccountId || undefined,
+      loss_expense_account_id: returLossExpenseAccountId || undefined,
     });
     if (!parsed.success) {
       setReturError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -361,6 +377,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       p_hpp_account_id: parsed.data.hpp_account_id ?? null,
       p_finished_good_account_id: parsed.data.finished_good_account_id ?? null,
       p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id ?? null,
+      p_loss_expense_account_id: parsed.data.loss_expense_account_id ?? null,
     });
     setReturSubmitting(false);
     if (error) {
@@ -849,6 +866,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                           <li key={l.item_id}>
                             {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
                             {l.total_cost.toLocaleString("id-ID")})
+                            {l.condition === "DAMAGED" && (
+                              <span className="ml-1 rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">
+                                Rusak
+                              </span>
+                            )}
                           </li>
                         ))}
                       </ul>
@@ -1403,7 +1425,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                     </Select>
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="retur_finished_good_account">Akun Persediaan Barang Jadi (debit)</Label>
+                    <Label htmlFor="retur_finished_good_account">Akun Persediaan Barang Jadi (debit, baris Layak Jual)</Label>
                     <Select
                       id="retur_finished_good_account"
                       value={returFinishedGoodAccountId}
@@ -1417,18 +1439,36 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                       ))}
                     </Select>
                   </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="retur_loss_expense_account">
+                      Akun Beban Kerugian Barang Rusak (debit, baris Rusak)
+                    </Label>
+                    <Select
+                      id="retur_loss_expense_account"
+                      value={returLossExpenseAccountId}
+                      onChange={(e) => setReturLossExpenseAccountId(e.target.value)}
+                    >
+                      <option value="">Pilih akun (wajib kalau ada baris Rusak)...</option>
+                      {leafAccounts.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code} — {a.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                 </>
               )}
             </div>
 
             {goodsIssue && (
               <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+                <div className="grid grid-cols-[1fr_8rem_10rem] gap-2 text-sm font-medium text-slate-500">
                   <span>Item Terjual (qty asli)</span>
                   <span>Qty Retur</span>
+                  <span>Kondisi</span>
                 </div>
                 {returLines.map((line) => (
-                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
+                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem_10rem] gap-2">
                     <span className="flex items-center text-sm text-slate-700">
                       {line.name} ({line.qty_available} {line.uom})
                     </span>
@@ -1439,6 +1479,15 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                       value={line.qty_returned}
                       onChange={(e) => updateReturLine(line.item_id, e.target.value)}
                     />
+                    <Select
+                      value={line.condition}
+                      onChange={(e) =>
+                        updateReturLineCondition(line.item_id, e.target.value as "RESALABLE" | "DAMAGED")
+                      }
+                    >
+                      <option value="RESALABLE">Layak Jual</option>
+                      <option value="DAMAGED">Rusak</option>
+                    </Select>
                   </div>
                 ))}
               </div>

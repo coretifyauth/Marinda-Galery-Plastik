@@ -316,7 +316,7 @@ Akun baru: `1350` **Piutang Retur Supplier** (asset) — di-insert di migration 
 
 **Ketahuan lewat `schema-reviewer` sebelum diapply** (2 blocker + 1 warning, sudah diperbaiki di file final): (1) `ap_bill_remaining()` awalnya cuma 2 reducer, kelewat `ap_return_credit_applications` — bisa bikin over-allocation nyata (bill yang udah "dibayar" pakai saldo kredit retur masih bisa dialokasikan payment lagi ngelebihin sisa riil); (2) `cancel_ap_bill` (0010) awalnya gak diperbarui sama sekali buat 2 reducer baru — sekarang diperluas; (3) `create_ap_credit_note` jalur full awalnya nerima `p_amount` independen dari cost fisik yang dihitung `consume_weighted_average` — bisa divergen tanpa ketauan. Detail perbaikan di masing-masing bagian di bawah.
 
-Cuma nanganin item Weighted Average — bukan lagi "sementara": FIFO sudah dihapus total dari sistem (migration `0038_remove_fifo_costing.sql`), jadi Weighted Average sekarang satu-satunya jalur yang ada, 0 dampak balik ke fitur ini. **Batas waktu retur** sengaja gak termasuk dan gak akan digarap (bukan scope-debt, keputusan final) — AR sendiri sempat punya validasi serupa (`return_window_days`) tapi udah dicabut total (migration `0039`), jadi gak ada lagi padanan buat di-mirror. **Barang rusak yang pemasok tolak ganti sama sekali** (gak kurangin utang, gak kirim pengganti) di luar scope fitur ini — itu kerugian murni yang harus diakui sebagai Beban Kerugian Barang Rusak, bukan lewat jalur retur; ref `memory/scope-debt/kerugian-barang-rusak.md` (lintas modul AR & AP).
+Cuma nanganin item Weighted Average — bukan lagi "sementara": FIFO sudah dihapus total dari sistem (migration `0038_remove_fifo_costing.sql`), jadi Weighted Average sekarang satu-satunya jalur yang ada, 0 dampak balik ke fitur ini. **Batas waktu retur** sengaja gak termasuk dan gak akan digarap (bukan scope-debt, keputusan final) — AR sendiri sempat punya validasi serupa (`return_window_days`) tapi udah dicabut total (migration `0039`), jadi gak ada lagi padanan buat di-mirror. **Barang rusak yang pemasok tolak ganti sama sekali** (gak kurangin utang, gak kirim pengganti) — **Opsi C**, `purchase_writeoffs`/`create_purchase_writeoff`, migration `0016_ap_purchase_writeoff_schema.sql`, lihat sub-bagian di bawah.
 
 ### `ap_credit_notes` — Opsi A, selalu dibuat kalau resolusinya "kurangi utang"
 
@@ -375,12 +375,36 @@ create table purchase_replacement_lines (
 );
 ```
 
-### `purchase_returned_qty(bill_id, item_id)` — guard qty gabungan Opsi A + B
+### `purchase_writeoffs` + `purchase_writeoff_lines` — Opsi C, berdiri sendiri (migration `0016_ap_purchase_writeoff_schema.sql`)
 
-Item Weighted Average gak punya proteksi otomatis per-lot (beda dari zaman FIFO masih ada — dulu ada `inventory_lot_consumptions_no_over_consumption`, sudah dihapus bareng FIFO di migration `0038`) — stoknya udah nyampur begitu diterima. Guard ini jumlahin klaim dari **2 tabel sekaligus** (`purchase_return_lines` via `ap_credit_notes.bill_id`, `purchase_replacement_lines` via `purchase_replacements.bill_id`) dan dibandingin ke `goods_receipt_lines.qty_received` — fisiknya cuma ada 1 pool qty yang bisa diklaim, mau lewat jalur mana pun.
+Supplier **nolak kompensasi sama sekali** — gak kurangin Utang Usaha (beda Opsi A), gak kirim pengganti (beda Opsi B). Struktur identik `purchase_replacements`/`purchase_replacement_lines` (berdiri sendiri, gak nunjuk `ap_credit_notes`), bedanya jurnal RPC-nya BUKAN net-nol — lihat "RPC `create_purchase_writeoff`" di bawah. Ref bisnis: `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier" > Opsi C.
 
 ```sql
-create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns numeric as $$
+create table purchase_writeoffs (
+  id uuid primary key default gen_random_uuid(),
+  bill_id uuid not null references ap_bills(id),
+  writeoff_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create table purchase_writeoff_lines (
+  id uuid primary key default gen_random_uuid(),
+  purchase_writeoff_id uuid not null references purchase_writeoffs(id) on delete cascade,
+  item_id uuid not null references items(id),
+  qty_written_off numeric(14,3) not null check (qty_written_off > 0),
+  total_cost numeric(14,2) not null check (total_cost > 0)
+);
+```
+
+### `purchase_returned_qty(bill_id, item_id)` — guard qty gabungan Opsi A + B + C (diperluas `0016`)
+
+Item Weighted Average gak punya proteksi otomatis per-lot (beda dari zaman FIFO masih ada — dulu ada `inventory_lot_consumptions_no_over_consumption`, sudah dihapus bareng FIFO di migration `0038`) — stoknya udah nyampur begitu diterima. Guard ini jumlahin klaim dari **3 tabel sekaligus** (`purchase_return_lines` via `ap_credit_notes.bill_id`, `purchase_replacement_lines` via `purchase_replacements.bill_id`, `purchase_writeoff_lines` via `purchase_writeoffs.bill_id`) dan dibandingin ke `goods_receipt_lines.qty_received` — fisiknya cuma ada 1 pool qty yang bisa diklaim, mau lewat jalur mana pun. `create or replace` — signature gak berubah, jadi 2 trigger existing (`purchase_return_lines_no_over_return_trigger`, `purchase_replacement_lines_no_over_return_trigger`) otomatis kepake definisi baru tanpa perlu di-drop/recreate. Ini yang bikin Opsi A/B/C partial-capable "gratis" (batasnya di level fisik qty diterima, bukan per-mekanisme) — gak butuh fungsi `*_remaining()` terpisah kayak `ap_deposit_remaining()`.
+
+```sql
+create or replace function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns numeric as $$
   select
     coalesce((
       select sum(prl.qty_returned) from purchase_return_lines prl
@@ -392,11 +416,17 @@ create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns nu
       select sum(prpl.qty_replaced) from purchase_replacement_lines prpl
       join purchase_replacements prp on prp.id = prpl.purchase_replacement_id
       where prp.bill_id = p_bill_id and prpl.item_id = p_item_id
+    ), 0)
+    +
+    coalesce((
+      select sum(pwl.qty_written_off) from purchase_writeoff_lines pwl
+      join purchase_writeoffs pw on pw.id = pwl.purchase_writeoff_id
+      where pw.bill_id = p_bill_id and pwl.item_id = p_item_id
     ), 0);
 $$ language sql stable;
 ```
 
-Dipakai 2 trigger insert (`purchase_return_lines_no_over_return_trigger`, `purchase_replacement_lines_no_over_return_trigger`) yang keduanya juga nge-lookup `goods_receipt_lines.qty_received` lewat `goods_receipt_notes.bill_id`.
+Dipakai 3 trigger insert (`purchase_return_lines_no_over_return_trigger`, `purchase_replacement_lines_no_over_return_trigger`, `purchase_writeoff_lines_no_over_return_trigger` — baru `0016`, pola identik 2 lainnya) yang semuanya juga nge-lookup `goods_receipt_lines.qty_received` lewat `goods_receipt_notes.bill_id`.
 
 ### `ap_return_credits` + `ap_return_credit_refunds`
 
@@ -457,6 +487,19 @@ Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
 Konsumsi barang rusak pakai `consume_weighted_average` (fungsi yang sama dipakai jalur full Opsi A), lalu "terima" barang baru pakai `avg_cost` yang identik (`v_line_cost / v_qty`) — karena unit cost-nya sama persis, hitung ulang rata-rata otomatis balik ke `avg_cost` semula (murni aljabar: `((qty_before - qty)*avg + qty*avg) / qty_before = avg`), konsisten sama klaim "net nol" di dokumentasi bisnis.
 
 Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
+
+### RPC `create_purchase_writeoff` (Opsi C, migration `0016_ap_purchase_writeoff_schema.sql`)
+
+Mirror `create_purchase_replacement` persis dari sisi struktur (berdiri sendiri, wajib `goods_receipt_notes`, konsumsi via `consume_weighted_average`) — bedanya di jurnal: **BUKAN net-nol**, cuma 1 sisi barang yang tersentuh (yang keluar), gak ada barang pengganti yang masuk:
+
+```
+Debit Beban Kerugian Barang Rusak (5900)   v_total_cost
+  Kredit Persediaan Bahan Baku (p_inventory_account_id)   v_total_cost
+```
+
+`p_loss_expense_account_id`/`p_inventory_account_id` diterima sebagai parameter (gak di-hardcode), pola sama semua RPC AP lain. Utang Usaha bill (`ap_bills`/`ap_bill_remaining()`) **gak disentuh sama sekali** — sama kayak Opsi B, `cancel_ap_bill` juga gak nge-guard `purchase_writeoffs` (konsisten sama Opsi B yang juga gak di-guard, bukan regresi — lihat catatan `cancel_ap_bill` di submodule "Konsep Inti").
+
+Full body: `supabase/migrations/0016_ap_purchase_writeoff_schema.sql`.
 
 ### RPC `refund_ap_return_credit`
 

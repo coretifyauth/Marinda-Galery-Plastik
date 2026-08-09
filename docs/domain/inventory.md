@@ -8,8 +8,8 @@ Tanpa HPP, Laporan Laba Rugi bohong. Kelihatan pendapatan besar, padahal margin 
 
 ## Konsep Inti
 
-- **Barang (Item)** — unit yang dilacak sistem, dua jenis: **bahan baku** (dipakai buat produksi) dan **barang jadi** (yang akhirnya dijual ke customer). Semua barang, tanpa kecuali, pakai metode hitung biaya yang sama — Rata-Rata Tertimbang (lihat di bawah).
-- **Posisi stok per barang** — qty yang tersedia sekarang, plus harga rata-rata per satuan. Ini semacam "buku besar fisik" yang dipakai bareng-bareng oleh tiga alur di modul ini: beli (nambah), produksi (nambah barang jadi, ngurangin bahan baku), dan jual (ngurangin barang jadi). Diperbarui tiap kali ada barang masuk (harga rata-rata berubah) atau keluar (qty berkurang, harga rata-rata tetap).
+- **Barang (Item)** — unit yang dilacak sistem, dua jenis: **bahan baku** (dipakai buat produksi) dan **barang jadi** (yang akhirnya dijual ke customer). Semua barang, tanpa kecuali, pakai metode hitung biaya yang sama — Rata-Rata Tertimbang (lihat di bawah). Tiap barang punya **1 satuan dasar** (kg, pcs, dst) — dipakai buat semua pelacakan stok/biaya (pembelian, produksi, posisi stok). Satuan jual ke customer boleh beda dari satuan dasar ini (lihat submodule "Satuan Jual & Harga" di bawah).
+- **Posisi stok per barang** — qty yang tersedia sekarang (di satuan dasar), plus harga rata-rata per satuan. Ini semacam "buku besar fisik" yang dipakai bareng-bareng oleh tiga alur di modul ini: beli (nambah), produksi (nambah barang jadi, ngurangin bahan baku), dan jual (ngurangin barang jadi). Diperbarui tiap kali ada barang masuk (harga rata-rata berubah) atau keluar (qty berkurang, harga rata-rata tetap). Bisa juga disesuaikan langsung ke hasil hitung fisik gudang lewat Stock Opname (lihat submodule di bawah).
 
 **Membeli ≠ Berbiaya**
 
@@ -99,7 +99,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
   ```
 - Selisih antara harga jual dan HPP = **laba kotor** transaksi itu.
 - Sisi jual belum punya pencocokan tiga arah (3-way matching) selayaknya sisi beli — belum ada "Sales Order" sebagai cerminan Purchase Order yang mendahului Goods Issue, invoice dan Goods Issue langsung dibuat bersamaan tanpa tahap komitmen terpisah. Belum jadi masalah nyata sekarang karena penjualan langsung dicatat begitu terjadi, tapi kalau nanti bisnisnya butuh tahap "pesanan pelanggan" terpisah sebelum barang keluar (misal pesanan custom yang perlu dikonfirmasi dulu sebelum barang disiapkan), ini yang perlu ditambahkan.
-- **Catatan lintas modul (retur):** kalau barang yang terjual lewat Goods Issue ini diretur customer, sistem membalik sebagian stok+HPP secara proporsional, pakai harga pokok **snapshot asli** pas barang itu keluar (bukan harga sekarang) — detail penuh ada di dokumentasi Piutang Usaha (Retur Barang/Credit Note). Catatan terbuka: barang yang balik dari retur masuk lagi sebagai stok bernilai seolah layak jual biasa — padahal kalau alasan returnya barang rusak, harusnya diakui sebagai kerugian, bukan ditambahkan balik jadi stok yang bisa dijual/dipakai ganti lagi. Belum ada kejadian ini di cerita bisnis yang sedang berjalan, jadi belum didesain.
+- **Catatan lintas modul (retur):** kalau barang yang terjual lewat Goods Issue ini diretur customer, sistem membalik sebagian stok+HPP secara proporsional, pakai harga pokok **snapshot asli** pas barang itu keluar (bukan harga sekarang) — detail penuh ada di dokumentasi Piutang Usaha (Retur Barang/Credit Note). Barang yang diretur diklasifikasi kondisinya per baris: **masih layak jual** (balik jadi stok normal) atau **rusak** (gak balik jadi stok, diakui sebagai Beban Kerugian Barang Rusak) — jadi barang rusak gak pernah lagi "seolah-olah" jadi stok bernilai.
 
 **Aturan Bisnis**
 - Pengurangan stok barang jadi (Goods Issue) tidak boleh melebihi qty yang tersedia.
@@ -110,3 +110,59 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 
 **Common Mistakes**
 - Menghitung HPP berdasarkan **kapan utang ke supplier dibayar**, bukan berdasarkan **kapan barangnya terjual** — dua hal yang sama sekali gak berhubungan. HPP baru diakui persis di titik Goods Issue ini, gak lebih cepat dan gak lebih lambat.
+
+### Satuan Jual & Harga (Multi Unit of Measure)
+
+**Cara Kerja**
+- Barang bisa dijual ke customer dalam **satuan yang beda dari satuan dasarnya**. Contoh: Roti Tawar satuan dasarnya "buah" (dipakai buat pelacakan stok), tapi bisa dijual per buah ATAU per lusin (isi 12) — dua pilihan satuan jual, masing-masing punya harga sendiri.
+- Tiap barang boleh (opsional) dikasih 1 atau lebih "satuan jual" — masing-masing punya **faktor konversi** ke satuan dasar (berapa satuan dasar = 1 satuan jual ini) dan **harga jual per satuan jual itu**. Satuan dasar sendiri juga terhitung sebagai "satuan jual" (faktor konversi 1) — jadi kalau barang cuma dijual dalam 1 satuan aja (kasus paling umum), cukup 1 baris data: satuan dasar + harganya.
+- **Sisi stok/HPP SELALU dihitung di satuan dasar** — begitu customer pilih "beli 2 lusin", sistem otomatis konversi jadi qty satuan dasar (2 × 12 = 24 buah) SEBELUM ngurangin stok/ngitung HPP. Barang besar/kecil kemasannya, `avg_cost` dan posisi stok gak pernah "ngerti" satuan jual — cuma ngerti satuan dasar.
+- **Harga per satuan jual itu independen, BUKAN hasil kali otomatis dari harga satuan dasar.** Harga per lusin biasanya dikasih diskon grosir (misal Rp22.000/lusin, bukan 12 × Rp2.000 = Rp24.000) — itu keputusan bisnis yang diisi manual per satuan jual, bukan dihitung sistem.
+- Ini murni **data referensi** buat menyarankan nominal invoice, sama persis prinsipnya kayak harga jual satuan dasar sebelumnya — nominal akhir yang beneran tercatat di invoice tetap bisa diubah, dan perubahan harga di data master gak pernah retroaktif ngubah invoice yang udah terbit.
+- Cuma relevan buat transaksi yang melibatkan barang fisik (jalur "full" Goods Issue) — invoice financial-only (jasa, atau barang yang gak dilacak stok) gak pernah nyentuh satuan jual sama sekali, karena emang gak ada referensi ke barang di situ.
+
+**Aturan Bisnis**
+- Tiap barang maksimal punya 1 "satuan dasar" (faktor konversi wajib 1) — sisanya boleh berapa pun satuan jual tambahan.
+- Qty yang beneran dikonsumsi dari stok SELALU di satuan dasar, gak peduli satuan jual apa yang dipilih customer.
+- Harga tiap satuan jual independen — gak wajib proporsional ke harga satuan dasar.
+
+**Skenario**
+- Barang dijual pakai satuan jual bukan satuan dasar (misal 1 lusin) — qty dikonversi ke satuan dasar dulu buat ngitung HPP, harga jual pakai harga satuan jual itu sendiri (bisa beda dari harga satuan dasar × faktor konversi).
+
+**Common Mistakes**
+- Nyimpen qty transaksi di satuan JUAL (misal "2", maksudnya 2 lusin) tanpa dikonversi ke satuan dasar — stok kelihatan cuma berkurang dikit padahal fisiknya udah berkurang jauh lebih banyak, HPP juga keitung jauh lebih kecil dari seharusnya.
+- Menghitung harga per satuan jual sebagai hasil kali otomatis dari harga satuan dasar (misal harga lusin dipaksa = 12 × harga per buah) — mengabaikan diskon grosir yang biasanya memang beda dari harga eceran.
+
+### Stock Opname (Penyesuaian Stok Fisik)
+
+**Cara Kerja**
+- Semua transaksi stok yang udah dibahas (beli, produksi, jual, retur, write-off) itu **tercatat lewat kejadian yang jelas**. Tapi ada 1 sumber selisih yang gak pernah lewat transaksi apa pun: susut alami, salah catat lama, atau kehilangan tanpa penjelasan pasti. Stock Opname = proses hitung fisik stok gudang secara berkala, dibandingkan ke posisi stok yang tercatat di sistem, lalu **sistem disesuaikan mengikuti hasil hitung fisik** — karena fisiknya itu kebenaran, bukan sebaliknya.
+- Beda mendasar dari retur/write-off: opname **gak menempel ke 1 transaksi tertentu**. Dokumen sumbernya justru **hasil hitung fisik itu sendiri** (kapan dihitung, siapa yang hitung), bukan nunjuk ke invoice/bill/credit note manapun.
+- Selisih bisa 2 arah, masing-masing diakui ke akun **terpisah** (bukan digabung/netting) — biar laporan tetap nunjukin rincian per item, bukan cuma hasil akhir gabungan:
+  - **Kurang** (fisik < sistem) — kerugian, diakui sebagai beban:
+    ```
+    Debit Beban Selisih Persediaan
+      Kredit Persediaan (Bahan Baku/Barang Jadi, sesuai jenis barangnya)
+    ```
+  - **Lebih** (fisik > sistem) — biasanya ada penerimaan/kejadian lama yang kelewat dicatat, diakui sebagai pendapatan:
+    ```
+    Debit Persediaan (Bahan Baku/Barang Jadi, sesuai jenis barangnya)
+      Kredit Pendapatan Selisih Persediaan
+    ```
+- Nilai selisih dihitung dari **harga rata-rata berjalan barang itu saat opname terjadi** (bukan harga historis) — konsisten sama cara Rata-Rata Tertimbang bekerja di modul ini (gak nyimpen asal-usul per batch).
+- 1 sesi opname boleh mencakup banyak barang sekaligus (misal hitung fisik seluruh gudang hari yang sama) — tiap barang punya arah selisihnya sendiri-sendiri, gak di-*netting* jadi 1 angka gabungan sebelum dijurnal. Barang yang hasil hitungnya **PAS** (gak ada selisih) gak menghasilkan catatan apa pun — gak ada yang perlu disesuaikan.
+- Cuma qty yang disesuaikan — harga rata-rata berjalan barang itu **tidak berubah** (opname soal jumlah fisik, bukan soal harga per unit).
+
+**Aturan Bisnis**
+- Selisih kurang dan lebih diakui ke akun terpisah (Beban vs Pendapatan Selisih Persediaan), gak digabung jadi 1 angka bersih.
+- Nilai selisih dihitung dari harga rata-rata berjalan barang itu saat opname, bukan harga historis.
+- Barang tanpa selisih (hasil hitung fisik = catatan sistem) gak menghasilkan pencatatan apa pun.
+- Opname gak boleh dicatat ke periode akuntansi yang udah ditutup — soal integritas pembukuan umum, bukan aturan khusus opname.
+
+**Skenario**
+- Opname 1 sesi, banyak barang sekaligus — sebagian barang selisih kurang (jadi beban), sebagian selisih lebih (jadi pendapatan), sebagian pas (gak ada catatan) — masing-masing diproses independen sesuai arahnya sendiri.
+
+**Common Mistakes**
+- Menggabungkan (netting) semua selisih dalam 1 sesi opname jadi 1 angka bersih sebelum dijurnal — kehilangan rincian per barang, gak bisa lagi lihat "barang apa yang sebenarnya hilang" vs "barang apa yang ternyata lebih".
+- Memakai harga historis (harga pas barang itu pertama masuk) buat menghitung nilai selisih — harusnya harga rata-rata berjalan yang berlaku SAAT opname terjadi.
+- Mencatat opname lewat jalur transaksi yang udah ada (retur, write-off, goods issue) — opname gak punya "lawan transaksi" (customer/supplier) sama sekali, butuh jalur sendiri.

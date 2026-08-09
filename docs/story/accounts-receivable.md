@@ -89,30 +89,30 @@ Piutang Usaha Kang Ade: 900.000 (invoice) − 900.000 (bayar lunas) − 50.000 (
 
 Basis: 25 Agustus 2026, Pak Budi beli 30 Roti Tawar @Rp2.000 = Rp60.000 lewat `create_goods_issue`, HPP 30×Rp1.300 = Rp39.000 dari `inventory_balances` Roti Tawar (`docs/story/inventory.md`).
 
-28 Agustus 2026: 3 dari 30 roti apek, Pak Budi balikin. RPC retur dipanggil, `qty_returned = 3`. Cek: invoice ini punya baris `goods_issues` → **jalur full**.
+28 Agustus 2026: 3 dari 30 roti apek, Pak Budi balikin. RPC retur dipanggil, `qty_returned = 3`. Cek: invoice ini punya baris `goods_issues` → **jalur full**. Roti apek gak akan pernah dijual lagi — baris ini diklasifikasi `condition = DAMAGED`.
 
-Cost per unit asli = 39.000 / 30 = Rp1.300/buah (snapshot, bukan harga sekarang). Nominal retur = 3 × (60.000/30) = Rp6.000. Cost retur = 3 × 1.300 = Rp3.900.
+Cost per unit asli = 39.000 / 30 = Rp1.300/buah (snapshot, bukan harga sekarang). Nominal retur (sisi piutang) = 3 × (60.000/30) = Rp6.000 — gak kepengaruh kondisi barang, customer tetap dapat kompensasi ini. Cost retur = 3 × 1.300 = Rp3.900 — karena `DAMAGED`, cost ini masuk beban, BUKAN balik ke stok.
 
 Jurnal:
 ```
 Debit Retur & Potongan Penjualan   6.000
   Kredit Piutang Usaha                    6.000
 
-Debit Persediaan Barang Jadi       3.900
+Debit Beban Kerugian Barang Rusak  3.900
   Kredit Harga Pokok Penjualan            3.900
 ```
 
-3 buah Roti Tawar masuk balik ke `inventory_balances` (bukan lot baru — konsep lot udah gak ada sejak FIFO dihapus): qty_before 20, avg_before Rp1.300 → qty_after 20+3 = **23**, avg_after = (20×1.300 + 3×1.300) / 23 = **Rp1.300** (kebetulan avg-nya gak berubah, karena unit cost retur ini persis sama dengan avg_cost yang berlaku saat itu — bukan aturan umum, kalau unit cost retur beda dari avg saat ini pasti avg_after ikut bergeser). Piutang Usaha Pak Budi: 60.000 (invoice, belum dibayar) − 6.000 (retur) = **54.000 outstanding**. Persediaan Roti Tawar: 23 buah @ Rp1.300 = **Rp29.900**.
+3 buah Roti Tawar apek ini **TIDAK** masuk balik ke `inventory_balances` — beda dari retur barang masih layak jual yang direstock normal. `inventory_balances` Roti Tawar tetap di posisi sebelum retur: qty_on_hand **20**, avg_cost tetap **Rp1.300** (gak ada transaksi stok apa pun dari retur ini). Piutang Usaha Pak Budi: 60.000 (invoice, belum dibayar) − 6.000 (retur) = **54.000 outstanding**. Persediaan Roti Tawar: 20 buah @ Rp1.300 = **Rp26.000**.
 
-**Catatan realitas baru:** dulu (waktu FIFO masih ada), 3 roti apek yang diretur ini masuk sebagai lot terpisah (`source_type = SALES_RETURN`) supaya gak ketuker pas ada penukaran garansi berikutnya (Skenario 6b). Sekarang gak ada lagi konsep lot — 3 roti apek ini langsung campur jadi 1 pool `inventory_balances` bareng 20 roti baik yang tersisa, gak ada segregasi sama sekali. Ini keterbatasan yang sudah diketahui & dicatat terpisah di `memory/scope-debt/kerugian-barang-rusak.md` (barang rusak yang diretur harusnya diakui sebagai Beban Kerugian, bukan balik jadi stok bernilai) — bukan hal yang diselesaikan di sini, cuma dicatat sebagai konsekuensi baru dari penghapusan FIFO.
+**Catatan retcon:** skenario ini sebelumnya menceritakan 3 roti apek yang tetap direstock ke `inventory_balances` (jadi 23 buah) — itu gap yang belum ketutup waktu itu (barang rusak yang diretur harusnya diakui Beban Kerugian, bukan balik jadi stok bernilai). Fitur klasifikasi `condition` menutup gap itu, jadi cerita di sini diperbarui pakai perilaku yang benar (`DAMAGED`, tidak direstock) — bukan lagi versi lama yang sengaja menunjukkan keterbatasannya.
 
 ## Skenario 6b — Penukaran barang pasca-retur/garansi (Pak Budi, lanjutan Skenario 6)
 
 29 Agustus 2026: Pak Budi minta ganti 3 roti fresh buat gantiin 3 roti apek kemarin — bukan cuma potongan tagihan, dia tetap mau 30 roti utuh buat dijual. Bu Nur setuju (garansi kualitas), kirim 3 Roti Tawar baru dari stok aktif. Ini penukaran, bukan hadiah — Pak Budi tetap harus bayar penuh nilai 30 roti baik, cuma gak ada invoice baru buat 3 roti pengganti ini.
 
-RPC penukaran dipanggil dengan `credit_note_id` = credit note Skenario 6. Cek: credit note itu punya `inventory_returns` (jalur full) → boleh lanjut. Cek qty: 3 diminta ≤ 3 yang diretur di credit note itu → lolos.
+RPC penukaran dipanggil dengan `credit_note_id` = credit note Skenario 6. Cek: credit note itu punya `inventory_returns` (jalur full, tetap tercatat walau baris `DAMAGED` gak direstock — `inventory_return_lines` adalah audit trail retur fisik, independen dari `condition`) → boleh lanjut. Cek qty: 3 diminta ≤ 3 yang diretur di credit note itu → lolos.
 
-3 roti diambil dari `inventory_balances` Roti Tawar — pool tunggal 23 buah @ avg Rp1.300, **bukan** "stok fresh terpisah dari lot retur" lagi, karena gak ada lot sama sekali (lihat catatan realitas di Skenario 6: 3 roti apek udah campur ke pool yang sama). Cost = 3 × Rp1.300 = **Rp3.900**.
+3 roti diambil dari `inventory_balances` Roti Tawar — pool tunggal **20 buah** @ avg Rp1.300 (bukan 23 seperti versi cerita lama — 3 roti apek dari Skenario 6 memang gak pernah masuk ke pool ini, jadi pool ini murni stok fresh, gak ada risiko barang cacat ikut kepakai jadi pengganti). Cost = 3 × Rp1.300 = **Rp3.900**.
 
 Jurnal cost:
 ```
@@ -120,13 +120,13 @@ Debit Harga Pokok Penjualan (HPP)   3.900
   Kredit Persediaan Barang Jadi            3.900
 ```
 
-**Diskon retur Skenario 6 dibalik** (fix `0037` — sebelum fix ini, Pak Budi dapat diskon Rp6.000 DAN 3 roti pengganti gratis sekaligus, kompensasi ganda): qty ditukar (3) = seluruh qty yang diretur di credit note itu (3), jadi reversal-nya **penuh** — porsi cost retur yang ditukar (3×1.300=3.900) dibagi total cost retur di credit note itu (3.900) = 100% dari diskon Rp6.000 (jumlah reversal-nya sama kayak sebelum FIFO dihapus, karena proporsinya tetap 100% — cuma angka cost dasarnya yang beda).
+**Diskon retur Skenario 6 dibalik** (fix `0037` — sebelum fix ini, Pak Budi dapat diskon Rp6.000 DAN 3 roti pengganti gratis sekaligus, kompensasi ganda): qty ditukar (3) = seluruh qty yang diretur di credit note itu (3), jadi reversal-nya **penuh** — porsi cost retur yang ditukar (3×1.300=3.900) dibagi total cost retur di credit note itu (3.900) = 100% dari diskon Rp6.000.
 ```
 Debit Piutang Usaha                 6.000
   Kredit Retur & Potongan Penjualan        6.000
 ```
 
-Piutang Usaha Pak Budi: 54.000 (outstanding pasca-retur Skenario 6) + 6.000 (diskon dibalik) = **60.000 outstanding** — balik ke nilai invoice penuh, karena akhirnya Pak Budi diganti barang (bukan didiskon). Persediaan Roti Tawar: 23 (sisa Skenario 6) − 3 (keluar buat ganti) = **20 buah** @ Rp1.300 = Rp26.000 — balik ke qty yang sama kayak sebelum retur terjadi, tapi sekarang gak ada jejak lot mana yang "asli" vs "pengganti" — semua udah 1 pool campur, konsisten sama catatan di Skenario 6.
+Piutang Usaha Pak Budi: 54.000 (outstanding pasca-retur Skenario 6) + 6.000 (diskon dibalik) = **60.000 outstanding** — balik ke nilai invoice penuh, karena akhirnya Pak Budi diganti barang (bukan didiskon). Persediaan Roti Tawar: 20 (sisa Skenario 6, gak berubah karena retur `DAMAGED` gak pernah nambah stok) − 3 (keluar buat ganti) = **17 buah** @ Rp1.300 = Rp22.100. Beda dari nilai invoice/piutang (yang balik ke kondisi semula), stoknya justru NETT berkurang 3 buah dari kondisi sebelum retur — itu wajar: 3 roti apek beneran hilang nilainya (Skenario 6), dan 3 roti pengganti yang keluar di sini adalah stok fresh terpisah yang beneran dipakai.
 
 ## Uang Muka / DP — customer baru (pesanan custom, bukan warung langganan)
 
@@ -226,7 +226,7 @@ Saldo kredit retur Kang Ade: **Rp0** (habis, direfund tunai).
 
 ## Simulasi Interface (rencana)
 
-Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar — pilih 1 invoice outstanding, nominal otomatis keisi sisa outstanding-nya, boleh dikurangi buat cicil tapi gak boleh lebih), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/refund tunai/hanguskan, ketiganya partial-capable sejak migration `0012_ar_deposit_refund_and_partial.sql`). Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Halaman `/ar-return-credits` (list+detail) buat saldo kredit yang lahir dari retur negatif — lahir otomatis, gak ada form "bikin baru". Detail flow menyusul pas fase UI dikerjakan.
+Setelah schema (`ar-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/customers` (CRUD customer + termin), `/ar-invoices` (list + form bikin invoice, otomatis hitung `due_date`), `/ar-payments` (form bayar — pilih 1 invoice outstanding, nominal otomatis keisi sisa outstanding-nya, boleh dikurangi buat cicil tapi gak boleh lebih), dan `/ar-deposits` (catat DP masuk + aksi terapkan ke invoice/refund tunai/hanguskan, ketiganya partial-capable sejak migration `0012_ar_deposit_refund_and_partial.sql`). Panel "Retur" (jalur full) tiap baris item dapat pilihan kondisi (Layak Jual/Rusak) — default Layak Jual, dipilih manual sama yang input. Aksi "Hapusbukukan" (write-off) inline di `/ar-invoices/[id]`, sama pola tombol "Retur"/"Terapkan DP" — cuma muncul kalau invoice masih ada outstanding & belum dibatalkan. Halaman `/ar-return-credits` (list+detail) buat saldo kredit yang lahir dari retur negatif — lahir otomatis, gak ada form "bikin baru". Detail flow menyusul pas fase UI dikerjakan.
 
 ## Lanjutan Story
 

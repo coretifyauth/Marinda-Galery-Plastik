@@ -28,6 +28,10 @@ erDiagram
   ITEMS ||--o| BOM_HEADERS : "jadi hasil resep"
   ITEMS ||--o{ PRODUCTION_ORDER_LINES : dikonsumsi
   ITEMS ||--o{ GOODS_ISSUE_LINES : keluar
+  ITEMS ||--o{ ITEM_UNITS : "satuan jual"
+  ITEMS ||--o{ STOCK_OPNAME_LINES : dihitung
+
+  STOCK_OPNAMES ||--|{ STOCK_OPNAME_LINES : ""
 
   SUPPLIERS ||--o{ PURCHASE_ORDERS : ""
 
@@ -49,9 +53,10 @@ erDiagram
 ### `items`
 
 Master data barang yang di-track Inventory — bisa bahan baku (`RAW_MATERIAL`) atau barang jadi (`FINISHED_GOOD`). Kolom penting:
-- `uom` — satuan (kg, gram, pcs, dst), murni informasi tampilan/dokumentasi, gak ada konversi antar-satuan di scope ini.
+- `uom` — satuan dasar (kg, gram, pcs, dst), dipakai semua pelacakan stok/costing (PO/GRN/BOM/production/goods issue), gak diubah oleh fitur satuan jual. Satuan JUAL ke customer (boleh beda, boleh lebih dari 1) ada di `item_units` — lihat submodule "Satuan Jual & Harga" di bawah.
 - `inventory_account_id` — FK ke `accounts` (COA), akun **kontrol** (misal "Persediaan Bahan Baku" / "Persediaan Barang Jadi"). Satu akun ini menaungi banyak item sekaligus — detail per-item hidup di subledger Inventory (`items`+lot/balance), bukan sebagai akun terpisah per item di COA (pola sama `ar_invoices`/`customers`: 1 akun "Piutang Usaha" menaungi banyak customer).
 - `archived_at` — pola sama `customers`/`suppliers` (`state-naming-convention.md`), item lama gak boleh dihapus keras.
+- **`default_price` sempat ada** (nullable, migration `0018_items_default_price.sql`) — **di-drop lagi migration `0019_item_units_schema.sql`**, digantiin `item_units` (lihat submodule "Satuan Jual & Harga" di bawah) begitu ketauan item bisa dijual dalam >1 satuan, gak cukup 1 kolom flat per item.
 
 ```sql
 create table items (
@@ -70,7 +75,7 @@ create trigger items_set_updated_at
   for each row execute function set_updated_at();
 ```
 
-`set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang.
+`set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang. `default_price` (migration `0018`) dan pencabutannya (migration `0019`) sudah tercermin di bentuk final ini — `create table` di atas ditulis dalam bentuk final, sesuai konvensi schema doc (`memory/preferences/system/schema-doc-format.md`).
 
 ### `inventory_balances`
 
@@ -86,6 +91,8 @@ create table inventory_balances (
 ```
 
 **`inventory_lots` dan `inventory_lot_consumptions` sudah dihapus total (migration `0038_remove_fifo_costing.sql`)** — dulu ada 2 tabel buat nangenin costing FIFO per-lot (`inventory_lots` buat stok "lahir", `inventory_lot_consumptions` buat stok "dipakai/keluar"), lengkap sama trigger anti-over-consumption per lot. Sekarang cuma Weighted Average yang tersisa — satu-satunya state costing yang hidup adalah `inventory_balances` di atas, gak ada lagi konsep lot/batch per item.
+
+**Penyesuaian ke hasil hitung fisik**: RPC `record_stock_opname` (migration `0020_stock_opname_schema.sql`) langsung nyesuaiin `qty_on_hand` ke hasil hitung — satu-satunya jalur yang nulis ke `qty_on_hand` tanpa lewat transaksi lain (semua RPC lain sebelumnya selalu lewat kejadian eksplisit: GRN, goods issue, produksi, retur, write-off). `avg_cost` gak disentuh. Lihat submodule "Stock Opname" di bawah.
 
 ### Fungsi Bersama: `consume_weighted_average`
 
@@ -403,4 +410,216 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### Catatan Lintas Modul: Retur (AR Credit Note, migration `0021_ar_credit_notes_schema.sql`)
 
-`inventory_lots.source_type` sempat dapat value baru `'SALES_RETURN'` (check constraint) buat fitur retur AR, tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur — barang yang balik dari retur masuk lagi sebagai stok bernilai seolah layak jual, padahal kalau alasannya rusak harusnya diakui Beban Kerugian Barang Rusak, bukan ditambahkan balik jadi stok. **Catatan terbuka, ref `memory/scope-debt/kerugian-barang-rusak.md`** — lintas modul AR/AP, ditunda karena belum ada kejadian ini di cerita bisnis). Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Sempat ada juga `items.return_window_days` (batas hari retur per item, nullable) — dicabut total lewat migration `0039_ar_remove_return_window.sql`. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
+`inventory_lots.source_type` sempat dapat value baru `'SALES_RETURN'` (check constraint) buat fitur retur AR, tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur). **Ditutup migration `0015`**: kolom `inventory_return_lines.condition` (`RESALABLE`/`DAMAGED`) balikin segregasinya secara logis — baris `DAMAGED` gak pernah nambah `inventory_balances`, cost-nya diakui `Beban Kerugian Barang Rusak` bukan ditambahkan balik jadi stok. Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Sempat ada juga `items.return_window_days` (batas hari retur per item, nullable) — dicabut total lewat migration `0039_ar_remove_return_window.sql`. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
+
+## Satuan Jual & Harga (Multi Unit of Measure) — migration `0019_item_units_schema.sql`
+
+Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Satuan Jual & Harga". Gantiin `items.default_price` (migration `0018`, di-drop di sini) — item bisa dijual dalam >1 satuan (misal "buah" dan "lusin"), masing-masing punya faktor konversi ke satuan dasar (`items.uom`, gak berubah — tetap dipakai semua pelacakan stok/costing) dan harga sendiri.
+
+### Keputusan Desain
+
+- **`items.uom` tetap 1 satuan dasar, gak diubah** — dipakai semua submodule lain (PO/GRN/BOM/production/goods issue) persis kayak sekarang. `item_units` cuma nambah lapisan "satuan JUAL ke customer", gak menggantikan satuan dasar buat pelacakan stok.
+- **0 perubahan ke `create_goods_issue`/`goods_issue_lines`.** RPC ini tetap nerima qty di satuan dasar. Konversi "N satuan jual → qty satuan dasar" dan hitung "N × price satuan jual" murni logic UI, terjadi SEBELUM RPC dipanggil — bukan server-side. Ini jaga kontrak RPC/tabel transaksional gak berubah sama sekali, konsisten sama filosofi `items.default_price` sebelumnya (murni referensi, RPC tetap terima nominal final dari caller).
+- **CRUD langsung lewat tabel, bukan RPC** — `item_units` itu master data mutable, mirror pola `bom_lines` (anak dari parent yang mutable, insert/update/delete bebas — beda dari tabel transaksional immutable kayak `goods_issue_lines`).
+- **Base unit direpresentasikan sebagai baris `item_units` juga** (`is_base=true`, `conversion_factor=1`), bukan kolom terpisah di `items` — biar 1 sumber kebenaran buat semua harga per satuan, gak ada 2 tempat (`items.default_price` untuk base + tabel lain untuk satuan tambahan).
+
+### `item_units`
+
+```sql
+create table item_units (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references items(id),
+  unit_label text not null,
+  conversion_factor numeric(14,4) not null check (conversion_factor > 0),
+  price numeric(14,2) check (price is null or price >= 0),
+  is_base boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check ((is_base and conversion_factor = 1) or not is_base),
+  unique (item_id, unit_label)
+);
+
+create unique index item_units_one_base_per_item
+  on item_units(item_id) where is_base;
+
+create trigger item_units_set_updated_at
+  before update on item_units
+  for each row execute function set_updated_at();
+```
+
+- `conversion_factor` — berapa satuan dasar (`items.uom`) = 1 unit satuan jual ini. Baris `is_base=true` wajib `conversion_factor=1` (dijaga check constraint) dan `unit_label`-nya konvensinya harus sama persis `items.uom` (input-trust, gak ada trigger cross-table — pola sama pemilihan akun debit manual di `create_ap_bill`).
+- `price` — nullable, sama alasan `default_price` dulu (gak semua item/satuan punya harga jual standar).
+- `item_units_one_base_per_item` — partial unique index, mastiin maksimal 1 baris base per item (struktural, gak perlu trigger tambahan).
+- Item boleh 0 baris (gak dijual langsung, misal bahan baku) sampai berapa pun baris.
+
+### Migrasi data dari `items.default_price` (migration `0019`, sekali jalan)
+
+```sql
+insert into item_units (item_id, unit_label, conversion_factor, price, is_base)
+select id, uom, 1, default_price, true
+from items
+where default_price is not null;
+
+alter table items drop column default_price;
+```
+
+### RLS & Grant (Satuan Jual & Harga)
+
+Pola sama `bom_lines` (master data mutable, anak dari item) — `select` semua `authenticated`, `insert`/`update`/`delete` cuma `admin`/`accountant`.
+
+```sql
+grant select, insert, update, delete on item_units to authenticated;
+```
+
+Full body: `supabase/migrations/0019_item_units_schema.sql`.
+
+## Stock Opname (Penyesuaian Stok Fisik) — migration `0020_stock_opname_schema.sql` + `0021_seed_stock_opname_accounts.sql`
+
+Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Stock Opname". Beda mendasar dari semua submodule lain: gak menempel ke 1 transaksi tertentu (retur/write-off selalu nunjuk balik ke credit note/bill sumbernya) — dokumen sumbernya justru sesi hitung fisik itu sendiri.
+
+### Keputusan Desain
+
+- **Header (`stock_opnames`) gak punya `journal_entry_id`** — beda dari pola header lain di seluruh project ini (yang biasanya 1 header = 1 jurnal). Di sini jurnalnya per-baris (`stock_opname_lines.journal_entry_id`), karena tiap item dalam 1 sesi opname bisa beda arah (debit/kredit tertukar tergantung kurang/lebih) DAN beda akun Persediaan (Bahan Baku vs Barang Jadi) — gak bisa digabung jadi 1 jurnal.
+- **2 akun terpisah buat 2 arah selisih** (`Beban Selisih Persediaan` / `Pendapatan Selisih Persediaan`), BUKAN 1 akun netting — keputusan bisnis eksplisit (dibahas interaktif) biar laporan tetap nunjukin rincian per item, bukan cuma hasil bersih gabungan.
+- **`inventory_account_id` diterima per baris di `p_lines`** (bukan 1 parameter buat seluruh pemanggilan RPC, beda dari `create_purchase_writeoff`) — karena 1 sesi opname bisa mencakup item lintas kategori (Bahan Baku dan Barang Jadi) sekaligus dalam 1 hari hitung.
+- **`avg_cost` gak pernah disentuh** — opname murni soal qty, bukan soal harga per unit. Nilai selisih dihitung dari `avg_cost` yang berlaku SAAT opname (snapshot ke `unit_cost`), bukan harga historis.
+
+### `stock_opnames` + `stock_opname_lines`
+
+```sql
+create table stock_opnames (
+  id uuid primary key default gen_random_uuid(),
+  opname_date date not null,
+  source_ref text not null,
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create trigger stock_opnames_block_edit_delete
+  before update or delete on stock_opnames
+  for each row execute function block_edit_delete();
+
+create table stock_opname_lines (
+  id uuid primary key default gen_random_uuid(),
+  stock_opname_id uuid not null references stock_opnames(id) on delete cascade,
+  item_id uuid not null references items(id),
+  qty_system numeric(14,3) not null check (qty_system >= 0),
+  qty_actual numeric(14,3) not null check (qty_actual >= 0),
+  unit_cost numeric(14,2) not null check (unit_cost >= 0),
+  journal_entry_id uuid not null references journal_entries(id),
+  created_at timestamptz not null default now(),
+  check (qty_actual <> qty_system)
+);
+
+create index stock_opname_lines_stock_opname_id_idx on stock_opname_lines(stock_opname_id);
+
+create trigger stock_opname_lines_block_edit_delete
+  before update or delete on stock_opname_lines
+  for each row execute function block_edit_delete();
+```
+
+`check (qty_actual <> qty_system)` — item yang hasil hitungnya pas gak pernah punya baris di sini sama sekali (gak ada yang perlu disesuaikan/dijurnal).
+
+### RPC `record_stock_opname`
+
+`security invoker`, reuse `create_journal_entry` (1x per baris yang ada selisih, bukan 1x per sesi). Insert header dulu, loop tiap baris `p_lines`, kalau `variance = 0` di-skip (`continue`, gak insert apa pun). Kalau SEMUA baris ternyata `variance = 0`, `raise exception` di akhir — seluruh transaksi (termasuk insert header) di-rollback otomatis, konsisten pola "no partial write" di seluruh project ini.
+
+```sql
+create function record_stock_opname(
+  p_opname_date date,
+  p_source_ref text,
+  p_lines jsonb, -- array of {"item_id":uuid,"qty_actual":numeric,"inventory_account_id":uuid}
+  p_shortage_expense_account_id uuid,
+  p_surplus_revenue_account_id uuid
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_opname_id uuid;
+  v_line jsonb;
+  v_item_id uuid;
+  v_qty_actual numeric;
+  v_inventory_account_id uuid;
+  v_qty_system numeric;
+  v_avg_cost numeric;
+  v_variance numeric;
+  v_value numeric;
+  v_entry_id uuid;
+  v_any_line boolean := false;
+begin
+  insert into stock_opnames (opname_date, source_ref, created_by)
+  values (p_opname_date, p_source_ref, auth.uid())
+  returning id into v_opname_id;
+
+  for v_line in select * from jsonb_array_elements(p_lines)
+  loop
+    v_item_id := (v_line->>'item_id')::uuid;
+    v_qty_actual := (v_line->>'qty_actual')::numeric;
+    v_inventory_account_id := (v_line->>'inventory_account_id')::uuid;
+
+    select qty_on_hand, avg_cost into v_qty_system, v_avg_cost
+      from inventory_balances where item_id = v_item_id;
+
+    if not found then
+      raise exception 'Item % gak punya inventory_balances', v_item_id;
+    end if;
+
+    v_variance := v_qty_actual - v_qty_system;
+
+    if v_variance = 0 then
+      continue;
+    end if;
+
+    v_value := abs(v_variance) * v_avg_cost;
+    v_any_line := true;
+
+    if v_variance < 0 then
+      v_entry_id := create_journal_entry(
+        p_opname_date, 'Selisih stok opname (kurang)', p_source_ref,
+        jsonb_build_array(
+          jsonb_build_object('account_id', p_shortage_expense_account_id, 'debit', v_value, 'credit', 0),
+          jsonb_build_object('account_id', v_inventory_account_id, 'debit', 0, 'credit', v_value)
+        )
+      );
+    else
+      v_entry_id := create_journal_entry(
+        p_opname_date, 'Selisih stok opname (lebih)', p_source_ref,
+        jsonb_build_array(
+          jsonb_build_object('account_id', v_inventory_account_id, 'debit', v_value, 'credit', 0),
+          jsonb_build_object('account_id', p_surplus_revenue_account_id, 'debit', 0, 'credit', v_value)
+        )
+      );
+    end if;
+
+    insert into stock_opname_lines (stock_opname_id, item_id, qty_system, qty_actual, unit_cost, journal_entry_id)
+    values (v_opname_id, v_item_id, v_qty_system, v_qty_actual, v_avg_cost, v_entry_id);
+
+    update inventory_balances
+      set qty_on_hand = v_qty_actual, updated_at = now()
+      where item_id = v_item_id;
+  end loop;
+
+  if not v_any_line then
+    raise exception 'Gak ada selisih ditemukan di opname ini -- semua item cocok, gak perlu dicatat';
+  end if;
+
+  return v_opname_id;
+end;
+$$;
+```
+
+### Akun baru — migration seed `0021_seed_stock_opname_accounts.sql`
+
+`Beban Selisih Persediaan` (expense) dan `Pendapatan Selisih Persediaan` (revenue) — pola sama semua akun baru lain (di migration seed terpisah, bukan migration schema).
+
+### RLS & Grant (Stock Opname)
+
+Pola identik tabel transaksional lain (`goods_issues`, dst) — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (immutable, RLS default-deny + `block_edit_delete`).
+
+```sql
+grant select, insert on stock_opnames to authenticated;
+grant select, insert on stock_opname_lines to authenticated;
+```
+
+Full body: `supabase/migrations/0020_stock_opname_schema.sql`.

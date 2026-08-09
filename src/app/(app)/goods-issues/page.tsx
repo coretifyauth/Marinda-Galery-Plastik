@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
 import { createGoodsIssueSchema, type GoodsIssue } from "@/lib/goods-issues/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -13,10 +14,10 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 
-type LineInput = { item_id: string; qty_issued: string };
+type LineInput = { item_id: string; unit_id: string; qty: string };
 
 function emptyLine(): LineInput {
-  return { item_id: "", qty_issued: "" };
+  return { item_id: "", unit_id: "", qty: "" };
 }
 
 export default function GoodsIssuesPage() {
@@ -25,6 +26,7 @@ export default function GoodsIssuesPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<Item[]>([]);
+  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [issues, setIssues] = useState<GoodsIssue[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -70,11 +72,15 @@ export default function GoodsIssuesPage() {
   }, []);
 
   const loadItems = useCallback(async () => {
-    const { data } = await supabase
-      .from("items")
-      .select("id, name, item_type, uom, inventory_account_id, archived_at")
-      .order("name");
+    const [{ data }, { data: units }] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id, name, item_type, uom, inventory_account_id, archived_at")
+        .order("name"),
+      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
+    ]);
     setItems((data ?? []) as Item[]);
+    setItemUnits((units ?? []) as ItemUnit[]);
   }, []);
 
   const loadAccounts = useCallback(async () => {
@@ -106,8 +112,17 @@ export default function GoodsIssuesPage() {
     };
   }, [router, loadCustomers, loadItems, loadAccounts, loadIssues]);
 
-  function updateLine(index: number, patch: Partial<LineInput>) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  function updateLineItem(index: number, itemId: string) {
+    // Ganti item -> satuan jual sebelumnya gak relevan lagi, reset.
+    setLines((prev) => prev.map((l, i) => (i === index ? { item_id: itemId, unit_id: "", qty: l.qty } : l)));
+  }
+
+  function updateLineUnit(index: number, unitId: string) {
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, unit_id: unitId } : l)));
+  }
+
+  function updateLineQty(index: number, qty: string) {
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, qty } : l)));
   }
 
   function addLine() {
@@ -118,9 +133,44 @@ export default function GoodsIssuesPage() {
     setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
+  /**
+   * Saran nominal dari item_units.price (murni referensi, bukan dihitung server-side —
+   * lihat memory/domain/inventory.md submodule "Satuan Jual & Harga"). Cuma ngisi field
+   * `amount`, tetap bisa diedit manual sebelum submit — RPC tetap terima p_amount apa adanya.
+   */
+  function suggestAmountFromUnitPrices() {
+    const suggested = lines.reduce((sum, l) => {
+      const qty = Number(l.qty);
+      const unit = itemUnits.find((u) => u.id === l.unit_id);
+      if (!unit || unit.price == null || l.qty.trim() === "" || Number.isNaN(qty)) {
+        return sum;
+      }
+      return sum + qty * unit.price;
+    }, 0);
+    setAmount(String(suggested));
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+
+    const activeLines = lines.filter((l) => l.item_id.trim() !== "" && l.qty.trim() !== "");
+    if (activeLines.some((l) => l.unit_id.trim() === "")) {
+      setFormError("Pilih satuan jual buat tiap baris item");
+      return;
+    }
+
+    // Konversi qty (satuan jual) -> qty_issued (satuan dasar) SEBELUM manggil RPC.
+    // create_goods_issue tetap terima qty di satuan dasar, sama kayak sebelum fitur ini ada
+    // (ref memory/domain/inventory.md submodule "Satuan Jual & Harga").
+    const convertedLines = activeLines.map((l) => {
+      const unit = itemUnits.find((u) => u.id === l.unit_id);
+      const qty = Number(l.qty);
+      return {
+        item_id: l.item_id,
+        qty_issued: unit ? qty * unit.conversion_factor : qty,
+      };
+    });
 
     const parsed = createGoodsIssueSchema.safeParse({
       customer_id: customerId,
@@ -132,7 +182,7 @@ export default function GoodsIssuesPage() {
       revenue_account_id: revenueAccountId,
       hpp_account_id: hppAccountId,
       finished_good_account_id: finishedGoodAccountId,
-      lines,
+      lines: convertedLines,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -215,7 +265,7 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-2">Customer</th>
               <th className="px-4 py-2">Invoice</th>
               <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Items Keluar (HPP)</th>
+              <th className="px-4 py-2">Items Keluar (HPP, satuan dasar)</th>
               <th className="px-4 py-2 text-right">Pendapatan</th>
               <th className="px-4 py-2 text-right">Total HPP</th>
             </tr>
@@ -310,14 +360,19 @@ export default function GoodsIssuesPage() {
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="amount">Jumlah Pendapatan</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
+                <div className="flex gap-1.5">
+                  <Input
+                    id="amount"
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                  />
+                  <Button type="button" variant="secondary" onClick={suggestAmountFromUnitPrices}>
+                    Saran
+                  </Button>
+                </div>
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="receivable_account">Akun Piutang Usaha (debit)</Label>
@@ -378,39 +433,58 @@ export default function GoodsIssuesPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_10rem_7rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Barang Jadi Keluar</span>
-                <span>Qty Jual</span>
+                <span>Satuan Jual</span>
+                <span>Qty</span>
                 <span />
               </div>
-              {lines.map((line, i) => (
-                <div key={i} className="grid grid-cols-[1fr_8rem_2.5rem] gap-2">
-                  <Select value={line.item_id} onChange={(e) => updateLine(i, { item_id: e.target.value })}>
-                    <option value="">Pilih item...</option>
-                    {finishedGoods.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({item.uom})
+              {lines.map((line, i) => {
+                const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
+                return (
+                  <div key={i} className="grid grid-cols-[1fr_10rem_7rem_2.5rem] gap-2">
+                    <Select value={line.item_id} onChange={(e) => updateLineItem(i, e.target.value)}>
+                      <option value="">Pilih item...</option>
+                      {finishedGoods.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({item.uom})
+                        </option>
+                      ))}
+                    </Select>
+                    <Select
+                      value={line.unit_id}
+                      onChange={(e) => updateLineUnit(i, e.target.value)}
+                      disabled={!line.item_id}
+                    >
+                      <option value="">
+                        {line.item_id && unitsForItem.length === 0 ? "Belum ada satuan" : "Pilih satuan..."}
                       </option>
-                    ))}
-                  </Select>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={line.qty_issued}
-                    onChange={(e) => updateLine(i, { qty_issued: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeLine(i)}
-                    disabled={lines.length <= 1}
-                    className="text-slate-400 hover:text-red-600 disabled:opacity-30"
-                    aria-label="Hapus baris"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+                      {unitsForItem.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.unit_label}
+                          {u.price != null ? ` (@${u.price.toLocaleString("id-ID")})` : ""}
+                        </option>
+                      ))}
+                    </Select>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={line.qty}
+                      onChange={(e) => updateLineQty(i, e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeLine(i)}
+                      disabled={lines.length <= 1}
+                      className="text-slate-400 hover:text-red-600 disabled:opacity-30"
+                      aria-label="Hapus baris"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
               <Button type="button" variant="secondary" onClick={addLine} className="w-fit">
                 + Tambah item
               </Button>

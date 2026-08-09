@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { createItemSchema, itemTypes, type Item } from "@/lib/items/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -15,6 +16,7 @@ export default function ItemsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
+  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -30,16 +32,20 @@ export default function ItemsPage() {
   const leafAccounts = getLeafAccounts(accounts);
 
   const loadItems = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("items")
-      .select("id, name, item_type, uom, inventory_account_id, archived_at")
-      .order("name");
+    const [{ data, error }, { data: units }] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id, name, item_type, uom, inventory_account_id, archived_at")
+        .order("name"),
+      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
+    ]);
     if (error) {
       setLoadError(error.message);
       return;
     }
     setLoadError(null);
     setItems((data ?? []) as Item[]);
+    setItemUnits((units ?? []) as ItemUnit[]);
   }, []);
 
   const loadAccounts = useCallback(async () => {
@@ -141,13 +147,15 @@ export default function ItemsPage() {
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Nama</th>
               <th className="px-4 py-2">Tipe</th>
-              <th className="px-4 py-2">Satuan</th>
+              <th className="px-4 py-2">Satuan Dasar</th>
+              <th className="px-4 py-2">Satuan Jual</th>
               <th className="px-4 py-2">Akun Persediaan</th>
             </tr>
           </thead>
           <tbody>
             {items.map((item) => {
               const account = accounts.find((a) => a.id === item.inventory_account_id);
+              const units = itemUnits.filter((u) => u.item_id === item.id);
               return (
                 <tr
                   key={item.id}
@@ -161,13 +169,20 @@ export default function ItemsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-2">{item.uom}</td>
+                  <td className="px-4 py-2">
+                    {units.length > 0
+                      ? units
+                          .map((u) => `${u.unit_label}${u.price != null ? ` (${u.price.toLocaleString("id-ID")})` : ""}`)
+                          .join(", ")
+                      : "-"}
+                  </td>
                   <td className="px-4 py-2">{account ? `${account.code} — ${account.name}` : "-"}</td>
                 </tr>
               );
             })}
             {items.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
                   Belum ada item.
                 </td>
               </tr>
@@ -185,6 +200,10 @@ export default function ItemsPage() {
               ketolak RLS.
             </p>
           )}
+          <p className="mb-4 text-sm text-slate-500">
+            Satuan jual & harga (bisa lebih dari 1, misal per buah dan per lusin) dikelola di
+            halaman detail item — setelah item ini disimpan.
+          </p>
           <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
@@ -211,7 +230,7 @@ export default function ItemsPage() {
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="uom">Satuan (UOM)</Label>
+                <Label htmlFor="uom">Satuan Dasar (UOM)</Label>
                 <Input
                   id="uom"
                   placeholder="mis. kg, buah"

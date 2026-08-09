@@ -34,6 +34,7 @@ import {
   Lock,
   PiggyBank,
   RotateCcw,
+  ClipboardCheck,
 } from "lucide-react";
 
 const navGroups = [
@@ -79,6 +80,7 @@ const navGroups = [
       { href: "/bom", label: "BOM", icon: FlaskConical },
       { href: "/production-orders", label: "Production Orders", icon: Factory },
       { href: "/goods-issues", label: "Goods Issues", icon: PackageMinus },
+      { href: "/stock-opnames", label: "Stock Opname", icon: ClipboardCheck },
     ],
   },
   {

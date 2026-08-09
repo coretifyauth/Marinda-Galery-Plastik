@@ -60,6 +60,19 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
       Kredit Harga Pokok Penjualan
     ```
     Nilai HPP yang dibalik pakai harga **snapshot asli** pas barang itu keluar, bukan harga sekarang — biar konsisten sama biaya yang beneran diakui waktu itu. Barang yang balik masuk lagi ke stok yang aktif.
+  - **Klasifikasi kondisi barang, per baris item (jalur full)** — tiap baris barang yang diretur wajib diklasifikasi kondisinya: **masih layak jual** (default, jurnal di atas berlaku apa adanya — barang balik masuk stok) atau **rusak** (barang gak akan pernah dijual lagi, gak boleh dianggap nambah nilai stok). Bedanya cuma di sisi cost, bukan di sisi piutang:
+    ```
+    Baris "masih layak jual":
+      Debit Persediaan Barang Jadi
+        Kredit Harga Pokok Penjualan
+      (seperti biasa, balik masuk stok)
+
+    Baris "rusak":
+      Debit Beban Kerugian Barang Rusak
+        Kredit Harga Pokok Penjualan
+      (TIDAK balik masuk stok)
+    ```
+    Sisi kontra-revenue (Debit Retur & Potongan Penjualan / Kredit Piutang Usaha) tetap jalan **sama** buat kedua kondisi — customer tetap dapat kompensasi piutang berkurang, terlepas kondisi fisik barangnya (klaim balik dari customer dan nasib fisik barangnya adalah dua hal independen). 1 kejadian retur (1 credit note) boleh campur — sebagian baris layak jual, sebagian rusak, masing-masing punya perlakuan cost sendiri.
 - Kenapa pakai akun kontra "Retur & Potongan Penjualan" (bukan langsung mengurangi Pendapatan Penjualan): biar "penjualan kotor" (nilai invoice asli) tetap keliatan utuh di histori, terpisah dari "berapa yang balik".
 - Retur independen dari status bayar invoice — tetap bisa dibuat baik invoice-nya belum dibayar, sebagian, maupun udah lunas penuh.
 - **Kalau invoice udah lunas, retur bikin sisa tagihan jadi negatif** — perusahaan "berutang" balik ke customer sejumlah itu. Butuh mekanisme sendiri buat ini, bukan cuma dibiarkan sebagai angka minus: tanpa itu, gak ada cara resmi buat customer mencairkan haknya, padahal secara bisnis dia berhak dapat refund atau ganti barang. Dicatat ke akun liability terpisah "Saldo Kredit Retur Customer" — biar riwayatnya tetap bisa ditelusuri balik ke retur mana yang jadi sumbernya.
@@ -82,12 +95,15 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - Retur gak boleh dicatat ke periode yang sudah ditutup.
 - Saldo kredit retur cuma boleh diselesaikan lewat refund tunai atau ganti barang — gak boleh dipakai motong invoice lain.
 - Total yang dicairkan/disettle dari saldo kredit retur gak boleh melebihi nominal saldo yang tersisa.
+- Klasifikasi kondisi (layak jual/rusak) ditentukan per baris item, bukan per keseluruhan credit note — 1 credit note boleh campur kondisi kalau isinya lebih dari 1 jenis barang.
 
 **Skenario**
 - Retur barang, invoice financial-only, belum lunas — sisa tagihan turun langsung dari nominal retur.
 - Retur barang, invoice yang stoknya dilacak, udah lunas — 2 jurnal (kontra-revenue + reversal HPP), stok masuk lagi, sisa tagihan jadi negatif (jadi saldo kredit).
 - Saldo kredit dari retur, direfund tunai — retur setelah invoice lunas bikin sisa tagihan negatif, excess-nya otomatis dicairkan jadi saldo resmi, lalu direfund tunai.
 - Saldo kredit dari retur, diselesaikan lewat ganti barang — retur yang bikin saldo kredit retur ternyata diselesaikan lewat penukaran barang, bukan refund tunai — sebagian/seluruh saldo otomatis nyettle, dibatasi sisa saldo yang ada.
+- Retur barang rusak, jalur full — kontra-revenue tetap jalan seperti retur biasa (piutang berkurang), tapi cost-nya diakui Beban Kerugian Barang Rusak, TIDAK balik masuk stok.
+- Retur campuran dalam 1 credit note — sebagian baris item masih layak jual (balik stok), sebagian baris rusak (jadi beban), masing-masing baris diproses sesuai kondisinya sendiri-sendiri.
 
 **Common Mistakes**
 - Retur mereduksi Pendapatan Penjualan langsung (bukan lewat akun kontra) — bikin nilai "penjualan kotor" asli gak keliatan lagi di histori.
@@ -97,6 +113,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - Excess dari retur negatif dicatat ke akun saldo kredit yang sama dengan kelebihan bayar biasa — harus akun terpisah, beda asal jurnal.
 - Excess dari retur dihitung dari seluruh nominal retur (bukan cuma bagian yang ngelebihin sisa tagihan) — bikin dobel hitung kalau sisa tagihannya masih ada sebagian.
 - Kasih jalan lagi buat saldo kredit retur "dititip"/dipakai motong invoice lain — keputusan bisnis udah eksplisit cuma 2 cara (refund tunai, ganti barang).
+- Barang rusak yang diretur ikut direstock ke stok aktif seolah masih layak jual — harus diakui sebagai Beban Kerugian Barang Rusak, bukan nambah Persediaan Barang Jadi. Kontra-revenue-nya (piutang berkurang) tetap jalan seperti biasa — yang beda cuma sisi cost/stoknya.
 
 ### Penukaran Barang Pasca-Retur (Garansi)
 
@@ -122,7 +139,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
   Jurnal ini sengaja pasangan kebalikan dari pembalikan diskon di atas — net efeknya ke Piutang Usaha invoice itu jadi nol (invoice tetap keliatan lunas, gak muncul jadi berutang lagi), sementara saldo kreditnya berkurang beneran.
 - **Kalau porsi diskon yang mau dibalik ternyata lebih besar dari sisa saldo kredit retur — transaksi ditolak, bukan diam-diam dipotong.** Ini bisa kejadian kalau sebagian saldo kredit retur itu udah kadung direfund tunai duluan sebelum penukaran ini diajukan. Ditolak keras karena kalau dibiarkan lolos dengan porsi yang dipotong diam-diam, sisa reversal yang gak ketampung bakal jadi piutang yang "menggantung" tanpa invoice manapun yang bisa nampungnya.
 - **Wajib referensi ke retur yang udah ada** (retur fisik, bukti barang emang balik ke gudang) — gak bisa berdiri sendiri tanpa retur formal duluan. Alasan bisnis: audit trail (tanpa bukti retur, penukaran gampang disalahgunakan), traceability (pengeluaran stok harus nunjuk dokumen sumber jelas), dan matching principle (biaya penukaran itu beban garansi dari penjualan yang udah diakui sebelumnya, harus terhubung ke transaksi asalnya).
-- **Batas kuantitas** — total qty yang ditukar (akumulasi, bisa lebih dari 1 kali penukaran per retur) gak boleh ngelebihin qty yang beneran diretur (per item). Barang pengganti diambil dari stok aktif yang sama dengan stok jualan biasa (belum ada pemisahan "barang bekas retur" vs "barang fresh" — catatan terbuka, lihat scope-debt kerugian barang rusak).
+- **Batas kuantitas** — total qty yang ditukar (akumulasi, bisa lebih dari 1 kali penukaran per retur) gak boleh ngelebihin qty yang beneran diretur (per item). Barang pengganti diambil dari stok aktif yang sama dengan stok jualan biasa — ini aman karena retur yang **rusak** (submodule "Retur Barang" di atas) TIDAK PERNAH masuk ke stok aktif sama sekali (langsung jadi Beban Kerugian Barang Rusak, gak direstock), jadi gak ada resiko barang cacat yang balik ikut kepakai lagi buat penukaran. Retur yang **masih layak jual** memang sengaja campur ke stok aktif — itu bukan gap, barangnya beneran gak cacat.
 
 **Aturan Bisnis**
 - Penukaran barang gak boleh berdiri sendiri — wajib menunjuk retur fisik yang sudah tercatat.
