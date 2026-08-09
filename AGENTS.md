@@ -38,14 +38,29 @@ Ada 2 folder dokumentasi terpisah, buat 2 pembaca berbeda — jangan tercampur:
 /docs                      <- knowledge base buat USER, naratif & non-teknis
   brief.md                <- entry point, peta seluruh /docs
   /domain                 <- knowledge bisnis/akuntansi, versi naratif (padanan: memory/domain)
-  /architecture
-    /data                 <- ERD & struktur data tiap modul, dijelasin non-teknis (tabel, bukan DDL/RPC/trigger)
+  /architecture            <- ERD & struktur data tiap modul, dijelasin non-teknis (tabel, bukan DDL/RPC/trigger)
   /story                  <- skenario bisnis riil (1 perusahaan fiktif), dipakai berkelanjutan lintas fase roadmap
 ```
 
 `memory/brief.md` dan `docs/brief.md` masing-masing adalah peta lengkap foldernya sendiri — baca yang relevan tiap orientasi ulang. Detail isi tiap folder ada di kedua file itu, gak diduplikat di sini.
 
 **Kenapa dipisah:** `/memory` adalah working memory agent — padat, boleh nyebut nama tabel/kolom/fungsi SQL langsung, gak perlu enak dibaca manusia. `/docs` adalah knowledge base milik user — naratif, dihindari istilah kode mentah, karena ini media belajar & jejak keputusan bisnis buat manusia baca ulang. Konten sering membahas topik yang sama (misal `coa-schema.md` ada di kedua folder), tapi levelnya beda: `memory/architecture/data/*.md` = DDL+RPC+trigger, `docs/architecture/*.md` = ERD dalam tabel + penjelasan aturan pakai bahasa natural.
+
+### Format Baku: Struktur Module → Submodule
+
+Berlaku di semua 4 lokasi (`docs/domain`, `docs/architecture`, `memory/domain`, `memory/architecture/data`) — cuma level bahasa/detail yang beda (naratif vs compact-teknis, lihat "Kenapa dipisah" di atas), strukturnya sama. **Posisi & pengelompokan submodule harus identik** antara `docs/domain/<modul>.md` ↔ `docs/architecture/<modul>-schema.md`, dan antara `memory/domain/<modul>.md` ↔ `memory/architecture/data/<modul>-schema.md`. Kalau 1 submodule adalah konsekuensi langsung dari submodule lain (misal "Saldo Kredit dari Retur" yang lahir otomatis dari "Retur Barang"), gabung jadi 1 submodule — jangan dipisah sendiri.
+
+**`docs/domain/<modul>.md`** (naratif, TANPA nama RPC/tabel/kolom/migration):
+- `##` level modul: "Masalah yang Diselesaikan", "Konsep Inti" (entitas bisnis dasar yang dipakai semua submodule).
+- `###` per submodule, isi pakai **bold label** (bukan heading lebih dalam): **Cara Kerja** (alur bisnis + jurnal per skenario — akun yang didebit/dikredit, TANPA nominal konkret, itu ranah `docs/story/`), **Aturan Bisnis** (boleh/tidak boleh, bahasa bisnis murni), **Skenario** (poin ringkas), **Common Mistakes** (kesalahan pemahaman/pemakaian sisi bisnis, bukan bug teknis).
+
+**`docs/architecture/<modul>-schema.md`** (teknis, semua konten dalam bentuk tabel markdown):
+- `##` level modul: "Peta Data (ERD) — Ringkasan Semua Tabel" (satu baris per tabel, mewakili SEMUA tabel modul itu).
+- `##` per submodule (sejajar level modul, bukan `###`), isi pakai **bold label**: **Peta Data (ERD)** (subset tabel submodule ini), **Alur Teknis (RPC)** (aksi → RPC → efek → guard), **Aturan Bisnis → RPC** (mapping tiap aturan dari `docs/domain` ke RPC/trigger yang menjaganya), **Interaksi Antar Tabel**.
+
+**`memory/domain/<modul>.md`** & **`memory/architecture/data/<modul>-schema.md`**: struktur module → submodule yang sama persis (posisi submodule identik dengan pasangan `docs/`-nya), tapi tetap compact & teknis (boleh nyebut RPC/tabel/kolom/DDL/trigger langsung) — bukan ditulis ulang naratif kayak `docs/`.
+
+**Gak ada section "Belum Termasuk" di keempat lokasi** — item yang sengaja ditunda dilacak lewat `memory/scope-debt/*.md` (lihat "Aturan siklus hidup: scope-debt" di bawah), disebut inline di prosa/tabel kalau relevan konteksnya, bukan section terpisah tiap file.
 
 Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor (lihat `memory/preferences/system/md-file-naming.md`). Nama file sama antara `memory/domain/*.md` dan `docs/domain/*.md`.
 

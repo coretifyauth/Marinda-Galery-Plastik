@@ -2,57 +2,65 @@
 
 Fixed Assets menyebar biaya perolehan aset yang dipakai berulang bertahun-tahun (oven, motor — beda dari bahan baku Inventory yang habis sekali pakai) ke sepanjang masa manfaatnya, lewat penyusutan periodik. **Prinsip inti: matching by time** — beda dari Inventory yang matching-nya dipicu kejadian (barang terjual), Fixed Assets matching-nya berjalan tiap periode waktu (tiap bulan) tanpa perlu kejadian pemicu.
 
-## Alur Akuntansi
+Naratif lengkap + reasoning penuh: `docs/domain/fixed-assets.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu dan dengan `memory/architecture/data/fixed-assets-schema.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
 
-**Akuisisi** (tukar aset ke aset, sama pola Inventory):
-```
-Debit Aset Tetap [nilai perolehan] | Kredit Kas/Utang [nilai perolehan]
-```
+## Konsep Inti
 
-**Penyusutan** (tiap bulan, biaya diakui di sini):
-```
-Debit Beban Penyusutan [nilai bulanan] | Kredit Akumulasi Penyusutan [nilai bulanan]
-```
+**Entitas & Jurnal**
+- **fixed_asset** — satu unit aset fisik (bukan kategori). Kolom kunci: nilai perolehan, nilai residu, umur manfaat (bulan), metode penyusutan, tarif (kalau declining balance), 3 kolom akun (asset/akumulasi penyusutan/beban penyusutan).
+- **Akuisisi** — Debit Aset Tetap, Kredit Kas/Utang. Dicatat lewat jurnal umum biasa (`create_journal_entry`), BUKAN RPC modul ini — modul ini cuma nyimpen master data buat dasar penyusutan berikutnya.
+- **Penyusutan (per periode)** — Debit Beban Penyusutan, Kredit Akumulasi Penyusutan. Nominal dihitung otomatis sesuai metode aset (atau bisa di-override manual, dipakai buat penyesuaian periode terakhir declining balance), dijurnal + insert histori sekaligus dalam 1 langkah atomik.
+- **Akumulasi Penyusutan** — akun kontra-asset pertama di project ini (`accounts.is_contra`, lihat "Dampak Schema" di bawah) — kategori `asset`, `normal_balance` kredit (kebalikan asset biasa).
 
-**Kesalahan paling umum**: kredit langsung ke akun Aset Tetap saat penyusutan. Harusnya kredit ke akun **terpisah** — Akumulasi Penyusutan — supaya nilai perolehan asli tetap utuh (auditability) dan Neraca menampilkan Aset Tetap + Akumulasi Penyusutan (kontra) berdampingan, bukan 1 angka yang mengecil.
+**Dampak Schema (akun kontra)** — `accounts.normal_balance` (`coa-schema.md`) awalnya generated column, `asset → debit` tanpa exception, gak bisa nampung akun kontra-asset. Keputusan (Opsi A): tambah kolom `accounts.is_contra` boolean, rumus generated `normal_balance` ikut flag ini — kategori asset dengan `is_contra=true` jadi normal kredit. `is_contra` juga masuk daftar field yang dikunci setelah akun kepakai transaksi (`published` field-lock, reuse pola `accounts_published_lock`). DDL final: `memory/architecture/data/fixed-assets-schema.md`.
 
-## Akun Kontra-Asset
+**Constraints**
+- **Cap penyusutan**: akumulasi gak boleh melebihi (nilai perolehan - nilai residu) — ditegakkan trigger DB, bukan cuma dihitung benar di RPC (jaring kedua kalau ada insert bypass RPC).
+- **No dobel posting**: 1 aset cuma boleh punya 1 baris penyusutan per periode (constraint unique).
+- **Immutability**: histori penyusutan gak bisa di-`UPDATE`/`DELETE` — RLS default-deny + trigger `block_edit_delete` (reuse dari Journal Entry). Koreksi = reversing entry + posting ulang.
+- **3 akun tervalidasi perannya** — trigger nolak kalau akun yang dipetakan ke aset ditunjuk ke kategori/status kontra yang salah (misal akumulasi penyusutan ditunjuk ke akun yang bukan kontra).
+- **Published-lock**: begitu aset punya minimal 1 baris penyusutan, field penentu nilai (nilai perolehan, residu, umur manfaat, metode, tarif, 3 kolom akun) terkunci — nama & status arsip tetap bebas diubah kapan pun.
+- **Disposal aset belum ada mekanismenya** — aset tercatat konstan sampai beneran dijual/dibuang, tapi belum ada RPC/tabel buat mencatat pelepasan & laba-rugi dari situ. Belum ada scope-debt file buat ini (belum digali lebih lanjut).
 
-Akumulasi Penyusutan: `category = asset`, tapi `normal_balance = credit` (kebalikan asset biasa). General contra-account concept + cross-category examples: `memory/domain/chart-of-accounts.md` "Contra Account" section. This is the first real usage in the project — no prior module (COA/GL/AR/AP/Inventory) has any contra account.
+**Skenario referensi** (detail angka: `docs/story/fixed-assets.md`)
 
-**Dampak schema**: `accounts.normal_balance` (`coa-schema.md`) generated column, `asset → debit` tanpa exception.
+| # | Kasus | Pola |
+|---|---|---|
+| 1 | Daftarkan aset baru | Insert master data doang, gak ada jurnal — akuisisi dicatat manual lewat jurnal umum |
+| 2 | Posting penyusutan 1 periode | Hitung otomatis sesuai metode, 1 jurnal + 1 baris histori, atomik |
+| 3 | Posting penyusutan periode terakhir (lewat cap) | Auto-terpotong ke sisa yang tersedia, biar nilai buku pas berhenti di residu |
 
-**Keputusan (Opsi A)**: add `accounts.is_contra boolean default false`, generated `normal_balance` formula branches on this flag. `is_contra` also added to `published` field-lock list (locked after account used in a transaction). Final DDL + migration: `memory/architecture/data/fixed-assets-schema.md` (`0014_fixed_assets_schema.sql`) — applied to a live Supabase instance, UI (`/fixed-assets`) built and tested.
+**Common Mistakes**
+- Beban penuh di bulan beli (harusnya disebar via penyusutan periodik).
+- Kredit langsung ke akun Aset Tetap saat penyusutan — harusnya ke Akumulasi Penyusutan (kontra), biar histori nilai perolehan gak hilang.
+- Lupa nilai residu — penyusutan dihitung kayak residu-nya nol.
+- Penyusutan lewat batas nilai perolehan tanpa auto-adjust/guard.
+- Nambah tabel/kolom baru yang butuh akun kontra tanpa cek `is_contra` — pola generated `normal_balance` sekarang bercabang, jangan asumsikan akun `asset` selalu normal debit.
 
-## Metode Penyusutan (2 in-scope: Straight-Line + Declining Balance)
+## Metode Penyusutan (Garis Lurus & Saldo Menurun)
 
-Per-asset (`fixed_assets.depreciation_method`), gak global. Common terms: **nilai perolehan** (harga beli + biaya siap pakai), **umur manfaat** (estimasi tahun/bulan pakai), **nilai residu** (estimasi nilai jual akhir, sering 0 untuk UMKM), **nilai buku** (`Nilai Perolehan - Akumulasi Penyusutan`, tampil di Neraca).
+**Entitas & Jurnal**
+- Ditentukan **per aset** (`fixed_assets.depreciation_method`), bukan global — tabel `depreciation_entries` menampung histori kedua metode tanpa struktur tambahan, karena `amount` tiap baris disimpan eksplisit (bukan re-derive dari formula tiap dibaca).
+- **Garis Lurus (straight_line)**: `(nilai perolehan - nilai residu) / umur manfaat (bulan)`, sama tiap periode, dihitung ulang tiap posting dari formula yang sama (bukan snapshot rate).
+- **Saldo Menurun (declining_balance)**: `nilai buku awal periode × tarif`. `depreciation_rate` merepresentasikan tarif PER PERIODE POSTING, bukan otomatis per-tahun — kalau posting bulanan, tarif yang diisi ya tarif bulanan, sengaja dibikin eksplisit (bukan disimpan sebagai tarif tahunan lalu dibagi 12 di RPC) biar gak ada ambiguitas konversi periode di 2 tempat beda (dokumentasi vs kode).
+- **Auto-potong periode terakhir**: kalau hasil hitung (kedua metode) bikin akumulasi lewat cap, RPC posting otomatis motong ke sisa yang tersedia — kenyamanan doang (auto-adjust, gak perlu hitung manual pas periode terakhir), trigger cap tetap jalan sebagai jaring kedua kalau ada jalur insert lain yang gak lewat RPC ini.
+- **Unit Produksi (metode ke-3) belum masuk scope** — butuh data pemakaian eksternal per periode (jam mesin/KM/batch produksi), bukan cuma waktu berjalan, berpotensi coupling ke `production_orders` (Inventory). Ditunda karena straight-line + declining balance udah cukup buat kebutuhan sekarang. Belum ada scope-debt file.
+- **Ganti metode di tengah umur manfaat belum ada jalur resmi** — field-lock ("published lock", submodule "Konsep Inti") udah nutup dari sisi "gak bisa diam-diam berubah" (field metode terkunci begitu ada riwayat penyusutan), tapi belum ada proses revaluasi formal buat ganti dengan sengaja lewat jalur yang benar. Revaluasi aset (penyesuaian nilai wajar di luar penyusutan rutin) secara umum juga belum dibangun. Belum ada scope-debt file buat keduanya.
 
-**Straight-Line**: `(Nilai Perolehan - Nilai Residu) / Umur Manfaat`, sama tiap periode. Contoh: Rp15.000.000/5 tahun/residu 0 → Rp3.000.000/tahun (Rp250.000/bulan).
+**Constraints**
+- `depreciation_rate` wajib keisi kalau `depreciation_method='declining_balance'`, wajib `null` kalau `straight_line` — `check` constraint antar-kolom di tabel yang sama (bukan lintas tabel, jadi bisa `CHECK` biasa).
+- `depreciation_method` + `depreciation_rate` ikut daftar field yang dikunci published-lock (lihat submodule "Konsep Inti").
 
-**Declining Balance**: `Nilai Buku Awal Periode × Tarif%`, jadi ngecil tiap periode (nilai buku sisa makin kecil). Contoh: Rp24.000.000, residu Rp2.400.000, tarif 40%/tahun → tahun1: 24jt×40%=9,6jt, tahun2: 14,4jt×40%=5,76jt, tahun3: 8,64jt×40%=3,456jt, tahun4: dipotong ke 2,784jt biar pas residu. **Periode terakhir butuh potongan manual** ke sisa cap, jangan pakai rumus polos (bisa lewat residu).
+**Skenario referensi**
 
-Schema impact: `fixed_assets` += `depreciation_method enum('straight_line','declining_balance') default 'straight_line'` + `depreciation_rate numeric nullable` (wajib isi kalau declining_balance, harus null kalau straight_line). `depreciation_entries` **tidak berubah** — `amount` udah disimpan eksplisit per baris, otomatis nampung angka variabel declining balance tanpa struktur tambahan.
+| # | Kasus | Pola |
+|---|---|---|
+| 4 | Aset garis lurus | Penyusutan sama tiap periode |
+| 5 | Aset saldo menurun, periode terakhir | Penyusutan dihitung dari nilai buku sisa, periode terakhir kena auto-potong ke cap |
 
-Unit Produksi (metode ke-3) di luar scope — butuh data pemakaian eksternal per periode (KM/batch), bukan cuma waktu berjalan. Lihat "Belum termasuk".
-
-## Constraints (wajib ditegakkan di implementasi)
-
-- Akumulasi Penyusutan gak boleh melebihi `(Nilai Perolehan - Nilai Residu)` — cap, cegah nilai buku negatif. Declining balance lebih rawan kena cap di periode akhir — wajib dicek tiap posting, bukan diasumsikan aman kayak straight-line.
-- Akun Aset Tetap per unit aset konstan dari akuisisi sampai disposal — cuma Akumulasi Penyusutan yang bergerak.
-- Tiap posting penyusutan tertelusur ke aset + periode spesifik (anti dobel-posting/kelewat), pola traceability sama modul lain.
-- `depreciation_method` + `depreciation_rate` masuk field-lock setelah `published` — gak boleh ganti metode di tengah umur manfaat tanpa revaluasi formal (pola sama constraint costing method Inventory).
-
-## Common mistakes to guard against
-
-- Beban penuh di bulan beli (harusnya disebar via penyusutan).
-- Kredit langsung ke akun Aset Tetap saat penyusutan (harusnya ke Akumulasi Penyusutan).
-- Lupa nilai residu (bikin nilai buku bisa negatif).
-- Penyusutan lewat batas nilai perolehan.
-
-## Belum termasuk (di luar scope fase ini)
-
-Detail: `memory/scope-debt/` — disposal aset, metode Unit Produksi (butuh data pemakaian eksternal, potensi coupling ke `production_orders`/Inventory), revaluasi aset, ganti metode di tengah umur manfaat aset.
+**Common Mistakes**
+- Simpan tarif Saldo Menurun sebagai tarif tahunan lalu dibagi 12 di kode — harus eksplisit tarif per periode posting, biar gak ada konversi ambigu di 2 tempat beda.
+- Anggap `depreciation_entries` butuh kolom tambahan buat nampung Saldo Menurun — gak perlu, `amount` udah eksplisit per baris.
 
 ## Glossary
 

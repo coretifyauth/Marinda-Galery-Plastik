@@ -2,7 +2,11 @@
 
 Fase 2 roadmap. Ref konsep bisnis: `docs/domain/general-ledger.md` + `memory/domain/general-ledger.md`. Ref ERD & keputusan draft/posted: dibahas di percakapan, hasil finalnya di file ini + `memory/architecture/app/tech-stack-decisions.md` (entri "Journal Entry: no draft/posted workflow"). Ref schema COA yang kena dampak: `memory/architecture/data/coa-schema.md`.
 
-## Keputusan
+Struktur module → submodule di file ini SAMA urutannya dengan `docs/architecture/journal-entry-schema.md` dan `memory/domain/general-ledger.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule"). Modul ini foundational — cuma 1 submodule nyata (Period Closing, dan itu pun skemanya dibangun di `financial-reports-schema.md`), sisanya adalah Konsep Inti yang dipakai semua modul lain.
+
+## Konsep Inti
+
+### Keputusan
 
 - **Gak ada draft/posted workflow** — entry final begitu dibuat & lolos validasi (lihat `tech-stack-decisions.md`). Gak ada kolom `status`/`posted_at`.
 - **Immutability 2 lapis** — RLS sengaja gak ada policy `UPDATE`/`DELETE` (default deny), DITAMBAH trigger yang selalu `RAISE EXCEPTION` di `UPDATE`/`DELETE` sebagai jaring kedua (kalau suatu saat grant/policy salah dikonfigurasi, trigger tetep nahan).
@@ -11,9 +15,9 @@ Fase 2 roadmap. Ref konsep bisnis: `docs/domain/general-ledger.md` + `memory/dom
 - **2 trigger baru nempel di tabel `accounts`** (Fase 1) — closing 2 item yang sengaja ditunda di `coa-schema.md`, plus 1 edge case baru: cegah akun yang udah dipakai jurnal diam-diam jadi header lewat child baru.
 - Money pakai `numeric(14,2)`, bukan float (invariant di `AGENT.md`).
 
-## DDL
+### DDL
 
-### `journal_entries` — header transaksi
+#### `journal_entries` — header transaksi
 
 Satu baris = satu kejadian bisnis. Yang perlu diperhatiin:
 - `source_ref` — **wajib diisi** (`not null`), bukan opsional. Ini penegakan constraint domain "traceability ke source document" (`general-ledger.md`) — tanpa ini, entry gak bisa diverifikasi ke bukti fisiknya.
@@ -32,7 +36,7 @@ create table journal_entries (
 );
 ```
 
-### `journal_lines` — baris debit/kredit
+#### `journal_lines` — baris debit/kredit
 
 Tiap baris nunjuk ke 1 akun COA + 1 sisi (debit atau kredit). Yang perlu diperhatiin:
 - `debit`/`credit` dua kolom terpisah (bukan `amount`+`side` enum) — pola standar software akuntansi, gampang di-`SUM()` per kolom pas hitung saldo akun.
@@ -53,11 +57,11 @@ create index journal_lines_journal_entry_id_idx on journal_lines(journal_entry_i
 create index journal_lines_account_id_idx on journal_lines(account_id);
 ```
 
-Index di `journal_entry_id` buat query "semua baris 1 entry" (dipakai trigger balance-check tiap commit). Index di `account_id` buat query "hitung saldo 1 akun" (bakal sering dipanggil pas laporan/rollup).
+Index di `journal_entry_id` buat query "semua baris 1 entry" (dipakai trigger balance-check tiap commit). Index di `account_id` buat query "hitung saldo 1 akun" (bakal sering dipanggil pas laporan/rollup — lihat catatan `ar_invoice_remaining`-style rollup di `memory/scope-debt/trial-balance-rollup.md`, masih ditunda ke Fase 7).
 
-## Trigger
+### Trigger
 
-### `journal_lines_leaf_only` — tolak posting ke akun header
+#### `journal_lines_leaf_only` — tolak posting ke akun header
 
 Constraint domain #3 (`general-ledger.md`): cuma leaf account yang boleh diposting. Trigger ini jalan tiap ada baris baru, cek apakah `account_id`-nya punya child di `accounts` — kalau iya, tolak.
 
@@ -76,7 +80,7 @@ create trigger journal_lines_leaf_only_trigger
   for each row execute function journal_lines_leaf_only();
 ```
 
-### `journal_lines_balance_check` — tolak entry yang gak balance atau kurang dari 2 baris
+#### `journal_lines_balance_check` — tolak entry yang gak balance atau kurang dari 2 baris
 
 Constraint domain #1 & #2. Ini **deferred constraint trigger** — bedanya dari trigger biasa, dia dijadwalin jalan pas transaksi mau `COMMIT`, bukan langsung tiap baris masuk. Kenapa harus gitu: kalau dicek per baris, baris pertama sebuah entry selalu "kelihatan" gak balance (baris pasangannya belum ada). Karena RPC `create_journal_entry` masukin header+semua lines dalam 1 transaksi, deferred trigger ini pas jadi "pengecekan akhir" pas semua baris udah lengkap.
 
@@ -110,7 +114,7 @@ create constraint trigger journal_lines_balance_check_trigger
   for each row execute function journal_lines_balance_check();
 ```
 
-### `block_edit_delete` — jaring kedua buat immutability
+#### `block_edit_delete` — jaring kedua buat immutability
 
 RLS udah nolak `UPDATE`/`DELETE` lewat default-deny (gak ada policy-nya). Trigger ini nolak lagi di level lain — kalau suatu saat ada yang salah kasih grant/policy, ini tetep nahan.
 
@@ -130,7 +134,9 @@ create trigger journal_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### `accounts_published_lock` — kunci akun yang udah kepakai (dari `coa-schema.md`, ditunda ke sini)
+Fungsi `block_edit_delete()` ini yang di-reuse tiap tabel transaksional immutable di modul lain (`ar_invoices`/`ar_payments`, dst) — jangan bikin fungsi baru, tinggal pasang trigger baru yang manggil fungsi ini.
+
+#### `accounts_published_lock` — kunci akun yang udah kepakai (dari `coa-schema.md`, ditunda ke sini)
 
 Begitu akun dipakai di `journal_lines` mana pun, `code`/`category`/`normal_balance`/`parent_id` terkunci — implementasi "published" di `state-naming-convention.md` (derived, bukan kolom manual). `name`/`archived_at` tetap bebas diubah kapan pun.
 
@@ -152,7 +158,7 @@ create trigger accounts_published_lock_trigger
   for each row execute function accounts_published_lock();
 ```
 
-### `accounts_no_retroactive_header` — edge case yang ketemu waktu bedah domain
+#### `accounts_no_retroactive_header` — edge case yang ketemu waktu bedah domain
 
 Tanpa ini, akun leaf yang udah keposting bisa diam-diam jadi header cuma dengan nambah akun baru yang `parent_id`-nya nunjuk ke situ — ngelanggar leaf-only-posting secara retroaktif buat histori yang udah ada. Trigger ini nolak `insert` akun baru kalau calon parent-nya udah "published" (udah dipakai di jurnal).
 
@@ -173,11 +179,11 @@ create trigger accounts_no_retroactive_header_trigger
   for each row execute function accounts_no_retroactive_header();
 ```
 
-## RPC (financial write — atomik)
+### RPC (financial write — atomik)
 
 Sesuai `tech-stack-decisions.md`: financial writes lewat Postgres RPC biar header+lines commit bareng dalam 1 transaksi. Dua-duanya `security invoker` (bukan `security definer`) — jalan pakai hak akses user yang manggil, jadi RLS `insert` di atas tetep berlaku normal. RPC di sini murni buat atomicity, bukan buat bypass keamanan.
 
-### `create_journal_entry` — bikin entry baru
+#### `create_journal_entry` — bikin entry baru
 
 ```sql
 create function create_journal_entry(
@@ -213,7 +219,9 @@ end;
 $$;
 ```
 
-### `reverse_journal_entry` — bikin entry pembalik
+Ini RPC yang dipanggil ULANG oleh SEMUA modul lain (AR, AP, Inventory, Fixed Assets) buat nyatet efek jurnalnya — gak ada modul yang insert manual ke `journal_entries`/`journal_lines`.
+
+#### `reverse_journal_entry` — bikin entry pembalik
 
 Baca semua baris entry asli, bikin entry baru dengan debit/kredit ketuker, link balik lewat `reverses_entry_id`. Ini satu-satunya cara "koreksi" yang disediain — gak ada jalur buat edit entry lama.
 
@@ -243,7 +251,7 @@ end;
 $$;
 ```
 
-## RLS Policy
+### RLS Policy
 
 **`journal_entries_select` & `journal_lines_select`** — semua yang `authenticated` boleh liat, sama kayak `accounts_select`: data ledger itu referensi bareng, semua role butuh liat buat kerja/lapor.
 
@@ -276,7 +284,7 @@ create policy journal_lines_insert on journal_lines
 -- sengaja gak ada policy UPDATE/DELETE -> RLS default deny
 ```
 
-## Grant
+### Grant
 
 Sama kayak yang ketemu di `coa-schema.md` migration 0002 — "Automatically expose new tables" dimatikan di project settings, jadi tabel baru butuh grant eksplisit sebelum RLS-nya bisa "kepakai" sama sekali oleh PostgREST.
 
@@ -285,4 +293,10 @@ grant select, insert on journal_entries to authenticated;
 grant select, insert on journal_lines to authenticated;
 ```
 
-Period closing (kunci entry per rentang waktu + closing entry ke `Laba Ditahan`) dan rollup saldo per akun (Trial Balance/Neraca) udah dibangun di Fase 7 — lihat `memory/architecture/data/financial-reports-schema.md`. Dampak balik ke modul ini: trigger `journal_entries_block_retroactive_into_closed_period` (ditambah migration `0016_period_closing.sql`) nolak `insert` baru ke `journal_entries` yang `entry_date`-nya jatuh di rentang yang udah tercatat di `period_closings`.
+## Period Closing (Tutup Buku)
+
+Gak ada tabel/RPC baru di file ini — kuncian per rentang waktu (`period_closings`) dan RPC `close_period` dibangun penuh di `memory/architecture/data/financial-reports-schema.md` (migration `0016_period_closing.sql`), karena butuh Income Statement jalan dulu buat tau angka definitif per akun yang mau ditutup (ditunda dari Fase 2 ke Fase 7).
+
+Dampak balik ke tabel di file ini: trigger `journal_entries_block_retroactive_into_closed_period` (ditambah migration `0016_period_closing.sql`) nolak `insert` baru ke `journal_entries` yang `entry_date`-nya jatuh di rentang yang udah tercatat di `period_closings`. Closing entry itu sendiri tetap dibuat lewat `create_journal_entry` yang sudah ada di submodule "Konsep Inti" — gak ada RPC pencatatan jurnal baru buat proses ini.
+
+Ringkasan compact cara kerja + constraint: `memory/domain/general-ledger.md` bagian "Period Closing (Tutup Buku)". Detail teknis penuh (DDL `period_closings`, RPC `close_period`, exclusion constraint GiST buat cegah overlap): `memory/architecture/data/financial-reports-schema.md` bagian "Period Closing".

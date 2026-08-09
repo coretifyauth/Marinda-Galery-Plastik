@@ -2,7 +2,7 @@
 
 Fase 1. Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Kalau butuh detail teknis (kode SQL, nama fungsi persis), itu ada di `memory/architecture/data/coa-schema.md`.
 
-## Peta Data (ERD)
+## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
@@ -10,25 +10,81 @@ Fase 1. Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini 
 | `user_roles` | Peran yang dipegang tiap user (1 user boleh punya lebih dari 1 peran) | `roles`, user login |
 | `accounts` | Daftar akun (Chart of Accounts itu sendiri) | Bisa nunjuk ke akun lain sebagai "induk" (struktur header/leaf) |
 
-**Struktur `accounts` (kolom yang penting buat dipahami):**
+## Konsep Inti
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `roles` | Daftar peran yang dikenal sistem | — |
+| `user_roles` | Peran yang dipegang tiap user (1 user boleh punya lebih dari 1 peran) | `roles`, user login |
+| `accounts` | Daftar akun (Chart of Accounts itu sendiri) | Self-relasi ke `accounts` lain sebagai "induk" |
+
+**Struktur `accounts` (kolom yang penting buat dipahami)**
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
 | `code`, `name` | Kode & nama akun | Kode gak boleh dobel |
 | `category` | asset / liability / equity / revenue / expense | 1 dari 5 kategori baku akuntansi |
-| `normal_balance` | debit / kredit | **Dihitung otomatis** dari kategori, gak bisa diisi manual — lihat "Aturan Otomatis" |
-| `is_contra` | ya / tidak | Penanda akun kontra (misal Akumulasi Penyusutan) — lihat `docs/domain/chart-of-accounts.md` bagian "Akun Kontra" |
+| `normal_balance` | debit / kredit | **Dihitung otomatis** dari kategori, gak bisa diisi manual |
 | `parent_id` | menunjuk ke akun lain (atau kosong) | Ini yang bikin akun bisa jadi "header" (kalau punya anak) atau "leaf" (kalau gak punya anak) |
 | status aktif/arsip | ada tidaknya tanggal arsip | Akun lama gak pernah dihapus permanen, cuma diarsipkan |
 
-## Aturan Otomatis yang Dijaga Sistem
+**Alur Teknis (RPC)**
 
-Sistem gak cuma nyimpen data — dia juga menolak input yang melanggar aturan akuntansi, tanpa perlu dicek manual satu-satu:
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Tambah akun baru | — (insert langsung ke `accounts`, bukan financial write jadi gak lewat RPC) | Insert baris baru; `normal_balance` otomatis terhitung dari `category` | RLS `accounts_insert` (admin/accountant); trigger `accounts_no_retroactive_header` menolak kalau `parent_id` nunjuk akun yang sudah dipakai transaksi (bakal jadi header retroaktif) |
+| Ubah akun | — (update langsung) | Update kolom | RLS `accounts_update` (admin/accountant); trigger `accounts_published_lock` menolak perubahan `code`/`category`/`normal_balance`/`parent_id`/`is_contra` begitu akun sudah dipakai di `journal_lines` — `name`/`archived_at` tetap bebas diubah |
+| Posting transaksi ke akun (modul Journal Entry) | `create_journal_entry` | Insert `journal_lines` menunjuk `account_id` | Trigger `journal_lines_leaf_only` menolak posting ke akun yang masih punya child (header) |
+| Hapus akun | — | Tidak pernah bisa terjadi | RLS `accounts` gak ada policy `DELETE` → default deny |
+| Assign peran ke user lain | — (belum ada, masih manual/migration) | — | Butuh fungsi `security definer` biar gak circular-check ke `user_roles` sendiri — belum digarap, ditunda sampai ada layar user management |
 
-1. **Sisi normal (debit/kredit) gak bisa salah ketik.** Begitu kategori akun dipilih (misal "asset"), sisi normalnya otomatis kebentuk sendiri (debit) — gak ada kolom terpisah yang bisa diisi ngawur dan jadi gak nyambung sama kategorinya.
-2. **Akun yang sudah pernah dipakai transaksi jadi "terkunci" sebagian.** Kode, kategori, sisi normal, posisi induk, dan status kontra sebuah akun gak bisa diubah lagi begitu akun itu pernah dipakai mencatat transaksi — mencegah histori laporan lama berubah makna secara diam-diam. Nama akun tetap boleh diganti kapan saja (misal typo).
-3. **Akun yang sudah dipakai transaksi gak bisa "diam-diam" jadi header baru.** Kalau sebuah akun leaf sudah pernah diposting, sistem menolak penambahan akun anak baru di bawahnya — karena itu berarti akun itu jadi header, dan header gak boleh diposting langsung (aturan ini dijaga terpisah, lihat modul General Ledger).
-4. **Akun tidak pernah benar-benar dihapus.** Yang bisa dilakukan cuma "arsipkan" — akun lama tetap ada di histori supaya laporan masa lalu tetap bisa dibaca dengan benar.
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Sisi normal gak bisa salah ketik / gak nyambung sama kategori | Kolom `normal_balance` generated dari `category` |
+| Transaksi cuma boleh posting ke akun leaf | Trigger `journal_lines_leaf_only` (didefinisikan di modul Journal Entry, dipasang ke `journal_lines`) |
+| Akun leaf yang sudah dipakai gak boleh diam-diam jadi header | Trigger `accounts_no_retroactive_header` |
+| Field kritikal akun terkunci setelah dipakai transaksi | Trigger `accounts_published_lock` (`code`/`category`/`normal_balance`/`parent_id`/`is_contra`) |
+| Akun gak pernah dihapus permanen | RLS `accounts` tanpa policy `DELETE` + `archived_at` sebagai satu-satunya penanda lifecycle |
+| Peran dikelola lewat lookup table, bukan enum, biar nambah peran baru gak butuh migration `ALTER TYPE` | Tabel `roles` + `user_roles` (PK komposit `user_id, role_name`) |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `accounts.parent_id` | self-relasi (banyak-ke-satu) | `accounts` |
+| `user_roles` | banyak-ke-satu | `roles`, user login (`auth.users`) |
+| `journal_lines.account_id` (modul Journal Entry) | banyak-ke-satu, wajib leaf | `accounts` |
+
+## Akun Kontra (Contra Account)
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `accounts.is_contra` (kolom, ditambah Fase 6 — Fixed Assets) | Flag penanda akun kontra — belum ada sampai Fase 5, semua akun asset yang lahir normal debit polos | `accounts` itu sendiri, bukan tabel baru |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Tandai akun sebagai kontra | — (kolom ditambah Fase 6, lihat modul Fixed Assets) | Formula generated `normal_balance` bercabang berdasar `is_contra` — kebalik dari default kategori kalau `true` | Trigger `accounts_published_lock` (versi Fase 6) ikut mengunci `is_contra` begitu akun dipakai transaksi |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Kategori akun kontra tetap ikut akun pasangan, cuma normal balance yang kebalik | Formula generated `normal_balance` bercabang berdasar `is_contra` |
+| Sampai Fase 5, gak ada akun kontra yang bisa dibuat | `normal_balance` generated rigid (`asset`/`expense` → debit, sisanya kredit) tanpa kolom `is_contra` — belum ditambah |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `accounts.is_contra` | flag pada baris yang sama, dipakai formula generated | `accounts.category` / `accounts.normal_balance` |
 
 ## Siapa Boleh Apa
 
@@ -38,7 +94,3 @@ Sistem gak cuma nyimpen data — dia juga menolak input yang melanggar aturan ak
 | Menambah/mengubah akun | Role `admin` atau `accountant` |
 | Menghapus akun secara permanen | **Tidak ada seorang pun** — ini sengaja ditutup total di level sistem, sesuai aturan "arsip, bukan hapus" |
 | Melihat peran diri sendiri | User yang bersangkutan (gak bisa lihat peran user lain) |
-
-## Belum Termasuk
-
-- Fitur admin menetapkan peran ke user lain lewat aplikasi — sekarang masih dilakukan manual di luar aplikasi. Ditunda karena butuh mekanisme keamanan tambahan yang belum digarap.

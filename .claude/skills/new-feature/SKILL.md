@@ -22,6 +22,8 @@ Ini bukan satu langkah, tapi 3 sub-langkah berurutan, gak boleh diloncat:
    - `memory/domain/<nama-modul>.md` (compact, padanan teknis)
    - `docs/story/<nama-modul>.md` (skenario bisnis konkret, lanjutan cerita perusahaan fiktif yang sudah berjalan — `docs/story/company-profile.md` + file story fase sebelumnya)
 
+   Ikuti struktur module → submodule baku (`AGENTS.md` > "Format Baku: Struktur Module → Submodule") — entitas dasar masuk "Konsep Inti", tiap fitur tambahan (retur, DP, dst) jadi submodule `###` sendiri dengan **Cara Kerja**/**Aturan Bisnis**/**Skenario**/**Common Mistakes**. Kalau modul ini nanti juga dapet `docs/architecture/<nama-modul>-schema.md` + `memory/architecture/data/<nama-modul>-schema.md`, posisi submodule di sana WAJIB sama urutan/pengelompokannya sama yang di `docs/domain`.
+
 ### 2. Rancang ERD
 
 Gambarkan entity baru, relasi, FK, cardinality — secara eksplisit, sebelum nulis DDL. Kalau ini nambah kolom/tabel ke entity yang sudah ada (bukan entity baru), tetap sebutkan dampaknya ke ERD existing.
@@ -41,11 +43,11 @@ Urutan ini gak boleh dibalik. Schema (migration SQL, ikuti `memory/preferences/s
 
 ### 5. Setelah implementasi selesai — sapu exclusion notes lintas file
 
-Fitur yang baru selesai dibangun sering nutup gap yang udah lama didokumentasikan sebagai "Belum Termasuk"/"Belum termasuk" di file **lain** (bukan cuma file yang lagi diedit) — pola siklus hidup ini wajib dipatuhi sama kayak scope-debt (`memory/brief.md` bagian "Aturan siklus hidup dokumen", poin 4). Sebelum bilang fitur ini kelar:
+Fitur yang baru selesai dibangun sering nutup gap yang udah lama didokumentasikan sebagai catatan "belum ada"/"belum dirancang"/"ditunda"/"catatan terbuka" di file **lain** (bukan cuma file yang lagi diedit) — pola siklus hidup ini wajib dipatuhi sama kayak scope-debt (`memory/brief.md` bagian "Aturan siklus hidup dokumen", poin 4). Catatan ini sekarang **inline** di dalam prosa/tabel submodule terkait (gak ada lagi section "Belum Termasuk" terpisah, lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule"), jadi gak bisa dicari cuma lewat 1 nama heading — cek isi kalimat/baris tabelnya. Sebelum bilang fitur ini kelar:
 
 1. Ambil keyword inti dari fitur yang baru dibangun (nama konsep bisnis, nama tabel/kolom baru).
-2. Grep keyword itu ke SEMUA `docs/architecture/*.md`, `memory/architecture/data/*.md`, `docs/domain/*.md`, `memory/domain/*.md` — bukan cuma file yang barusan disentuh.
-3. Tiap match yang nyebut fitur ini sebagai "belum ada"/"belum dirancang"/"ditunda" — cek apakah fitur yang barusan dibangun beneran nutup itu. Kalau iya, hapus/update baris itu.
+2. Grep keyword itu ke SEMUA `docs/architecture/*.md`, `memory/architecture/data/*.md`, `docs/domain/*.md`, `memory/domain/*.md`, plus grep referensi ke `memory/scope-debt/*.md` yang namanya relevan — bukan cuma file yang barusan disentuh.
+3. Tiap match yang nyebut fitur ini sebagai "belum ada"/"belum dirancang"/"ditunda"/"catatan terbuka" — cek apakah fitur yang barusan dibangun beneran nutup itu. Kalau iya, hapus/update baris/bullet itu (jangan hapus seluruh submodule-nya, cuma klausa yang basi).
 
 Jangan asumsikan exclusion note cuma nyangkut di file topik yang sama — kasus nyata: fitur Period Closing (Fase 7, dibangun di `financial-reports-schema.md`) nutup gap yang catatannya nyangkut di `journal-entry-schema.md` (Fase 2), gak ketauan sampai lama karena gak ada yang nyapu balik ke situ.
 

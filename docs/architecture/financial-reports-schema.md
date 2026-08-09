@@ -2,52 +2,177 @@
 
 Fase 7. Konsep bisnisnya ada di `docs/domain/financial-reports.md`. Skenario nyata (angka tervalidasi lintas 6 fase): `docs/story/financial-reports.md`. Detail teknis: `memory/architecture/data/financial-reports-schema.md`.
 
-## Peta Data (ERD) — Gak Ada Tabel Baru
+Struktur module → submodule di file ini SAMA urutannya dengan `docs/domain/financial-reports.md` dan `memory/domain/financial-reports.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
 
-Beda dari semua fase sebelumnya: Financial Reports **gak menambah satu tabel pun**. Empat laporannya (Trial Balance, Income Statement, Balance Sheet, Cash Flow) semuanya dihitung on-demand dari 3 tabel yang sudah ada sejak Fase 1 dan Fase 2:
+## Peta Data (ERD) — Ringkasan Semua Tabel & Fungsi Laporan
 
-| Tabel (sudah ada) | Peran di laporan ini |
+Beda dari semua fase sebelumnya: Financial Reports **hampir gak menambah tabel baru**. Empat laporannya (Trial Balance, Income Statement, Balance Sheet, Cash Flow) semuanya dihitung on-demand dari 3 tabel yang sudah ada sejak Fase 1 dan Fase 2 — cuma Tutup Buku (submodule terakhir) yang beneran nambah struktur baru.
+
+| Nama | Jenis | Fungsi | Terhubung ke |
+|---|---|---|---|
+| `accounts` (sudah ada) | Tabel (dibaca) | Sumber daftar akun, kategori, dan arah saldo normal | — |
+| `journal_entries` (sudah ada) | Tabel (dibaca) | Sumber tanggal transaksi — dasar filter "per tanggal" / "rentang tanggal" | — |
+| `journal_lines` (sudah ada) | Tabel (dibaca) | Sumber angka debit/kredit mentah yang dijumlahkan per akun | `journal_entries` |
+| Fungsi Trial Balance | Fungsi baca (bukan RPC/view) | Jumlahkan debit/kredit tiap akun sampai 1 tanggal, hasil saldo per akun | `accounts`, `journal_entries`, `journal_lines` |
+| Fungsi Income Statement | Fungsi baca | Ambil akun Pendapatan+Beban dari Trial Balance, dibatasi rentang tanggal | Fungsi Trial Balance |
+| Fungsi Balance Sheet | Fungsi baca | Ambil akun Aset+Liabilitas+Ekuitas dari Trial Balance di 1 tanggal + baris Laba Ditahan | Fungsi Trial Balance, Fungsi Income Statement |
+| Fungsi Cash Flow | Fungsi baca | Bandingkan 2 Trial Balance + Laba Bersih dari Income Statement | Fungsi Trial Balance, Fungsi Income Statement |
+| `period_closings` (baru) | Tabel (ditulis) | Daftar rentang tanggal yang sudah "disegel" lewat Tutup Buku | `journal_entries` (opsional, kalau ada closing entry) |
+| Fungsi Tutup Buku (RPC) | RPC (financial write) | Nolkan saldo Pendapatan/Beban 1 rentang ke Laba Ditahan, kunci rentang itu | `accounts`, `journal_lines`, `period_closings` |
+
+Laporan-laporan baca ini bisa dibayangkan sebagai **lapisan baca (read layer)** yang duduk di atas 3 tabel yang sudah ada — bukan entity baru yang berdiri sendiri.
+
+## Trial Balance
+
+**Peta Data (ERD)**
+
+| Tabel/Fungsi | Fungsi | Terhubung ke |
+|---|---|---|
+| `accounts` | Daftar akun + kategori + arah saldo normal | — |
+| `journal_lines` | Baris debit/kredit mentah, difilter sampai tanggal tertentu | `journal_entries` (buat tanggal) |
+| Fungsi Trial Balance | Jumlahkan debit/kredit per akun, hasil saldo per akun di 1 titik waktu | `accounts`, `journal_lines` |
+
+**Alur Teknis (RPC)**
+
+| Aksi | Fungsi | Efek | Guard |
+|---|---|---|---|
+| Minta saldo semua akun per tanggal tertentu | Fungsi Trial Balance | Ambil semua `journal_lines` sampai tanggal itu, jumlahkan per akun, gabung ke `accounts` | Gak ada — murni baca, gak ada validasi input selain format tanggal |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| `accounts` | Sumber daftar akun, kategori, dan arah saldo normal (dipakai buat tahu tiap saldo akun ditambah atau dikurang) |
-| `journal_entries` | Sumber tanggal transaksi — jadi dasar filter "per tanggal tertentu" (Trial Balance/Balance Sheet) atau "rentang tanggal" (Income Statement/Cash Flow) |
-| `journal_lines` | Sumber angka debit/kredit mentah yang dijumlahkan per akun |
+| Total debit = total kredit persis, gak ada toleransi | Konsekuensi otomatis dari aturan "setiap jurnal wajib balance" yang udah ditegakkan sejak baris pertama dicatat (Fase 2) — Trial Balance cuma membuktikan ulang, gak menjamin dari nol |
+| Saldo per akun dihitung dari arah saldo normal | Fungsi Trial Balance — debit dikurangi kredit kalau `normal_balance` akun itu debit, kebalikannya kalau kredit |
 
-Laporan ini bisa dibayangkan sebagai **lapisan baca (read layer)** yang duduk di atas 3 tabel itu — bukan entity baru yang berdiri sendiri.
+**Interaksi Antar Tabel**
 
-## Bagaimana Tiap Laporan Dihitung
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `journal_lines` | banyak-ke-satu | `journal_entries` (buat tanggal transaksi) |
+| `journal_lines` | banyak-ke-satu | `accounts` (buat kategori & arah saldo normal) |
 
-1. **Trial Balance** — jumlahkan debit dan kredit tiap akun sampai tanggal tertentu, hasilnya saldo per akun di 1 titik waktu.
-2. **Income Statement** — ambil akun Pendapatan dan Beban dari Trial Balance, tapi dibatasi rentang tanggal (bukan sampai tanggal tertentu doang) — Laba Bersih = Pendapatan dikurangi Beban. Khusus laporan ini, transaksi jurnal penutup (hasil Tutup Buku, lihat di bawah) sengaja **dikeluarkan** dari perhitungan — supaya lihat ulang Laba Rugi periode yang udah ditutup tetap nunjukin angka historis, bukan 0 (detail: bagian "Tutup Buku" di bawah).
-3. **Balance Sheet** — ambil akun Aset, Liabilitas, Ekuitas dari Trial Balance di 1 tanggal, ditambah 1 baris tambahan "Laba Ditahan" yang nilainya dihitung ulang dari Income Statement. Perhitungan ulang ini tetap dipakai meski Period Closing sekarang sudah ada (lihat bagian "Tutup Buku" di bawah) — begitu ada periode yang sudah ditutup, saldo Pendapatan/Beban yang tersisa di Trial Balance otomatis cuma mewakili periode yang masih berjalan (periode-periode sebelumnya sudah dinolkan beneran oleh proses tutup buku), jadi rumus yang sama tetap benar di kedua kondisi.
-4. **Cash Flow** — bandingkan 2 Trial Balance (awal dan akhir periode) buat tahu perubahan saldo Piutang/Persediaan/Utang, dikombinasikan dengan Laba Bersih dari Income Statement dan Beban Penyusutan yang ditambahkan balik (karena penyusutan bukan transaksi kas beneran).
+## Income Statement
 
-## Kenapa Bukan Tabel/View Database Baru
+**Peta Data (ERD)**
 
-Datanya diambil apa adanya (baris transaksi yang relevan, difilter tanggal) lalu **dijumlahkan di kode aplikasi** — sama persis pola fitur "Ledger" yang sudah ada di halaman detail akun (`/accounts/[id]`), cuma sekarang dijalankan untuk semua akun sekaligus, bukan 1 akun. Gak ada logic tersembunyi di level database yang perlu dijaga lewat migration terpisah, dan gak bergantung ke fitur agregat khusus di sisi database (sempat dicoba, ternyata gak aktif secara default di project ini).
+| Tabel/Fungsi | Fungsi | Terhubung ke |
+|---|---|---|
+| Fungsi Income Statement | Ambil akun kategori Pendapatan+Beban dari Fungsi Trial Balance, dibatasi rentang tanggal | Fungsi Trial Balance |
+| `period_closings` | Sumber daftar entry penutup yang harus dikeluarkan dari perhitungan | `journal_entries` |
 
-## Tutup Buku (Period Closing) — Satu-satunya Bagian yang Beneran Nambah Tabel
+**Alur Teknis (RPC)**
 
-Beda dari 4 laporan di atas (murni baca), tutup buku itu **tindakan menulis** — mengubah data, bukan cuma menampilkannya. Ada 1 tabel baru: `period_closings`, daftar rentang tanggal yang sudah "disegel". Gak ada tabel "periode" dengan status terbuka/tertutup terpisah — sebuah tanggal dianggap "masih terbuka" kalau memang belum ada baris di `period_closings` yang mencakup tanggal itu.
+| Aksi | Fungsi | Efek | Guard |
+|---|---|---|---|
+| Minta Laba Rugi 1 rentang tanggal | Fungsi Income Statement | Jalankan Fungsi Trial Balance dibatasi rentang, ambil akun Pendapatan+Beban, jumlahkan | Baris yang berasal dari entry penutup (lihat submodule "Tutup Buku") dikeluarkan sebelum dijumlahkan |
 
-**Cara kerja "Tutup Periode":**
-1. Sistem menghitung ulang total Pendapatan dan Beban untuk rentang tanggal itu langsung dari data mentah (bukan menerima angka dari luar — supaya gak bisa "ditutup" dengan angka yang salah).
-2. Semua akun Pendapatan dan Beban yang aktif di rentang itu dinolkan lewat 1 transaksi jurnal penutup, selisihnya (Laba atau Rugi bersih periode itu) dipindahkan ke akun Laba Ditahan.
-3. Rentang tanggal itu dicatat sebagai "tertutup".
+**Aturan Bisnis → RPC**
 
-Setelahnya, **transaksi baru gak boleh lagi bertanggal masuk ke rentang yang sudah tertutup** — kalau ada transaksi yang ketinggalan, tetap dicatat, tapi dengan tanggal periode yang sedang berjalan sekarang, bukan dipaksa masuk ke tanggal lama (`docs/domain/general-ledger.md`).
+| Aturan | Dijaga oleh |
+|---|---|
+| Income Statement selalu rentang tanggal, gak boleh snapshot 1 tanggal | Parameter fungsi mewajibkan tanggal awal DAN akhir, beda dari Trial Balance/Balance Sheet yang cuma 1 tanggal |
+| Lihat ulang Laba Rugi periode yang sudah ditutup tetap nunjukin angka historis, bukan nol | Fungsi Income Statement secara eksplisit mengeluarkan baris entry penutup dari perhitungannya — Trial Balance sengaja TIDAK mengeluarkan (lihat submodule "Tutup Buku") |
 
-**Aturan yang dijaga sistem:**
-- Periode harus ditutup berurutan dan tanpa jeda — gak bisa loncat (tutup Maret duluan sebelum Februari) atau bolong (lupa nutup 1 bulan).
-- Periode yang sudah ditutup **gak bisa dibuka lagi** — kalau ada kesalahan, koreksinya lewat transaksi baru di periode yang sedang berjalan, bukan membongkar kunci periode lama. Ini konsisten dengan prinsip "laporan yang sudah dipegang pihak luar gak boleh diam-diam berubah".
-- Kalau suatu rentang tanggal ternyata gak punya transaksi Pendapatan/Beban sama sekali, rentang itu tetap bisa "ditutup" (buat menjaga urutan tetap bersambung) tanpa perlu bikin transaksi jurnal penutup apa pun.
+**Interaksi Antar Tabel**
 
-**Kenapa lihat ulang Laba Rugi periode yang udah ditutup tetap benar (bukan 0):** transaksi jurnal penutup itu sendiri bertanggal di hari terakhir periode yang ditutup — kalau ikut dihitung pas laporan Income Statement dijalankan ulang buat rentang yang sama, dia bakal membatalkan balik saldo yang baru aja dinolkan (menolkan Pendapatan lagi jadi 0, dst). Ini pernah kejadian beneran (dicatat & sekarang sudah diperbaiki) — laporan Income Statement sekarang secara khusus mengabaikan transaksi jurnal penutup dari perhitungannya, jadi selalu menunjukkan angka historis asli, kapan pun dijalankan. Trial Balance dan Neraca sengaja TETAP memperhitungkan transaksi jurnal penutup — itu justru intinya, supaya saldo Pendapatan/Beban kumulatif yang ditampilkan beneran mencerminkan periode yang sudah dinolkan.
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| Fungsi Income Statement | memanggil | Fungsi Trial Balance |
+| Fungsi Income Statement | mengecualikan baris dari | `period_closings.journal_entry_id` |
 
-## Keterbatasan Saat Ini
+## Balance Sheet
 
-- **Belum ada mekanisme "buka lagi" periode yang salah ditutup** — sengaja (lihat di atas), tapi konsekuensinya kesalahan penutupan gak bisa dibatalkan secara langsung.
-- **Cash Flow metode Direct belum tersedia** — cuma metode Indirect (mulai dari Laba Bersih, dikoreksi balik) yang didukung, karena metode Direct butuh setiap transaksi kas dikategorikan asalnya (dari pelanggan/ke supplier/dst), yang belum ada mekanismenya.
-- **Pengelompokan Investing vs Financing di Cash Flow masih manual** berdasarkan daftar akun yang diketahui (Utang Bank = Financing, Aset Tetap = Investing) — belum otomatis dari struktur data, jadi kalau ada jenis akun serupa baru harus diupdate manual.
+**Peta Data (ERD)**
+
+| Tabel/Fungsi | Fungsi | Terhubung ke |
+|---|---|---|
+| Fungsi Balance Sheet | Ambil akun Aset+Liabilitas+Ekuitas dari Fungsi Trial Balance di 1 tanggal, tambah 1 baris derived Laba Ditahan | Fungsi Trial Balance, Fungsi Income Statement |
+
+**Alur Teknis (RPC)**
+
+| Aksi | Fungsi | Efek | Guard |
+|---|---|---|---|
+| Minta Neraca per 1 tanggal | Fungsi Balance Sheet | (1) Jalankan Fungsi Trial Balance per tanggal itu. (2) Jalankan Fungsi Income Statement dari tanggal transaksi pertama sistem sampai tanggal itu, buat dapetin Laba Bersih. (3) Ambil akun Aset+Liabilitas+Ekuitas dari (1), tambah baris "Laba Ditahan" = Laba Bersih dari (2) | Validasi wajib: Total Aset = Total Liabilitas + Total Ekuitas setelah baris Laba Ditahan ditambahkan |
+
+**Aturan Bisnis → RPC**
+
+| Aturan | Dijaga oleh |
+|---|---|
+| Laba Bersih wajib di-closing ke Laba Ditahan sebelum Balance Sheet dihitung | Fungsi Balance Sheet selalu memanggil Fungsi Income Statement dulu buat dapetin Laba Bersih sebelum menyusun baris Ekuitas |
+| Akun kontra (Akumulasi Penyusutan) wajib dikurangkan dari Aset Tetap, bukan nilai perolehan mentah | Akun kontra otomatis bersaldo kredit dari arah saldo normalnya — tinggal dikurangkan pas ditampilkan di grup Aset |
+| Asset = Liability + Equity harus selalu tegak | Kalau meleset, itu bug di query rollup (akun kelewat, atau closing Laba Ditahan lupa disertakan) — bukan toleransi pembulatan |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| Fungsi Balance Sheet | memanggil | Fungsi Trial Balance |
+| Fungsi Balance Sheet | memanggil (buat baris Laba Ditahan) | Fungsi Income Statement |
+
+## Cash Flow Statement
+
+**Peta Data (ERD)**
+
+| Tabel/Fungsi | Fungsi | Terhubung ke |
+|---|---|---|
+| Fungsi Cash Flow | Bandingkan 2 Trial Balance (awal & akhir periode) + Laba Bersih dari Income Statement | Fungsi Trial Balance (dipanggil 2x), Fungsi Income Statement |
+
+**Alur Teknis (RPC)**
+
+| Aksi | Fungsi | Efek | Guard |
+|---|---|---|---|
+| Minta Arus Kas 1 rentang tanggal (Metode Tidak Langsung) | Fungsi Cash Flow | (1) Fungsi Income Statement rentang itu → Laba Bersih. (2) Fungsi Trial Balance di tanggal awal-1 dan tanggal akhir → delta akun Piutang/Persediaan/Utang. (3) Add-back akun Beban Penyusutan. (4) Operating = Laba Bersih + add-back − ΔPiutang − ΔPersediaan + ΔUtang. (5) Investing/Financing dikelompokkan dari daftar akun yang diketahui (belum otomatis) | Validasi wajib: Kas Awal + Operating + Investing + Financing = Kas Akhir (harus sama persis dengan saldo akun Kas di Trial Balance akhir periode) |
+
+**Aturan Bisnis → RPC**
+
+| Aturan | Dijaga oleh |
+|---|---|
+| Saldo Kas Akhir hasil hitungan wajib cocok ke saldo akun Kas Trial Balance sekarang | Ini validasi eksternal (dicek manual/di UI), bukan constraint yang mem-block — kalau gak cocok, bug ada di logic Fungsi Cash Flow, bukan di data |
+| Metode Tidak Langsung dipilih, Metode Langsung belum didukung | Fungsi Cash Flow gak menerima kategori kas per baris — datanya emang gak ada kolom buat itu |
+| Aktivitas non-kas (Investing/Financing) tetap didokumentasikan meski nilainya 0 di laporan | Ditampilkan sebagai catatan kaki terpisah di layer presentasi, bukan disembunyikan begitu nilainya nol |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| Fungsi Cash Flow | memanggil 2x (awal & akhir periode) | Fungsi Trial Balance |
+| Fungsi Cash Flow | memanggil | Fungsi Income Statement |
+
+## Tutup Buku (Period Closing)
+
+Satu-satunya bagian di modul ini yang beneran **menulis** data (bukan cuma membaca) — mengunci sebuah rentang tanggal biar gak bisa disusupi transaksi baru lagi.
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `period_closings` | Daftar rentang tanggal yang sudah "disegel". Gak ada tabel "periode" dengan status terbuka/tertutup terpisah — sebuah tanggal dianggap "masih terbuka" kalau memang belum ada baris di sini yang mencakup tanggal itu | `journal_entries` (opsional, kalau ada entry penutup) |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Tutup 1 rentang tanggal | Fungsi Tutup Buku | (1) Hitung ulang total Pendapatan dan Beban rentang itu langsung dari data mentah (bukan menerima angka dari luar). (2) Semua akun Pendapatan/Beban yang aktif di rentang itu dinolkan lewat 1 transaksi jurnal penutup, selisihnya (Laba/Rugi bersih) dipindahkan ke akun Laba Ditahan. (3) Rentang tanggal dicatat sebagai "tertutup" | Rentang harus berurutan & bersambung ke penutupan terakhir; gak boleh overlap; gak ada jalur reopen |
+| Transaksi baru masuk ke rentang yang sudah tertutup | (trigger, bukan RPC terpisah) | Ditolak sebelum sempat tercatat | Tanggal transaksi dicek terhadap semua rentang di `period_closings` |
+
+**Aturan Bisnis → RPC**
+
+| Aturan | Dijaga oleh |
+|---|---|
+| Transaksi baru gak boleh bertanggal masuk ke periode yang sudah ditutup | Trigger penolakan di titik pencatatan transaksi baru |
+| Periode harus ditutup berurutan & tanpa jeda | Fungsi Tutup Buku — validasi rentang baru harus pas melanjutkan rentang terakhir yang sudah tertutup |
+| Periode yang sudah ditutup gak bisa dibuka lagi | Sengaja gak ada RPC/aksi "reopen" sama sekali — koreksi cuma lewat transaksi baru di periode berjalan |
+| Rentang tanpa aktivitas Pendapatan/Beban tetap bisa ditutup | Fungsi Tutup Buku gak mewajibkan ada jurnal penutup — kalau gak ada akun yang perlu dinolkan, rentang tetap dicatat tertutup tanpa transaksi jurnal apa pun |
+| Angka yang ditutup gak boleh dimanipulasi dari luar | Fungsi Tutup Buku menghitung ulang sendiri dari data mentah, gak menerima nominal dari pemanggil |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `period_closings` | opsional, satu-ke-satu kalau ada penutupan beneran | `journal_entries` (entry penutup) |
+| Income Statement | mengecualikan baris dari | `period_closings.journal_entry_id` |
+| Trial Balance & Balance Sheet | TIDAK mengecualikan, ikut memperhitungkan | entry penutup dari `period_closings` |
 
 ## Siapa Boleh Apa
 

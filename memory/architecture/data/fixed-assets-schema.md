@@ -2,20 +2,23 @@
 
 Fase 6 roadmap. Ref konsep bisnis: `docs/domain/fixed-assets.md` + `memory/domain/fixed-assets.md`. Ref akun kontra: `docs/domain/chart-of-accounts.md` bagian "Akun Kontra". Ref schema yang di-reuse: `memory/architecture/data/journal-entry-schema.md` (RPC `create_journal_entry`, fungsi `set_updated_at()`+`block_edit_delete()`), `memory/architecture/data/coa-schema.md` (tabel `accounts` yang kena `ALTER`).
 
-## Keputusan
+Struktur module → submodule di file ini SAMA urutannya dengan `docs/architecture/fixed-assets-schema.md` dan `memory/domain/fixed-assets.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
+
+## Konsep Inti
+
+### Keputusan
 
 - **`accounts.is_contra`** (Opsi A dari scope-debt) — kolom baru, generated column `normal_balance` diubah rumusnya biar ikut flag ini. Postgres gak bisa `ALTER` ekspresi generated column langsung — migration-nya `DROP COLUMN normal_balance` lalu `ADD COLUMN` ulang dengan rumus baru (data existing aman, semua akun lama `is_contra` default `false`, hasil generated-nya sama persis kayak sebelumnya).
-- **2 metode penyusutan in-scope**: `straight_line` & `declining_balance` (`depreciation_method` enum di `fixed_assets`). Unit produksi ditunda (`memory/scope-debt/`).
-- **`depreciation_rate` mewakili tarif PER PERIODE POSTING**, bukan otomatis per-tahun — kalau posting bulanan, rate yang diinput ya tarif bulanan. Ini sengaja dibikin eksplisit (bukan disimpan sebagai tarif tahunan terus dibagi 12 di RPC) biar gak ada ambiguitas konversi periode di 2 tempat beda (dokumentasi vs kode).
 - **3 akun per aset** (asset, akumulasi penyusutan, beban penyusutan), divalidasi kategori & `is_contra`-nya lewat trigger insert — bukan cuma dipercaya dari sisi app, karena Supabase client bisa dipanggil langsung dari browser (sama alasan RLS wajib di semua tabel).
 - **Cap penyusutan ditegakkan trigger di `depreciation_entries`**, bukan cuma dihitung benar di RPC — kalau ada insert langsung yang bypass RPC, cap tetap ketutup (pola sama `journal_lines_leaf_only`/`journal_lines_balance_check`, invariant dijaga di DB bukan cuma di app).
 - **Immutability `depreciation_entries`** — reuse `block_edit_delete()`, koreksi cuma lewat `reverse_journal_entry` + insert entry baru (posting ulang), sama pola AR/AP/GL.
 - **`fixed_assets` published-lock** — begitu punya minimal 1 `depreciation_entries`, field penentu nilai (`acquisition_cost`, `salvage_value`, `useful_life_months`, `depreciation_method`, `depreciation_rate`, 3 kolom akun) terkunci. `name`/`archived_at` tetap bebas.
 - Money `numeric(14,2)`, `depreciation_rate` `numeric(5,4)` (representasi desimal, `0.40` = 40%) — bukan float (invariant `AGENT.md`).
+- **2 metode penyusutan in-scope**: `straight_line` & `declining_balance` (`depreciation_method` enum di `fixed_assets`, DDL di bawah). Unit produksi ditunda — lihat submodule "Metode Penyusutan".
 
-## DDL
+### DDL
 
-### `accounts` — `ALTER` nambah `is_contra`
+#### `accounts` — `ALTER` nambah `is_contra`
 
 ```sql
 alter table accounts add column is_contra boolean not null default false;
@@ -34,7 +37,7 @@ alter table accounts add column normal_balance balance_side generated always as 
 
 Data existing aman: semua akun lama `is_contra=false` (default), hasil `normal_balance` generated-nya identik sama sebelum migration ini jalan.
 
-### `accounts_published_lock` — `is_contra` ikut masuk daftar field terkunci
+#### `accounts_published_lock` — `is_contra` ikut masuk daftar field terkunci
 
 Redefinisi (`create or replace`) dari `journal-entry-schema.md`, nambah `is_contra` ke tuple yang dibandingin — begitu akun kepakai jurnal, gak boleh diam-diam diubah dari kontra jadi non-kontra atau sebaliknya.
 
@@ -54,12 +57,12 @@ $$ language plpgsql;
 
 Trigger-nya sendiri (`accounts_published_lock_trigger`) gak perlu dibuat ulang — `create or replace function` cukup, trigger existing otomatis pakai definisi baru.
 
-### `fixed_assets` — master data tiap unit aset tetap
+#### `fixed_assets` — master data tiap unit aset tetap
 
 Satu baris = satu unit aset fisik (1 oven, 1 motor), bukan kategori. Yang perlu diperhatiin dari kolomnya:
 - `asset_account_id`, `accumulated_depreciation_account_id`, `depreciation_expense_account_id` — 3 akun COA yang dipetakan ke aset ini. Divalidasi lewat trigger `fixed_assets_validate_accounts` (bukan `CHECK` constraint biasa — Postgres gak bisa `CHECK` yang query tabel lain).
 - `useful_life_months` — satuan bulan (bukan tahun), biar penyusutan bulanan presisi tanpa pembagian ulang di RPC.
-- `depreciation_rate` — nullable, wajib keisi kalau `depreciation_method='declining_balance'`, wajib `null` kalau `straight_line` (ditegakkan `check` constraint biasa, karena ini validasi antar-kolom di baris yang sama, bukan lintas tabel).
+- `depreciation_method`/`depreciation_rate` — 2 metode in-scope, `depreciation_rate` nullable, wajib keisi kalau `depreciation_method='declining_balance'`, wajib `null` kalau `straight_line` (ditegakkan `check` constraint biasa, karena ini validasi antar-kolom di baris yang sama, bukan lintas tabel). Detail rationale & formula: submodule "Metode Penyusutan".
 - Gak ada kolom `normal_balance`/kategori di sini — itu urusan tabel `accounts` yang direferensi, `fixed_assets` cuma nunjuk `id`-nya.
 
 ```sql
@@ -97,7 +100,7 @@ create trigger fixed_assets_set_updated_at
 
 `set_updated_at()` di-reuse dari `coa-schema.md`. `salvage_value < acquisition_cost` — nilai residu gak masuk akal kalau sama/lebih dari nilai perolehan (gak ada yang perlu disusutkan).
 
-### `depreciation_entries` — histori posting penyusutan per periode
+#### `depreciation_entries` — histori posting penyusutan per periode
 
 Satu baris = satu periode (bulan) penyusutan untuk satu aset. `amount` disimpan eksplisit (bukan re-derive dari formula) — keputusan ini yang bikin `declining_balance` (nilainya beda tiap periode) gak butuh kolom tambahan apapun dibanding `straight_line`.
 
@@ -118,9 +121,9 @@ create index depreciation_entries_fixed_asset_id_idx on depreciation_entries(fix
 
 `unique (fixed_asset_id, period)` — cegah dobel-posting bulan yang sama buat aset yang sama.
 
-## Trigger
+### Trigger
 
-### `fixed_assets_validate_accounts` — pastikan 3 akun yang dipetakan sesuai peran masing-masing
+#### `fixed_assets_validate_accounts` — pastikan 3 akun yang dipetakan sesuai peran masing-masing
 
 Cegah salah pasang akun dari sisi UI/typo — misal `accumulated_depreciation_account_id` ditunjuk ke akun yang bukan kontra, atau `depreciation_expense_account_id` ditunjuk ke akun kategori asset.
 
@@ -160,7 +163,7 @@ create trigger fixed_assets_validate_accounts_trigger
   for each row execute function fixed_assets_validate_accounts();
 ```
 
-### `depreciation_entries_cap_check` — tolak penyusutan yang ngelewatin batas
+#### `depreciation_entries_cap_check` — tolak penyusutan yang ngelewatin batas
 
 Constraint domain wajib (`fixed-assets.md`): akumulasi gak boleh melebihi `acquisition_cost - salvage_value`. Ditegakkan di level trigger DB, bukan cuma dipercaya dari perhitungan RPC — biar cap ini tetap ketutup meski ada insert yang bypass RPC.
 
@@ -191,7 +194,7 @@ create trigger depreciation_entries_cap_check_trigger
   for each row execute function depreciation_entries_cap_check();
 ```
 
-### Immutability — reuse `block_edit_delete()`
+#### Immutability — reuse `block_edit_delete()`
 
 ```sql
 create trigger depreciation_entries_block_edit_delete
@@ -199,7 +202,7 @@ create trigger depreciation_entries_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### `fixed_assets_published_lock` — kunci field penentu nilai setelah ada penyusutan
+#### `fixed_assets_published_lock` — kunci field penentu nilai setelah ada penyusutan
 
 Pola sama `accounts_published_lock`. Field terkunci: 3 kolom akun, `acquisition_cost`, `salvage_value`, `useful_life_months`, `acquisition_date`, `depreciation_method`, `depreciation_rate`. Yang tetap bebas: `name`, `archived_at`.
 
@@ -226,9 +229,9 @@ create trigger fixed_assets_published_lock_trigger
   for each row execute function fixed_assets_published_lock();
 ```
 
-## RPC (financial write — atomik)
+### RPC (financial write — atomik)
 
-### `create_fixed_asset` — insert master data doang, gak ada jurnal
+#### `create_fixed_asset` — insert master data doang, gak ada jurnal
 
 Akuisisi (Debit Aset Tetap, Kredit Kas/Utang) dicatat manual lewat `create_journal_entry` biasa — itu transaksi generik, gak butuh RPC khusus. `create_fixed_asset` cuma nyimpen master data buat dasar penyusutan berikutnya.
 
@@ -268,9 +271,9 @@ end;
 $$;
 ```
 
-### `post_depreciation` — hitung (atau terima override) + bikin jurnal + insert entry, atomik
+#### `post_depreciation` — hitung (atau terima override) + bikin jurnal + insert entry, atomik
 
-Formula otomatis per `depreciation_method`. `p_amount_override` dipakai buat penyesuaian manual periode terakhir (declining balance, potongan biar pas residu — lihat `fixed-assets.md`); kalau `null`, dihitung otomatis.
+Formula otomatis per `depreciation_method` — detail rationale tiap formula & kenapa periode terakhir sering butuh override: submodule "Metode Penyusutan". `p_amount_override` dipakai buat penyesuaian manual periode terakhir (declining balance, potongan biar pas residu — lihat `fixed-assets.md`); kalau `null`, dihitung otomatis.
 
 ```sql
 create function post_depreciation(
@@ -331,7 +334,7 @@ $$;
 
 Potongan-cap di RPC ini cuma buat kenyamanan (auto-adjust, gak perlu hitung manual pas periode terakhir) — `depreciation_entries_cap_check_trigger` tetep jalan sebagai jaring kedua kalau ada jalur insert lain yang gak lewat RPC ini.
 
-## RLS Policy
+### RLS Policy
 
 Pola identik AR/AP/Inventory — `select` terbuka buat semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `delete` (arsip lewat `archived_at` di `fixed_assets`, immutability trigger di `depreciation_entries`).
 
@@ -369,18 +372,41 @@ create policy depreciation_entries_insert on depreciation_entries
 -- sengaja gak ada policy UPDATE/DELETE -> RLS default deny + trigger block_edit_delete, 2 lapis
 ```
 
-## Grant
+### Grant
 
 ```sql
 grant select, insert, update on fixed_assets to authenticated;
 grant select, insert on depreciation_entries to authenticated;
 ```
 
-## Belum termasuk (dependency / di luar scope fase ini)
+## Metode Penyusutan (Garis Lurus & Saldo Menurun)
 
-Detail lengkap tiap item: `memory/scope-debt/` dan `docs/domain/fixed-assets.md` bagian "Belum Termasuk".
+Gak ada tabel/RPC terpisah — enum `depreciation_method` dan kolom `depreciation_rate` ada di tabel `fixed_assets` (DDL lengkap di submodule "Konsep Inti" di atas), formula switch-nya ada di badan RPC `post_depreciation` (kode lengkap juga di submodule "Konsep Inti").
 
-- **Disposal aset** — belum ada RPC/tabel buat catat penjualan/pembuangan aset & laba-rugi disposal-nya.
-- **Metode Unit Produksi** — butuh data pemakaian eksternal per periode, potensi coupling ke `production_orders` (Inventory).
-- **Revaluasi aset**.
-- **Ganti metode penyusutan di tengah umur manfaat aset** — butuh proses revaluasi formal, bukan `UPDATE` biasa (udah ditutup `fixed_assets_published_lock` dari sisi "gak bisa diam-diam ganti", tapi belum ada jalur resmi buat ganti dengan sengaja lewat proses yang benar).
+**Keputusan**
+- 2 metode in-scope: `straight_line` & `declining_balance`. Metode ketiga (unit produksi) ditunda — butuh data pemakaian eksternal per periode (jam mesin/KM/batch produksi), bukan cuma dihitung dari waktu berjalan, berpotensi coupling ke `production_orders` (Inventory). Belum ada scope-debt file buat ini.
+- **`depreciation_rate` mewakili tarif PER PERIODE POSTING**, bukan otomatis per-tahun — kalau posting bulanan, rate yang diinput ya tarif bulanan. Ini sengaja dibikin eksplisit (bukan disimpan sebagai tarif tahunan terus dibagi 12 di RPC) biar gak ada ambiguitas konversi periode di 2 tempat beda (dokumentasi vs kode).
+- Formula di `post_depreciation`: `straight_line` → `v_cap / v_asset.useful_life_months` (tetap tiap periode); `declining_balance` → `v_book_value * v_asset.depreciation_rate` (mengecil tiap periode karena `v_book_value` turun). Auto-potong ke cap (`v_accumulated + v_amount > v_cap`) berlaku ke kedua metode, tapi paling sering kena di periode akhir `declining_balance`.
+- **Constraint method/rate** — sudah didefinisikan langsung di `create table fixed_assets` (submodule "Konsep Inti"): `check ((depreciation_method = 'straight_line' and depreciation_rate is null) or (depreciation_method = 'declining_balance' and depreciation_rate is not null))`.
+- **Field-lock** — `fixed_assets_published_lock` (submodule "Konsep Inti") turut mengunci `depreciation_method` dan `depreciation_rate` begitu aset punya minimal 1 `depreciation_entries`.
+- **Ganti metode di tengah umur manfaat / revaluasi aset** — belum ada RPC/proses resmi. Field-lock di atas cuma nutup dari sisi "gak bisa diam-diam berubah", bukan jalur resmi buat ganti dengan sengaja lewat revaluasi formal. Belum ada scope-debt file buat ini.
+
+**Skenario referensi**
+
+| # | Kasus | Pola |
+|---|---|---|
+| 4 | Aset `straight_line` | `post_depreciation` hitung `v_cap / useful_life_months`, sama tiap periode |
+| 5 | Aset `declining_balance`, periode terakhir | `post_depreciation` hitung `v_book_value * depreciation_rate`, auto-potong ke `v_cap - v_accumulated` kalau lewat cap |
+
+**Common Mistakes**
+- Simpan `depreciation_rate` sebagai tarif tahunan lalu dibagi 12 di kode pemanggil — harus eksplisit tarif per periode posting di kolomnya, biar gak ada konversi ambigu di 2 tempat.
+- Anggap `depreciation_entries` butuh kolom tambahan buat nampung `declining_balance` — gak perlu, `amount` udah eksplisit per baris (lihat DDL submodule "Konsep Inti").
+
+## Glossary
+
+- **`accounts.is_contra`**: flag boolean yang menentukan arah `normal_balance` generated column — kategori `asset`/`expense` dengan `is_contra=true` jadi normal kredit (kebalikan default).
+- **`fixed_assets`**: master data 1 unit aset fisik, menunjuk 3 akun COA (asset, akumulasi penyusutan, beban penyusutan) + field penyusutan (metode, tarif, umur manfaat, nilai residu).
+- **`depreciation_entries`**: histori posting penyusutan, 1 baris per periode per aset, `amount` eksplisit (bukan re-derive).
+- **`post_depreciation`**: RPC atomik yang menghitung nominal penyusutan sesuai metode aset, bikin jurnal, dan insert histori sekaligus.
+
+Naratif lengkap + reasoning penuh: `docs/domain/fixed-assets.md`. Detail teknis non-teknis (ERD tabel): `docs/architecture/fixed-assets-schema.md`.

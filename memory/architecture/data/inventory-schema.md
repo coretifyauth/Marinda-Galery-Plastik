@@ -6,18 +6,18 @@ DDL final di bawah, ERD & keputusan desain gak berubah dari revisi sebelumnya.
 
 **Update `0038_remove_fifo_costing.sql`**: metode costing FIFO dihapus total dari sistem — `inventory_lots`+`inventory_lot_consumptions` di-drop, `items.costing_method` di-drop, `consume_fifo()` di-drop. Weighted Average (`inventory_balances`) sekarang satu-satunya mekanisme costing, dipakai semua item tanpa kecuali. Bagian di bawah yang masih menyebut FIFO/lot dipertahankan sebagai jejak sejarah desain (kenapa dulu ada 2 mekanisme) tapi ditandai eksplisit sudah tidak berlaku.
 
-## Keputusan Desain
+Struktur module → submodule di file ini SAMA urutannya dengan `docs/architecture/inventory-schema.md` dan `memory/domain/inventory.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
+
+## Konsep Inti
+
+### Keputusan Desain
 
 - **`ap_bills`/`ar_invoices` tetap lump-sum, gak diubah sama sekali.** Rincian barang (qty & harga satuan) ditaruh di tabel baru (`goods_receipt_notes`/`goods_issues`) yang **nunjuk balik** ke bill/invoice yang sudah ada, bukan mengubah strukturnya. Alasan: dua tabel itu immutable & sudah punya data histori — mengubah strukturnya berarti migrasi data lama + bongkar UI yang sudah jalan, resiko besar buat manfaat yang bisa dicapai tanpa itu.
-- **Goods Receipt Note (GRN) dan Bill dibuat bersamaan** (1 RPC, 1 langkah) — asumsi proses pembelian informal (nota = bukti kirim + tagihan sekaligus, gak ada jeda waktu antara barang datang dan tagihan resmi). Ini menghindari kebutuhan akun perantara "Barang Diterima Belum Ditagih" (GR/IR clearing) yang dipakai ERP besar buat kasus barang datang duluan tagihan nyusul — dicatat sebagai scope-debt kalau nanti dibutuhkan.
-- **3-way matching cuma di sisi pembelian (PO → GRN → Bill), gak ada Sales Order di sisi jual.** Sisi jual cuma 2 dokumen: Invoice (sudah ada) + Goods Issue (baru, dibuat bersamaan dengan invoice, sama pola GRN+Bill). Sales Order (mirror PO) dicatat scope-debt — di luar scope Inventory, itu ranah modul Procurement/Sales (Fase 9).
 - **Metode costing: Weighted Average, satu-satunya, berlaku semua item.** Sebelum migration `0038` sempat ada dua metode (FIFO per-lot + Weighted Average) yang ditentukan per `items.costing_method`; FIFO sudah dihapus total dari sistem (`0038_remove_fifo_costing.sql`) — kolom `costing_method` juga sudah di-drop karena jadi redundant (cuma ada 1 nilai yang mungkin).
 - **`inventory_balances` adalah satu-satunya state costing tersimpan** (bukan derived) di seluruh modul Inventory — beda dari pola dominan project ini (status AR/AP selalu derived dari query). Alasannya: rata-rata berjalan (`new_avg = (qty_before×avg_before + qty_in×unit_cost_in) / (qty_before+qty_in)`) itu rekursif — gak bisa diringkas jadi 1 agregat SQL sederhana kayak `SUM(debit)-SUM(credit)` atau `SUM(allocations)`, harus dihitung incremental tiap transaksi.
 - **Penamaan tabel: master data gak pakai prefix modul, transaksional pakai.** Pola ini udah established di AR/AP (`customers`/`suppliers` polos, tapi `ar_invoices`/`ap_bills` pakai prefix). `items` konsisten sama pola itu (master data, polos). `inventory_balances` konsisten pakai prefix `inventory_` (transaksional/state). Tabel lain (`purchase_orders`, `goods_receipt_notes`, `bom_headers`, `production_orders`, `goods_issues`, dst) gak butuh prefix tambahan — namanya udah unik & jelas sendiri, gak ada modul lain yang bisa nabrak makna.
-- **BOM (`bom_headers`/`bom_lines`) adalah master data mutable**, bukan transaksional immutable — resep boleh direvisi. Ini aman karena `production_orders`/`production_order_lines` **snapshot** qty & biaya aktual pas produksi terjadi (gak look-up ulang ke `bom_lines` di kemudian hari) — pola sama seperti `due_date` di AR/AP yang snapshot dari `payment_term_days` pas insert, gak retroaktif kalau master data berubah belakangan.
-- **Purchase Order gak bikin journal entry.** PO murni komitmen/rencana, belum ada pertukaran aset/liability — journal entry baru muncul pas GRN+Bill dibuat.
 
-## ERD
+### ERD
 
 ```mermaid
 erDiagram
@@ -46,8 +46,6 @@ erDiagram
   GOODS_ISSUES ||--|{ GOODS_ISSUE_LINES : ""
 ```
 
-## Entity — Master Data
-
 ### `items`
 
 Master data barang yang di-track Inventory — bisa bahan baku (`RAW_MATERIAL`) atau barang jadi (`FINISHED_GOOD`). Kolom penting:
@@ -72,6 +70,8 @@ create trigger items_set_updated_at
   for each row execute function set_updated_at();
 ```
 
+`set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang.
+
 ### `inventory_balances`
 
 **Dipakai semua item** (sejak migration `0038` — sebelumnya cuma item `WEIGHTED_AVERAGE`, item `FIFO` punya baris di `inventory_lots`). Nyimpen `qty_on_hand` dan `avg_cost` yang di-update tiap ada penerimaan (avg_cost berubah) atau konsumsi/penjualan (qty_on_hand berkurang, avg_cost tetap). Ini pengecualian sengaja dari pola "derived, bukan stored" yang dipegang di modul lain (lihat "Keputusan Desain" di atas kenapa gak bisa di-derive). PK-nya `item_id` sendiri (bukan `id` terpisah) — struktural mastiin maksimal 1 baris per item, gak butuh `unique` constraint tambahan.
@@ -85,7 +85,32 @@ create table inventory_balances (
 );
 ```
 
-## Entity — Procurement (PO → GRN+Bill)
+**`inventory_lots` dan `inventory_lot_consumptions` sudah dihapus total (migration `0038_remove_fifo_costing.sql`)** — dulu ada 2 tabel buat nangenin costing FIFO per-lot (`inventory_lots` buat stok "lahir", `inventory_lot_consumptions` buat stok "dipakai/keluar"), lengkap sama trigger anti-over-consumption per lot. Sekarang cuma Weighted Average yang tersisa — satu-satunya state costing yang hidup adalah `inventory_balances` di atas, gak ada lagi konsep lot/batch per item.
+
+### Fungsi Bersama: `consume_weighted_average`
+
+Fungsi generik (bukan RPC yang dipanggil langsung dari client, tapi dipanggil dari dalam `create_production_order`/`create_goods_issue` — submodule "Produksi" dan "Penjualan & Pengakuan HPP" di bawah) — satu-satunya tempat logika konsumsi stok ditulis, biar production-input dan sales-issue gak duplikat logika. Cukup kurangin `qty_on_hand` langsung, `avg_cost` gak berubah pas konsumsi (cuma berubah pas penerimaan baru). Sebelum migration `0038`, ada juga `consume_fifo` (jalan lot demi lot, urut `lot_date`) buat item FIFO — sudah di-drop total, `consume_weighted_average` sekarang satu-satunya jalur konsumsi buat semua item.
+
+Full body: `supabase/migrations/0012_inventory_schema.sql`.
+
+### RLS & Grant (Konsep Inti)
+
+Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Beda dari tabel transaksional di submodule lain — `items` dan `inventory_balances` dapat policy `update` juga: `items` (+`archived_at` lewat update biasa, gak ada delete), `inventory_balances` (state yang di-update RPC, bukan cuma insert-only).
+
+```sql
+grant select, insert, update on items to authenticated;
+grant select, insert, update on inventory_balances to authenticated;
+```
+
+Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
+
+## Purchase Order & Penerimaan Barang (3-Way Matching)
+
+### Keputusan Desain
+
+- **Goods Receipt Note (GRN) dan Bill dibuat bersamaan** (1 RPC, 1 langkah) — asumsi proses pembelian informal (nota = bukti kirim + tagihan sekaligus, gak ada jeda waktu antara barang datang dan tagihan resmi). Ini menghindari kebutuhan akun perantara "Barang Diterima Belum Ditagih" (GR/IR clearing) yang dipakai ERP besar buat kasus barang datang duluan tagihan nyusul — dicatat sebagai catatan terbuka (bukan scope-debt formal, belum ada file tracking-nya) kalau nanti proses pembeliannya berkembang butuh jeda waktu.
+- **3-way matching cuma di sisi pembelian (PO → GRN → Bill), gak ada Sales Order di sisi jual.** Sisi jual cuma 2 dokumen: Invoice (sudah ada) + Goods Issue (dibuat bersamaan dengan invoice, sama pola GRN+Bill) — lihat submodule "Penjualan & Pengakuan HPP". Sales Order (mirror PO di sisi jual) dicatat sebagai catatan terbuka — di luar scope Inventory, itu ranah modul Procurement/Sales (Fase 9), belum ada bukti kebutuhan nyata sekarang.
+- **Purchase Order gak bikin journal entry.** PO murni komitmen/rencana, belum ada pertukaran aset/liability — journal entry baru muncul pas GRN+Bill dibuat.
 
 ### `purchase_orders` + `purchase_order_lines`
 
@@ -154,7 +179,9 @@ create trigger goods_receipt_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-Trigger anti-over-receipt — menolak `qty_received` yang bikin total penerimaan per PO line ngelewatin `qty_ordered`:
+### Trigger `goods_receipt_lines_no_over_receipt`
+
+Menolak `qty_received` yang bikin total penerimaan per PO line ngelewatin `qty_ordered`:
 
 ```sql
 create function goods_receipt_lines_no_over_receipt() returns trigger as $$
@@ -180,11 +207,52 @@ create trigger goods_receipt_lines_no_over_receipt_trigger
   for each row execute function goods_receipt_lines_no_over_receipt();
 ```
 
-## Entity — Costing Mechanism
+### RPC `create_purchase_order` — bikin PO + lines sekaligus
 
-**`inventory_lots` dan `inventory_lot_consumptions` sudah dihapus total (migration `0038_remove_fifo_costing.sql`)** — dulu di bagian ini ada 2 tabel buat nangenin costing FIFO per-lot (`inventory_lots` buat stok "lahir", `inventory_lot_consumptions` buat stok "dipakai/keluar"), lengkap sama trigger anti-over-consumption per lot. Sekarang cuma Weighted Average yang tersisa — satu-satunya state costing yang hidup adalah `inventory_balances` (lihat "Entity — Master Data" di atas), gak ada lagi konsep lot/batch per item.
+Murni insert, **gak ada journal entry** (PO cuma komitmen — lihat "Keputusan Desain").
 
-## Entity — Production (BOM)
+```sql
+create function create_purchase_order(
+  p_supplier_id uuid, p_po_date date, p_expected_date date, p_source_ref text,
+  p_lines jsonb -- array of {"item_id":uuid,"qty_ordered":numeric,"unit_cost_expected":numeric}
+) returns uuid language plpgsql security invoker as $$ ... $$;
+```
+
+Full body: `supabase/migrations/0012_inventory_schema.sql`.
+
+### RPC `create_goods_receipt` — GRN + Bill + update Persediaan sekaligus
+
+Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) hitung total amount dari lines, (2) panggil `create_ap_bill` (reuse, **0 perubahan**) buat bikin bill+jurnal utang, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO) jalan otomatis pas langkah (3).
+
+```sql
+create function create_goods_receipt(
+  p_purchase_order_id uuid, p_receipt_date date, p_delivery_note_ref text,
+  p_lines jsonb, -- array of {"po_line_id":uuid,"item_id":uuid,"qty_received":numeric,"unit_cost":numeric}
+  p_bill_description text, p_bill_source_ref text,
+  p_debit_account_id uuid, p_payable_account_id uuid
+) returns uuid language plpgsql security invoker as $$ ... $$;
+```
+
+Full body: `supabase/migrations/0012_inventory_schema.sql`.
+
+### RLS & Grant (Purchase Order & Penerimaan Barang)
+
+Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Keempat tabel ini transaksional — **gak ada policy `update`/`delete`** (immutable, 2 lapis proteksi sama kayak journal entry — RLS default-deny + trigger `block_edit_delete`).
+
+```sql
+grant select, insert on purchase_orders to authenticated;
+grant select, insert on purchase_order_lines to authenticated;
+grant select, insert on goods_receipt_notes to authenticated;
+grant select, insert on goods_receipt_lines to authenticated;
+```
+
+Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
+
+## Produksi (Bill of Materials & Production Order)
+
+### Keputusan Desain
+
+- **BOM (`bom_headers`/`bom_lines`) adalah master data mutable**, bukan transaksional immutable — resep boleh direvisi. Ini aman karena `production_orders`/`production_order_lines` **snapshot** qty & biaya aktual pas produksi terjadi (gak look-up ulang ke `bom_lines` di kemudian hari) — pola sama seperti `due_date` di AR/AP yang snapshot dari `payment_term_days` pas insert, gak retroaktif kalau master data berubah belakangan.
 
 ### `bom_headers` + `bom_lines`
 
@@ -214,7 +282,9 @@ create table bom_lines (
 
 ### `production_orders` + `production_order_lines`
 
-Kejadian produksi beneran. Header: `bom_header_id`, `qty_produced`, `production_date`, **`journal_entry_id`** (wajib, dibuat via `create_journal_entry`: Debit Persediaan Barang Jadi, Kredit Persediaan Bahan Baku, di level akun kontrol — bukan per-item). Lines: snapshot tiap bahan baku yang dikonsumsi (`item_id`, `qty_consumed`, `total_cost` — hasil dari Weighted Average lookup). Immutable (reuse `block_edit_delete`).
+Kejadian produksi beneran. Header: `bom_header_id`, `qty_produced`, `production_date`, **`journal_entry_id`** (wajib, dibuat via `create_journal_entry`: Debit Persediaan Barang Jadi, Kredit Persediaan Bahan Baku, di level akun kontrol — bukan per-item). Lines: snapshot tiap bahan baku yang dikonsumsi (`item_id`, `qty_consumed`, `total_cost` — hasil dari Weighted Average lookup, via `consume_weighted_average` di submodule "Konsep Inti"). Immutable (reuse `block_edit_delete`).
+
+**Scope biaya produksi**: `production_order_lines` saat ini cuma menghitung dari bahan baku yang dikonsumsi (`consume_weighted_average`) — belum ada alokasi biaya tenaga kerja langsung atau overhead pabrik, walau secara prinsip *full absorption costing* keduanya wajib ikut masuk HPP. Butuh mekanisme alokasi terpisah yang belum dibangun.
 
 ```sql
 create table production_orders (
@@ -245,11 +315,37 @@ create trigger production_order_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-## Entity — Sales (Goods Issue → HPP)
+### RPC `create_production_order` — jalankan resep + jurnal produksi sekaligus
+
+Ambil `bom_lines` dari `bom_header_id`, hitung `batch_multiplier = qty_produced / output_qty`, konsumsi tiap bahan baku (Weighted Average, via `consume_weighted_average`), total biayanya jadi jurnal (Debit Persediaan Barang Jadi, Kredit Persediaan Bahan Baku), lalu barang jadi hasil produksi nambah `inventory_balances`. **Detail teknis**: `id` production order digenerate duluan (`gen_random_uuid()`) sebelum baris headernya di-insert, dipakai sebagai `consumption_ref` pas konsumsi jalan — perlu karena `production_order_lines` (yang FK ke header) baru bisa di-insert setelah total biaya (yang butuh hasil konsumsi) diketahui buat bikin jurnal duluan; header jurnal-dulu-baris-belakangan ini pola yang sama kayak `create_ap_bill`/`create_ar_invoice`, cuma di sini urutannya lebih panjang karena ada langkah konsumsi di tengah.
+
+```sql
+create function create_production_order(
+  p_bom_header_id uuid, p_qty_produced numeric, p_production_date date, p_source_ref text,
+  p_finished_good_debit_account_id uuid, p_raw_material_credit_account_id uuid
+) returns uuid language plpgsql security invoker as $$ ... $$;
+```
+
+Full body: `supabase/migrations/0012_inventory_schema.sql`.
+
+### RLS & Grant (Produksi)
+
+Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. `production_orders`+`production_order_lines` transaksional — **gak ada policy `update`/`delete`**. `bom_headers`+`bom_lines` beda — master data mutable, dapat policy `update` juga; `bom_lines` malah dapat `delete` juga (komposisi resep boleh diubah bebas, hapus+tambah baris).
+
+```sql
+grant select, insert, update on bom_headers to authenticated;
+grant select, insert, update, delete on bom_lines to authenticated;
+grant select, insert on production_orders to authenticated;
+grant select, insert on production_order_lines to authenticated;
+```
+
+Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
+
+## Penjualan & Pengakuan HPP (Goods Issue)
 
 ### `goods_issues` + `goods_issue_lines`
 
-Kebalikan GRN — barang jadi **keluar** karena terjual. Header: **wajib nunjuk `invoice_id`** (dibuat bersamaan dengan `ar_invoices`, sama pola GRN+Bill), **`journal_entry_id`** (Debit HPP, Kredit Persediaan Barang Jadi — **jurnal tambahan**, terpisah dari jurnal invoice yang sudah ada Debit Piutang/Kredit Pendapatan). Lines: `item_id` (barang jadi), `qty_issued`, `total_cost` (dari Weighted Average, sama mekanisme `production_order_lines`). Immutable (reuse `block_edit_delete`).
+Kebalikan GRN — barang jadi **keluar** karena terjual. Header: **wajib nunjuk `invoice_id`** (dibuat bersamaan dengan `ar_invoices`, sama pola GRN+Bill), **`journal_entry_id`** (Debit HPP, Kredit Persediaan Barang Jadi — **jurnal tambahan**, terpisah dari jurnal invoice yang sudah ada Debit Piutang/Kredit Pendapatan). Lines: `item_id` (barang jadi), `qty_issued`, `total_cost` (dari Weighted Average, sama mekanisme `production_order_lines`, via `consume_weighted_average` di submodule "Konsep Inti"). Immutable (reuse `block_edit_delete`).
 
 ```sql
 create table goods_issues (
@@ -279,58 +375,9 @@ create trigger goods_issue_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-## RPC (stock-affecting write — atomik)
+### RPC `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus
 
-### `create_purchase_order` — bikin PO + lines sekaligus
-
-Murni insert, **gak ada journal entry** (PO cuma komitmen — lihat "Keputusan Desain").
-
-```sql
-create function create_purchase_order(
-  p_supplier_id uuid, p_po_date date, p_expected_date date, p_source_ref text,
-  p_lines jsonb -- array of {"item_id":uuid,"qty_ordered":numeric,"unit_cost_expected":numeric}
-) returns uuid language plpgsql security invoker as $$ ... $$;
-```
-
-Full body: `supabase/migrations/0012_inventory_schema.sql`.
-
-### `create_goods_receipt` — GRN + Bill + update Persediaan sekaligus
-
-Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) hitung total amount dari lines, (2) panggil `create_ap_bill` (reuse, **0 perubahan**) buat bikin bill+jurnal utang, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO) jalan otomatis pas langkah (3).
-
-```sql
-create function create_goods_receipt(
-  p_purchase_order_id uuid, p_receipt_date date, p_delivery_note_ref text,
-  p_lines jsonb, -- array of {"po_line_id":uuid,"item_id":uuid,"qty_received":numeric,"unit_cost":numeric}
-  p_bill_description text, p_bill_source_ref text,
-  p_debit_account_id uuid, p_payable_account_id uuid
-) returns uuid language plpgsql security invoker as $$ ... $$;
-```
-
-Full body: `supabase/migrations/0012_inventory_schema.sql`.
-
-### `consume_weighted_average` — helper konsumsi, dipakai 2 arah
-
-Fungsi generik (bukan RPC yang dipanggil langsung dari client, tapi dipanggil dari dalam `create_production_order`/`create_goods_issue`) — satu-satunya tempat logika konsumsi stok ditulis, biar production-input dan sales-issue gak duplikat logika. Cukup kurangin `qty_on_hand` langsung, `avg_cost` gak berubah pas konsumsi (cuma berubah pas penerimaan baru). Sebelum migration `0038`, ada juga `consume_fifo` (jalan lot demi lot, urut `lot_date`) buat item FIFO — sudah di-drop total, `consume_weighted_average` sekarang satu-satunya jalur konsumsi buat semua item.
-
-Full body: `supabase/migrations/0012_inventory_schema.sql`.
-
-### `create_production_order` — jalankan resep + jurnal produksi sekaligus
-
-Ambil `bom_lines` dari `bom_header_id`, hitung `batch_multiplier = qty_produced / output_qty`, konsumsi tiap bahan baku (Weighted Average, via `consume_weighted_average`), total biayanya jadi jurnal (Debit Persediaan Barang Jadi, Kredit Persediaan Bahan Baku), lalu barang jadi hasil produksi nambah `inventory_balances`. **Detail teknis**: `id` production order digenerate duluan (`gen_random_uuid()`) sebelum baris headernya di-insert, dipakai sebagai `consumption_ref` pas konsumsi jalan — perlu karena `production_order_lines` (yang FK ke header) baru bisa di-insert setelah total biaya (yang butuh hasil konsumsi) diketahui buat bikin jurnal duluan; header jurnal-dulu-baris-belakangan ini pola yang sama kayak `create_ap_bill`/`create_ar_invoice`, cuma di sini urutannya lebih panjang karena ada langkah konsumsi di tengah.
-
-```sql
-create function create_production_order(
-  p_bom_header_id uuid, p_qty_produced numeric, p_production_date date, p_source_ref text,
-  p_finished_good_debit_account_id uuid, p_raw_material_credit_account_id uuid
-) returns uuid language plpgsql security invoker as $$ ... $$;
-```
-
-Full body: `supabase/migrations/0012_inventory_schema.sql`.
-
-### `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus
-
-Panggil `create_ar_invoice` (reuse, **0 perubahan**) dulu buat jurnal Debit Piutang/Kredit Pendapatan, lalu konsumsi tiap barang jadi yang terjual (Weighted Average), total biayanya jadi jurnal **kedua** (Debit HPP, Kredit Persediaan Barang Jadi — titik HPP diakui, `inventory.md` Tahap 7). Trik `id`-digenerate-duluan yang sama kayak `create_production_order`.
+Panggil `create_ar_invoice` (reuse, **0 perubahan**) dulu buat jurnal Debit Piutang/Kredit Pendapatan, lalu konsumsi tiap barang jadi yang terjual (Weighted Average), total biayanya jadi jurnal **kedua** (Debit HPP, Kredit Persediaan Barang Jadi — titik HPP diakui, `inventory.md` submodule "Penjualan & Pengakuan HPP"). Trik `id`-digenerate-duluan yang sama kayak `create_production_order`.
 
 ```sql
 create function create_goods_issue(
@@ -343,38 +390,17 @@ create function create_goods_issue(
 
 Full body: `supabase/migrations/0012_inventory_schema.sql`.
 
-## RLS Policy
+### RLS & Grant (Penjualan & Pengakuan HPP)
 
-Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Tabel transaksional (`purchase_orders`+lines, `goods_receipt_notes`+lines, `production_orders`+lines, `goods_issues`+lines) **gak ada policy update/delete** (immutable, 2 lapis proteksi sama kayak journal entry — RLS default-deny + trigger `block_edit_delete`). Master data mutable dapat policy `update` juga: `items` (+`archived_at` lewat update biasa, gak ada delete), `inventory_balances` (state yang di-update RPC), `bom_headers` (+`update` doang), `bom_lines` (+`update`/`delete` — komposisi resep boleh diubah bebas).
-
-Detail lengkap tiap tabel: `supabase/migrations/0012_inventory_schema.sql`.
-
-## Grant
+Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Transaksional — **gak ada policy `update`/`delete`** (immutable, 2 lapis proteksi sama kayak journal entry — RLS default-deny + trigger `block_edit_delete`).
 
 ```sql
-grant select, insert, update on items to authenticated;
-grant select, insert, update on inventory_balances to authenticated;
-grant select, insert on purchase_orders to authenticated;
-grant select, insert on purchase_order_lines to authenticated;
-grant select, insert on goods_receipt_notes to authenticated;
-grant select, insert on goods_receipt_lines to authenticated;
-grant select, insert, update on bom_headers to authenticated;
-grant select, insert, update, delete on bom_lines to authenticated;
-grant select, insert on production_orders to authenticated;
-grant select, insert on production_order_lines to authenticated;
 grant select, insert on goods_issues to authenticated;
 grant select, insert on goods_issue_lines to authenticated;
 ```
 
-## Catatan lintas modul: AR Credit Note (retur, migration `0021_ar_credit_notes_schema.sql`)
+Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
-`inventory_lots.source_type` sempat dapat value baru `'SALES_RETURN'` (check constraint) buat fitur retur AR, tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur — lihat `memory/scope-debt/kerugian-barang-rusak.md`). Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Sempat ada juga `items.return_window_days` (batas hari retur per item, nullable) — dicabut total lewat migration `0039_ar_remove_return_window.sql`. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
+### Catatan Lintas Modul: Retur (AR Credit Note, migration `0021_ar_credit_notes_schema.sql`)
 
-## Belum Termasuk (dependency / di luar scope fase ini)
-
-Detail lengkap tiap item: `memory/scope-debt/`.
-
-- **Akun perantara "Barang Diterima Belum Ditagih" (GR/IR clearing)** — dibutuhkan kalau GRN dan Bill perlu terjadi di waktu berbeda (barang datang duluan, tagihan resmi nyusul).
-- **Sales Order** — mirror PO di sisi jual, buat 3-way matching penuh di kedua arah (saat ini cuma di procurement).
-- **Purchase price variance report** — laporan read-side (harga PO vs harga GRN beda), gak butuh tabel/kolom tambahan, digarap pas UI.
-- **Tenaga kerja & overhead dalam biaya produksi** — `production_order_lines` saat ini cuma dari bahan baku, belum ada alokasi biaya tenaga kerja/overhead pabrik.
+`inventory_lots.source_type` sempat dapat value baru `'SALES_RETURN'` (check constraint) buat fitur retur AR, tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur — barang yang balik dari retur masuk lagi sebagai stok bernilai seolah layak jual, padahal kalau alasannya rusak harusnya diakui Beban Kerugian Barang Rusak, bukan ditambahkan balik jadi stok. **Catatan terbuka, ref `memory/scope-debt/kerugian-barang-rusak.md`** — lintas modul AR/AP, ditunda karena belum ada kejadian ini di cerita bisnis). Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Sempat ada juga `items.return_window_days` (batas hari retur per item, nullable) — dicabut total lewat migration `0039_ar_remove_return_window.sql`. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".

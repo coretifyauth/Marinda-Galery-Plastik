@@ -16,4 +16,4 @@ Fase 7 (Financial Reports), begitu Balance Sheet/Trial Balance mulai dibangun. D
 
 ## Referensi
 
-- `memory/architecture/data/journal-entry-schema.md` (bagian "Belum termasuk")
+- `memory/architecture/data/journal-entry-schema.md` (bagian "Konsep Inti" > DDL `journal_lines`)
