@@ -6,11 +6,15 @@ import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Supplier } from "@/lib/suppliers/schema";
 import { createApBillSchema, billStatus, type ApBill } from "@/lib/ap-bills/schema";
+import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
+import type { TaxSettings } from "@/lib/tax-settings/schema";
+import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -36,6 +40,10 @@ export default function ApBillsPage() {
   const [amount, setAmount] = useState("");
   const [debitAccountId, setDebitAccountId] = useState("");
   const [payableAccountId, setPayableAccountId] = useState("");
+  const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<ApBillExpenseCategory[]>([]);
+  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
+  const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -83,6 +91,19 @@ export default function ApBillsPage() {
     setAccounts((data ?? []) as Account[]);
   }, []);
 
+  const loadExpenseCategories = useCallback(async () => {
+    const { data } = await supabase
+      .from("ap_bill_expense_categories")
+      .select("id, name, account_id, archived_at, accounts(code, name)")
+      .order("name");
+    setExpenseCategories((data ?? []) as unknown as ApBillExpenseCategory[]);
+  }, []);
+
+  const loadTaxSettings = useCallback(async () => {
+    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
+    setTaxSettings((data ?? null) as TaxSettings | null);
+  }, []);
+
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -96,26 +117,38 @@ export default function ApBillsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadSuppliers(), loadAccounts(), loadBills(), loadReversedEntryIds()]);
+      await Promise.all([
+        loadSuppliers(),
+        loadAccounts(),
+        loadBills(),
+        loadReversedEntryIds(),
+        loadExpenseCategories(),
+        loadTaxSettings(),
+      ]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadAccounts, loadBills, loadReversedEntryIds]);
+  }, [router, loadSuppliers, loadAccounts, loadBills, loadReversedEntryIds, loadExpenseCategories, loadTaxSettings]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+
+    const debitLines = [
+      { account_id: debitAccountId, amount: Number(amount) },
+      ...resolveChargeLines(extraLines, expenseCategories),
+    ];
 
     const parsed = createApBillSchema.safeParse({
       supplier_id: supplierId,
       bill_date: billDate,
       description,
       source_ref: sourceRef,
-      amount,
-      debit_account_id: debitAccountId,
+      debit_lines: debitLines,
       payable_account_id: payableAccountId,
+      apply_tax: applyTax,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -128,9 +161,9 @@ export default function ApBillsPage() {
       p_bill_date: parsed.data.bill_date,
       p_description: parsed.data.description || null,
       p_source_ref: parsed.data.source_ref,
-      p_amount: parsed.data.amount,
-      p_debit_account_id: parsed.data.debit_account_id,
+      p_debit_lines: parsed.data.debit_lines,
       p_payable_account_id: parsed.data.payable_account_id,
+      p_apply_tax: parsed.data.apply_tax,
     });
     setSubmitting(false);
     if (error) {
@@ -145,6 +178,8 @@ export default function ApBillsPage() {
     setAmount("");
     setDebitAccountId("");
     setPayableAccountId("");
+    setExtraLines([]);
+    setApplyTax(false);
     setShowForm(false);
     await loadBills();
   }
@@ -333,6 +368,24 @@ export default function ApBillsPage() {
                 </Select>
               </div>
             </div>
+
+            <ChargeLinesEditor
+              label="Kategori Debit Tambahan (opsional — mis. ongkir supplier)"
+              lines={extraLines}
+              chargeTypes={expenseCategories}
+              onChange={setExtraLines}
+            />
+
+            {taxSettings?.is_active && (
+              <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={applyTax}
+                  onChange={(e) => setApplyTax(e.target.checked)}
+                />
+                Kena PPN Masukan ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
+              </label>
+            )}
 
             {formError && <FormError>{formError}</FormError>}
 

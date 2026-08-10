@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chargeLineSchema } from "@/lib/charge-lines/schema";
 
 export const giLineSchema = z.object({
   item_id: z.string().uuid("Pilih barang jadi"),
@@ -11,12 +12,12 @@ export const createGoodsIssueSchema = z.object({
   invoice_date: z.string().min(1, "Tanggal wajib diisi"),
   description: z.string().optional(),
   source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
-  amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
+  credit_lines: z.array(chargeLineSchema).min(1, "Minimal 1 baris kredit"),
   receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
-  revenue_account_id: z.string().uuid("Pilih akun Pendapatan"),
   hpp_account_id: z.string().uuid("Pilih akun HPP"),
   finished_good_account_id: z.string().uuid("Pilih akun Persediaan Barang Jadi"),
   lines: z.array(giLineSchema).min(1, "Minimal 1 baris item"),
+  apply_tax: z.boolean().default(false),
 });
 
 export type CreateGoodsIssueInput = z.infer<typeof createGoodsIssueSchema>;

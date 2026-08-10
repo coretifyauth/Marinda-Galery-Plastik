@@ -1,13 +1,14 @@
 import { z } from "zod";
+import { chargeLineSchema } from "@/lib/charge-lines/schema";
 
 export const createApBillSchema = z.object({
   supplier_id: z.string().uuid("Pilih supplier"),
   bill_date: z.string().min(1, "Tanggal wajib diisi"),
   description: z.string().optional(),
   source_ref: z.string().min(1, "Rujukan dokumen sumber wajib diisi"),
-  amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
-  debit_account_id: z.string().uuid("Pilih akun Persediaan/Beban"),
+  debit_lines: z.array(chargeLineSchema).min(1, "Minimal 1 baris debit"),
   payable_account_id: z.string().uuid("Pilih akun Utang Usaha"),
+  apply_tax: z.boolean().default(false),
 });
 
 export type CreateApBillInput = z.infer<typeof createApBillSchema>;

@@ -1,13 +1,14 @@
 import { z } from "zod";
+import { chargeLineSchema } from "@/lib/charge-lines/schema";
 
 export const createArInvoiceSchema = z.object({
   customer_id: z.string().uuid("Pilih customer"),
   invoice_date: z.string().min(1, "Tanggal wajib diisi"),
   description: z.string().optional(),
   source_ref: z.string().min(1, "Rujukan dokumen sumber wajib diisi"),
-  amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
+  credit_lines: z.array(chargeLineSchema).min(1, "Minimal 1 baris kredit"),
   receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
-  revenue_account_id: z.string().uuid("Pilih akun Pendapatan"),
+  apply_tax: z.boolean().default(false),
 });
 
 export type CreateArInvoiceInput = z.infer<typeof createArInvoiceSchema>;

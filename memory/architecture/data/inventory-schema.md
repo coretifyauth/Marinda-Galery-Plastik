@@ -387,22 +387,26 @@ create trigger goods_issue_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### RPC `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus (terakhir di-extend `0024`)
+### RPC `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus (terakhir di-extend `0025`)
 
-Panggil `create_ar_invoice` (reuse, **0 perubahan**) dulu buat jurnal Debit Piutang/Kredit Pendapatan, lalu konsumsi tiap barang jadi yang terjual (Weighted Average), total biayanya jadi jurnal **kedua** (Debit HPP, Kredit Persediaan Barang Jadi — titik HPP diakui, `inventory.md` submodule "Penjualan & Pengakuan HPP"). Trik `id`-digenerate-duluan yang sama kayak `create_production_order`.
+Panggil `create_ar_invoice` (reuse) dulu buat jurnal Debit Piutang/Kredit Pendapatan, lalu konsumsi tiap barang jadi yang terjual (Weighted Average), total biayanya jadi jurnal **kedua** (Debit HPP, Kredit Persediaan Barang Jadi — titik HPP diakui, `inventory.md` submodule "Penjualan & Pengakuan HPP"). Trik `id`-digenerate-duluan yang sama kayak `create_production_order`.
 
-**Signature TETAP SAMA sejak `0024`** — `p_lines` cuma nambah key opsional `so_line_id` per baris (`nullif(v_line->>'so_line_id', '')::uuid`, aman kalau key-nya gak ada sama sekali di objek). Caller lama yang gak nyertain key ini tetap jalan apa adanya (`so_line_id` NULL, gak kena trigger anti-over-issue). Detail: submodule "Sales Order & Pemenuhan Bertahap" di bawah.
+**Signature TETAP SAMA sejak `0024`** (nambah key opsional `so_line_id` di `p_lines`, lihat submodule "Sales Order" di bawah) tapi **berubah lagi di `0025`** — beda kelasnya: bukan nambah key opsional dalam jsonb, tapi ganti parameter level fungsi (`p_amount`+`p_revenue_account_id` jadi `p_credit_lines jsonb`+`p_apply_tax`) karena `create_ar_invoice` yang dipanggilnya berubah signature (`memory/architecture/data/ar-schema.md` submodule "Compounding & PPN"). Ini breaking change yang sudah diantisipasi sejak submodule "Sales Order" ditulis (lihat catatan di situ) — `drop function` dulu baru `create function`, bukan `create or replace` biasa.
 
 ```sql
 create function create_goods_issue(
   p_customer_id uuid, p_invoice_date date, p_description text, p_source_ref text,
-  p_amount numeric, p_receivable_account_id uuid, p_revenue_account_id uuid,
+  p_credit_lines jsonb, -- array of {"account_id":uuid,"amount":numeric} -- diteruskan ke create_ar_invoice
+  p_receivable_account_id uuid,
   p_lines jsonb, -- array of {"item_id":uuid,"qty_issued":numeric,"so_line_id":uuid|null}
-  p_hpp_account_id uuid, p_finished_good_account_id uuid
+  p_hpp_account_id uuid, p_finished_good_account_id uuid,
+  p_apply_tax boolean default false
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-Full body: `supabase/migrations/0004_inventory_schema.sql` (base) + `supabase/migrations/0024_sales_orders_schema.sql` (`create or replace`, nambah `so_line_id`).
+`p_lines` (item + `so_line_id`) dan seluruh logika konsumsi stok/jurnal HPP **TIDAK berubah** — cuma bagian yang manggil `create_ar_invoice` yang disesuaikan (`p_credit_lines`+`p_apply_tax` diteruskan apa adanya).
+
+Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) → `0024_sales_orders_schema.sql` (nambah `so_line_id`) → `0025_compound_transactional_entries_schema.sql` (signature `p_credit_lines`, definisi terkini).
 
 ### RLS & Grant (Penjualan & Pengakuan HPP)
 
@@ -425,7 +429,7 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 - **Cerminan `purchase_orders` di sisi jual, tapi OPSIONAL (bukan wajib).** Beda dari PO yang `not null` di `goods_receipt_notes.purchase_order_id`, `goods_issue_lines.so_line_id` nullable — jalur `create_goods_issue` tanpa SO (jual langsung) tetap jalan 0 perubahan. Alasan asimetri: pembelian di bisnis ini selalu keputusan terencana (Bu Nur yang inisiatif), wajar dipaksa PO tiap kali; penjualan punya 2 pola sekaligus — spontan (kios walk-in) dan terencana (pesanan customer qty besar) — maksa SO buat SEMUA penjualan nambah 1 tabel+1 RPC call ekstra buat transaksi spontan yang gak butuh komitmen apa pun.
 - **Gak ada journal entry di `create_sales_order`** — sama alasan PO: baru komitmen, belum ada barang berpindah tangan. Piutang & Pendapatan cuma boleh diakui pas barang beneran dikirim (revenue recognition), bukan pas SO dibuat — kalau dipaksa diakui di depan, invoice/piutang jadi overstated buat bagian yang belum tentu jadi dikirim.
-- **`create_goods_issue` di-extend TANPA ubah signature** — `p_lines` (jsonb array) cuma nambah key opsional `so_line_id` per objek baris, bukan parameter baru di level fungsi. Ini `create or replace function` yang aman buat project live-linked (gak ada breaking change ke caller lama), beda dari kalau nambah parameter baru di level tanda tangan fungsi (butuh default value atau bikin overload).
+- **`create_goods_issue` di-extend TANPA ubah signature (waktu itu, `0024`)** — `p_lines` (jsonb array) cuma nambah key opsional `so_line_id` per objek baris, bukan parameter baru di level fungsi. Ini `create or replace function` yang aman buat project live-linked (gak ada breaking change ke caller lama), beda dari kalau nambah parameter baru di level tanda tangan fungsi (butuh default value atau bikin overload). **Update `0025`**: signature-nya JUSTRU berubah belakangan, tapi karena alasan lain sama sekali (compounding `p_credit_lines`, lihat submodule "RPC `create_goods_issue`" di atas) — bukan gara-gara SO. Mekanisme `so_line_id` di `p_lines` sendiri gak kesentuh sama sekali oleh perubahan itu.
 - **Fulfillment per pengiriman = per invoice, gak nunggu SO lunas.** Tiap kali `create_goods_issue` dipanggil dengan `so_line_id` keisi, itu jadi 1 invoice tersendiri senilai qty yang dikirim SAAT ITU — bisa dipanggil berkali-kali sampai `SUM(qty_issued)` = `qty_ordered`. Ini konsisten sama prinsip pengakuan pendapatan (diakui sebesar kewajiban yang udah terpenuhi), dan konsisten sama pola PO/GRN yang juga bisa dicicil (`0/N` penerimaan per PO line).
 
 ### `sales_orders` + `sales_order_lines`

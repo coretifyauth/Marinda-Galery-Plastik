@@ -37,6 +37,7 @@ import {
   ClipboardCheck,
   ShoppingCart,
   NotebookPen,
+  Settings,
 } from "lucide-react";
 
 const navGroups = [
@@ -106,6 +107,11 @@ const navGroups = [
       { href: "/reports/cash-flow", label: "Cash Flow", icon: Waves },
       { href: "/reports/period-closing", label: "Tutup Buku", icon: Lock },
     ],
+  },
+  {
+    label: "Settings",
+    icon: Settings,
+    items: [{ href: "/settings/charges", label: "Kategori & Pajak", icon: Settings }],
   },
 ];
 

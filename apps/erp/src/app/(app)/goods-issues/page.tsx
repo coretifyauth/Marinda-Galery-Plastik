@@ -8,11 +8,15 @@ import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { createGoodsIssueSchema, type GoodsIssue } from "@/lib/goods-issues/schema";
+import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
+import type { TaxSettings } from "@/lib/tax-settings/schema";
+import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 
 type LineInput = { item_id: string; unit_id: string; qty: string };
 
@@ -41,6 +45,10 @@ export default function GoodsIssuesPage() {
   const [hppAccountId, setHppAccountId] = useState("");
   const [finishedGoodAccountId, setFinishedGoodAccountId] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
+  const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
+  const [chargeTypes, setChargeTypes] = useState<ArInvoiceChargeType[]>([]);
+  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
+  const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -91,6 +99,19 @@ export default function GoodsIssuesPage() {
     setAccounts((data ?? []) as Account[]);
   }, []);
 
+  const loadChargeTypes = useCallback(async () => {
+    const { data } = await supabase
+      .from("ar_invoice_charge_types")
+      .select("id, name, account_id, archived_at, accounts(code, name)")
+      .order("name");
+    setChargeTypes((data ?? []) as unknown as ArInvoiceChargeType[]);
+  }, []);
+
+  const loadTaxSettings = useCallback(async () => {
+    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
+    setTaxSettings((data ?? null) as TaxSettings | null);
+  }, []);
+
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -104,13 +125,20 @@ export default function GoodsIssuesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadCustomers(), loadItems(), loadAccounts(), loadIssues()]);
+      await Promise.all([
+        loadCustomers(),
+        loadItems(),
+        loadAccounts(),
+        loadIssues(),
+        loadChargeTypes(),
+        loadTaxSettings(),
+      ]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadItems, loadAccounts, loadIssues]);
+  }, [router, loadCustomers, loadItems, loadAccounts, loadIssues, loadChargeTypes, loadTaxSettings]);
 
   function updateLineItem(index: number, itemId: string) {
     // Ganti item -> satuan jual sebelumnya gak relevan lagi, reset.
@@ -172,17 +200,22 @@ export default function GoodsIssuesPage() {
       };
     });
 
+    const creditLines = [
+      { account_id: revenueAccountId, amount: Number(amount) },
+      ...resolveChargeLines(extraLines, chargeTypes),
+    ];
+
     const parsed = createGoodsIssueSchema.safeParse({
       customer_id: customerId,
       invoice_date: invoiceDate,
       description,
       source_ref: sourceRef,
-      amount,
+      credit_lines: creditLines,
       receivable_account_id: receivableAccountId,
-      revenue_account_id: revenueAccountId,
       hpp_account_id: hppAccountId,
       finished_good_account_id: finishedGoodAccountId,
       lines: convertedLines,
+      apply_tax: applyTax,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -195,12 +228,12 @@ export default function GoodsIssuesPage() {
       p_invoice_date: parsed.data.invoice_date,
       p_description: parsed.data.description || null,
       p_source_ref: parsed.data.source_ref,
-      p_amount: parsed.data.amount,
+      p_credit_lines: parsed.data.credit_lines,
       p_receivable_account_id: parsed.data.receivable_account_id,
-      p_revenue_account_id: parsed.data.revenue_account_id,
       p_lines: parsed.data.lines,
       p_hpp_account_id: parsed.data.hpp_account_id,
       p_finished_good_account_id: parsed.data.finished_good_account_id,
+      p_apply_tax: parsed.data.apply_tax,
     });
     setSubmitting(false);
     if (error) {
@@ -218,6 +251,8 @@ export default function GoodsIssuesPage() {
     setHppAccountId("");
     setFinishedGoodAccountId("");
     setLines([emptyLine()]);
+    setExtraLines([]);
+    setApplyTax(false);
     setShowForm(false);
     await loadIssues();
   }
@@ -489,6 +524,24 @@ export default function GoodsIssuesPage() {
                 + Tambah item
               </Button>
             </div>
+
+            <ChargeLinesEditor
+              label="Kategori Pendapatan Tambahan (opsional — mis. jasa antar)"
+              lines={extraLines}
+              chargeTypes={chargeTypes}
+              onChange={setExtraLines}
+            />
+
+            {taxSettings?.is_active && (
+              <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={applyTax}
+                  onChange={(e) => setApplyTax(e.target.checked)}
+                />
+                Kena PPN Keluaran ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
+              </label>
+            )}
 
             {formError && <FormError>{formError}</FormError>}
 

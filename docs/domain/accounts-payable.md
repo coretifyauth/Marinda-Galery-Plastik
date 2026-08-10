@@ -9,8 +9,7 @@ Fase 2 (General Ledger) udah bisa nyatet utang timbul (Kredit Utang Usaha) pas b
 Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi payment tetap payment), tapi ada 1 perbedaan konteks bisnis penting yang berlaku ke semua turunan di bawahnya: di AR, CV Barokah yang nentuin termin buat customer (Bu Nur ngasih syarat termin ke warung langganan). Di AP, kebalikannya — **supplier** yang nentuin termin, CV Barokah cuma nerima syarat itu. Bedanya cuma di makna bisnis, bukan di struktur data.
 
 - **Supplier** — master data, pihak yang CV Barokah berutang ke dia (2 supplier bahan baku langganan). Punya termin pembayaran default (syarat yang **diterima** dari supplier, bukan yang kita tetapkan sendiri) yang dipakai ngitung jatuh tempo tiap bill baru. Bukan data transaksional — kalau terminnya berubah (misal supplier naikin kepercayaan jadi termin lebih panjang), cukup diubah di data yang sama, gak bikin baris baru; perubahan cuma berlaku ke bill **baru** ke depan, bill lama yang jatuh temponya udah ditetapkan gak ikut geser.
-- **AP Bill** — utang timbul, 1 kejadian "ambil barang, belum bayar". Tiap bill bikin 1 jurnal: **Debit Persediaan atau Beban (tergantung jenis pembelian), Kredit Utang Usaha**. Akun debit dipilih manual tiap bill dibuat — beli bahan baku masuk Persediaan (asset), beli jasa/sewa/listrik langsung ke Beban (expense) — bukan hasil deteksi otomatis sistem. Jatuh tempo dihitung sekali saat bill dicatat (dari termin supplier saat itu) dan gak berubah lagi setelahnya, walau termin supplier berubah belakangan.
-  - Catatan terbuka: pencatatan bill sekarang cuma nampung 1 akun debit per bill. Kalau 1 nota fisik dari supplier isinya campuran kategori (misal sebagian bahan baku masuk Persediaan, sebagian ongkos kirim langsung Beban), itu belum tertampung dalam 1 pencatatan — belum ada kebutuhan nyata yang muncul di cerita, jadi didesain belakangan kalau kejadian beneran muncul.
+- **AP Bill** — utang timbul, 1 kejadian "ambil barang, belum bayar". Tiap bill bikin 1 jurnal: **Debit Persediaan atau Beban (tergantung jenis pembelian, bisa lebih dari 1 kategori sekaligus — lihat submodule "Kategori Campur & PPN"), Kredit Utang Usaha**. Akun debit dipilih manual tiap bill dibuat — beli bahan baku masuk Persediaan (asset), beli jasa/sewa/listrik langsung ke Beban (expense) — bukan hasil deteksi otomatis sistem. Jatuh tempo dihitung sekali saat bill dicatat (dari termin supplier saat itu) dan gak berubah lagi setelahnya, walau termin supplier berubah belakangan.
 - **AP Payment** — utang berkurang, kejadian bayar beneran ke supplier (bukan jadwal terjadwal). Selalu nutup **1 bill spesifik** (gak ada bayar gabungan beberapa bill sekaligus), boleh **dicicil** (kurang dari sisa tagihan, 1 bill boleh dibayar berkali-kali dari waktu ke waktu), tapi gak boleh **lebih dari sisa tagihan** (overpay ditolak keras — sama alasan kenapa overpay ditolak di AR, biar gak ada saldo mengambang yang gak jelas pertanggungjawabannya). Tiap pembayaran bikin 1 jurnal: **Debit Utang Usaha, Kredit Kas/Bank**, sejumlah yang beneran dibayar. Sempat ada desain yang ngizinin 1 pembayaran dipecah nutup beberapa bill sekaligus ("bayar gabungan") — dicabut demi konsisten sama kebijakan penagihan AR: pembayaran wajib fokus ke 1 obligasi spesifik, cicil boleh, nyebar ke banyak obligasi dalam 1 transaksi gak boleh.
 - **Status bill** (lunas/sebagian/belum/dibatalkan) — selalu dihitung ulang dari total pembayaran yang sudah diterima dibanding nilai bill, bukan status yang disimpan/di-update manual. Sama pola persis AR.
 
@@ -106,3 +105,22 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - Mengakui DP sebagai Beban (atau langsung ngurangin Utang Usaha) pas dibayar — barangnya belum diterima, belum ada manfaat yang diakui.
 - Refund DP dicatat lewat jalur hangus (atau sebaliknya) — dua-duanya beda dampak Laba Rugi (refund netral, hangus jadi Beban), harus lewat jalur yang tepat.
 - DP yang udah diterapkan ke bill dianggap masih bisa direfund/dihanguskan sejumlah penuh — bagian yang udah kepake harus dikurangin dulu, cuma sisanya yang bisa diselesaikan lewat refund/hangus.
+
+### Kategori Campur & PPN
+
+**Cara Kerja**
+- 1 nota supplier kadang isinya campuran — misal Rp750.000 tepung (Persediaan) + Rp50.000 ongkos kirim (Beban), dalam 1 nota fisik yang sama. Dulu sistem cuma bisa mencatat 1 kategori debit per bill, jadi transaksi campuran seperti ini terpaksa disederhanakan (dianggap 1 kategori saja) atau dipecah jadi 2 dokumen buatan yang gak mencerminkan nota fisiknya.
+- Sekarang admin bisa menyiapkan daftar kategori beban/persediaan tambahan (misal "Ongkos Kirim Supplier"), dan staf AP bisa menambahkan baris kategori itu saat mencatat bill — nominalnya tetap diinput manual per nota, gak ada nilai default.
+- PPN Masukan (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Utang Usaha — bukan diketik manual, biar konsisten dengan jumlah yang benar-benar terutang ke supplier.
+- Fitur ini TIDAK berlaku untuk alur pembelian terencana (Purchase Order → Goods Receipt → Bill) — 1 penerimaan barang dari 1 PO selalu 1 kategori Persediaan, gak ada kebutuhan bisnis buat dipecah kategori di jalur itu.
+
+**Aturan Bisnis**
+- Kategori campur tidak mengubah cara Utang Usaha dihitung — tetap 1 angka total (subtotal kategori + PPN kalau ada).
+- Staf AP tidak memilih akun pembukuan bebas untuk kategori tambahan — hanya dari daftar yang sudah disiapkan admin.
+
+**Skenario**
+- Nota dari Toko Tepung Makmur berisi Rp750.000 tepung + Rp50.000 ongkir — dicatat sebagai 1 bill dengan 2 baris kategori (Persediaan + Beban Ongkir), Utang Usaha tetap 1 angka Rp800.000.
+
+**Common Mistakes**
+- Memaksa transaksi campuran jadi 1 kategori saja — bikin laporan biaya per kategori jadi gak akurat (ongkir ketumpuk jadi Persediaan).
+- Membiarkan PPN Masukan diketik manual — beresiko salah hitung atau lupa dicatat sama sekali.

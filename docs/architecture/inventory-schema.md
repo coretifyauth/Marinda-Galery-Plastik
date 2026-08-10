@@ -119,6 +119,7 @@ erDiagram
 | Purchase Order tidak bikin jurnal | `create_purchase_order` cuma insert data, tidak memicu transaksi jurnal apa pun |
 | Penerimaan barang tidak boleh melebihi sisa qty yang dipesan | Pengaman otomatis pada baris penerimaan barang, dicek per barang terhadap Purchase Order-nya |
 | Pembelian bahan baku selalu masuk Persediaan, tidak pernah ke Beban | `create_goods_receipt` selalu mendebit akun Persediaan barang itu (bukan akun Beban) saat membuat tagihan |
+| Penerimaan barang dari 1 PO selalu 1 kategori Persediaan, gak butuh kategori campur | `create_goods_receipt` signature-nya gak berubah (`docs/architecture/ap-schema.md` bagian "Kategori Campur & PPN") — beda dari alur jual (Goods Issue) yang memang expose kategori campur ke UI-nya, karena kebutuhan bisnisnya beda |
 | Penerimaan barang tertelusur ke Purchase Order + tagihan yang menyertainya | `goods_receipt_notes` wajib menunjuk baik Purchase Order maupun tagihan (bill) yang dibuat bersamaan |
 
 **Interaksi Antar Tabel**
@@ -174,7 +175,7 @@ erDiagram
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Catat Penjualan (Goods Issue) | `create_goods_issue` | Menerbitkan invoice (Debit Piutang, Kredit Pendapatan), mengurangi stok barang jadi yang terjual dari saldo rata-rata, mencatat transaksi jurnal kedua khusus HPP (Debit HPP, Kredit Persediaan Barang Jadi) — titik ini HPP benar-benar diakui sebagai beban | Menolak pengurangan stok yang melebihi jumlah yang tersedia |
+| Catat Penjualan (Goods Issue) | `create_goods_issue` | Menerbitkan invoice (Debit Piutang, Kredit [1 atau lebih kategori Pendapatan + PPN kalau relevan] — lihat `docs/architecture/ar-schema.md` bagian "Kategori Campur & PPN"), mengurangi stok barang jadi yang terjual dari saldo rata-rata, mencatat transaksi jurnal kedua khusus HPP (Debit HPP, Kredit Persediaan Barang Jadi) — titik ini HPP benar-benar diakui sebagai beban | Menolak pengurangan stok yang melebihi jumlah yang tersedia |
 
 **Aturan Bisnis → RPC**
 
@@ -206,7 +207,7 @@ erDiagram
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Buat Sales Order | `create_sales_order` | Insert header + baris pesanan. Tidak ada dampak keuangan atau stok sama sekali — baru komitmen | — |
-| Penuhi Sales Order (sebagian atau seluruhnya) | `create_goods_issue` (**signature sama, tidak ada perubahan cara panggil lama**) | Baris `p_lines` sekarang boleh menunjuk balik ke baris Sales Order. Tiap pemanggilan = 1 invoice + 1 pengurangan stok tersendiri — bisa dipanggil berkali-kali sampai seluruh qty pesanan terkirim | Menolak pengiriman yang total-nya melebihi qty yang dipesan di baris Sales Order itu |
+| Penuhi Sales Order (sebagian atau seluruhnya) | `create_goods_issue` (**signature-nya sendiri belakangan berubah karena alasan lain sama sekali — lihat "Kategori Campur & PPN" di `docs/architecture/ar-schema.md` — tapi bagian `so_line_id` yang dibahas di sini gak kesentuh**) | Baris `p_lines` sekarang boleh menunjuk balik ke baris Sales Order. Tiap pemanggilan = 1 invoice + 1 pengurangan stok tersendiri — bisa dipanggil berkali-kali sampai seluruh qty pesanan terkirim | Menolak pengiriman yang total-nya melebihi qty yang dipesan di baris Sales Order itu |
 
 **Aturan Bisnis → RPC**
 

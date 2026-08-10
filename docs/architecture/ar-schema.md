@@ -19,6 +19,9 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario n
 | `ar_deposit_refunds` | DP dicairkan tunai kembali — tidak berdampak Laba Rugi | `ar_deposits`, dan ke transaksi jurnal |
 | `ar_deposit_forfeitures` | DP dianggap hangus, partial-capable | `ar_deposits`, dan ke transaksi jurnal |
 | `ar_bad_debt_writeoffs` | Piutang yang benar-benar tidak akan tertagih, dihapusbukukan | `ar_invoices` (1 invoice bisa punya lebih dari satu write-off parsial), dan ke transaksi jurnal |
+| `ar_invoice_credit_lines` | Rincian baris kredit (kategori pendapatan + PPN) 1 invoice, kalau lebih dari 1 kategori | `ar_invoices` (banyak-ke-satu) |
+| `ar_invoice_charge_types` | Katalog kategori pendapatan tambahan yang bisa dipilih staf saat bikin invoice — murni master data, disiapkan admin | `accounts` (akun tujuan tiap kategori) |
+| `tax_settings` | Pengaturan PPN (tarif, status aktif, akun Keluaran/Masukan) — 1 baris untuk seluruh sistem, dipakai bareng AP/AR/POS | `accounts` (akun PPN Keluaran/Masukan) |
 
 ## Konsep Inti
 
@@ -240,6 +243,38 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 |---|---|---|
 | `ar_bad_debt_writeoffs` | banyak-ke-satu | `ar_invoices` |
 
+## Kategori Campur & PPN
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `ar_invoice_credit_lines` | Rincian baris kredit (kategori pendapatan + PPN) 1 invoice | `ar_invoices` (banyak-ke-satu) |
+| `ar_invoice_charge_types` | Katalog kategori pendapatan tambahan, dipetakan ke akun tetap — master data, bukan tabel transaksional | `accounts` |
+| `tax_settings` | Pengaturan PPN — 1 baris untuk seluruh sistem (tarif, status aktif, akun Keluaran/Masukan), dipakai bareng AP/POS | `accounts` |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Bikin invoice dengan >1 kategori pendapatan | `create_ar_invoice` (`p_credit_lines` array) | 1 baris jurnal kredit per kategori, insert `ar_invoice_credit_lines` per baris | Minimal 1 baris kategori; Credit Hold dicek terhadap total (subtotal + PPN) |
+| Bikin invoice dengan PPN | `create_ar_invoice` (`p_apply_tax=true`) | Tambahan 1 baris kredit PPN Keluaran, dihitung dari `tax_settings.ppn_rate` | Ditolak kalau `tax_settings.is_active=false` atau akun PPN Keluaran belum diset |
+
+**Aturan Bisnis → RPC**
+
+| Aturan | Dijaga oleh |
+|---|---|
+| Kategori tambahan dipilih dari katalog, bukan akun bebas | Diselesaikan di UI (dropdown `ar_invoice_charge_types`) — RPC sendiri tetap menerima `account_id` mentah, sama seperti akun Piutang/Pendapatan yang sudah ada |
+| PPN gak boleh diketik manual | `create_ar_invoice` menghitung sendiri nominal PPN dari `tax_settings`, bukan menerima dari parameter klien |
+| Kategori campur tidak mengubah Credit Hold | Perhitungan outstanding tetap pakai total invoice (`v_total_amount`), bukan per-kategori |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `ar_invoice_credit_lines` | banyak-ke-satu | `ar_invoices` |
+| `ar_invoice_charge_types` | referensi (dipakai UI, bukan FK langsung) | `ar_invoice_credit_lines` |
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
@@ -249,3 +284,4 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 | Membuat invoice, mencatat pembayaran, mencatat/menerapkan/menghanguskan uang muka, mencatat write-off, refund saldo kredit retur, mencatat penukaran barang | Role `admin` atau `accountant` |
 | Mengedit atau menghapus invoice/pembayaran/retur/uang muka/write-off/saldo kredit retur | **Tidak ada seorang pun** — hanya pembatalan/retur lewat jalur resmi yang diizinkan |
 | Menghapus data pelanggan secara permanen | **Tidak ada seorang pun** — hanya bisa diarsipkan |
+| Menambah/menonaktifkan kategori pendapatan tambahan, mengubah Pengaturan Pajak | Role `admin` |

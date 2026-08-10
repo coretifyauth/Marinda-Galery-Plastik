@@ -54,20 +54,24 @@ create trigger pos_sale_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### RPC `create_pos_sale` — konsumsi stok + 2 jurnal + header + lines sekaligus
+### RPC `create_pos_sale` — konsumsi stok + 2 jurnal + header + lines sekaligus (terakhir didefinisi `0025`)
 
 ```sql
 create function create_pos_sale(
   p_sale_date date, p_source_ref text, p_customer_id uuid,
   p_cash_account_id uuid, p_revenue_account_id uuid,
   p_hpp_account_id uuid, p_finished_good_account_id uuid,
-  p_lines jsonb -- array of {"item_id":uuid,"qty_sold":numeric,"unit_price":numeric}
-) returns uuid language plpgsql security definer set search_path = public as $$ ... $$;
+  p_lines jsonb, -- array of {"item_id":uuid,"qty_sold":numeric,"unit_price":numeric}
+  p_extra_credit_lines jsonb default '[]'::jsonb, -- array of {"account_id":uuid,"amount":numeric} -- packing/ongkir dkk
+  p_apply_tax boolean default false
+) returns uuid language plpgsql security definer set search_path = public, pg_temp as $$ ... $$;
 ```
 
-Guard role manual di baris pertama (`user_roles.role_name in ('admin','accountant','cashier')`), lalu loop `p_lines`: tiap baris manggil `consume_weighted_average(item_id, qty_sold)` (raise exception sendiri kalau stok kurang — no-oversell, no partial write karena masih di 1 transaksi Postgres). Dua `create_journal_entry` terpisah (Kas/Bank↔Pendapatan Toko, HPP↔Persediaan), baru insert `pos_sales` + loop insert `pos_sale_lines`.
+Guard role manual di baris pertama (`user_roles.role_name in ('admin','accountant','cashier')`), lalu loop `p_lines`: tiap baris manggil `consume_weighted_average(item_id, qty_sold)` (raise exception sendiri kalau stok kurang — no-oversell, no partial write karena masih di 1 transaksi Postgres). Dua `create_journal_entry` terpisah (Kas/Bank↔[Pendapatan Toko + kategori tambahan + PPN], HPP↔Persediaan), baru insert `pos_sales` + loop insert `pos_sale_lines` + `pos_sale_extra_credit_lines`.
 
-Full body: `supabase/migrations/0023_pos_schema.sql`.
+**`p_revenue_account_id` TETAP ADA** (`0025`, lihat submodule "Compounding & PPN" di bawah) — basket item tetap 1 baris kredit fixed, totalnya (`v_total_amount`) tetap dihitung server dari `p_lines`, TETAP gak dipercaya dari klien. `p_extra_credit_lines`+`p_apply_tax` cuma NAMBAH baris kredit lain di jurnal Kas↔Pendapatan yang sama, gak mengubah sifat anti-tamper item yang udah ada dari awal.
+
+Full body: `supabase/migrations/0025_compound_transactional_entries_schema.sql` (definisi awal `0023_pos_schema.sql`).
 
 ### RPC `void_pos_sale` — reversing entry, pola `cancel_ar_invoice`
 
@@ -107,6 +111,14 @@ insert into roles (name, description) values
 ```
 
 Detail lengkap: `supabase/migrations/0023_pos_schema.sql`.
+
+### Compounding & PPN — migration `0025_compound_transactional_entries_schema.sql`
+
+Menutup `memory/scope-debt/compound-transactional-entries.md` + `memory/scope-debt/tax-handling.md` (keduanya sudah dihapus — riwayat resolusi diringkas di sini & `ar-schema.md`). Kasus asalnya: kios mau kenain biaya packing/ongkir ATAU PPN dalam 1 transaksi kasir, tapi `create_pos_sale` cuma punya 1 akun kredit tetap (`p_revenue_account_id`).
+
+- **`pos_sale_extra_credit_lines`** — 1 baris per elemen `p_extra_credit_lines` + 1 baris `is_tax=true` kalau `p_apply_tax`. Immutable, FK `pos_sale_id` (index). **Sengaja gak ada policy/grant INSERT sama sekali** — pola identik `pos_sales`/`pos_sale_lines`, satu-satunya jalur nulis adalah `create_pos_sale` (`security definer`).
+- **`pos_charge_types`** — katalog master data (dropdown checkout kasir), struktur identik `ar_invoice_charge_types` (`ar-schema.md`) — cuma admin yang bisa insert/update, kasir cuma pilih dari daftar aktif (`archived_at is null`), gak pernah lihat/pilih akun mentah (konsisten filosofi role `cashier` yang dikunci ketat).
+- **PPN Keluaran** — `p_apply_tax=true` baca `tax_settings.ppn_keluaran_account_id`/`ppn_rate` (tabel singleton, didefinisikan penuh di `ar-schema.md` submodule "Compounding & PPN" — dipakai bareng AP/AR/POS), dihitung server dari `v_total_amount + v_extra_total` (basket item + kategori tambahan, SEBELUM pajak), ditambahkan ke debit Kas. **Interim sebelumnya** (migration `0022`): PPN dicatat manual via `create_journal_entry` di luar `create_pos_sale`, gak nempel ke `pos_sales` row manapun — gak traceable, gak ikut kebalik otomatis kalau `void_pos_sale` dipanggil. Sekarang PPN jadi bagian jurnal yang sama, jadi otomatis ikut kebalik (`reverse_journal_entry` copy SEMUA baris `journal_lines` apa adanya, gak peduli jumlah barisnya — `void_pos_sale` gak perlu diubah sama sekali).
 
 ## Pembatalan (Void)
 

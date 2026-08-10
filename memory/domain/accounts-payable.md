@@ -8,7 +8,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`. Struktur m
 
 **Entitas & Jurnal**
 - **supplier** — master data. `payment_term_days` = syarat dari supplier (bukan kita yang set).
-- **ap_bill** — utang timbul. Jurnal: Debit Persediaan/Beban (tergantung jenis pembelian, dipilih manual pas input — gak di-hardcode), Kredit Utang Usaha. `due_date = bill_date + supplier.payment_term_days`, snapshot pas insert. **Catatan terbuka**: RPC pembuatan bill cuma nampung 1 akun debit per panggilan — nota supplier yang isinya campuran kategori (misal barang + ongkos kirim dalam 1 nota fisik) belum tertampung, ref `memory/scope-debt/compound-transactional-entries.md`.
+- **ap_bill** — utang timbul. Jurnal: Debit Persediaan/Beban (1 atau lebih kategori, dipilih manual pas input — gak di-hardcode, lihat submodule "Kategori Campur & PPN"), Kredit Utang Usaha. `due_date = bill_date + supplier.payment_term_days`, snapshot pas insert.
 - **ap_payment** — utang berkurang, kejadian bayar nyata. Selalu nutup 1 bill spesifik (`bill_id` FK langsung, gak lewat tabel jembatan lagi sejak migration `0011_ap_payment_single_bill.sql`), boleh cicil (gak `unique`, 1 bill boleh punya banyak baris payment), gak boleh overpay. Jurnal: Debit Utang Usaha, Kredit Kas/Bank, sejumlah yang beneran dibayar. **Sebelum `0011`**, AP justru lebih longgar dari AR pasca-`0010` — ada tabel jembatan `ap_payment_allocations` (many-to-many) yang ngizinin 1 payment dipecah ke banyak bill sekaligus ("bayar gabungan"). `0011` mencabut itu total demi selaras filosofi AR: payment boleh cicil ke 1 bill, tapi gak boleh disebar ke banyak obligasi dalam 1 transaksi.
 - **Status bill** (lunas/sebagian/belum/dibatalkan) — derived dari `SUM(ap_payments.amount)` + cek reversal, sama pola AR.
 
@@ -95,6 +95,19 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`. Struktur m
 
 **Common Mistakes**
 - DP refund dicatat lewat forfeiture (atau sebaliknya) — beda dampak Laba Rugi, harus lewat tabel yang tepat.
+
+## Kategori Campur & PPN (Compounding)
+
+**Cara Kerja**
+- Dulu `create_ap_bill` cuma bisa 1 kategori debit per nota (misal semua dianggap Persediaan, walau notanya campur Persediaan + Beban Ongkir). Sekarang bisa dipecah beberapa kategori dalam **1 nota yang sama** — kredit (Utang Usaha) tetap 1 baris, cuma sisi debit yang jadi array.
+- Kategori dipilih dari katalog preset (`ap_bill_expense_categories`) yang disiapkan admin — nama + akun tujuan — bukan pilih akun COA mentah tiap transaksi. Nominal tetap diinput manual per nota (gak ada nilai default).
+- PPN Masukan (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Utang Usaha (utang ke supplier termasuk pajak yang bisa dikreditkan) — bukan diketik manual.
+
+**Aturan Bisnis**
+- Kategori campur TIDAK mengubah cara Utang Usaha dihitung — tetap 1 angka total (subtotal kategori + PPN kalau ada).
+- `create_goods_receipt` (PO → GRN → Bill) TIDAK ikut dapat kategori campur — 1 GRN = barang dari 1 PO = selalu 1 kategori Persediaan, gak ada kebutuhan bisnis buat dipecah.
+
+**Referensi:** `memory/architecture/data/ap-schema.md` submodule "Compounding & PPN".
 
 ## Glossary
 

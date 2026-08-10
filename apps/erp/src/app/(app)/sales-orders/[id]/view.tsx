@@ -149,9 +149,8 @@ export function SalesOrderDetailView({ id }: { id: string }) {
       invoice_date: invoiceDate,
       description,
       source_ref: sourceRef,
-      amount: fulfillAmount,
+      credit_lines: [{ account_id: revenueAccountId, amount: fulfillAmount }],
       receivable_account_id: receivableAccountId,
-      revenue_account_id: revenueAccountId,
       hpp_account_id: hppAccountId,
       finished_good_account_id: finishedGoodAccountId,
       lines: activeLines.map((l) => ({
@@ -171,12 +170,12 @@ export function SalesOrderDetailView({ id }: { id: string }) {
       p_invoice_date: parsed.data.invoice_date,
       p_description: parsed.data.description || null,
       p_source_ref: parsed.data.source_ref,
-      p_amount: parsed.data.amount,
+      p_credit_lines: parsed.data.credit_lines,
       p_receivable_account_id: parsed.data.receivable_account_id,
-      p_revenue_account_id: parsed.data.revenue_account_id,
       p_lines: parsed.data.lines,
       p_hpp_account_id: parsed.data.hpp_account_id,
       p_finished_good_account_id: parsed.data.finished_good_account_id,
+      p_apply_tax: parsed.data.apply_tax,
     });
     setSubmitting(false);
     if (error) {

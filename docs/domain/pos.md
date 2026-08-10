@@ -36,3 +36,21 @@ Kios bukan sekadar "AR Invoice versi lebih sederhana". Bedanya fundamental: penj
 **Common Mistakes**
 - Membatalkan transaksi dengan cara hapus/edit data asli — harus selalu jurnal pembalik, biar riwayat tetap utuh dan bisa ditelusuri.
 - Menganggap pembatalan kios butuh guard "sudah ada pembayaran" seperti penjualan termin — penjualan kios gak punya tahapan itu, pembayarannya sudah selesai di titik transaksi dibuat.
+
+### Kategori Biaya Tambahan & PPN
+
+**Cara Kerja**
+- Sebuah transaksi kasir kadang bukan cuma harga barang — bisa ada biaya packing, ongkos antar, atau (kalau kiosnya PKP) PPN yang dipungut dari pelanggan. Dulu sistem cuma bisa mencatat 1 kategori pendapatan per transaksi (Pendapatan Penjualan Toko), jadi biaya-biaya tambahan ini gak punya tempat resmi — kalau dipaksakan, harus dicatat manual terpisah, gak nempel ke transaksi kasir yang bersangkutan.
+- Sekarang admin bisa menyiapkan daftar "jenis biaya tambahan" (misal "Biaya Packing", dipetakan ke akun pendapatan tertentu). Kasir tinggal pilih dari daftar itu saat checkout dan mengetik nominalnya — bukan memilih akun pembukuan secara bebas, karena kasir memang sengaja tidak diberi akses ke situ.
+- PPN diperlakukan beda dari kategori bebas di atas — begitu diaktifkan admin (tarif + status "kios ini wajib pungut PPN"), sistem yang menghitung sendiri nominalnya setiap transaksi, bukan diketik kasir. Ini supaya jumlah pajak yang tercatat gak bisa keliru/sengaja dikurangi saat input.
+
+**Aturan Bisnis**
+- Kategori biaya tambahan & PPN nempel jadi bagian dari transaksi kasir yang sama (jurnal yang sama) — kalau transaksinya dibatalkan, keduanya ikut terbalik otomatis, gak ada yang tertinggal.
+- Kasir tidak pernah memilih akun pembukuan secara langsung, baik untuk kategori tambahan maupun PPN.
+
+**Skenario**
+- Pelanggan beli 10 Roti Tawar borongan, minta dibungkus kotak (kena biaya packing terpisah), dan kiosnya sudah PKP jadi kena PPN — kasir pilih "Biaya Packing" dari daftar + isi nominalnya, centang "Kena PPN" kalau relevan, sistem menghitung total akhir dan mencatat semuanya dalam 1 transaksi.
+
+**Common Mistakes**
+- Membiarkan PPN dicatat manual di luar transaksi kasir — gak ada jaminan nempel ke transaksi yang benar, dan gak ikut terbalik kalau transaksinya dibatalkan.
+- Memberi kasir akses memilih akun pembukuan bebas untuk biaya tambahan — bertentangan dengan prinsip kasir cuma boleh bertransaksi lewat jalur resmi, gak punya akses langsung ke pembukuan.

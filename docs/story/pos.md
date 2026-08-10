@@ -80,10 +80,32 @@ Debit Harga Pokok Penjualan       1.300
 
 Pendapatan Penjualan Toko (kumulatif skenario di atas, net dari void): Rp4.000 (Skenario 1) + Rp2.000 (Skenario 4, transaksi pengganti) + Rp2.000 (Skenario 5) = **Rp8.000**. Kas Toko bertambah Rp6.000 (Skenario 1 + pengganti Skenario 4), Kas di Bank net **Rp0** (Skenario 2 dan pembalikannya di Skenario 4 saling meniadakan).
 
-## Interface (sudah dibangun, 2026-08-09)
+## Interface (sudah dibangun, 2026-08-09; diperluas 2026-08-10)
 
 App `apps/pos` (checkout kasir, laptop/desktop, layout sendiri tanpa admin shell, login sendiri) — layar tunggal: klik item buat nambah ke keranjang, keranjang jalan (running total, +/− qty per baris), pilih metode bayar (Tunai/QRIS), opsional pilih customer, tombol checkout manggil `create_pos_sale`. Riwayat transaksi ada di `apps/erp` — `/pos-sales` (list, grup sidebar baru "POS/Retail") + `/pos-sales/[id]` (detail: rincian baris item, 2 jurnal terkait, tombol "Batalkan" buat admin/accountant manggil `void_pos_sale`).
 
+Sejak 2026-08-10, checkout kasir juga punya baris "Biaya Tambahan" (pilih kategori dari katalog + isi nominal, bisa lebih dari 1 baris) dan checkbox "Kena PPN" (cuma muncul kalau admin sudah mengaktifkan PPN). Admin mengelola katalog kategori & Pengaturan Pajak di `apps/erp` `/settings/charges` (grup sidebar baru "Settings").
+
+## Skenario 6 — Biaya Packing + PPN dalam 1 Transaksi (14 September 2026, ilustrasi)
+
+**Catatan:** skenario ini murni ilustrasi cara kerja fitur "Kategori Biaya Tambahan & PPN" (migration `0025_compound_transactional_entries_schema.sql`) — CV Roti Barokah di cerita ini **belum** benar-benar terdaftar PKP (`tax_settings.is_active` tetap `false` secara default), jadi bagian PPN di bawah bersifat andaikata.
+
+Setelah restock produksi tambahan (mekanisme sama seperti `Tahap 6`/Sales Order `Tahap 9`), stok Roti Tawar cukup untuk pesanan borongan 10 buah, avg_cost tetap Rp1.300/buah. Pelanggan minta dibungkus rapi pakai kotak (kena **biaya packing Rp1.000**, kategori terpisah dari harga roti), dan diandaikan kios ini sudah PKP sehingga kena **PPN 11%**.
+
+Sebelum transaksi ini, Bu Nur sudah menyiapkan 1 kategori di halaman Pengaturan: "Biaya Packing" → akun `Pendapatan Jasa Packing`. Perhitungan: barang 10×Rp2.000 = Rp20.000, packing Rp1.000, dasar pengenaan pajak = Rp21.000, PPN 11% = Rp2.310.
+
+```
+Debit Kas Toko                          23.310
+  Kredit Pendapatan Penjualan Toko               20.000
+  Kredit Pendapatan Jasa Packing                  1.000
+  Kredit PPN Keluaran                             2.310
+
+Debit Harga Pokok Penjualan             13.000   (10 × Rp1.300)
+  Kredit Persediaan Barang Jadi                   13.000
+```
+
+Kasir cuma memilih "Biaya Packing" dari daftar + isi nominal, dan mencentang "Kena PPN" — PPN-nya sendiri dihitung otomatis, bukan diketik. Kalau transaksi ini salah input dan dibatalkan lewat `void_pos_sale`, KETIGA baris kredit (Pendapatan, Packing, PPN) ikut terbalik sekaligus — beda dari interim lama yang pernah dipertimbangkan (jurnal PPN manual terpisah, gak nempel ke `pos_sales` mana pun dan gak ikut kebalik otomatis).
+
 ## Lanjutan Story
 
-Kebijakan retur kios masih belum diputuskan Bu Nur (`memory/special-case/pos-retur-policy.md`) — begitu diputuskan, submodule baru bakal ditambahkan di sini. PPN kios (kalau suatu saat perlu) dicatat manual, di luar alur `create_pos_sale` (`memory/scope-debt/tax-handling.md`).
+Kebijakan retur kios masih belum diputuskan Bu Nur (`memory/special-case/pos-retur-policy.md`) — begitu diputuskan, submodule baru bakal ditambahkan di sini.

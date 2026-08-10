@@ -216,3 +216,22 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - Write-off lewat pembatalan invoice biasa (membalikkan Pendapatan) — penjualannya beneran kejadian, gak boleh dianggap "gak pernah ada".
 - Write-off ngelebihin sisa tagihan riil invoice (gak ngitung pengurang lain kayak pembayaran/retur/DP yang udah ada) — bisa "menghapus" uang yang sebenarnya udah lunas/diretur duluan.
 - Pakai metode cadangan/estimasi buat usaha skala kecil tanpa data historis kerugian — estimasinya cuma tebakan, dan gak diakui fiskus buat badan usaha umum di Indonesia.
+
+### Kategori Campur & PPN
+
+**Cara Kerja**
+- 1 invoice ke customer kadang isinya campuran kategori pendapatan — misal Rp500.000 Pendapatan Penjualan Roti + Rp20.000 Pendapatan Jasa Pengiriman, kalau Bu Nur mau memisahkan kedua kategori itu di laporan. Dulu sistem cuma bisa mencatat 1 kategori pendapatan per invoice.
+- Sekarang admin bisa menyiapkan daftar kategori pendapatan tambahan (misal "Jasa Pengiriman"), dan staf AR bisa menambahkan baris kategori itu saat membuat invoice — nominalnya tetap diinput manual per invoice, gak ada nilai default.
+- PPN Keluaran (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Piutang Usaha (customer ikut berutang pajaknya) — bukan diketik manual.
+- Berlaku juga untuk invoice yang lahir dari penjualan barang jadi (Goods Issue) — mekanismenya sama, cuma dipicu dari alur yang berbeda.
+
+**Aturan Bisnis**
+- Kategori campur tidak mengubah cara Credit Hold dihitung — tetap dicek terhadap total invoice (subtotal kategori + PPN kalau ada), bukan per-kategori.
+- Staf AR tidak memilih akun pembukuan bebas untuk kategori tambahan — hanya dari daftar yang sudah disiapkan admin.
+
+**Skenario**
+- Invoice ke Warung Bu Imas berisi Rp500.000 roti + Rp20.000 jasa antar — dicatat sebagai 1 invoice dengan 2 baris kategori pendapatan, Piutang Usaha tetap 1 angka Rp520.000.
+
+**Common Mistakes**
+- Memaksa invoice campuran jadi 1 kategori saja — bikin laporan pendapatan per channel jadi gak akurat.
+- Membiarkan PPN Keluaran diketik manual di luar invoice — beresiko lupa dicatat atau gak nempel ke dokumen sumber yang benar.

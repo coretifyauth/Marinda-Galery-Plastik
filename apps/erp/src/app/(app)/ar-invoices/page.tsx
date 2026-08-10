@@ -6,11 +6,15 @@ import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Customer } from "@/lib/customers/schema";
 import { createArInvoiceSchema, invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
+import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
+import type { TaxSettings } from "@/lib/tax-settings/schema";
+import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -37,6 +41,10 @@ export default function ArInvoicesPage() {
   const [amount, setAmount] = useState("");
   const [receivableAccountId, setReceivableAccountId] = useState("");
   const [revenueAccountId, setRevenueAccountId] = useState("");
+  const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
+  const [chargeTypes, setChargeTypes] = useState<ArInvoiceChargeType[]>([]);
+  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
+  const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -84,6 +92,19 @@ export default function ArInvoicesPage() {
     setAccounts((data ?? []) as Account[]);
   }, []);
 
+  const loadChargeTypes = useCallback(async () => {
+    const { data } = await supabase
+      .from("ar_invoice_charge_types")
+      .select("id, name, account_id, archived_at, accounts(code, name)")
+      .order("name");
+    setChargeTypes((data ?? []) as unknown as ArInvoiceChargeType[]);
+  }, []);
+
+  const loadTaxSettings = useCallback(async () => {
+    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
+    setTaxSettings((data ?? null) as TaxSettings | null);
+  }, []);
+
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -97,26 +118,38 @@ export default function ArInvoicesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadCustomers(), loadAccounts(), loadInvoices(), loadReversedEntryIds()]);
+      await Promise.all([
+        loadCustomers(),
+        loadAccounts(),
+        loadInvoices(),
+        loadReversedEntryIds(),
+        loadChargeTypes(),
+        loadTaxSettings(),
+      ]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadAccounts, loadInvoices, loadReversedEntryIds]);
+  }, [router, loadCustomers, loadAccounts, loadInvoices, loadReversedEntryIds, loadChargeTypes, loadTaxSettings]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+
+    const creditLines = [
+      { account_id: revenueAccountId, amount: Number(amount) },
+      ...resolveChargeLines(extraLines, chargeTypes),
+    ];
 
     const parsed = createArInvoiceSchema.safeParse({
       customer_id: customerId,
       invoice_date: invoiceDate,
       description,
       source_ref: sourceRef,
-      amount,
+      credit_lines: creditLines,
       receivable_account_id: receivableAccountId,
-      revenue_account_id: revenueAccountId,
+      apply_tax: applyTax,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -129,9 +162,9 @@ export default function ArInvoicesPage() {
       p_invoice_date: parsed.data.invoice_date,
       p_description: parsed.data.description || null,
       p_source_ref: parsed.data.source_ref,
-      p_amount: parsed.data.amount,
+      p_credit_lines: parsed.data.credit_lines,
       p_receivable_account_id: parsed.data.receivable_account_id,
-      p_revenue_account_id: parsed.data.revenue_account_id,
+      p_apply_tax: parsed.data.apply_tax,
     });
     setSubmitting(false);
     if (error) {
@@ -146,6 +179,8 @@ export default function ArInvoicesPage() {
     setAmount("");
     setReceivableAccountId("");
     setRevenueAccountId("");
+    setExtraLines([]);
+    setApplyTax(false);
     setShowForm(false);
     await loadInvoices();
   }
@@ -346,6 +381,24 @@ export default function ArInvoicesPage() {
                 </Select>
               </div>
             </div>
+
+            <ChargeLinesEditor
+              label="Kategori Pendapatan Tambahan (opsional — mis. jasa antar)"
+              lines={extraLines}
+              chargeTypes={chargeTypes}
+              onChange={setExtraLines}
+            />
+
+            {taxSettings?.is_active && (
+              <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={applyTax}
+                  onChange={(e) => setApplyTax(e.target.checked)}
+                />
+                Kena PPN Keluaran ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
+              </label>
+            )}
 
             {formError && <FormError>{formError}</FormError>}
 

@@ -123,9 +123,9 @@ create trigger ar_payments_block_edit_delete
 
 Dua-duanya `security invoker`, pola sama `journal-entry-schema.md`. Kunci desainnya: **gak insert manual ke `journal_entries`/`journal_lines`** — manggil RPC `create_journal_entry` yang udah ada, biar validasi (leaf-only, balance-check) dan atomicity-nya otomatis kewarisin, gak perlu ditulis ulang.
 
-#### `create_ar_invoice` — bikin invoice + journal entry-nya sekaligus (terakhir didefinisi `0039`)
+#### `create_ar_invoice` — bikin invoice + journal entry-nya sekaligus (terakhir didefinisi `0025`)
 
-**Credit Hold** (`0020_ar_credit_hold.sql`, dasarnya dipertahankan tiap revisi, detail rationale bisnis & guard lengkap di submodule "Credit Hold" di bawah) — sebelum bikin apa pun, RPC ini cek 2 kondisi independen (OR, salah satu kepenuhi udah cukup nolak) terhadap `customers.credit_limit`/`overdue_threshold_days`, pakai outstanding dari `ar_invoice_remaining(invoice_id)` (fungsi terpusat, lihat bawah). Kalau salah satu kepenuhi, RPC `raise exception` sebelum sempat manggil `create_journal_entry` — invoice gak jadi dibuat, gak ada jejak apa pun di GL (gagal bersih, bukan partial write).
+**Credit Hold** (`0020_ar_credit_hold.sql`, dasarnya dipertahankan tiap revisi, detail rationale bisnis & guard lengkap di submodule "Credit Hold" di bawah) — sebelum bikin apa pun, RPC ini cek 2 kondisi independen (OR, salah satu kepenuhi udah cukup nolak) terhadap `customers.credit_limit`/`overdue_threshold_days`, pakai outstanding dari `ar_invoice_remaining(invoice_id)` (fungsi terpusat, lihat bawah). Kalau salah satu kepenuhi, RPC `raise exception` sebelum sempat manggil `create_journal_entry` — invoice gak jadi dibuat, gak ada jejak apa pun di GL (gagal bersih, bukan partial write). Kredit Hold dicek terhadap **`v_total_amount`** (SUM baris kredit + PPN kalau `p_apply_tax`), bukan lagi `p_amount` mentah — lihat submodule "Compounding & PPN" di bawah.
 
 ```sql
 create or replace function create_ar_invoice(
@@ -133,9 +133,9 @@ create or replace function create_ar_invoice(
   p_invoice_date date,
   p_description text,
   p_source_ref text,
-  p_amount numeric,
+  p_credit_lines jsonb, -- array of {"account_id":uuid,"amount":numeric} -- kategori pendapatan, BUKAN termasuk PPN
   p_receivable_account_id uuid,
-  p_revenue_account_id uuid
+  p_apply_tax boolean default false
 ) returns uuid
 language plpgsql
 security invoker
@@ -149,7 +149,18 @@ declare
   v_overdue_threshold_days int;
   v_outstanding numeric;
   v_max_overdue_days int;
+  v_line jsonb;
+  v_line_amount numeric;
+  v_subtotal numeric := 0;
+  v_tax_amount numeric := 0;
+  v_total_amount numeric;
+  v_tax_active boolean;
+  v_tax_rate numeric;
+  v_tax_account_id uuid;
+  v_journal_lines jsonb;
 begin
+  -- jumlahin p_credit_lines -> v_subtotal, tambah PPN kalau p_apply_tax (lihat
+  -- submodule "Compounding & PPN"), v_total_amount = v_subtotal + v_tax_amount
   select payment_term_days, credit_limit, overdue_threshold_days
     into v_term_days, v_credit_limit, v_overdue_threshold_days
     from customers where id = p_customer_id;
@@ -166,9 +177,9 @@ begin
       )
       and r.remaining > 0;
 
-  if v_credit_limit is not null and (v_outstanding + p_amount) > v_credit_limit then
+  if v_credit_limit is not null and (v_outstanding + v_total_amount) > v_credit_limit then
     raise exception 'Customer kena credit hold: piutang outstanding % + invoice baru % ngelewatin credit_limit %',
-      v_outstanding, p_amount, v_credit_limit;
+      v_outstanding, v_total_amount, v_credit_limit;
   end if;
 
   if v_overdue_threshold_days is not null and v_max_overdue_days > v_overdue_threshold_days then
@@ -176,22 +187,36 @@ begin
       v_max_overdue_days, v_overdue_threshold_days;
   end if;
 
-  v_entry_id := create_journal_entry(
-    p_invoice_date, p_description, p_source_ref,
-    jsonb_build_array(
-      jsonb_build_object('account_id', p_receivable_account_id, 'debit', p_amount, 'credit', 0),
-      jsonb_build_object('account_id', p_revenue_account_id, 'debit', 0, 'credit', p_amount)
-    )
+  v_journal_lines := jsonb_build_array(
+    jsonb_build_object('account_id', p_receivable_account_id, 'debit', v_total_amount, 'credit', 0)
   );
+  -- + 1 baris kredit per elemen p_credit_lines, + 1 baris PPN kalau p_apply_tax
+
+  v_entry_id := create_journal_entry(p_invoice_date, p_description, p_source_ref, v_journal_lines);
 
   insert into ar_invoices (customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_by)
-  values (p_customer_id, p_invoice_date, v_due_date, p_description, p_source_ref, p_amount, v_entry_id, auth.uid())
+  values (p_customer_id, p_invoice_date, v_due_date, p_description, p_source_ref, v_total_amount, v_entry_id, auth.uid())
   returning id into v_invoice_id;
+
+  -- insert 1 baris ar_invoice_credit_lines per elemen p_credit_lines (is_tax=false)
+  -- + 1 baris is_tax=true kalau p_apply_tax -- lihat submodule "Compounding & PPN"
 
   return v_invoice_id;
 end;
 $$;
 ```
+
+Full body (loop lengkap `p_credit_lines`/PPN/insert `ar_invoice_credit_lines`): `supabase/migrations/0025_compound_transactional_entries_schema.sql`.
+
+### Compounding & PPN — migration `0025_compound_transactional_entries_schema.sql`
+
+Menutup `memory/scope-debt/compound-transactional-entries.md` (sudah dihapus, lihat "Aturan siklus hidup dokumen" `memory/brief.md`) — `create_ar_invoice` sebelumnya cuma nerima **1 akun kredit tetap** (`p_revenue_account_id`) + `p_amount` mentah. Sekarang nerima `p_credit_lines jsonb` (array `{account_id, amount}`) — bisa dipecah beberapa kategori pendapatan (mis. Pendapatan Roti + Pendapatan Jasa Antar) dalam **1 invoice yang sama**. Sisi debit (Piutang Usaha, `p_receivable_account_id`) TETAP 1 baris, gak berubah — cuma sisi kredit yang jadi array.
+
+- **`ar_invoice_credit_lines`** — tabel baru, 1 baris per elemen `p_credit_lines` + 1 baris tambahan kalau `p_apply_tax` (`is_tax=true`). Immutable (`block_edit_delete`), FK `ar_invoice_id` ke `ar_invoices` (index `ar_invoice_credit_lines_ar_invoice_id_idx`). Ini yang bikin PPN & kategori tambahan **traceable ke 1 invoice**, gak lagi jurnal manual lepas kayak sebelumnya (lihat catatan PPN di bawah).
+- **`ar_invoice_charge_types`** — katalog master data (bukan tabel transaksional): `id`, `name`, `account_id` (FK `accounts`), `archived_at` (soft-delete, `state-naming-convention.md`). Murni buat UI (dropdown "pilih kategori" di form AR Invoice) — **gak ada FK dari sini ke `ar_invoice_credit_lines`**, sama kayak `item_units` yang juga cuma resolve pilihan di UI sebelum manggil RPC (trust boundary gak berubah: RPC tetap cuma terima `account_id` mentah, sama kayak `p_receivable_account_id` yang udah lama gitu). Cuma admin yang bisa insert/update (RLS `ar_invoice_charge_types_insert`/`_update`).
+- **PPN (`p_apply_tax boolean default false`)** — beda perlakuan dari kategori bebas: PPN **dihitung server-side**, gak pernah dari input klien (`is_tax` di `ar_invoice_credit_lines` gak pernah diisi dari JSON klien, cuma RPC yang set `true` pas insert baris PPN-nya sendiri). Kalau `p_apply_tax=true`, RPC baca `tax_settings` (singleton, lihat bawah) — `raise exception` kalau `is_active=false` atau akun PPN Keluaran belum diset. `v_tax_amount := round(v_subtotal * v_tax_rate / 100, 2)`. Alasan gak dipercaya dari klien: sebelumnya (interim, migration `0022`) PPN dicatat manual lewat `create_journal_entry` di luar `create_ar_invoice` — gak traceable ke invoice manapun (lihat `memory/scope-debt/tax-handling.md`, sudah dihapus, riwayat resolusinya diringkas di sini).
+- **`tax_settings`** — tabel singleton (`id boolean primary key default true` + `check (id)`, cuma bisa ada 1 baris selamanya). Kolom: `is_active` (apakah bisnis ini sekarang wajib pungut PPN — beda dari `archived_at` katalog, ini flag konfigurasi bukan lifecycle per-baris), `ppn_rate numeric(5,2)`, `ppn_keluaran_account_id`/`ppn_masukan_account_id` (FK `accounts`, dipetakan ke akun `2400`/`1500` dari `0022_seed_tax_accounts.sql` saat seed). Tarif PPN itu aturan pemerintah (nasional) — disimpan di DB bukan di-hardcode di kode, biar ganti tarif cukup 1 `UPDATE`, gak perlu deploy ulang. RLS: select semua authenticated, update admin doang, **gak ada insert/delete** (baris tunggalnya cuma diseed migration, constraint singleton nolak baris kedua). Dipakai bareng oleh `create_ap_bill` (PPN Masukan) dan `create_pos_sale` (PPN Keluaran) — didefinisikan sekali di sini, referensi silang dari `ap-schema.md`/`pos-schema.md`.
+- **`create_goods_issue`** (`memory/architecture/data/inventory-schema.md`) manggil `create_ar_invoice` di dalamnya — ikut disesuaikan (`p_amount`+`p_revenue_account_id` jadi `p_credit_lines`, `p_apply_tax` diteruskan apa adanya) di migration yang sama, breaking change yang sudah diantisipasi sejak submodule "Sales Order" (`inventory-schema.md`).
 
 #### `record_ar_payment` — bikin payment + journal entry sekaligus, langsung ke 1 invoice (terakhir didefinisi `0010`)
 

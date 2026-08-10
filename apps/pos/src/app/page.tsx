@@ -25,6 +25,19 @@ type CartLine = {
   available: number;
 };
 
+type ChargeType = {
+  id: string;
+  name: string;
+  account_id: string;
+};
+
+type TaxSettings = {
+  is_active: boolean;
+  ppn_rate: number;
+};
+
+type ExtraLine = { category_id: string; amount: string };
+
 const ACCOUNT_CODES = {
   KAS_TOKO: "1100",
   KAS_BANK: "1200",
@@ -39,10 +52,14 @@ export default function CheckoutPage() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accountIds, setAccountIds] = useState<Record<string, string>>({});
+  const [chargeTypes, setChargeTypes] = useState<ChargeType[]>([]);
+  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [extraLines, setExtraLines] = useState<ExtraLine[]>([]);
+  const [applyTax, setApplyTax] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "QRIS">("CASH");
   const [customerId, setCustomerId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
@@ -53,7 +70,7 @@ export default function CheckoutPage() {
     setLoading(true);
     setLoadError(null);
 
-    const [itemsRes, accountsRes, customersRes] = await Promise.all([
+    const [itemsRes, accountsRes, customersRes, chargeTypesRes, taxSettingsRes] = await Promise.all([
       supabase
         .from("items")
         .select(
@@ -67,6 +84,8 @@ export default function CheckoutPage() {
         .select("id, code")
         .in("code", Object.values(ACCOUNT_CODES)),
       supabase.from("customers").select("id, name").is("archived_at", null).order("name"),
+      supabase.from("pos_charge_types").select("id, name, account_id").is("archived_at", null).order("name"),
+      supabase.from("tax_settings").select("is_active, ppn_rate").maybeSingle(),
     ]);
 
     if (itemsRes.error) {
@@ -85,6 +104,8 @@ export default function CheckoutPage() {
       codeToId[acc.code as string] = acc.id as string;
     }
     setAccountIds(codeToId);
+    setChargeTypes((chargeTypesRes.data ?? []) as ChargeType[]);
+    setTaxSettings((taxSettingsRes.data ?? null) as TaxSettings | null);
 
     type ItemRow = {
       id: string;
@@ -129,10 +150,36 @@ export default function CheckoutPage() {
     };
   }, [router, loadCatalog]);
 
-  const total = useMemo(
+  const itemTotal = useMemo(
     () => cart.reduce((sum, line) => sum + line.qty_sold * line.unit_price, 0),
     [cart]
   );
+
+  const extraTotal = useMemo(
+    () =>
+      extraLines.reduce((sum, l) => {
+        const amount = Number(l.amount);
+        return l.category_id && !Number.isNaN(amount) ? sum + amount : sum;
+      }, 0),
+    [extraLines]
+  );
+
+  const taxAmount = useMemo(() => {
+    if (!applyTax || !taxSettings?.is_active) return 0;
+    return Math.round((itemTotal + extraTotal) * taxSettings.ppn_rate) / 100;
+  }, [applyTax, taxSettings, itemTotal, extraTotal]);
+
+  const total = itemTotal + extraTotal + taxAmount;
+
+  function addExtraLine() {
+    setExtraLines((prev) => [...prev, { category_id: "", amount: "" }]);
+  }
+  function updateExtraLine(index: number, patch: Partial<ExtraLine>) {
+    setExtraLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+  function removeExtraLine(index: number) {
+    setExtraLines((prev) => prev.filter((_, i) => i !== index));
+  }
 
   function addToCart(item: CatalogItem) {
     setCheckoutError(null);
@@ -180,6 +227,13 @@ export default function CheckoutPage() {
     const cashAccountId =
       paymentMethod === "CASH" ? accountIds[ACCOUNT_CODES.KAS_TOKO] : accountIds[ACCOUNT_CODES.KAS_BANK];
 
+    const resolvedExtraLines = extraLines
+      .filter((l) => l.category_id && l.amount.trim() !== "")
+      .map((l) => {
+        const type = chargeTypes.find((c) => c.id === l.category_id);
+        return { account_id: type?.account_id ?? "", amount: Number(l.amount) };
+      });
+
     const { error } = await supabase.rpc("create_pos_sale", {
       p_sale_date: new Date().toISOString().slice(0, 10),
       p_source_ref: `POS-${Date.now()}`,
@@ -188,6 +242,8 @@ export default function CheckoutPage() {
       p_revenue_account_id: accountIds[ACCOUNT_CODES.PENDAPATAN_TOKO],
       p_hpp_account_id: accountIds[ACCOUNT_CODES.HPP],
       p_finished_good_account_id: accountIds[ACCOUNT_CODES.PERSEDIAAN_BARANG_JADI],
+      p_extra_credit_lines: resolvedExtraLines,
+      p_apply_tax: applyTax && !!taxSettings?.is_active,
       p_lines: cart.map((l) => ({
         item_id: l.item_id,
         qty_sold: l.qty_sold,
@@ -205,6 +261,8 @@ export default function CheckoutPage() {
     setSuccessMessage(`Transaksi berhasil — total Rp${total.toLocaleString("id-ID")}`);
     setCart([]);
     setCustomerId("");
+    setExtraLines([]);
+    setApplyTax(false);
     loadCatalog();
   }
 
@@ -283,6 +341,71 @@ export default function CheckoutPage() {
         </div>
 
         <div className="mt-4 space-y-3 border-t border-slate-200 pt-4">
+          <div className="space-y-1.5">
+            <label className="block text-xs text-slate-500">Biaya Tambahan (opsional)</label>
+            {extraLines.map((line, i) => (
+              <div key={i} className="flex gap-1.5">
+                <select
+                  className="flex-1 rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  value={line.category_id}
+                  onChange={(e) => updateExtraLine(i, { category_id: e.target.value })}
+                >
+                  <option value="">Pilih kategori...</option>
+                  {chargeTypes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  className="w-24 rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  value={line.amount}
+                  onChange={(e) => updateExtraLine(i, { amount: e.target.value })}
+                />
+                <button className="text-red-500" onClick={() => removeExtraLine(i)} aria-label="Hapus baris">
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              className="text-xs text-slate-500 underline"
+              onClick={addExtraLine}
+              disabled={chargeTypes.length === 0}
+            >
+              + Tambah kategori
+            </button>
+          </div>
+
+          {taxSettings?.is_active && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} />
+              Kena PPN ({taxSettings.ppn_rate}%)
+            </label>
+          )}
+
+          <div className="space-y-0.5 border-t border-slate-100 pt-2 text-sm text-slate-500">
+            <div className="flex justify-between">
+              <span>Subtotal Barang</span>
+              <span>Rp{itemTotal.toLocaleString("id-ID")}</span>
+            </div>
+            {extraTotal > 0 && (
+              <div className="flex justify-between">
+                <span>Biaya Tambahan</span>
+                <span>Rp{extraTotal.toLocaleString("id-ID")}</span>
+              </div>
+            )}
+            {taxAmount > 0 && (
+              <div className="flex justify-between">
+                <span>PPN</span>
+                <span>Rp{taxAmount.toLocaleString("id-ID")}</span>
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-between font-semibold">
             <span>Total</span>
             <span>Rp{total.toLocaleString("id-ID")}</span>

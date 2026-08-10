@@ -10,7 +10,7 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 - **Struktur DDL mirror persis AR** — `suppliers` ganti `customers`, `ap_bills` ganti `ar_invoices`, `ap_payments` ganti `ar_payments`. Alasan yang sama semua berlaku (immutability, due_date snapshot, status derived, anti overpay) — gak diulang detail di sini, cuma bagian yang beda yang dijelasin. `ap_payment_allocations` (tabel jembatan many-to-many) sempat ada dari desain awal, **dicabut migration `0011_ap_payment_single_bill.sql`** — lihat bagian "AP Payment — Selaras AR (0011)" di bawah.
 - **`payment_term_days` di `suppliers` maknanya kebalik dari `customers`** — di AR itu syarat yang KITA tetapkan; di AP itu syarat yang KITA TERIMA dari supplier. Kolom & mekanisme snapshot `due_date`-nya identik, cuma konteks bisnisnya beda (ref `docs/domain/accounts-payable.md`).
-- **`create_ap_bill` terima akun debit sebagai parameter, gak di-hardcode ke 1 kategori** — beda dari AR yang debit-nya selalu ke akun Piutang Usaha (fixed secara konsep), bill di AP bisa debit ke Persediaan (beli bahan baku) ATAU Beban (beli jasa/sewa/utility) tergantung jenis pembelian. Parameter `p_debit_account_id` generik, sama pola `create_journal_entry`. **Catatan terbuka**: RPC ini cuma nampung 1 akun debit per panggilan — nota supplier yang isinya campuran kategori (misal barang + ongkos kirim dalam 1 nota fisik yang sama) belum tertampung dalam 1 bill, ref `memory/scope-debt/compound-transactional-entries.md`.
+- **`create_ap_bill` terima kategori debit sebagai parameter, gak di-hardcode ke 1 kategori** — beda dari AR yang debit-nya selalu ke akun Piutang Usaha (fixed secara konsep), bill di AP bisa debit ke Persediaan (beli bahan baku) ATAU Beban (beli jasa/sewa/utility) tergantung jenis pembelian, sama pola `create_journal_entry`. Sejak migration `0025`, ini bahkan bisa lebih dari 1 kategori sekaligus dalam 1 nota (`p_debit_lines` array) — lihat submodule "Compounding & PPN" di bawah.
 - **Cancellation guard (`cancel_ap_bill`) diterapkan dari awal**, bukan ditambah belakangan — beda dari AR yang nambahnya belakangan setelah kebukti perlu lewat diskusi. Di AP langsung include karena polanya udah teruji.
 - Money pakai `numeric(14,2)`, bukan float (invariant `AGENT.md`).
 
@@ -99,9 +99,9 @@ create trigger ap_payments_block_edit_delete
 
 ### RPC (financial write — atomik, reuse `create_journal_entry`/`reverse_journal_entry`)
 
-#### `create_ap_bill` — bikin bill + journal entry-nya sekaligus
+#### `create_ap_bill` — bikin bill + journal entry-nya sekaligus (terakhir didefinisi `0025`)
 
-Beda dari `create_ar_invoice`: nerima `p_debit_account_id` generik (bisa Persediaan atau Beban, tergantung jenis pembelian — lihat "Keputusan"), bukan 2 akun fixed per konsep (receivable+revenue). Akun kredit selalu Utang Usaha (`p_payable_account_id`), sama pola dengan `p_receivable_account_id` di AR.
+Beda dari `create_ar_invoice`: nerima kategori debit generik (bisa Persediaan atau Beban, tergantung jenis pembelian — lihat "Keputusan"), bukan 2 akun fixed per konsep (receivable+revenue). Akun kredit selalu Utang Usaha (`p_payable_account_id`), sama pola dengan `p_receivable_account_id` di AR. Sejak `0025`, sisi debit itu **array** (`p_debit_lines`), bukan 1 akun tetap — lihat submodule "Compounding & PPN" di bawah.
 
 ```sql
 create function create_ap_bill(
@@ -109,9 +109,9 @@ create function create_ap_bill(
   p_bill_date date,
   p_description text,
   p_source_ref text,
-  p_amount numeric,
-  p_debit_account_id uuid,
-  p_payable_account_id uuid
+  p_debit_lines jsonb, -- array of {"account_id":uuid,"amount":numeric} -- Persediaan/Beban, BUKAN termasuk PPN
+  p_payable_account_id uuid,
+  p_apply_tax boolean default false
 ) returns uuid
 language plpgsql
 security invoker
@@ -121,26 +121,46 @@ declare
   v_due_date date;
   v_entry_id uuid;
   v_bill_id uuid;
+  v_subtotal numeric := 0;
+  v_tax_amount numeric := 0;
+  v_total_amount numeric;
+  v_journal_lines jsonb := '[]'::jsonb;
 begin
   select payment_term_days into v_term_days from suppliers where id = p_supplier_id;
   v_due_date := p_bill_date + v_term_days;
 
-  v_entry_id := create_journal_entry(
-    p_bill_date, p_description, p_source_ref,
-    jsonb_build_array(
-      jsonb_build_object('account_id', p_debit_account_id, 'debit', p_amount, 'credit', 0),
-      jsonb_build_object('account_id', p_payable_account_id, 'debit', 0, 'credit', p_amount)
-    )
+  -- loop p_debit_lines -> v_subtotal + v_journal_lines (1 baris debit per elemen),
+  -- tambah baris PPN Masukan kalau p_apply_tax (lihat submodule "Compounding & PPN")
+  -- v_total_amount := v_subtotal + v_tax_amount
+
+  v_journal_lines := v_journal_lines || jsonb_build_array(
+    jsonb_build_object('account_id', p_payable_account_id, 'debit', 0, 'credit', v_total_amount)
   );
 
+  v_entry_id := create_journal_entry(p_bill_date, p_description, p_source_ref, v_journal_lines);
+
   insert into ap_bills (supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_by)
-  values (p_supplier_id, p_bill_date, v_due_date, p_description, p_source_ref, p_amount, v_entry_id, auth.uid())
+  values (p_supplier_id, p_bill_date, v_due_date, p_description, p_source_ref, v_total_amount, v_entry_id, auth.uid())
   returning id into v_bill_id;
+
+  -- insert 1 baris ap_bill_debit_lines per elemen p_debit_lines (is_tax=false)
+  -- + 1 baris is_tax=true kalau p_apply_tax
 
   return v_bill_id;
 end;
 $$;
 ```
+
+Full body: `supabase/migrations/0025_compound_transactional_entries_schema.sql`.
+
+### Compounding & PPN — migration `0025_compound_transactional_entries_schema.sql`
+
+Menutup `memory/scope-debt/compound-transactional-entries.md` (sudah dihapus). Sisi debit `create_ap_bill` sekarang `p_debit_lines jsonb` (array `{account_id, amount}`), bisa dipecah kategori (mis. Rp750rb Persediaan + Rp50rb Beban Ongkir dalam 1 nota supplier). Sisi kredit (Utang Usaha, `p_payable_account_id`) TETAP 1 baris.
+
+- **`ap_bill_debit_lines`** — 1 baris per elemen `p_debit_lines` + 1 baris `is_tax=true` kalau `p_apply_tax`. Immutable, FK `ap_bill_id` (index `ap_bill_debit_lines_ap_bill_id_idx`).
+- **`ap_bill_expense_categories`** — katalog master data buat UI (dropdown kategori di form AP Bill), struktur identik `ar_invoice_charge_types` (lihat `ar-schema.md` submodule "Compounding & PPN" buat detail penuh pola ini + `tax_settings`) — `account_id` di sini biasanya nunjuk akun kategori `expense` (bukan `revenue`).
+- **PPN Masukan** — `p_apply_tax=true` baca `tax_settings.ppn_masukan_account_id`/`ppn_rate` (tabel singleton didefinisikan penuh di `ar-schema.md`, dipakai bareng ketiga RPC AP/AR/POS), dihitung server-side dari `v_subtotal`, **ditambahkan ke `p_payable_account_id`** (utang ke supplier termasuk pajak yang bisa dikreditkan). Beda dari `p_debit_lines` yang tetap dipercaya dari klien.
+- **`create_goods_receipt`** (`memory/architecture/data/inventory-schema.md`) manggil `create_ap_bill` di dalamnya — signature EKSTERNAL-nya (`p_debit_account_id` tunggal) **SENGAJA GAK DIUBAH** (PO/GRN gak pernah butuh kategori campur, 1 GRN = barang dari 1 PO = 1 kategori Persediaan), cukup dibungkus jadi array 1 elemen sebelum manggil `create_ap_bill` — UI `goods-receipts/page.tsx` gak kena dampak sama sekali. Ini beda perlakuan dari `create_goods_issue` (AR) yang memang expose `p_credit_lines` ke UI-nya.
 
 #### `record_ap_payment` — bikin payment + journal entry sekaligus, langsung ke 1 bill (terakhir didefinisi `0011`)
 

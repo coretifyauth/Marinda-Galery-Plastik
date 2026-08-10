@@ -19,6 +19,9 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Skenario nyat
 | `ap_deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan | `ap_deposits`, `ap_bills` |
 | `ap_deposit_refunds` | DP dicairkan tunai kembali (pemasok yang mutuskan, bukan kita) — tidak berdampak Laba Rugi | `ap_deposits` |
 | `ap_deposit_forfeitures` | DP dianggap hangus (pemasok tidak mau/tidak bisa balikin) — jadi Beban Kerugian Uang Muka | `ap_deposits` |
+| `ap_bill_debit_lines` | Rincian baris debit (kategori beban/persediaan + PPN) 1 bill, kalau lebih dari 1 kategori | `ap_bills` (banyak-ke-satu) |
+| `ap_bill_expense_categories` | Katalog kategori beban/persediaan tambahan yang bisa dipilih staf saat bikin bill — master data, disiapkan admin | `accounts` |
+| `tax_settings` | Pengaturan PPN (tarif, status aktif, akun Keluaran/Masukan) — 1 baris untuk seluruh sistem, dipakai bareng AR/POS, didefinisikan penuh di `docs/architecture/ar-schema.md` | `accounts` |
 
 Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik — di Piutang, kita yang menetapkan termin ke pelanggan; di Utang, pemasok yang menetapkan termin ke kita. Kolom & cara kerjanya identik, cuma makna bisnisnya kebalik.
 
@@ -39,7 +42,7 @@ Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik 
 | pemasok | Ke siapa kita berutang | |
 | tanggal bill, jatuh tempo | Kapan diterima, kapan harus dibayar | Jatuh tempo dihitung sekali dari termin pemasok **saat bill dicatat**, lalu disimpan permanen — kalau termin pemasok berubah belakangan, bill lama tidak ikut berubah |
 | jumlah | Nilai tagihan | |
-| akun debit | Persediaan atau Beban, tergantung jenis pembelian | Dipilih manual tiap bill dibuat — beda dari invoice AR yang sisi debitnya selalu tetap (Piutang Usaha). Sekarang cuma nampung 1 akun debit per bill — nota campuran kategori (misal barang + ongkos kirim dalam 1 nota fisik) belum tertampung, catatan terbuka |
+| akun debit | Persediaan atau Beban, tergantung jenis pembelian | Dipilih manual tiap bill dibuat — beda dari invoice AR yang sisi debitnya selalu tetap (Piutang Usaha). Bisa lebih dari 1 kategori sekaligus dalam 1 nota — lihat bagian "Kategori Campur & PPN" di bawah |
 | status (lunas/sebagian/belum/dibatalkan) | — | **Tidak disimpan**, selalu dihitung ulang dari total pembayaran yang sudah dialokasikan |
 
 Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-banyak) — sempat ada desain yang mengizinkan 1 pembayaran dipecah ke banyak bill sekaligus ("bayar gabungan"), dicabut demi selaras kebijakan penagihan AR: pembayaran taat ke 1 obligasi spesifik. Tapi **cicilan boleh** — 1 bill bisa punya banyak baris pembayaran dari waktu ke waktu.
@@ -158,6 +161,38 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | `ap_deposit_applications` | menghubungkan | `ap_deposits` ↔ `ap_bills` |
 | `ap_deposit_refunds` / `ap_deposit_forfeitures` | banyak-ke-satu | `ap_deposits` |
 
+## Kategori Campur & PPN
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `ap_bill_debit_lines` | Rincian baris debit (kategori beban/persediaan + PPN) 1 bill | `ap_bills` (banyak-ke-satu) |
+| `ap_bill_expense_categories` | Katalog kategori beban/persediaan tambahan — master data | `accounts` |
+| `tax_settings` | Pengaturan PPN, sama tabel dengan AR/POS (`docs/architecture/ar-schema.md`) | `accounts` |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Bikin bill dengan >1 kategori debit | `create_ap_bill` (`p_debit_lines` array) | 1 baris jurnal debit per kategori, insert `ap_bill_debit_lines` per baris | Minimal 1 baris kategori |
+| Bikin bill dengan PPN Masukan | `create_ap_bill` (`p_apply_tax=true`) | Tambahan 1 baris debit PPN Masukan, ditambahkan ke Utang Usaha | Ditolak kalau `tax_settings.is_active=false` atau akun PPN Masukan belum diset |
+
+**Aturan Bisnis → RPC**
+
+| Aturan | Dijaga oleh |
+|---|---|
+| Kategori tambahan dipilih dari katalog, bukan akun bebas | Diselesaikan di UI (dropdown `ap_bill_expense_categories`) |
+| PPN gak boleh diketik manual | `create_ap_bill` menghitung sendiri dari `tax_settings` |
+| Penerimaan barang dari PO (3-Way Matching) TIDAK dapat kategori campur | `create_goods_receipt` tetap 1 kategori Persediaan tetap, signature-nya gak berubah — lihat `docs/architecture/inventory-schema.md` |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `ap_bill_debit_lines` | banyak-ke-satu | `ap_bills` |
+| `ap_bill_expense_categories` | referensi (dipakai UI, bukan FK langsung) | `ap_bill_debit_lines` |
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
@@ -167,3 +202,4 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | Membuat bill, mencatat pembayaran, mencatat retur/tukar barang, mencatat/menerapkan/menghanguskan uang muka, refund saldo Piutang Retur Supplier | Role `admin` atau `accountant` |
 | Mengedit atau menghapus bill/pembayaran/retur/uang muka | **Tidak ada seorang pun** — hanya pembatalan lewat reversing entry yang diizinkan |
 | Menghapus data pemasok secara permanen | **Tidak ada seorang pun** — hanya bisa diarsipkan |
+| Menambah/menonaktifkan kategori beban tambahan, mengubah Pengaturan Pajak | Role `admin` |
