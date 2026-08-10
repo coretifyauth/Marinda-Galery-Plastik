@@ -26,4 +26,3 @@ Sebelum atau saat POS mulai dipakai beneran di kios — Bu Nur perlu eksplisit m
 ## Referensi
 
 - `memory/domain/accounts-receivable.md` submodule "Retur Barang (Credit Note)" — pola teknis yang bisa di-reuse kalau nanti diputuskan boleh retur.
-- `memory/scope-debt/pos-offline-capability.md` — keputusan arsitektur POS yang jadi starting point modul ini.

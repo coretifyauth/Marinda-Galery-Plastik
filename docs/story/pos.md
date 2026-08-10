@@ -42,7 +42,7 @@ Debit Harga Pokok Penjualan       1.300
 
 Rombongan pelanggan mau beli 5 buah sekaligus. Stok tersisa cuma 2 buah.
 
-`create_pos_sale` cek stok real-time ke `inventory_balances` SEBELUM bikin jurnal apa pun — 5 > 2, `raise exception`. Transaksi gak jadi tercatat sama sekali (no partial write), kasir kasih tau pelanggan stok gak cukup. Ini persis alasan checkout POS wajib online (`docs/domain/pos.md`, `memory/scope-debt/pos-offline-capability.md`) — kalau devicenya sempat kerja dari data stok yang gak ter-update, dua kasir/dua pelanggan bisa sama-sama "berhasil" checkout barang yang sama padahal stoknya cuma cukup buat satu.
+`create_pos_sale` cek stok real-time ke `inventory_balances` SEBELUM bikin jurnal apa pun — 5 > 2, `raise exception`. Transaksi gak jadi tercatat sama sekali (no partial write), kasir kasih tau pelanggan stok gak cukup. Ini persis alasan checkout POS wajib online (`docs/domain/pos.md`) — kalau devicenya sempat kerja dari data stok yang gak ter-update, dua kasir/dua pelanggan bisa sama-sama "berhasil" checkout barang yang sama padahal stoknya cuma cukup buat satu.
 
 ## Skenario 4 — Pembatalan (Void), kasir salah input (12 September 2026)
 
