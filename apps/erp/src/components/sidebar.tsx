@@ -36,6 +36,7 @@ import {
   RotateCcw,
   ClipboardCheck,
   ShoppingCart,
+  NotebookPen,
 } from "lucide-react";
 
 const navGroups = [
@@ -80,6 +81,7 @@ const navGroups = [
       { href: "/goods-receipts", label: "Goods Receipts", icon: PackageCheck },
       { href: "/bom", label: "BOM", icon: FlaskConical },
       { href: "/production-orders", label: "Production Orders", icon: Factory },
+      { href: "/sales-orders", label: "Sales Orders", icon: NotebookPen },
       { href: "/goods-issues", label: "Goods Issues", icon: PackageMinus },
       { href: "/stock-opnames", label: "Stock Opname", icon: ClipboardCheck },
     ],

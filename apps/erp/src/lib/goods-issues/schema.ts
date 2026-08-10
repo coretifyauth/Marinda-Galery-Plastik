@@ -3,6 +3,7 @@ import { z } from "zod";
 export const giLineSchema = z.object({
   item_id: z.string().uuid("Pilih barang jadi"),
   qty_issued: z.coerce.number().positive("Qty harus lebih dari 0"),
+  so_line_id: z.string().uuid().optional(),
 });
 
 export const createGoodsIssueSchema = z.object({
@@ -33,6 +34,7 @@ export type GoodsIssue = {
     item_id: string;
     qty_issued: number;
     total_cost: number;
+    so_line_id: string | null;
     items: { name: string; uom: string };
   }[];
 };

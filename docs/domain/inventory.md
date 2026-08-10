@@ -98,7 +98,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
   Kredit Persediaan Barang Jadi                  [biaya pokok]
   ```
 - Selisih antara harga jual dan HPP = **laba kotor** transaksi itu.
-- Sisi jual belum punya pencocokan tiga arah (3-way matching) selayaknya sisi beli — belum ada "Sales Order" sebagai cerminan Purchase Order yang mendahului Goods Issue, invoice dan Goods Issue langsung dibuat bersamaan tanpa tahap komitmen terpisah. Belum jadi masalah nyata sekarang karena penjualan langsung dicatat begitu terjadi, tapi kalau nanti bisnisnya butuh tahap "pesanan pelanggan" terpisah sebelum barang keluar (misal pesanan custom yang perlu dikonfirmasi dulu sebelum barang disiapkan), ini yang perlu ditambahkan.
+- Sisi jual sekarang **juga** punya tahap komitmen sebelum Goods Issue — lihat submodule "Sales Order & Pemenuhan Bertahap" di bawah. Bedanya dari PO: tahap ini **opsional**, karena penjualan punya 2 pola sekaligus (spontan dan terencana), gak kayak pembelian yang selalu direncanakan.
 - **Catatan lintas modul (retur):** kalau barang yang terjual lewat Goods Issue ini diretur customer, sistem membalik sebagian stok+HPP secara proporsional, pakai harga pokok **snapshot asli** pas barang itu keluar (bukan harga sekarang) — detail penuh ada di dokumentasi Piutang Usaha (Retur Barang/Credit Note). Barang yang diretur diklasifikasi kondisinya per baris: **masih layak jual** (balik jadi stok normal) atau **rusak** (gak balik jadi stok, diakui sebagai Beban Kerugian Barang Rusak) — jadi barang rusak gak pernah lagi "seolah-olah" jadi stok bernilai.
 
 **Aturan Bisnis**
@@ -110,6 +110,27 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 
 **Common Mistakes**
 - Menghitung HPP berdasarkan **kapan utang ke supplier dibayar**, bukan berdasarkan **kapan barangnya terjual** — dua hal yang sama sekali gak berhubungan. HPP baru diakui persis di titik Goods Issue ini, gak lebih cepat dan gak lebih lambat.
+
+### Sales Order & Pemenuhan Bertahap
+
+**Cara Kerja**
+- **Sales Order (SO)** adalah cerminan Purchase Order di sisi jual — tahap komitmen sebelum barang keluar: apa yang dipesan customer, berapa qty, harga berapa. Sama kayak PO, SO **belum mengubah apapun di General Ledger** — belum ada piutang, belum ada pendapatan yang diakui, karena barangnya belum pindah tangan sama sekali (prinsip pengakuan pendapatan: kewajiban baru dianggap terpenuhi pas kendali barang beneran berpindah ke customer, bukan pas dokumen dicetak).
+- **Beda penting dari PO: Sales Order sifatnya OPSIONAL, bukan wajib.** Pembelian selalu keputusan terencana (masuk akal dipaksa lewat PO tiap kali), tapi penjualan bisnis ini punya 2 pola: **spontan** (customer kios dateng, ambil barang yang ada, langsung dicatat — jalur "Penjualan & Pengakuan HPP" di atas, gak berubah) dan **terencana** (customer pesan qty besar buat kebutuhan tertentu, stok belum tentu cukup pas dipesan, butuh waktu buat disiapkan/diproduksi dulu). SO cuma relevan buat pola kedua.
+- **Pemenuhan Sales Order bisa dicicil** — tiap kali sebagian barang dikirim, itu jadi 1 Goods Issue + 1 invoice tersendiri (bukan nunggu semua qty di SO terkirim baru invoice terbit sekali). Kalau SO isinya 200 unit dan baru bisa kirim 120 hari ini, invoice yang terbit HARI INI cuma senilai 120 unit — piutang & pendapatan diakui persis sebesar barang yang beneran udah berpindah, gak lebih, gak kurang. Sisa 80 unit nyusul jadi invoice kedua begitu benar-benar dikirim.
+- Status SO (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`) **diturunkan** dari perbandingan total qty yang sudah dikirim (lewat Goods Issue yang nunjuk balik ke SO) terhadap qty yang dipesan — bukan kolom yang di-set manual, pola sama status PO.
+
+**Aturan Bisnis**
+- Sales Order tidak boleh dianggap kejadian akuntansi — gak ada jurnal apa pun sampai barangnya beneran dikirim (Goods Issue).
+- Pengiriman terhadap satu baris Sales Order tidak boleh melebihi qty yang dipesan di baris itu.
+- Sales Order sama sekali tidak wajib — penjualan tanpa tahap pemesanan (spontan) tetap sah dan tidak perlu melalui Sales Order.
+
+**Skenario**
+- Customer pesan 200 unit buat acara tertentu, stok gudang saat dipesan cuma 80 — Sales Order dibuat duluan tanpa jurnal apa pun. Produksi menambah stok belakangan. Barang dikirim 2 tahap (120 lalu 80) — masing-masing tahap memunculkan invoice terpisah, sampai total terkirim sama dengan yang dipesan.
+- Customer kios beli langsung barang yang tersedia — tetap lewat jalur biasa (Goods Issue tanpa Sales Order), tidak ada perubahan dari sebelumnya.
+
+**Common Mistakes**
+- Menunda invoice sampai seluruh Sales Order terpenuhi — seharusnya tiap pengiriman langsung memunculkan invoice sendiri, sesuai barang yang benar-benar sudah berpindah saat itu.
+- Memaksa semua penjualan melalui Sales Order dulu (meniru pola wajib PO di pembelian) — Sales Order hanya relevan untuk pesanan yang direncanakan, bukan transaksi spontan.
 
 ### Satuan Jual & Harga (Multi Unit of Measure)
 

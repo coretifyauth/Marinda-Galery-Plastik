@@ -48,6 +48,10 @@ erDiagram
 
   AR_INVOICES ||--|| GOODS_ISSUES : "dibuat bersamaan"
   GOODS_ISSUES ||--|{ GOODS_ISSUE_LINES : ""
+
+  CUSTOMERS ||--o{ SALES_ORDERS : ""
+  SALES_ORDERS ||--|{ SALES_ORDER_LINES : ""
+  SALES_ORDER_LINES ||--o{ GOODS_ISSUE_LINES : "dipenuhi bertahap (opsional)"
 ```
 
 ### `items`
@@ -116,7 +120,7 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 ### Keputusan Desain
 
 - **Goods Receipt Note (GRN) dan Bill dibuat bersamaan** (1 RPC, 1 langkah) — asumsi proses pembelian informal (nota = bukti kirim + tagihan sekaligus, gak ada jeda waktu antara barang datang dan tagihan resmi). Ini menghindari kebutuhan akun perantara "Barang Diterima Belum Ditagih" (GR/IR clearing) yang dipakai ERP besar buat kasus barang datang duluan tagihan nyusul — dicatat sebagai catatan terbuka (bukan scope-debt formal, belum ada file tracking-nya) kalau nanti proses pembeliannya berkembang butuh jeda waktu.
-- **3-way matching cuma di sisi pembelian (PO → GRN → Bill), gak ada Sales Order di sisi jual.** Sisi jual cuma 2 dokumen: Invoice (sudah ada) + Goods Issue (dibuat bersamaan dengan invoice, sama pola GRN+Bill) — lihat submodule "Penjualan & Pengakuan HPP". Sales Order (mirror PO di sisi jual) dicatat sebagai catatan terbuka — di luar scope Inventory, itu ranah modul Procurement/Sales (Fase 9), belum ada bukti kebutuhan nyata sekarang.
+- **3-way matching di sisi pembelian (PO → GRN → Bill) WAJIB, padanannya di sisi jual (Sales Order → Goods Issue → Invoice) OPSIONAL.** Sisi jual sekarang punya 2 jalur: langsung (Invoice + Goods Issue dibuat bersamaan, gak ada tahap komitmen — submodule "Penjualan & Pengakuan HPP") dan lewat Sales Order (komitmen duluan, pemenuhan bertahap — submodule "Sales Order & Pemenuhan Bertahap", migration `0024`). Beda dari PO yang `not null`, `goods_issue_lines.so_line_id` nullable — alasan asimetri: pembelian selalu keputusan terencana, penjualan ada yang spontan (kios) dan ada yang terencana (pesanan qty besar).
 - **Purchase Order gak bikin journal entry.** PO murni komitmen/rencana, belum ada pertukaran aset/liability — journal entry baru muncul pas GRN+Bill dibuat.
 
 ### `purchase_orders` + `purchase_order_lines`
@@ -374,7 +378,8 @@ create table goods_issue_lines (
   goods_issue_id uuid not null references goods_issues(id) on delete cascade,
   item_id uuid not null references items(id),
   qty_issued numeric(14,3) not null check (qty_issued > 0),
-  total_cost numeric(14,2) not null check (total_cost > 0)
+  total_cost numeric(14,2) not null check (total_cost > 0),
+  so_line_id uuid references sales_order_lines(id) -- nullable, migration 0024, lihat submodule "Sales Order & Pemenuhan Bertahap"
 );
 
 create trigger goods_issue_lines_block_edit_delete
@@ -382,20 +387,22 @@ create trigger goods_issue_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### RPC `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus
+### RPC `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus (terakhir di-extend `0024`)
 
 Panggil `create_ar_invoice` (reuse, **0 perubahan**) dulu buat jurnal Debit Piutang/Kredit Pendapatan, lalu konsumsi tiap barang jadi yang terjual (Weighted Average), total biayanya jadi jurnal **kedua** (Debit HPP, Kredit Persediaan Barang Jadi — titik HPP diakui, `inventory.md` submodule "Penjualan & Pengakuan HPP"). Trik `id`-digenerate-duluan yang sama kayak `create_production_order`.
+
+**Signature TETAP SAMA sejak `0024`** — `p_lines` cuma nambah key opsional `so_line_id` per baris (`nullif(v_line->>'so_line_id', '')::uuid`, aman kalau key-nya gak ada sama sekali di objek). Caller lama yang gak nyertain key ini tetap jalan apa adanya (`so_line_id` NULL, gak kena trigger anti-over-issue). Detail: submodule "Sales Order & Pemenuhan Bertahap" di bawah.
 
 ```sql
 create function create_goods_issue(
   p_customer_id uuid, p_invoice_date date, p_description text, p_source_ref text,
   p_amount numeric, p_receivable_account_id uuid, p_revenue_account_id uuid,
-  p_lines jsonb, -- array of {"item_id":uuid,"qty_issued":numeric}
+  p_lines jsonb, -- array of {"item_id":uuid,"qty_issued":numeric,"so_line_id":uuid|null}
   p_hpp_account_id uuid, p_finished_good_account_id uuid
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-Full body: `supabase/migrations/0012_inventory_schema.sql`.
+Full body: `supabase/migrations/0004_inventory_schema.sql` (base) + `supabase/migrations/0024_sales_orders_schema.sql` (`create or replace`, nambah `so_line_id`).
 
 ### RLS & Grant (Penjualan & Pengakuan HPP)
 
@@ -411,6 +418,103 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 ### Catatan Lintas Modul: Retur (AR Credit Note, migration `0021_ar_credit_notes_schema.sql`)
 
 `inventory_lots.source_type` sempat dapat value baru `'SALES_RETURN'` (check constraint) buat fitur retur AR, tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur). **Ditutup migration `0015`**: kolom `inventory_return_lines.condition` (`RESALABLE`/`DAMAGED`) balikin segregasinya secara logis — baris `DAMAGED` gak pernah nambah `inventory_balances`, cost-nya diakui `Beban Kerugian Barang Rusak` bukan ditambahkan balik jadi stok. Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Sempat ada juga `items.return_window_days` (batas hari retur per item, nullable) — dicabut total lewat migration `0039_ar_remove_return_window.sql`. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
+
+## Sales Order & Pemenuhan Bertahap — migration `0024_sales_orders_schema.sql`
+
+### Keputusan Desain
+
+- **Cerminan `purchase_orders` di sisi jual, tapi OPSIONAL (bukan wajib).** Beda dari PO yang `not null` di `goods_receipt_notes.purchase_order_id`, `goods_issue_lines.so_line_id` nullable — jalur `create_goods_issue` tanpa SO (jual langsung) tetap jalan 0 perubahan. Alasan asimetri: pembelian di bisnis ini selalu keputusan terencana (Bu Nur yang inisiatif), wajar dipaksa PO tiap kali; penjualan punya 2 pola sekaligus — spontan (kios walk-in) dan terencana (pesanan customer qty besar) — maksa SO buat SEMUA penjualan nambah 1 tabel+1 RPC call ekstra buat transaksi spontan yang gak butuh komitmen apa pun.
+- **Gak ada journal entry di `create_sales_order`** — sama alasan PO: baru komitmen, belum ada barang berpindah tangan. Piutang & Pendapatan cuma boleh diakui pas barang beneran dikirim (revenue recognition), bukan pas SO dibuat — kalau dipaksa diakui di depan, invoice/piutang jadi overstated buat bagian yang belum tentu jadi dikirim.
+- **`create_goods_issue` di-extend TANPA ubah signature** — `p_lines` (jsonb array) cuma nambah key opsional `so_line_id` per objek baris, bukan parameter baru di level fungsi. Ini `create or replace function` yang aman buat project live-linked (gak ada breaking change ke caller lama), beda dari kalau nambah parameter baru di level tanda tangan fungsi (butuh default value atau bikin overload).
+- **Fulfillment per pengiriman = per invoice, gak nunggu SO lunas.** Tiap kali `create_goods_issue` dipanggil dengan `so_line_id` keisi, itu jadi 1 invoice tersendiri senilai qty yang dikirim SAAT ITU — bisa dipanggil berkali-kali sampai `SUM(qty_issued)` = `qty_ordered`. Ini konsisten sama prinsip pengakuan pendapatan (diakui sebesar kewajiban yang udah terpenuhi), dan konsisten sama pola PO/GRN yang juga bisa dicicil (`0/N` penerimaan per PO line).
+
+### `sales_orders` + `sales_order_lines`
+
+Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `purchase_orders`/`purchase_order_lines` (`customer_id` gantiin `supplier_id`, `unit_price` gantiin `unit_cost_expected`). Status (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`/`CANCELLED`) derived dari perbandingan `SUM(goods_issue_lines.qty_issued)` per `so_line_id` vs `qty_ordered` — pola sama status PO. Immutable (reuse `block_edit_delete`) — koreksi pesanan cukup bikin SO baru.
+
+```sql
+create table sales_orders (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid not null references customers(id),
+  so_date date not null,
+  expected_date date,
+  source_ref text not null,
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create trigger sales_orders_block_edit_delete
+  before update or delete on sales_orders
+  for each row execute function block_edit_delete();
+
+create table sales_order_lines (
+  id uuid primary key default gen_random_uuid(),
+  sales_order_id uuid not null references sales_orders(id) on delete cascade,
+  item_id uuid not null references items(id),
+  qty_ordered numeric(14,3) not null check (qty_ordered > 0),
+  unit_price numeric(14,2) not null check (unit_price > 0)
+);
+
+create trigger sales_order_lines_block_edit_delete
+  before update or delete on sales_order_lines
+  for each row execute function block_edit_delete();
+```
+
+### Trigger `goods_issue_lines_no_over_issue`
+
+Mirror persis `goods_receipt_lines_no_over_receipt`, cuma **skip kalau `so_line_id` null** (jalur jual langsung gak kena guard ini sama sekali):
+
+```sql
+create function goods_issue_lines_no_over_issue() returns trigger as $$
+declare
+  v_qty_ordered numeric;
+  v_qty_issued numeric;
+begin
+  if new.so_line_id is null then
+    return new;
+  end if;
+
+  select qty_ordered into v_qty_ordered from sales_order_lines where id = new.so_line_id;
+  select coalesce(sum(qty_issued), 0) into v_qty_issued
+    from goods_issue_lines where so_line_id = new.so_line_id;
+
+  if v_qty_issued + new.qty_issued > v_qty_ordered then
+    raise exception 'Pengiriman line % melebihi qty_ordered (sisa %, coba kirim %)',
+      new.so_line_id, v_qty_ordered - v_qty_issued, new.qty_issued;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger goods_issue_lines_no_over_issue_trigger
+  before insert on goods_issue_lines
+  for each row execute function goods_issue_lines_no_over_issue();
+```
+
+### RPC `create_sales_order` — bikin SO + lines sekaligus
+
+Murni insert, **gak ada journal entry** (SO cuma komitmen — lihat "Keputusan Desain").
+
+```sql
+create function create_sales_order(
+  p_customer_id uuid, p_so_date date, p_expected_date date, p_source_ref text,
+  p_lines jsonb -- array of {"item_id":uuid,"qty_ordered":numeric,"unit_price":numeric}
+) returns uuid language plpgsql security invoker as $$ ... $$;
+```
+
+Full body: `supabase/migrations/0024_sales_orders_schema.sql`.
+
+### RLS & Grant (Sales Order & Pemenuhan Bertahap)
+
+Pola identik `purchase_orders`/`purchase_order_lines`: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Immutable — **gak ada policy `update`/`delete`** (RLS default-deny + `block_edit_delete`).
+
+```sql
+grant select, insert on sales_orders to authenticated;
+grant select, insert on sales_order_lines to authenticated;
+```
+
+Detail lengkap: `supabase/migrations/0024_sales_orders_schema.sql`.
 
 ## Satuan Jual & Harga (Multi Unit of Measure) — migration `0019_item_units_schema.sql`
 

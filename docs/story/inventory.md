@@ -184,6 +184,36 @@ Debit Persediaan Bahan Baku          37.500
 
 Total Persediaan = Rp945.000 + Rp450.000 + Rp6.500 = **Rp1.401.500**. Laporan Laba Rugi bulan September kena tambahan 2 baris: Beban Selisih Persediaan Rp52.500 dan Pendapatan Selisih Persediaan Rp37.500 — net-nya rugi Rp15.000, tapi keduanya tetap keliatan terpisah, gak ketimbun jadi 1 angka.
 
+## Tahap 10 — Pesanan Warung Pak Budi Dikirim Bertahap (Sales Order, 28 September – 2 Oktober 2026)
+
+Warung Pak Budi mau pesan 30 buah Roti Tawar buat acara syukuran RT, harga tetap Rp2.000/buah — tapi stok gudang saat ini cuma sisa 5 buah (posisi 10 September). Beda dari `Tahap 7`/`Tahap 8` (barang ready, langsung kirim), kali ini barangnya belum cukup pas dipesan.
+
+**28 September — Sales Order dibuat.** `create_sales_order`: customer Warung Pak Budi, 1 baris (Roti Tawar, `qty_ordered` 30, `unit_price` Rp2.000). **Gak ada jurnal apa pun** — belum ada piutang, belum ada pendapatan diakui, karena barangnya belum pindah tangan sama sekali.
+
+**29 September — Produksi tambahan.** Lewat mekanisme yang sama seperti `Tahap 6` (Production Order, konsumsi bahan baku via Weighted Average), gudang nambah 30 buah Roti Tawar baru — avg_cost tetap Rp1.300/buah. Stok sekarang 35 buah.
+
+**1 Oktober — Kirim tahap pertama (18 buah).** `create_goods_issue` dipanggil dengan baris `{item_id: Roti Tawar, qty_issued: 18, so_line_id: <baris SO Pak Budi>}`. Ini kejadian akuntansi pertama dari pesanan ini:
+```
+(a) Debit Piutang Usaha        36.000   (18 × Rp2.000)
+    Kredit Pendapatan Penjualan          36.000
+
+(b) Debit Harga Pokok Penjualan (HPP)   23.400   (18 × Rp1.300)
+    Kredit Persediaan Barang Jadi                 23.400
+```
+Trigger `goods_issue_lines_no_over_issue` ngecek: 18 ≤ 30 (qty_ordered), lolos. Status Sales Order jadi `PARTIALLY_FULFILLED` (18 dari 30 terkirim). Stok Roti Tawar sisa 17 buah.
+
+**2 Oktober — Kirim tahap kedua (12 buah, sisa pesanan).** `create_goods_issue` lagi, baris yang sama `so_line_id`-nya, `qty_issued: 12`. Invoice KEDUA terbit terpisah dari yang pertama:
+```
+(a) Debit Piutang Usaha        24.000   (12 × Rp2.000)
+    Kredit Pendapatan Penjualan          24.000
+
+(b) Debit Harga Pokok Penjualan (HPP)   15.600   (12 × Rp1.300)
+    Kredit Persediaan Barang Jadi                 15.600
+```
+Total terkirim sekarang 18 + 12 = 30, pas sama `qty_ordered` — status Sales Order jadi `FULLY_FULFILLED`. Kalau dipaksa kirim lagi (misal salah input 1 buah lebih), trigger nolak karena udah gak ada sisa qty_ordered.
+
+**Hasil akhir:** total piutang dari pesanan Pak Budi tetap Rp60.000 (sama kayak kalau dikirim sekaligus), cuma diakui di 2 invoice terpisah pada 2 tanggal berbeda — masing-masing persis sebesar barang yang beneran udah dikirim hari itu, bukan diakui penuh dari tanggal SO dibuat (28 September).
+
 ## Simulasi Interface (rencana)
 
 Sama pola modul lain: setelah DDL (`inventory-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/items` (master data barang + metode costing + kelola satuan jual & harga per satuan), `/purchase-orders` (bikin PO), `/goods-receipts` (terima barang, cocokkan ke PO, sekaligus bikin bill), `/bom` (kelola resep), `/production-orders` (jalankan produksi), `/stock-opnames` (list+create sesi hitung fisik, tiap baris input qty hasil hitung per item, selisih & jurnal dihitung otomatis pas submit), dan integrasi di `/ar-invoices` buat sekaligus bikin goods issue pas invoice dibuat. Form Goods Issue punya pemilih satuan jual per baris item (bukan cuma qty) — begitu satuan+qty dipilih, UI otomatis konversi ke satuan dasar & saranin nominal dari harga satuan itu. Detail flow menyusul pas fase UI dikerjakan.

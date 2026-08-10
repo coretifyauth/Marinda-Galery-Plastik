@@ -25,6 +25,12 @@ Belum ada tekanan nyata (AP, AR, maupun POS) yang butuh ini sekarang — didesai
 
 Kalau nanti diputuskan, keputusan yang sama sebaiknya berlaku ke ketiga RPC (AP/AR/POS) sekaligus — supaya gak didesain beda-beda per modul.
 
+**Update 2026-08-10 (Sales Order, migration `0024_sales_orders_schema.sql`):** Sales Order dibangun (`sales_orders`+`sales_order_lines`, cerminan Purchase Order di sisi jual, opsional — lihat `memory/architecture/data/inventory-schema.md` submodule "Sales Order & Pemenuhan Bertahap") **gak menyentuh item ini sama sekali** — SO by design gak pernah bikin journal entry, jadi struktur akun jurnal (yang jadi masalah di sini) gak relevan buat SO. Dibahas eksplisit dan dikonfirmasi gak ada konflik.
+
+Tapi diskusi itu nambah 2 catatan buat kalau item ini digarap nanti (bukan keputusan, cuma antisipasi dampak):
+- Kalau Opsi A (`p_lines` array) yang dipilih, `create_ar_invoice` signature berubah (`p_amount`+`p_revenue_account_id` tunggal → `p_credit_lines jsonb`) — ini **breaking change**, beda dari perluasan `so_line_id` di `create_goods_issue` kemarin yang aman (nambah key opsional di dalam jsonb, signature level fungsi gak berubah). `create_goods_issue` (yang manggil `create_ar_invoice`) WAJIB ikut disesuaikan di migration yang sama.
+- `sales_order_lines` kemungkinan perlu kolom baru `revenue_account_id` (nullable, per baris item) kalau SO mau tau routing akun pendapatan tiap item saat nanti di-fulfill (misal item "roti" vs item "jasa antar" beda akun) — perluasan kolom, bukan breaking, tapi belum ditambahkan sekarang karena speculative (belum ada skenario nyata, sama alasan item ini sendiri masih Ditunda).
+
 ## Kapan perlu digarap
 
 Begitu ada skenario nyata di salah satu modul (nota supplier campur kategori, invoice/POS butuh baris pendapatan/pajak terpisah) yang gak bisa lagi diakali lewat pemisahan dokumen manual.

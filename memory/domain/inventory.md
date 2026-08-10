@@ -64,7 +64,7 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
   ```
   Biaya pokok dihitung dari Weighted Average (qty × avg_cost saat itu, via `consume_weighted_average`) — titik ini HPP benar-benar diakui.
 - Dibuat **bersamaan** dengan invoice penjualan (`create_ar_invoice`, reuse, 0 perubahan) — sama pola GRN+Bill di sisi beli.
-- **Sales Order belum ada** — 3-way matching cuma ada di sisi procurement (PO→GRN→Bill). Sisi jual cuma 2 dokumen: invoice + Goods Issue, langsung dibuat bersamaan tanpa tahap komitmen terpisah. Belum ada tekanan nyata buat ini sekarang.
+- **Sales Order (opsional)** — tahap komitmen sebelum Goods Issue, lihat submodule "Sales Order & Pemenuhan Bertahap" di bawah. Jalur langsung (tanpa Sales Order) yang dijelaskan di atas tetap jalan apa adanya buat penjualan spontan (kios walk-in).
 - **Catatan lintas modul (retur):** kalau barang yang terjual lewat Goods Issue ini diretur (`ar_credit_notes` jalur full), barang balik masuk lagi nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur sejak FIFO dihapus — sebelum migration `0038`, item FIFO masih tersegregasi lewat lot `SALES_RETURN` biar barang rusak yang balik gak ketuker dipakai lagi buat penukaran garansi). Segregasi ini balik lagi secara logis sejak migration `0015`: tiap baris retur diklasifikasi `condition` (`RESALABLE`/`DAMAGED`), baris `DAMAGED` gak pernah nambah `inventory_balances` — cost-nya diakui `Beban Kerugian Barang Rusak` bukan ditambahkan balik jadi stok bernilai.
 
 **Constraints**
@@ -73,6 +73,25 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 
 **Common Mistakes**
 - HPP dihitung dari kapan utang dibayar (harusnya dari kapan barang terjual) — dua hal yang gak berhubungan sama sekali.
+
+## Sales Order & Pemenuhan Bertahap (migration `0024_sales_orders_schema.sql`)
+
+**Entitas & Jurnal**
+- **Sales Order (SO)** — cerminan Purchase Order di sisi jual: komitmen pesan dari customer (item, qty, harga disepakati). **Gak bikin jurnal** — belum kejadian akuntansi, sama alasannya kayak PO (belum ada barang pindah tangan, piutang belum boleh diakui — prinsip revenue recognition: kewajiban baru "terpenuhi" pas barang beneran dikirim).
+- **Beda dari PO: SO bersifat OPSIONAL, bukan wajib.** `goods_issue_lines.so_line_id` nullable — jalur jual langsung tanpa SO (submodule "Penjualan & Pengakuan HPP" di atas) tetap jalan gak berubah. Alasan asimetri: pembelian selalu keputusan terencana (wajar dipaksa PO), tapi penjualan ada 2 pola sekaligus — spontan (kios walk-in, gak natural dipaksa bikin SO dulu) dan terencana (pesanan customer buat acara, qty gede, stok belum tentu cukup pas dipesan).
+- **Pemenuhan (fulfillment) bisa dicicil, tiap cicilan = 1 Goods Issue + 1 invoice terpisah** — bukan nunggu SO lunas/`FULLY_FULFILLED` baru invoice terbit sekali. Piutang & Pendapatan diakui persis di titik barang dikirim, gak lebih cepat (itu yang mau dihindari — invoice full di depan sebelum barang jadi/dikirim = overstate piutang+pendapatan untuk bagian yang belum kepenuhi).
+- `create_goods_issue` **signature TETAP SAMA** (0 breaking change) — `p_lines` sekarang boleh punya key opsional `so_line_id` per baris. Caller lama yang gak nyertain key ini tetap jalan (`so_line_id` NULL, gak kena trigger anti-over-issue).
+
+**Constraints**
+- Pengiriman (Goods Issue) yang nunjuk `so_line_id` gak boleh melebihi `qty_ordered` SO line-nya (trigger `goods_issue_lines_no_over_issue`, mirror `goods_receipt_lines_no_over_receipt` — skip kalau `so_line_id` null).
+- SO immutable (`block_edit_delete`) — koreksi pesanan cukup bikin SO baru, gak ada edit/cancel eksplisit (sama pola PO).
+
+**Skenario referensi**
+- Customer pesan qty gede buat acara, stok belum cukup saat dipesan → SO dibuat duluan (belum ada jurnal apa pun). Produksi nambah stok belakangan. Barang dikirim bertahap (2x pengiriman) → 2 invoice terpisah lahir, masing-masing dari `create_goods_issue` yang nunjuk `so_line_id` yang sama, sampai `SUM(qty_issued)` = `qty_ordered` (status SO jadi `FULLY_FULFILLED`, derived — bukan kolom).
+
+**Common Mistakes**
+- Mikir invoice harus nunggu SO terpenuhi penuh baru terbit — harusnya per pengiriman, bisa banyak invoice dari 1 SO.
+- Nganggep SO wajib buat semua penjualan (niru pola PO di AP) — SO cuma dipakai kalau emang ada tahap komitmen-duluan; penjualan spontan tetap boleh lewat Goods Issue langsung tanpa SO.
 
 ## Satuan Jual & Harga (Multi Unit of Measure)
 

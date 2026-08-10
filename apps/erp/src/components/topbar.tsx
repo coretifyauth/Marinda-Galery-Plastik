@@ -26,6 +26,7 @@ const routeLabels: Record<string, string> = {
   "/goods-receipts": "Goods Receipts",
   "/bom": "BOM",
   "/production-orders": "Production Orders",
+  "/sales-orders": "Sales Orders",
   "/goods-issues": "Goods Issues",
   "/stock-opnames": "Stock Opname",
   "/fixed-assets": "Fixed Assets",

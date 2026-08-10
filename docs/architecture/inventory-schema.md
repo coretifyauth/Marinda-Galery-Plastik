@@ -35,6 +35,10 @@ erDiagram
 
   AR_INVOICES ||--|| GOODS_ISSUES : "dibuat bersamaan"
   GOODS_ISSUES ||--|{ GOODS_ISSUE_LINES : ""
+
+  CUSTOMERS ||--o{ SALES_ORDERS : ""
+  SALES_ORDERS ||--|{ SALES_ORDER_LINES : ""
+  SALES_ORDER_LINES ||--o{ GOODS_ISSUE_LINES : "dipenuhi bertahap (opsional)"
 ```
 
 | Tabel | Fungsi | Terhubung ke |
@@ -47,6 +51,7 @@ erDiagram
 | `bom_headers` + `bom_lines` | Resep produksi: 1 barang jadi butuh bahan baku apa saja, berapa takarannya per 1 batch. Boleh direvisi kapan saja tanpa mengubah histori produksi yang sudah terjadi | `items` |
 | `production_orders` + `production_order_lines` | Satu kejadian produksi nyata: mengonsumsi bahan baku sesuai resep, menghasilkan barang jadi, dan ke transaksi jurnal yang otomatis dibuat | `bom_headers`, `items`, `inventory_balances`, transaksi jurnal |
 | `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`ar_invoices`), `items`, `inventory_balances`, transaksi jurnal |
+| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan Purchase Order di sisi jual, belum ada transaksi jurnal. **Opsional**, bukan wajib | `customers`, `items` |
 | `stock_opnames` + `stock_opname_lines` | Sesi hitung fisik gudang — posisi stok disesuaikan langsung ke hasil hitung, selisih diakui sebagai beban/pendapatan | `items`, `inventory_balances`, transaksi jurnal (1 per baris yang ada selisih) |
 
 ## Konsep Inti
@@ -177,7 +182,7 @@ erDiagram
 |---|---|
 | Pengurangan stok barang jadi tidak boleh melebihi yang tersedia | Pengaman konsumsi stok terpusat, sama mekanisme dengan submodule Produksi |
 | Goods Issue tertelusur ke invoice penjualan yang dibuat bersamaan | `goods_issues` wajib menunjuk invoice-nya, keduanya dibuat dalam 1 aksi yang sama |
-| Sisi jual belum punya 3-way matching (belum ada Sales Order) | Tidak ada tahap komitmen terpisah sebelum Goods Issue — langsung dibuat bersamaan invoice |
+| Sisi jual juga punya tahap komitmen (Sales Order), tapi sifatnya opsional | Lihat submodule "Sales Order & Pemenuhan Bertahap" di bawah |
 
 **Interaksi Antar Tabel**
 
@@ -185,7 +190,39 @@ erDiagram
 |---|---|---|
 | `goods_issues` | satu-ke-satu | invoice penjualan (`ar_invoices`) |
 | `goods_issue_lines` | tiap baris didahului konsumsi dari | `inventory_balances` |
+| `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `sales_order_lines` |
 | Retur barang (modul Piutang Usaha) | banyak-ke-satu, kebalikan pemakaian | `goods_issues` — detail penuh: `docs/architecture/ar-schema.md` |
+
+## Sales Order & Pemenuhan Bertahap
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan `purchase_orders` di sisi jual. Belum ada transaksi jurnal — ini baru rencana, belum ada barang berpindah tangan | `customers`, `items` |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Buat Sales Order | `create_sales_order` | Insert header + baris pesanan. Tidak ada dampak keuangan atau stok sama sekali — baru komitmen | — |
+| Penuhi Sales Order (sebagian atau seluruhnya) | `create_goods_issue` (**signature sama, tidak ada perubahan cara panggil lama**) | Baris `p_lines` sekarang boleh menunjuk balik ke baris Sales Order. Tiap pemanggilan = 1 invoice + 1 pengurangan stok tersendiri — bisa dipanggil berkali-kali sampai seluruh qty pesanan terkirim | Menolak pengiriman yang total-nya melebihi qty yang dipesan di baris Sales Order itu |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Sales Order tidak bikin jurnal | `create_sales_order` cuma insert data, tidak memicu transaksi jurnal apa pun |
+| Pengiriman terhadap satu baris Sales Order tidak boleh melebihi qty yang dipesan | Pengaman otomatis pada baris pengiriman, dicek per baris terhadap Sales Order-nya |
+| Sales Order sama sekali tidak wajib | Kolom penghubung di baris Goods Issue bersifat opsional — penjualan tanpa Sales Order tetap berjalan seperti biasa |
+| Tiap pengiriman sebagian mengakui piutang & pendapatan sebesar yang benar-benar dikirim saat itu | `create_goods_issue` tetap menerbitkan 1 invoice tiap kali dipanggil, bukan menunggu Sales Order terpenuhi penuh |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `sales_order_lines` | banyak-ke-satu | `sales_orders` |
+| `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `sales_order_lines` |
 
 ## Satuan Jual & Harga (Multi Unit of Measure)
 
@@ -253,8 +290,9 @@ Gak ada RPC baru — `item_units` murni data master, CRUD langsung lewat tabel (
 
 1. Penerimaan barang tidak boleh melebihi jumlah yang dipesan di Purchase Order.
 2. Pemakaian/pengurangan stok tidak boleh melebihi jumlah yang tersedia.
-3. Purchase Order, penerimaan barang, produksi, dan penjualan barang tidak pernah bisa diedit atau dihapus setelah tercatat — koreksi harus lewat pencatatan baru.
-4. Data master (daftar barang, resep) tetap boleh diubah kapan saja — hanya catatan transaksi yang bersifat permanen.
+3. Pengiriman terhadap Sales Order (kalau dipakai) tidak boleh melebihi jumlah yang dipesan.
+4. Purchase Order, Sales Order, penerimaan barang, produksi, dan penjualan barang tidak pernah bisa diedit atau dihapus setelah tercatat — koreksi harus lewat pencatatan baru.
+5. Data master (daftar barang, resep) tetap boleh diubah kapan saja — hanya catatan transaksi yang bersifat permanen.
 
 ## Siapa Boleh Apa
 
@@ -262,5 +300,5 @@ Gak ada RPC baru — `item_units` murni data master, CRUD langsung lewat tabel (
 |---|---|
 | Melihat semua data (barang, resep, pesanan, penerimaan, produksi, penjualan) | Semua user yang sudah login |
 | Mengubah data barang & resep | Role `admin` atau `accountant` |
-| Membuat Purchase Order, mencatat penerimaan, mencatat produksi, mencatat penjualan, mencatat opname | Role `admin` atau `accountant` |
+| Membuat Purchase Order, Sales Order, mencatat penerimaan, mencatat produksi, mencatat penjualan, mencatat opname | Role `admin` atau `accountant` |
 | Mengedit/menghapus transaksi yang sudah tercatat | **Tidak ada seorang pun** |
