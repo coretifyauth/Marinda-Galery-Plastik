@@ -1,14 +1,17 @@
 -- Accounts Receivable schema.
--- Konsolidasi dari migration historis 0007, 0009, 0020, 0021, 0024, 0026, 0029, 0031, 0037,
--- 0039, 0040, 0041 — lihat git log untuk riwayat evolusi (termasuk fitur yang pernah ada lalu
--- dihapus lagi: batas waktu retur, alokasi payment many-to-many, overpayment-to-credit,
--- titip saldo kredit retur ke invoice lain).
+-- Konsolidasi dari migration historis 0007/0009/0020/0021/0024/0026/0029/0031/0037/0039/
+-- 0040/0041 (pra-squash) + 0010 (Cicil Dibalikin) + 0012 (Deposit Refund & Partial) + 0015
+-- (Kerugian Barang Rusak, DAMAGED condition) + bagian AR dari 0025 (Compounding & PPN) —
+-- lihat git log untuk riwayat evolusi (termasuk fitur yang pernah ada lalu dihapus lagi:
+-- batas waktu retur, alokasi payment many-to-many, overpayment-to-credit, titip saldo
+-- kredit retur ke invoice lain).
 -- Ref: docs/architecture/ar-schema.md
 --
 -- inventory_returns/inventory_return_lines dan warranty_replacement_lines ditaruh di sini
 -- (bukan modul inventory) karena FK ke ar_credit_notes/tabel modul ini. FK
--- goods_issues.invoice_id (dideklarasikan polos tanpa references di 0004_inventory_schema.sql)
--- ditambahkan di akhir file ini, setelah ar_invoices dibuat.
+-- goods_issues.invoice_id dan sales_orders.customer_id (dideklarasikan polos tanpa
+-- references di 0004_inventory_schema.sql) ditambahkan di akhir file ini, setelah
+-- ar_invoices/customers dibuat.
 
 create table customers (
   id uuid primary key default gen_random_uuid(),
@@ -46,14 +49,15 @@ create trigger ar_invoices_block_edit_delete
   before update or delete on ar_invoices
   for each row execute function block_edit_delete();
 
--- ar_payments.invoice_id: payment wajib persis 1:1 ke 1 invoice (unique) — no partial,
--- no gabung banyak invoice, no overpay-to-credit. Kebalikan dari desain alokasi
--- many-to-many (ar_payment_allocations) yang pernah ada sejak awal AR, dicabut total.
-
+-- ar_payments.invoice_id: WAJIB nunjuk 1 invoice spesifik (gak ada gabung invoice, gak ada
+-- alokasi many-to-many), tapi TIDAK unique (migration 0010) — 1 invoice boleh punya banyak
+-- baris payment dari waktu ke waktu (cicil). Index eksplisit gantiin unique constraint yang
+-- pernah ada, biar lookup invoice_id tetap gak jadi seq scan (ar_invoice_remaining() manggil
+-- ini di banyak jalur hot-path).
 create table ar_payments (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references customers(id),
-  invoice_id uuid not null unique references ar_invoices(id),
+  invoice_id uuid not null references ar_invoices(id),
   payment_date date not null,
   amount numeric(14,2) not null check (amount > 0),
   source_ref text not null,
@@ -63,6 +67,7 @@ create table ar_payments (
 );
 
 create index ar_payments_customer_id_idx on ar_payments(customer_id);
+create index ar_payments_invoice_id_idx on ar_payments(invoice_id);
 
 create trigger ar_payments_block_edit_delete
   before update or delete on ar_payments
@@ -131,12 +136,16 @@ create trigger inventory_returns_block_edit_delete
   before update or delete on inventory_returns
   for each row execute function block_edit_delete();
 
+-- condition (migration 0015, Kerugian Barang Rusak): RESALABLE (default, perilaku awal —
+-- balik masuk stok) atau DAMAGED (gak balik masuk stok, cost-nya direklasifikasi jadi Beban
+-- Kerugian Barang Rusak, akun 5900 — lihat seed di bawah).
 create table inventory_return_lines (
   id uuid primary key default gen_random_uuid(),
   inventory_return_id uuid not null references inventory_returns(id) on delete cascade,
   item_id uuid not null references items(id),
   qty_returned numeric(14,3) not null check (qty_returned > 0),
-  total_cost numeric(14,2) not null check (total_cost > 0)
+  total_cost numeric(14,2) not null check (total_cost > 0),
+  condition text not null default 'RESALABLE' check (condition in ('RESALABLE', 'DAMAGED'))
 );
 
 create index inventory_return_lines_return_id_idx on inventory_return_lines(inventory_return_id);
@@ -146,8 +155,8 @@ create trigger inventory_return_lines_block_edit_delete
   for each row execute function block_edit_delete();
 
 -- Guard: no-over-return (qty gak boleh ngelebihin qty_issued). Batas waktu retur per item
--- pernah ada di sini (0021), dicabut total (keputusan bisnis — retur diterima/ditolak
--- sekarang murni keputusan manual owner/staff, bukan hard-reject sistem).
+-- pernah ada di sini (0021 pra-squash), dicabut total (keputusan bisnis — retur
+-- diterima/ditolak sekarang murni keputusan manual owner/staff, bukan hard-reject sistem).
 create function inventory_return_lines_guard() returns trigger as $$
 declare
   v_goods_issue_id uuid;
@@ -184,7 +193,8 @@ create trigger inventory_return_lines_guard_trigger
   for each row execute function inventory_return_lines_guard();
 
 -- ============================================================
--- ar_deposits (Uang Muka/DP) + ar_deposit_applications + ar_deposit_forfeitures
+-- ar_deposits (Uang Muka/DP) + ar_deposit_applications + ar_deposit_forfeitures +
+-- ar_deposit_refunds (migration 0012 — ketiganya partial-capable, bisa campur bebas)
 -- ============================================================
 
 create table ar_deposits (
@@ -223,9 +233,12 @@ create trigger ar_deposit_applications_block_edit_delete
   before update or delete on ar_deposit_applications
   for each row execute function block_edit_delete();
 
+-- amount (migration 0012) — sebelumnya selalu diambil dari ar_deposits.amount penuh
+-- (gak disimpan per baris karena selalu 1x jalan sekali putus). Sekarang partial-capable.
 create table ar_deposit_forfeitures (
   id uuid primary key default gen_random_uuid(),
   deposit_id uuid not null references ar_deposits(id),
+  amount numeric(14,2) not null check (amount > 0),
   forfeiture_date date not null,
   source_ref text not null,
   journal_entry_id uuid not null references journal_entries(id),
@@ -237,6 +250,25 @@ create index ar_deposit_forfeitures_deposit_id_idx on ar_deposit_forfeitures(dep
 
 create trigger ar_deposit_forfeitures_block_edit_delete
   before update or delete on ar_deposit_forfeitures
+  for each row execute function block_edit_delete();
+
+-- Disposisi baru (migration 0012) — mirror ar_deposit_forfeitures tapi lawan jurnalnya Kas
+-- (bukan Pendapatan Lain-lain) — refund gak punya dampak Laba Rugi.
+create table ar_deposit_refunds (
+  id uuid primary key default gen_random_uuid(),
+  deposit_id uuid not null references ar_deposits(id),
+  amount numeric(14,2) not null check (amount > 0),
+  refund_date date not null,
+  source_ref text not null,
+  journal_entry_id uuid not null references journal_entries(id),
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+create index ar_deposit_refunds_deposit_id_idx on ar_deposit_refunds(deposit_id);
+
+create trigger ar_deposit_refunds_block_edit_delete
+  before update or delete on ar_deposit_refunds
   for each row execute function block_edit_delete();
 
 -- ============================================================
@@ -437,17 +469,18 @@ create trigger warranty_replacements_no_over_settle_return_credit_trigger
 
 -- ============================================================
 -- Fungsi "sumber kebenaran tunggal" — sisa outstanding riil per invoice / per saldo
--- kredit retur. Dipanggil semua guard/RPC AR, jangan hitung ulang manual di tempat lain.
+-- kredit retur / per DP. Dipanggil semua guard/RPC AR, jangan hitung ulang manual di
+-- tempat lain.
 -- ============================================================
 
--- 4 reducer: ar_payments (1:1 exact-match, cek langsung bukan SUM), ar_credit_notes,
--- ar_deposit_applications aktif, ar_bad_debt_writeoffs aktif. Reducer alokasi
--- many-to-many/overpayment-to-credit/titip-return-credit yang pernah ada di sini
--- (0007/0027/0031) sudah dicabut total bareng fiturnya.
+-- 4 reducer: ar_payments (SUM, migration 0010 -- boleh cicil/banyak baris per invoice,
+-- sebelumnya cuma 1 baris exact-match), ar_credit_notes, ar_deposit_applications aktif,
+-- ar_bad_debt_writeoffs aktif. Reducer alokasi many-to-many/overpayment-to-credit/titip-
+-- return-credit yang pernah ada di sini (pra-squash) sudah dicabut total bareng fiturnya.
 create function ar_invoice_remaining(p_invoice_id uuid) returns numeric as $$
   select ai.amount
     - coalesce((
-        select amount from ar_payments where invoice_id = p_invoice_id
+        select sum(amount) from ar_payments where invoice_id = p_invoice_id
       ), 0)
     - coalesce((
         select sum(amount) from ar_credit_notes where invoice_id = p_invoice_id
@@ -484,38 +517,45 @@ create function ar_return_credit_remaining(p_credit_id uuid) returns numeric as 
   where c.id = p_credit_id;
 $$ language sql stable;
 
+-- ar_deposit_remaining (migration 0012) — sumber kebenaran tunggal sisa DP, dipakai ketiga
+-- disposisi (applications/refunds/forfeitures) biar bisa campur bebas. Forfeitures & refunds
+-- gak pernah punya jalur reversal (beda dari applications yang bisa di-unwind
+-- cancel_ar_invoice), jadi SUM langsung tanpa exclude-reversed buat 2 reducer itu.
+create function ar_deposit_remaining(p_deposit_id uuid) returns numeric as $$
+  select ad.amount
+    - coalesce((
+        select sum(ada.amount) from ar_deposit_applications ada
+        where ada.deposit_id = p_deposit_id
+          and not exists (
+            select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
+          )
+      ), 0)
+    - coalesce((select sum(amount) from ar_deposit_refunds where deposit_id = p_deposit_id), 0)
+    - coalesce((select sum(amount) from ar_deposit_forfeitures where deposit_id = p_deposit_id), 0)
+  from ar_deposits ad
+  where ad.id = p_deposit_id;
+$$ language sql stable;
+
+-- ar_deposit_applications_guard (migration 0012) — cek pakai ar_deposit_remaining() yang
+-- udah nyakup applications+refunds+forfeitures sekaligus, gak ada lagi aturan "1 disposisi
+-- aktif" (forfeiture gak lagi eksklusif sama application, ketiganya boleh campur).
 create function ar_deposit_applications_guard() returns trigger as $$
 declare
-  v_forfeited_count int;
-  v_deposit_amount numeric;
+  v_remaining numeric;
   v_deposit_customer_id uuid;
-  v_already_applied numeric;
   v_invoice_customer_id uuid;
   v_invoice_journal_entry_id uuid;
   v_invoice_cancelled boolean;
   v_invoice_remaining numeric;
 begin
-  select count(*) into v_forfeited_count
-    from ar_deposit_forfeitures where deposit_id = new.deposit_id;
+  select ar_deposit_remaining(new.deposit_id) into v_remaining;
 
-  if v_forfeited_count > 0 then
-    raise exception 'Deposit % udah dihanguskan — gak bisa diterapkan ke invoice', new.deposit_id;
+  if new.amount > v_remaining then
+    raise exception 'Penerapan deposit % melebihi sisa deposit (sisa %, coba terapkan %)',
+      new.deposit_id, v_remaining, new.amount;
   end if;
 
-  select amount, customer_id into v_deposit_amount, v_deposit_customer_id
-    from ar_deposits where id = new.deposit_id;
-  select coalesce(sum(ada.amount), 0) into v_already_applied
-    from ar_deposit_applications ada
-    where ada.deposit_id = new.deposit_id
-      and not exists (
-        select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
-      );
-
-  if v_already_applied + new.amount > v_deposit_amount then
-    raise exception 'Penerapan deposit % melebihi sisa deposit (deposit %, sudah diterapkan %, coba terapkan %)',
-      new.deposit_id, v_deposit_amount, v_already_applied, new.amount;
-  end if;
-
+  select customer_id into v_deposit_customer_id from ar_deposits where id = new.deposit_id;
   select customer_id, journal_entry_id into v_invoice_customer_id, v_invoice_journal_entry_id
     from ar_invoices where id = new.invoice_id;
 
@@ -546,27 +586,18 @@ create trigger ar_deposit_applications_guard_trigger
   before insert on ar_deposit_applications
   for each row execute function ar_deposit_applications_guard();
 
+-- ar_deposit_forfeitures_guard (migration 0012) — sama pola, ganti 2 cek boolean lama
+-- ("belum pernah hangus" + "gak ada application aktif") jadi 1 cek numerik lewat
+-- ar_deposit_remaining().
 create function ar_deposit_forfeitures_guard() returns trigger as $$
 declare
-  v_forfeited_count int;
-  v_active_applied_count int;
+  v_remaining numeric;
 begin
-  select count(*) into v_forfeited_count
-    from ar_deposit_forfeitures where deposit_id = new.deposit_id;
+  select ar_deposit_remaining(new.deposit_id) into v_remaining;
 
-  if v_forfeited_count > 0 then
-    raise exception 'Deposit % udah pernah dihanguskan', new.deposit_id;
-  end if;
-
-  select count(*) into v_active_applied_count
-    from ar_deposit_applications ada
-    where ada.deposit_id = new.deposit_id
-      and not exists (
-        select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
-      );
-
-  if v_active_applied_count > 0 then
-    raise exception 'Deposit % masih diterapkan ke invoice aktif — gak bisa dihanguskan', new.deposit_id;
+  if new.amount > v_remaining then
+    raise exception 'Forfeiture deposit % melebihi sisa deposit (sisa %, coba hanguskan %)',
+      new.deposit_id, v_remaining, new.amount;
   end if;
 
   return new;
@@ -576,6 +607,26 @@ $$ language plpgsql;
 create trigger ar_deposit_forfeitures_guard_trigger
   before insert on ar_deposit_forfeitures
   for each row execute function ar_deposit_forfeitures_guard();
+
+-- Trigger baru (migration 0012) buat disposisi ar_deposit_refunds.
+create function ar_deposit_refunds_guard() returns trigger as $$
+declare
+  v_remaining numeric;
+begin
+  select ar_deposit_remaining(new.deposit_id) into v_remaining;
+
+  if new.amount > v_remaining then
+    raise exception 'Refund deposit % melebihi sisa deposit (sisa %, coba refund %)',
+      new.deposit_id, v_remaining, new.amount;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger ar_deposit_refunds_guard_trigger
+  before insert on ar_deposit_refunds
+  for each row execute function ar_deposit_refunds_guard();
 
 create function ar_bad_debt_writeoffs_no_over_writeoff() returns trigger as $$
 declare
@@ -628,20 +679,81 @@ create trigger ar_return_credit_refunds_guard_trigger
   for each row execute function ar_return_credit_refunds_guard();
 
 -- ============================================================
+-- Kategori Campur & PPN (Compounding, migration 0025) —
+-- memory/scope-debt/compound-transactional-entries.md +
+-- memory/scope-debt/tax-handling.md (keduanya sudah dihapus, ditutup di sini).
+-- ar_invoice_credit_lines: baris kredit aktual per invoice, kalau lebih dari 1 kategori.
+-- ar_invoice_charge_types: katalog master data (dropdown kategori di form AR Invoice) —
+-- gak ada FK ke ar_invoice_credit_lines, sama kayak item_units, murni resolve pilihan di
+-- UI sebelum manggil RPC.
+-- tax_settings: pengaturan PPN, tabel SINGLETON (id boolean primary key default true +
+-- check(id), cuma bisa ada 1 baris selamanya) — DIPAKAI BARENG AP (0006_ap_schema.sql) &
+-- POS (0009_pos_schema.sql), didefinisikan di sini karena AR modul pertama yang butuh
+-- konsep ini. Tarif PPN itu aturan pemerintah (nasional), bukan per-transaksi — disimpan
+-- di DB bukan di-hardcode di kode, biar ganti tarif cukup 1 UPDATE.
+-- ============================================================
+
+create table ar_invoice_credit_lines (
+  id uuid primary key default gen_random_uuid(),
+  ar_invoice_id uuid not null references ar_invoices(id) on delete cascade,
+  account_id uuid not null references accounts(id),
+  amount numeric(14,2) not null check (amount > 0),
+  is_tax boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create index ar_invoice_credit_lines_ar_invoice_id_idx on ar_invoice_credit_lines(ar_invoice_id);
+
+create trigger ar_invoice_credit_lines_block_edit_delete
+  before update or delete on ar_invoice_credit_lines
+  for each row execute function block_edit_delete();
+
+create table ar_invoice_charge_types (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  account_id uuid not null references accounts(id),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create trigger ar_invoice_charge_types_set_updated_at
+  before update on ar_invoice_charge_types
+  for each row execute function set_updated_at();
+
+create table tax_settings (
+  id boolean primary key default true,
+  is_active boolean not null default false,
+  ppn_rate numeric(5,2) not null default 11 check (ppn_rate >= 0),
+  ppn_keluaran_account_id uuid references accounts(id),
+  ppn_masukan_account_id uuid references accounts(id),
+  updated_at timestamptz not null default now(),
+  updated_by uuid references auth.users(id),
+  constraint tax_settings_singleton check (id)
+);
+
+create trigger tax_settings_set_updated_at
+  before update on tax_settings
+  for each row execute function set_updated_at();
+
+-- ============================================================
 -- RPC
 -- ============================================================
 
 -- Credit hold: nolak invoice baru kalau customer kelampaui credit_limit ATAU ada invoice
 -- open yang overdue lebih dari overdue_threshold_days-nya. NULL di kedua kolom = batas itu
 -- gak berlaku. Batas waktu retur (yang pernah divalidasi di sini juga) sudah dicabut total.
+-- Sisi kredit sekarang array (p_credit_lines, migration 0025) — bisa dipecah beberapa
+-- kategori pendapatan dalam 1 invoice yang sama. Sisi debit (Piutang Usaha) TETAP 1 baris.
+-- PPN (p_apply_tax) dihitung server-side dari tax_settings, gak pernah dari input klien.
 create function create_ar_invoice(
   p_customer_id uuid,
   p_invoice_date date,
   p_description text,
   p_source_ref text,
-  p_amount numeric,
+  p_credit_lines jsonb, -- array of {"account_id":uuid,"amount":numeric} -- kategori pendapatan, BUKAN termasuk PPN
   p_receivable_account_id uuid,
-  p_revenue_account_id uuid
+  p_apply_tax boolean default false
 ) returns uuid
 language plpgsql
 security invoker
@@ -655,11 +767,50 @@ declare
   v_overdue_threshold_days int;
   v_outstanding numeric;
   v_max_overdue_days int;
+  v_line jsonb;
+  v_line_amount numeric;
+  v_subtotal numeric := 0;
+  v_tax_amount numeric := 0;
+  v_total_amount numeric;
+  v_tax_active boolean;
+  v_tax_rate numeric;
+  v_tax_account_id uuid;
+  v_journal_lines jsonb;
 begin
+  if p_credit_lines is null or jsonb_array_length(p_credit_lines) = 0 then
+    raise exception 'AR invoice wajib punya minimal 1 baris kredit';
+  end if;
+
   select payment_term_days, credit_limit, overdue_threshold_days
     into v_term_days, v_credit_limit, v_overdue_threshold_days
     from customers where id = p_customer_id;
   v_due_date := p_invoice_date + v_term_days;
+
+  for v_line in select * from jsonb_array_elements(p_credit_lines)
+  loop
+    v_line_amount := (v_line->>'amount')::numeric;
+    if v_line_amount <= 0 then
+      raise exception 'Nominal baris kredit harus > 0';
+    end if;
+    v_subtotal := v_subtotal + v_line_amount;
+  end loop;
+
+  if p_apply_tax then
+    select is_active, ppn_rate, ppn_keluaran_account_id
+      into v_tax_active, v_tax_rate, v_tax_account_id
+      from tax_settings where id = true;
+
+    if not coalesce(v_tax_active, false) then
+      raise exception 'PPN gak aktif di Pengaturan Pajak -- gak bisa nambah baris PPN Keluaran';
+    end if;
+    if v_tax_account_id is null then
+      raise exception 'Akun PPN Keluaran belum diset di Pengaturan Pajak';
+    end if;
+
+    v_tax_amount := round(v_subtotal * v_tax_rate / 100, 2);
+  end if;
+
+  v_total_amount := v_subtotal + v_tax_amount;
 
   select coalesce(sum(greatest(r.remaining, 0)), 0),
          coalesce(max(p_invoice_date - ai.due_date), 0)
@@ -672,9 +823,9 @@ begin
       )
       and r.remaining > 0;
 
-  if v_credit_limit is not null and (v_outstanding + p_amount) > v_credit_limit then
+  if v_credit_limit is not null and (v_outstanding + v_total_amount) > v_credit_limit then
     raise exception 'Customer kena credit hold: piutang outstanding % + invoice baru % ngelewatin credit_limit %',
-      v_outstanding, p_amount, v_credit_limit;
+      v_outstanding, v_total_amount, v_credit_limit;
   end if;
 
   if v_overdue_threshold_days is not null and v_max_overdue_days > v_overdue_threshold_days then
@@ -682,30 +833,46 @@ begin
       v_max_overdue_days, v_overdue_threshold_days;
   end if;
 
-  v_entry_id := create_journal_entry(
-    p_invoice_date, p_description, p_source_ref,
-    jsonb_build_array(
-      jsonb_build_object('account_id', p_receivable_account_id, 'debit', p_amount, 'credit', 0),
-      jsonb_build_object('account_id', p_revenue_account_id, 'debit', 0, 'credit', p_amount)
-    )
+  v_journal_lines := jsonb_build_array(
+    jsonb_build_object('account_id', p_receivable_account_id, 'debit', v_total_amount, 'credit', 0)
   );
 
-  insert into ar_invoices (
-    customer_id, invoice_date, due_date, description, source_ref, amount,
-    journal_entry_id, created_by
-  )
-  values (
-    p_customer_id, p_invoice_date, v_due_date, p_description, p_source_ref, p_amount,
-    v_entry_id, auth.uid()
-  )
+  for v_line in select * from jsonb_array_elements(p_credit_lines)
+  loop
+    v_journal_lines := v_journal_lines || jsonb_build_array(
+      jsonb_build_object('account_id', (v_line->>'account_id')::uuid, 'debit', 0, 'credit', (v_line->>'amount')::numeric)
+    );
+  end loop;
+
+  if p_apply_tax then
+    v_journal_lines := v_journal_lines || jsonb_build_array(
+      jsonb_build_object('account_id', v_tax_account_id, 'debit', 0, 'credit', v_tax_amount)
+    );
+  end if;
+
+  v_entry_id := create_journal_entry(p_invoice_date, p_description, p_source_ref, v_journal_lines);
+
+  insert into ar_invoices (customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_by)
+  values (p_customer_id, p_invoice_date, v_due_date, p_description, p_source_ref, v_total_amount, v_entry_id, auth.uid())
   returning id into v_invoice_id;
+
+  for v_line in select * from jsonb_array_elements(p_credit_lines)
+  loop
+    insert into ar_invoice_credit_lines (ar_invoice_id, account_id, amount, is_tax)
+    values (v_invoice_id, (v_line->>'account_id')::uuid, (v_line->>'amount')::numeric, false);
+  end loop;
+
+  if p_apply_tax then
+    insert into ar_invoice_credit_lines (ar_invoice_id, account_id, amount, is_tax)
+    values (v_invoice_id, v_tax_account_id, v_tax_amount, true);
+  end if;
 
   return v_invoice_id;
 end;
 $$;
 
--- Payment wajib persis 1:1 ke 1 invoice — hard-reject kalau p_amount gak persis sama
--- ar_invoice_remaining() (bukan lagi "boleh kurang/cicilan" atau "boleh lebih/overpay").
+-- record_ar_payment (migration 0010) — boleh CICIL (kurang dari sisa outstanding), tapi
+-- tetap gak boleh overpay (lebih dari sisa) dan tetap wajib nunjuk ke 1 invoice spesifik.
 create function record_ar_payment(
   p_customer_id uuid,
   p_payment_date date,
@@ -725,8 +892,8 @@ declare
 begin
   select ar_invoice_remaining(p_invoice_id) into v_remaining;
 
-  if p_amount != v_remaining then
-    raise exception 'Payment % harus persis sama dengan sisa piutang invoice % (sisa %, coba bayar %) — gak boleh cicilan/kurang/lebih',
+  if p_amount > v_remaining then
+    raise exception 'Payment % melebihi sisa piutang invoice % (sisa %, coba bayar %) -- gak boleh overpay',
       p_source_ref, p_invoice_id, v_remaining, p_amount;
   end if;
 
@@ -794,11 +961,14 @@ begin
 end;
 $$;
 
--- p_lines null/kosong -> jalur financial-only (1 jurnal). p_lines terisi -> jalur full
--- (2 jurnal + stok balik), invoice WAJIB punya goods_issue. Kalau retur ini bikin outstanding
--- invoice jadi minus, excess-nya otomatis "dicairkan" jadi ar_return_credits (reklasifikasi:
--- Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer). Batas waktu retur yang pernah
--- divalidasi di sini sudah dicabut total.
+-- create_ar_credit_note (migration 0015 — Kerugian Barang Rusak) — p_lines null/kosong ->
+-- jalur financial-only (1 jurnal). p_lines terisi -> jalur full (2+ jurnal + stok balik),
+-- invoice WAJIB punya goods_issue. Tiap baris retur jalur full sekarang punya `condition`:
+-- RESALABLE (default, balik masuk stok) atau DAMAGED (gak balik masuk stok, cost-nya
+-- direklasifikasi jadi Beban Kerugian Barang Rusak, p_loss_expense_account_id). Kontra-
+-- revenue (Piutang Usaha) gak kepengaruh condition. Kalau retur ini bikin outstanding
+-- invoice jadi minus, excess-nya otomatis "dicairkan" jadi ar_return_credits. Batas waktu
+-- retur yang pernah divalidasi di sini sudah dicabut total.
 create function create_ar_credit_note(
   p_invoice_id uuid,
   p_credit_note_date date,
@@ -806,10 +976,11 @@ create function create_ar_credit_note(
   p_amount numeric,
   p_contra_revenue_account_id uuid,
   p_receivable_account_id uuid,
-  p_lines jsonb default null, -- array of {"item_id":uuid,"qty_returned":numeric}
+  p_lines jsonb default null, -- array of {"item_id":uuid,"qty_returned":numeric,"condition":text}
   p_hpp_account_id uuid default null,
   p_finished_good_account_id uuid default null,
-  p_return_credit_liability_account_id uuid default null
+  p_return_credit_liability_account_id uuid default null,
+  p_loss_expense_account_id uuid default null
 ) returns uuid
 language plpgsql
 security invoker
@@ -825,14 +996,19 @@ declare
   v_total_cost numeric;
   v_unit_cost numeric;
   v_line_cost numeric;
+  v_condition text;
   v_total_cost_returned numeric := 0;
+  v_total_cost_resalable numeric := 0;
+  v_total_cost_damaged numeric := 0;
   v_qty_before numeric;
   v_avg_before numeric;
   v_hpp_entry_id uuid;
+  v_hpp_journal_lines jsonb := '[]'::jsonb;
   v_return_id uuid;
   v_line_items uuid[] := '{}';
   v_line_qtys numeric[] := '{}';
   v_line_costs numeric[] := '{}';
+  v_line_conditions text[] := '{}';
   i int;
   v_remaining_before numeric;
   v_excess numeric;
@@ -886,6 +1062,11 @@ begin
     loop
       v_item_id := (v_line->>'item_id')::uuid;
       v_qty_returned := (v_line->>'qty_returned')::numeric;
+      v_condition := coalesce(v_line->>'condition', 'RESALABLE');
+
+      if v_condition not in ('RESALABLE', 'DAMAGED') then
+        raise exception 'condition % gak valid -- harus RESALABLE atau DAMAGED', v_condition;
+      end if;
 
       select qty_issued, total_cost into v_qty_issued, v_total_cost
         from goods_issue_lines
@@ -899,26 +1080,47 @@ begin
       v_line_cost := v_qty_returned * v_unit_cost;
       v_total_cost_returned := v_total_cost_returned + v_line_cost;
 
-      select qty_on_hand, avg_cost into v_qty_before, v_avg_before
-        from inventory_balances where item_id = v_item_id;
+      if v_condition = 'RESALABLE' then
+        v_total_cost_resalable := v_total_cost_resalable + v_line_cost;
 
-      update inventory_balances
-        set qty_on_hand = v_qty_before + v_qty_returned,
-            avg_cost = (v_qty_before * v_avg_before + v_qty_returned * v_unit_cost) / (v_qty_before + v_qty_returned),
-            updated_at = now()
-        where item_id = v_item_id;
+        select qty_on_hand, avg_cost into v_qty_before, v_avg_before
+          from inventory_balances where item_id = v_item_id;
+
+        update inventory_balances
+          set qty_on_hand = v_qty_before + v_qty_returned,
+              avg_cost = (v_qty_before * v_avg_before + v_qty_returned * v_unit_cost) / (v_qty_before + v_qty_returned),
+              updated_at = now()
+          where item_id = v_item_id;
+      else
+        v_total_cost_damaged := v_total_cost_damaged + v_line_cost;
+      end if;
 
       v_line_items := array_append(v_line_items, v_item_id);
       v_line_qtys := array_append(v_line_qtys, v_qty_returned);
       v_line_costs := array_append(v_line_costs, v_line_cost);
+      v_line_conditions := array_append(v_line_conditions, v_condition);
     end loop;
 
+    if v_total_cost_damaged > 0 and p_loss_expense_account_id is null then
+      raise exception 'Ada baris retur DAMAGED (total cost %) -- wajib isi p_loss_expense_account_id',
+        v_total_cost_damaged;
+    end if;
+
+    if v_total_cost_resalable > 0 then
+      v_hpp_journal_lines := v_hpp_journal_lines ||
+        jsonb_build_object('account_id', p_finished_good_account_id, 'debit', v_total_cost_resalable, 'credit', 0);
+    end if;
+
+    if v_total_cost_damaged > 0 then
+      v_hpp_journal_lines := v_hpp_journal_lines ||
+        jsonb_build_object('account_id', p_loss_expense_account_id, 'debit', v_total_cost_damaged, 'credit', 0);
+    end if;
+
+    v_hpp_journal_lines := v_hpp_journal_lines ||
+      jsonb_build_object('account_id', p_hpp_account_id, 'debit', 0, 'credit', v_total_cost_returned);
+
     v_hpp_entry_id := create_journal_entry(
-      p_credit_note_date, 'Reversal HPP retur', p_source_ref,
-      jsonb_build_array(
-        jsonb_build_object('account_id', p_finished_good_account_id, 'debit', v_total_cost_returned, 'credit', 0),
-        jsonb_build_object('account_id', p_hpp_account_id, 'debit', 0, 'credit', v_total_cost_returned)
-      )
+      p_credit_note_date, 'Reversal HPP retur', p_source_ref, v_hpp_journal_lines
     );
 
     insert into inventory_returns (credit_note_id, goods_issue_id, journal_entry_id, return_date, source_ref, created_by)
@@ -926,8 +1128,8 @@ begin
     returning id into v_return_id;
 
     for i in 1..array_length(v_line_items, 1) loop
-      insert into inventory_return_lines (inventory_return_id, item_id, qty_returned, total_cost)
-      values (v_return_id, v_line_items[i], v_line_qtys[i], v_line_costs[i]);
+      insert into inventory_return_lines (inventory_return_id, item_id, qty_returned, total_cost, condition)
+      values (v_return_id, v_line_items[i], v_line_qtys[i], v_line_costs[i], v_line_conditions[i]);
     end loop;
   end if;
 
@@ -998,8 +1200,11 @@ begin
 end;
 $$;
 
+-- forfeit_ar_deposit (migration 0012) — signature baru nerima p_amount (boleh sebagian dari
+-- ar_deposits.amount, gak wajib penuh lagi).
 create function forfeit_ar_deposit(
   p_deposit_id uuid,
+  p_amount numeric,
   p_forfeiture_date date,
   p_source_ref text,
   p_deposit_liability_account_id uuid,
@@ -1009,25 +1214,55 @@ language plpgsql
 security invoker
 as $$
 declare
-  v_amount numeric;
   v_entry_id uuid;
   v_forfeiture_id uuid;
 begin
-  select amount into v_amount from ar_deposits where id = p_deposit_id;
-
   v_entry_id := create_journal_entry(
     p_forfeiture_date, 'Uang muka hangus', p_source_ref,
     jsonb_build_array(
-      jsonb_build_object('account_id', p_deposit_liability_account_id, 'debit', v_amount, 'credit', 0),
-      jsonb_build_object('account_id', p_other_revenue_account_id, 'debit', 0, 'credit', v_amount)
+      jsonb_build_object('account_id', p_deposit_liability_account_id, 'debit', p_amount, 'credit', 0),
+      jsonb_build_object('account_id', p_other_revenue_account_id, 'debit', 0, 'credit', p_amount)
     )
   );
 
-  insert into ar_deposit_forfeitures (deposit_id, forfeiture_date, source_ref, journal_entry_id, created_by)
-  values (p_deposit_id, p_forfeiture_date, p_source_ref, v_entry_id, auth.uid())
+  insert into ar_deposit_forfeitures (deposit_id, amount, forfeiture_date, source_ref, journal_entry_id, created_by)
+  values (p_deposit_id, p_amount, p_forfeiture_date, p_source_ref, v_entry_id, auth.uid())
   returning id into v_forfeiture_id;
 
   return v_forfeiture_id;
+end;
+$$;
+
+-- refund_ar_deposit (migration 0012, RPC baru) — mirror forfeit_ar_deposit, lawan jurnal
+-- Kas bukan Pendapatan Lain-lain.
+create function refund_ar_deposit(
+  p_deposit_id uuid,
+  p_amount numeric,
+  p_refund_date date,
+  p_source_ref text,
+  p_deposit_liability_account_id uuid,
+  p_cash_account_id uuid
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_entry_id uuid;
+  v_refund_id uuid;
+begin
+  v_entry_id := create_journal_entry(
+    p_refund_date, 'Refund uang muka', p_source_ref,
+    jsonb_build_array(
+      jsonb_build_object('account_id', p_deposit_liability_account_id, 'debit', p_amount, 'credit', 0),
+      jsonb_build_object('account_id', p_cash_account_id, 'debit', 0, 'credit', p_amount)
+    )
+  );
+
+  insert into ar_deposit_refunds (deposit_id, amount, refund_date, source_ref, journal_entry_id, created_by)
+  values (p_deposit_id, p_amount, p_refund_date, p_source_ref, v_entry_id, auth.uid())
+  returning id into v_refund_id;
+
+  return v_refund_id;
 end;
 $$;
 
@@ -1190,10 +1425,7 @@ begin
     -- ar_return_credits aktif, porsi diskon yang mau dibalik gak boleh ngelebihin sisa
     -- saldonya. Sebagian saldo itu bisa aja udah kadung direfund tunai duluan
     -- (refund_ar_return_credit) — duitnya udah beneran keluar dan gak bisa "ditarik balik",
-    -- jadi porsi reversal yang ngelebihin sisa saldo ditolak, bukan di-least()-kan diam-diam
-    -- (kalau di-least(), selisihnya jadi debit Piutang Usaha yang menggantung tanpa invoice
-    -- manapun yang nyerap, dan gak bisa dilunasin lewat record_ar_payment karena payment
-    -- sekarang wajib exact-match ke 1 invoice).
+    -- jadi porsi reversal yang ngelebihin sisa saldo ditolak, bukan di-least()-kan diam-diam.
     select id into v_return_credit_id from ar_return_credits where credit_note_id = p_credit_note_id;
 
     if v_return_credit_id is not null then
@@ -1252,11 +1484,32 @@ end;
 $$;
 
 -- ============================================================
+-- Seed — akun baru buat Kerugian Barang Rusak (migration 0017 pra-squash), dipakai bareng
+-- kedua sisi — baris RESALABLE/DAMAGED di AR Credit Note (di atas), dan Opsi C
+-- (create_purchase_writeoff) di AP (0006_ap_schema.sql). Plus akun PPN Keluaran/Masukan
+-- (dipakai tax_settings di atas + AP), seed baris tunggal tax_settings-nya sendiri.
+-- ============================================================
+
+insert into accounts (code, name, category) values
+  ('5900', 'Beban Kerugian Barang Rusak', 'expense'),
+  ('1500', 'PPN Masukan', 'asset'),
+  ('2400', 'PPN Keluaran', 'liability');
+
+-- is_active=false (kios CV Roti Barokah belum PKP di cerita saat ini).
+insert into tax_settings (id, is_active, ppn_rate, ppn_keluaran_account_id, ppn_masukan_account_id)
+select true, false, 11,
+  (select id from accounts where code = '2400'),
+  (select id from accounts where code = '1500');
+
+-- ============================================================
 -- FK lintas-modul (deferred dari 0004_inventory_schema.sql — lihat catatan di sana)
 -- ============================================================
 
 alter table goods_issues
   add constraint goods_issues_invoice_id_fkey foreign key (invoice_id) references ar_invoices(id);
+
+alter table sales_orders
+  add constraint sales_orders_customer_id_fkey foreign key (customer_id) references customers(id);
 
 -- ============================================================
 -- RLS Policy
@@ -1368,6 +1621,17 @@ create policy ar_deposit_forfeitures_insert on ar_deposit_forfeitures
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
 
+alter table ar_deposit_refunds enable row level security;
+
+create policy ar_deposit_refunds_select on ar_deposit_refunds
+  for select using (auth.role() = 'authenticated');
+
+create policy ar_deposit_refunds_insert on ar_deposit_refunds
+  for insert with check (
+    exists (select 1 from user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  );
+
 alter table ar_bad_debt_writeoffs enable row level security;
 
 create policy ar_bad_debt_writeoffs_select on ar_bad_debt_writeoffs
@@ -1422,8 +1686,44 @@ create policy warranty_replacement_lines_insert on warranty_replacement_lines
     exists (select 1 from user_roles ur
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
--- sengaja gak ada policy UPDATE/DELETE di semua tabel transaksional AR -> RLS default deny
--- + block_edit_delete
+-- sengaja gak ada policy UPDATE/DELETE di semua tabel transaksional AR di atas -> RLS
+-- default deny + block_edit_delete
+
+alter table ar_invoice_credit_lines enable row level security;
+
+create policy ar_invoice_credit_lines_select on ar_invoice_credit_lines
+  for select using (auth.role() = 'authenticated');
+
+create policy ar_invoice_credit_lines_insert on ar_invoice_credit_lines
+  for insert with check (
+    exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  );
+
+-- ar_invoice_charge_types: katalog master data, select semua authenticated, insert+update
+-- admin doang (owner yang setup katalog). Gak ada delete -- nonaktifkan pakai archived_at.
+alter table ar_invoice_charge_types enable row level security;
+
+create policy ar_invoice_charge_types_select on ar_invoice_charge_types for select using (auth.role() = 'authenticated');
+create policy ar_invoice_charge_types_insert on ar_invoice_charge_types for insert with check (
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+);
+create policy ar_invoice_charge_types_update on ar_invoice_charge_types for update using (
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+);
+
+-- tax_settings: select semua authenticated, update admin doang. Sengaja gak ada policy
+-- INSERT/DELETE -- baris tunggalnya cuma diseed migration ini, admin cuma boleh UPDATE
+-- nilai yang sudah ada (constraint singleton nolak baris kedua walau ada yang nekat insert).
+alter table tax_settings enable row level security;
+
+create policy tax_settings_select on tax_settings
+  for select using (auth.role() = 'authenticated');
+
+create policy tax_settings_update on tax_settings
+  for update using (
+    exists (select 1 from user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  );
 
 -- ============================================================
 -- Grant
@@ -1438,8 +1738,12 @@ grant select, insert on inventory_return_lines to authenticated;
 grant select, insert on ar_deposits to authenticated;
 grant select, insert on ar_deposit_applications to authenticated;
 grant select, insert on ar_deposit_forfeitures to authenticated;
+grant select, insert on ar_deposit_refunds to authenticated;
 grant select, insert on ar_bad_debt_writeoffs to authenticated;
 grant select, insert on ar_return_credits to authenticated;
 grant select, insert on ar_return_credit_refunds to authenticated;
 grant select, insert on warranty_replacements to authenticated;
 grant select, insert on warranty_replacement_lines to authenticated;
+grant select, insert on ar_invoice_credit_lines to authenticated;
+grant select, insert, update on ar_invoice_charge_types to authenticated;
+grant select, update on tax_settings to authenticated;

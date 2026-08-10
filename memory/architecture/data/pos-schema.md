@@ -1,6 +1,6 @@
 # POS / Jualan Eceran — Struktur Data & Teknis (AI Context)
 
-Konsep: `memory/domain/pos.md`. Naratif: `docs/architecture/pos-schema.md`. Migration: `supabase/migrations/0023_pos_schema.sql`.
+Konsep: `memory/domain/pos.md`. Naratif: `docs/architecture/pos-schema.md`. Migration: `supabase/migrations/0009_pos_schema.sql`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -71,7 +71,7 @@ Guard role manual di baris pertama (`user_roles.role_name in ('admin','accountan
 
 **`p_revenue_account_id` TETAP ADA** (`0025`, lihat submodule "Compounding & PPN" di bawah) — basket item tetap 1 baris kredit fixed, totalnya (`v_total_amount`) tetap dihitung server dari `p_lines`, TETAP gak dipercaya dari klien. `p_extra_credit_lines`+`p_apply_tax` cuma NAMBAH baris kredit lain di jurnal Kas↔Pendapatan yang sama, gak mengubah sifat anti-tamper item yang udah ada dari awal.
 
-Full body: `supabase/migrations/0025_compound_transactional_entries_schema.sql` (definisi awal `0023_pos_schema.sql`).
+Full body: `supabase/migrations/0009_pos_schema.sql` (migration history 0001-0025 disquash jadi 9 file per modul 2026-08-10 — riwayat evolusi lengkap tetap ada di git log).
 
 ### RPC `void_pos_sale` — reversing entry, pola `cancel_ar_invoice`
 
@@ -83,7 +83,7 @@ create function void_pos_sale(
 
 Cek dulu `pos_sales` ada & belum pernah dibatalkan (`exists (select 1 from journal_entries where reverses_entry_id = revenue_journal_entry_id)`), lalu `reverse_journal_entry` ke KEDUA jurnal (`revenue_journal_entry_id` dan `cogs_journal_entry_id`), baru `update inventory_balances` manual buat balikin `qty_on_hand` (reversing entry cuma bereskan sisi jurnal, gak otomatis balikin stok — beda dari `consume_weighted_average` yang manggil `update` juga tapi arah kebalik). `avg_cost` gak disentuh, sama pola restock retur `RESALABLE` di AR. **Di-agregasi per `item_id` dulu** (`group by item_id` sebelum `update ... from`) — bukan `UPDATE...FROM` langsung ke `pos_sale_lines` mentah, karena kalau 1 sale punya >1 baris `item_id` yang sama (kasir scan SKU sama 2x), join langsung cuma makan 1 baris match (perilaku Postgres yang terdokumentasi, bukan menjumlahkan) — bug nyata yang ketauan `schema-reviewer`, diperbaiki sebelum migration ini dianggap siap.
 
-Full body: `supabase/migrations/0023_pos_schema.sql`.
+Full body: `supabase/migrations/0009_pos_schema.sql`.
 
 ### RLS & Grant
 
@@ -110,7 +110,7 @@ insert into roles (name, description) values
   ('cashier', 'Bikin POS Sale doang lewat create_pos_sale — gak punya akses insert langsung ke journal_entries/tabel finansial lain manapun');
 ```
 
-Detail lengkap: `supabase/migrations/0023_pos_schema.sql`.
+Detail lengkap: `supabase/migrations/0009_pos_schema.sql`.
 
 ### Compounding & PPN — migration `0025_compound_transactional_entries_schema.sql`
 

@@ -151,7 +151,7 @@ end;
 $$;
 ```
 
-Full body: `supabase/migrations/0025_compound_transactional_entries_schema.sql`.
+Full body: `supabase/migrations/0006_ap_schema.sql` (migration history 0001-0025 disquash jadi 9 file per modul 2026-08-10 — riwayat evolusi lengkap tetap ada di git log).
 
 ### Compounding & PPN — migration `0025_compound_transactional_entries_schema.sql`
 
@@ -519,13 +519,13 @@ Debit Beban Kerugian Barang Rusak (5900)   v_total_cost
 
 `p_loss_expense_account_id`/`p_inventory_account_id` diterima sebagai parameter (gak di-hardcode), pola sama semua RPC AP lain. Utang Usaha bill (`ap_bills`/`ap_bill_remaining()`) **gak disentuh sama sekali** — sama kayak Opsi B, `cancel_ap_bill` juga gak nge-guard `purchase_writeoffs` (konsisten sama Opsi B yang juga gak di-guard, bukan regresi — lihat catatan `cancel_ap_bill` di submodule "Konsep Inti").
 
-Full body: `supabase/migrations/0016_ap_purchase_writeoff_schema.sql`.
+Full body: `supabase/migrations/0006_ap_schema.sql`.
 
 ### RPC `refund_ap_return_credit`
 
 Mirror `refund_ar_return_credit` (0031) persis, arah jurnal kebalik (Debit Kas/Bank / Kredit Piutang Retur Supplier). Sempat ada pasangan `apply_ap_return_credit` (Debit Utang Usaha / Kredit Piutang Retur Supplier, motong bill lain) — dicabut `0009`, lihat bagian "Pencabutan `apply_ap_return_credit`" di bawah.
 
-Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql` (bentuk awal), `supabase/migrations/0009_ap_remove_return_credit_apply.sql` (fungsi terkait di-`create or replace`, `apply_ap_return_credit`-nya di-drop).
+Full body (definisi terkini): `supabase/migrations/0006_ap_schema.sql`.
 
 ### RLS Policy
 
@@ -545,7 +545,7 @@ Sempat ada disposisi kedua buat `ap_return_credits`: **dipakai motong bill lain*
 
 Perubahan: drop RPC `apply_ap_return_credit`, drop tabel `ap_return_credit_applications` (cascade trigger/index/RLS/grant), drop fungsi guard `ap_return_credit_applications_guard`, `create or replace` 3 fungsi (`ap_bill_remaining`, `ap_return_credit_remaining`, `cancel_ap_bill`) buang reducer/loop yang nunjuk ke tabel itu — signature ketiganya gak berubah, jadi gak perlu `drop function` duluan. Direview `schema-reviewer` sebelum apply (blocker awal: UI/type di `src/` masih query tabel yang mau di-drop — diperbaiki bareng di PR yang sama sebelum migration di-push).
 
-Full body: `supabase/migrations/0009_ap_remove_return_credit_apply.sql`.
+Full body: `supabase/migrations/0006_ap_schema.sql` (migration history 0001-0025 disquash jadi 9 file per modul 2026-08-10 — riwayat evolusi lengkap tetap ada di git log).
 
 ## Uang Muka / DP ke Supplier — migration `0013_ap_deposits_schema.sql` + `0014_seed_ap_deposit_accounts.sql`
 
@@ -645,7 +645,7 @@ Guard tiap tabel transaksional (`ap_deposit_applications_guard`, `ap_deposit_ref
 
 `security invoker`, pola sama RPC AP lain — semua reuse `create_journal_entry`. Ke-4 RPC dibangun bareng dari awal (beda dari AR yang `refund_ar_deposit` nyusul belakangan lewat `0012`). Nominal selalu diinput eksplisit dari caller.
 
-Full body: `supabase/migrations/0013_ap_deposits_schema.sql`.
+Full body: `supabase/migrations/0006_ap_schema.sql`.
 
 ### Akun baru — migration seed `0014_seed_ap_deposit_accounts.sql`
 

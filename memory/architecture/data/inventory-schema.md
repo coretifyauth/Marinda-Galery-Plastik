@@ -406,7 +406,7 @@ create function create_goods_issue(
 
 `p_lines` (item + `so_line_id`) dan seluruh logika konsumsi stok/jurnal HPP **TIDAK berubah** — cuma bagian yang manggil `create_ar_invoice` yang disesuaikan (`p_credit_lines`+`p_apply_tax` diteruskan apa adanya).
 
-Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) → `0024_sales_orders_schema.sql` (nambah `so_line_id`) → `0025_compound_transactional_entries_schema.sql` (signature `p_credit_lines`, definisi terkini).
+Full body: `supabase/migrations/0004_inventory_schema.sql` — definisi terkini, sudah menyatukan riwayat evolusinya (base → nambah `so_line_id` → signature `p_credit_lines`; migration history 0001-0025 disquash jadi 9 file per modul 2026-08-10, riwayat evolusi lengkap tetap ada di git log).
 
 ### RLS & Grant (Penjualan & Pengakuan HPP)
 
@@ -507,7 +507,7 @@ create function create_sales_order(
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-Full body: `supabase/migrations/0024_sales_orders_schema.sql`.
+Full body: `supabase/migrations/0004_inventory_schema.sql`.
 
 ### RLS & Grant (Sales Order & Pemenuhan Bertahap)
 
@@ -518,7 +518,7 @@ grant select, insert on sales_orders to authenticated;
 grant select, insert on sales_order_lines to authenticated;
 ```
 
-Detail lengkap: `supabase/migrations/0024_sales_orders_schema.sql`.
+Detail lengkap: `supabase/migrations/0004_inventory_schema.sql`.
 
 ## Satuan Jual & Harga (Multi Unit of Measure) — migration `0019_item_units_schema.sql`
 
@@ -579,7 +579,7 @@ Pola sama `bom_lines` (master data mutable, anak dari item) — `select` semua `
 grant select, insert, update, delete on item_units to authenticated;
 ```
 
-Full body: `supabase/migrations/0019_item_units_schema.sql`.
+Full body: `supabase/migrations/0004_inventory_schema.sql`.
 
 ## Stock Opname (Penyesuaian Stok Fisik) — migration `0020_stock_opname_schema.sql` + `0021_seed_stock_opname_accounts.sql`
 
@@ -730,4 +730,4 @@ grant select, insert on stock_opnames to authenticated;
 grant select, insert on stock_opname_lines to authenticated;
 ```
 
-Full body: `supabase/migrations/0020_stock_opname_schema.sql`.
+Full body: `supabase/migrations/0004_inventory_schema.sql`.
