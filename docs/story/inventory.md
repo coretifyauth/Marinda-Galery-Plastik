@@ -1,223 +1,280 @@
-# Story — Inventory & HPP: CV Roti Barokah
+# Story — Inventory & HPP: Toko Plastik Makmur Jaya
 
-Fase 5. Konteks bisnis: `docs/story/company-profile.md` (poin 5: "hitung HPP roti, butuh weighted average karena harga tepung naik-turun"). Konsep: `docs/domain/inventory.md`. ERD & DDL: `docs/architecture/inventory-schema.md`. Lanjutan langsung dari `docs/story/accounts-payable.md` — bahan baku yang sudah dicatat di sana (dari Toko Tepung Makmur & Toko Gula Sejahtera) sekarang ditelusuri lebih detail: qty & harga per kg, diolah jadi roti, sampai akhirnya kejual dan HPP-nya kehitung.
+Konteks bisnis: `docs/story/company-profile.md`. Konsep: `docs/domain/inventory.md`. ERD & DDL: `memory/architecture/data/inventory-schema.md` (**costing Weighted Average doang — FIFO sudah dihapus total**, migration `0038_remove_fifo_costing.sql`). Aturan UI: `memory/preferences/ui/admin-shell-design.md` (list cuma klik-baris, semua aksi transaksional hidup di halaman detail `[id]`).
 
-Timeline cerita ini: **Agustus 2026** (bulan setelah AR/AP per 30 Juli 2026).
+Beda dari versi lama file ini: sekarang ditulis sebagai **tutorial klik-per-klik di browser beneran** — tiap langkah nyebut menu sidebar mana, buka URL apa, isi field apa, klik tombol apa, dan apa yang harus muncul. Login dulu sebagai Pak Herman (`admin`) sebelum mulai — role `cashier` (Mbak Rina) gak punya akses ke `apps/erp` sama sekali, cuma ke kios POS.
 
-> **Catatan migrasi:** metode costing FIFO (per-lot) sudah dihapus total dari sistem (`supabase/migrations/0038_remove_fifo_costing.sql`). Semua item sekarang pakai **Weighted Average** — gak ada lagi konsep `inventory_lots`/lot per-batch, satu-satunya sumber saldo per item adalah `inventory_balances` (qty_on_hand + avg_cost).
+Timeline cerita: **Agustus–September 2026** (persis sekitar "hari ini", 11 Agustus 2026, di dunia nyata sesi ini — dipilih sengaja biar kerasa "baru terjadi").
 
-## Item Master Data
+**Peta menu.** Sidebar kiri, grup **Inventory** (ikon `Boxes`, klik label buat expand kalau collapsed): `Items`, `Stock Position`, `Purchase Orders`, `Goods Receipts`, `BOM`, `Production Orders`, `Sales Orders`, `Goods Issues`, `Stock Opname`. Semua di bawah ini urut sesuai alur bisnis, bukan urutan sidebar.
 
-| Item | Tipe | Satuan Dasar | Metode Costing | Akun Persediaan |
+**Catatan desain penting (kenapa item dikelompokkan gini):** `items.item_type` cuma 2 pilihan — `RAW_MATERIAL` (muncul di dropdown Purchase Order & jadi komponen BOM) dan `FINISHED_GOOD` (muncul di dropdown Sales Order & Goods Issue, jadi output BOM). Ini desain lama warisan skenario pabrik roti (beli bahan mentah → olah → jual barang jadi). Karena itu, semua barang plastik yang **dibeli dari supplier apa adanya** (Ember, Kursi, Rak, Piring, Gelas, Sendok-Garpu, Toples) diklasifikasikan `RAW_MATERIAL` — biar bisa muncul di form Purchase Order. Yang beneran **dirakit** (Paket Alat Makan, lewat BOM+Production Order) satu-satunya `FINISHED_GOOD` — makanya cuma Paket Alat Makan yang bisa dijual lewat Sales Order/Goods Issue di walkthrough ini. Penjualan langsung Ember/Piring/dkk ke pelanggan grosir (di luar bundling) dicatat lewat AR Invoice financial-only (lihat `docs/story/accounts-receivable.md`), bukan lewat modul ini.
+
+## Item Master Data (target akhir setelah Tahap 1)
+
+| Item | Tipe | Satuan Dasar | Akun Persediaan | Supplier |
 |---|---|---|---|---|
-| Tepung Terigu | Bahan Baku | kg | **Weighted Average** — harganya sering naik-turun, tapi sekarang cukup rata-rata tertimbang, gak perlu jejak per-batch | Persediaan Bahan Baku |
-| Gula Pasir | Bahan Baku | kg | **Weighted Average** — harga relatif stabil, cukup rata-rata | Persediaan Bahan Baku |
-| Roti Tawar | Barang Jadi | buah | **Weighted Average** — ngikutin hasil produksi, avg_cost dihitung ulang tiap ada penambahan qty | Persediaan Barang Jadi |
+| Ember Plastik 10L | RAW_MATERIAL | pcs | 1400 Persediaan Bahan Baku | PT Plastindo Jaya |
+| Kursi Plastik Lipat | RAW_MATERIAL | pcs | 1400 Persediaan Bahan Baku | PT Plastindo Jaya |
+| Rak Plastik Serbaguna | RAW_MATERIAL | pcs | 1400 Persediaan Bahan Baku | PT Plastindo Jaya |
+| Piring Plastik | RAW_MATERIAL | pcs | 1400 Persediaan Bahan Baku | CV Sumber Plastik |
+| Gelas Plastik | RAW_MATERIAL | pcs | 1400 Persediaan Bahan Baku | CV Sumber Plastik |
+| Sendok-Garpu Plastik | RAW_MATERIAL | pack (isi 12) | 1400 Persediaan Bahan Baku | CV Sumber Plastik |
+| Toples Plastik | RAW_MATERIAL | pcs | 1400 Persediaan Bahan Baku | CV Sumber Plastik |
+| **Paket Alat Makan** | **FINISHED_GOOD** | pcs | 1420 Persediaan Barang Jadi | — (dirakit, BOM) |
 
-## Satuan Jual Roti Tawar (`item_units`)
+Semua Weighted Average — gak ada pilihan metode lain di form.
 
-| Satuan Jual | Faktor Konversi (ke "buah") | Harga | Catatan |
-|---|---|---|---|
-| buah (base) | 1 | Rp2.000/buah | Satuan dasar, dipakai semua pelacakan stok/HPP |
-| lusin (isi 12) | 12 | Rp22.000/lusin | Diskon grosir — 12 × Rp2.000 = Rp24.000 kalau beli lepasan, lusin lebih murah Rp2.000 |
+## Tahap 1 — Bikin Item Master + Satuan Jual (Items)
 
-Harga-harga ini cuma dipakai buat **menyarankan** nominal pas bikin Goods Issue baru — semua invoice di skenario bawah tetap tercatat pakai nominal yang benar-benar disepakati saat itu, gak pernah berubah retroaktif kalau harganya diubah belakangan (lihat Tahap 8).
+**Menu:** Inventory → **Items** (`/items`).
 
-## Resep (BOM)
+Untuk tiap baris di tabel di atas: klik **+ New** di pojok kanan atas toolbar tabel Items → form "Tambah Item" muncul di bawah tabel. Isi:
+- **Nama**: mis. `Ember Plastik 10L`
+- **Tipe**: pilih `RAW_MATERIAL` (dropdown cuma `RAW_MATERIAL`/`FINISHED_GOOD`)
+- **Satuan Dasar (UOM)**: `pcs` (atau `pack` khusus Sendok-Garpu Plastik)
+- **Akun Persediaan**: pilih `1400 — Persediaan Bahan Baku` dari dropdown akun leaf
 
-**1 batch Roti Tawar = 5kg Tepung Terigu + 1kg Gula Pasir → menghasilkan 50 buah roti.**
+Klik **Simpan Item**. Baris baru langsung muncul di tabel list (kolom Nama/Tipe/Satuan Dasar/Satuan Jual/Akun Persediaan). Ulangi buat ketujuh item RAW_MATERIAL, lalu sekali lagi buat **Paket Alat Makan** dengan Tipe `FINISHED_GOOD`, UOM `pcs`, Akun Persediaan `1420 — Persediaan Barang Jadi`.
 
-## Tahap 1 — Pesan tepung (PO, 1 Agustus 2026)
+**Satuan jual & harga (multi-unit) — di halaman detail item, bukan di form create.** Klik baris **Ember Plastik 10L** di tabel (row-nya clickable, bukan tombol) → masuk `/items/[id]`. Di section "Satuan Jual & Harga", klik **+ Tambah Satuan**:
+- Baris pertama dipaksa jadi satuan dasar: field **Nama Satuan** & **Faktor Konversi** otomatis terkunci ke `pcs`/`1` (gak bisa diedit) — cuma **Harga (opsional)** yang bisa diisi. Kosongkan (Ember gak dijual per pcs langsung di walkthrough ini) → klik **Simpan Satuan**.
+- Klik **+ Tambah Satuan** lagi buat baris kedua: **Nama Satuan** = `lusin`, **Faktor Konversi (ke pcs)** = `12`, **Harga (opsional)** = `200000`. Klik **Simpan Satuan** → tabel Satuan Jual & Harga sekarang punya 2 baris: `pcs (dasar)` dan `lusin — faktor 12 — harga 200.000`.
 
-Bu Nur pesan ke Toko Tepung Makmur: 50kg Tepung Terigu, harga disepakati Rp10.000/kg.
+Ulangi pola yang sama (base + 1-2 satuan tambahan) buat **Piring Plastik** (base `pcs`, + `lusin` faktor 12 harga 18.000, + `pack` faktor 6 harga 10.000) dan **Gelas Plastik** (base `pcs`, + `lusin` faktor 12 harga 14.000, + `pack` faktor 6 harga 8.000) — sekadar demo CRUD `item_units`, gak dipakai transaksi di walkthrough ini karena keduanya `RAW_MATERIAL` (gak muncul di dropdown Goods Issue).
 
-`purchase_orders`: supplier = Toko Tepung Makmur, po_date = 1 Agustus. `purchase_order_lines`: qty_ordered = 50kg, unit_cost_expected = Rp10.000.
+Untuk **Paket Alat Makan** (dipakai transaksi Goods Issue nanti, jadi satuannya penting): base `pcs` harga `6000`, tambah satuan `paket besar` faktor `5` harga `28000` ("paket besar isi 5" — buat pesanan acara/grosir, harga per unitnya didiskon dari 5×6.000=30.000 jadi 28.000).
 
-**Belum ada jurnal** — baru komitmen.
+Kursi Plastik Lipat, Rak Plastik Serbaguna, Sendok-Garpu Plastik, Toples Plastik: **gak perlu** ditambah satuan jual (dijual/dipakai langsung di satuan dasarnya, atau gak pernah keluar lewat modul ini).
 
-## Tahap 2 — Tepung datang + nota (GRN+Bill, 5 Agustus 2026)
+Di halaman detail item juga keliatan **Qty On Hand** & **Avg Cost** (dari `inventory_balances`) — masih 0 buat semua item karena belum ada penerimaan barang.
 
-Barang datang persis sesuai pesanan: 50kg @ Rp10.000.
+## Tahap 2 — Purchase Order ke PT Plastindo Jaya (3 Agustus 2026)
 
-`goods_receipt_notes` (nunjuk PO tahap 1) + `goods_receipt_lines` (qty_received = 50kg, unit_cost = Rp10.000, cocok PO — gak ada selisih) → `ap_bills` (amount Rp500.000, due_date = 5 Agustus + 14 hari = **19 Agustus**, **tabel yang sudah ada, gak berubah**) → `inventory_balances` (Tepung Terigu): qty_on_hand 0 → **50kg**, avg_cost = **Rp10.000** (penerimaan pertama, sama pola kayak Gula Pasir di Tahap 3).
+**Menu:** Inventory → **Purchase Orders** (`/purchase-orders`). Klik **+ New**.
 
-Jurnal (via `create_ap_bill` yang sudah ada):
+- **Supplier**: `PT Plastindo Jaya`
+- **Tanggal PO**: `2026-08-03`
+- **Estimasi Tiba**: `2026-08-05`
+- **Rujukan dokumen (source_ref)**: `PO-PLASTINDO-014`
+- Baris item (klik **+ Tambah item** buat nambah baris):
+  1. Ember Plastik 10L — Qty Pesan `40` — Harga/Unit `18000`
+  2. Kursi Plastik Lipat — Qty Pesan `10` — Harga/Unit `45000`
+  3. Rak Plastik Serbaguna — Qty Pesan `8` — Harga/Unit `60000`
+
+Klik **Simpan PO**. Baris baru muncul di list dengan badge status **OPEN** (abu-abu). Klik baris itu → masuk `/purchase-orders/[id]`, keliatan detail: tanggal, rujukan, tabel "Item Dipesan" (Qty Pesan vs Qty Diterima — masih 0 — vs Harga/Unit), dan section "Goods Receipts" (masih kosong). **Belum ada jurnal apa pun** — PO cuma komitmen.
+
+## Tahap 3 — Terima Barang + Bikin Bill (Goods Receipt, 5 Agustus 2026)
+
+**Menu:** Inventory → **Goods Receipts** (`/goods-receipts`). Klik **+ New**.
+
+- **Purchase Order**: pilih `PO-PLASTINDO-014 — PT Plastindo Jaya` → begitu dipilih, baris "Item (sisa PO)" otomatis muncul, qty & harga ter-prefill dari PO
+- **Tanggal Terima**: `2026-08-05`
+- **No. Surat Jalan**: `SJ-PLASTINDO-014`
+- **Rujukan Bill (source_ref)**: `GRN-PLASTINDO-014`
+- **Deskripsi Bill**: `Terima ember/kursi/rak dari PT Plastindo Jaya`
+- **Akun Persediaan (debit)**: `1400 — Persediaan Bahan Baku`
+- **Akun Utang Usaha (kredit)**: `2100 — Utang Usaha`
+- Baris qty terima & harga riil dibiarkan sama persis dengan PO (gak ada selisih kali ini)
+
+Klik **Simpan Penerimaan**. List Goods Receipts nambah 1 baris (Supplier, PO, Tanggal, Items Diterima, Bill, Jumlah `1.650.000`). Klik baris → `/goods-receipts/[id]`: detail terima + "Bill" (`GRN-PLASTINDO-014` — `1.650.000`) + section "Jurnal Terkait":
 ```
-Debit  Persediaan Bahan Baku    500.000
-Kredit Utang Usaha                        500.000
+Debit  1400 Persediaan Bahan Baku   1.650.000
+Kredit 2100 Utang Usaha                        1.650.000
+```
+Balik ke `/purchase-orders/[id]` PO ini → status sekarang **FULLY_RECEIVED**, Qty Diterima = Qty Pesan tiap baris.
+
+`inventory_balances` sekarang: Ember 0→**40 @ 18.000**, Kursi 0→**10 @ 45.000**, Rak 0→**8 @ 60.000** (avg_cost = harga beli pertama, penerimaan pertama tiap item).
+
+## Tahap 4 — Ember Datang Lagi, Harga Naik (WA Recalculation, PO 12 Agustus → GRN 15 Agustus 2026)
+
+Distributor plastik dunia naikin harga. PO baru (`PO-PLASTINDO-015`, 12 Agustus): Ember Plastik 10L qty `40` @ harapan `18000` (sama seperti sebelumnya). GRN (`GRN-PLASTINDO-015`, 15 Agustus): qty diterima tetap 40 (gak ada masalah kuantitas), tapi **Harga Riil/Unit diisi manual jadi `20000`** — beda dari harga PO, sistem gak menolak (price variance cuma informasional, cuma qty yang dijaga ketat terhadap sisa PO).
+
+`inventory_balances` Ember dihitung ulang: `(40×18.000 + 40×20.000) ÷ 80 = 1.520.000 ÷ 80 = Rp19.000/pcs`. qty_on_hand jadi **80**. AP bill baru: `800.000` (40×20.000).
+
+Buka `/items/[id]` Ember Plastik 10L lagi → **Qty On Hand 80 pcs**, **Avg Cost / pcs 19.000** — 1 angka gabungan, gak ada jejak "yang mana dari batch mana" (Weighted Average, bukan FIFO).
+
+## Tahap 5 — Purchase Order + Goods Receipt ke CV Sumber Plastik (6–8 Agustus 2026)
+
+Beli komponen buat Paket Alat Makan + Toples (rawan pecah, dipakai nanti buat opname).
+
+**PO** (`/purchase-orders`, source_ref `PO-SUMBERPLASTIK-021`, tanggal `2026-08-06`, supplier `CV Sumber Plastik`):
+1. Piring Plastik — Qty `60` — Harga `1500`
+2. Gelas Plastik — Qty `60` — Harga `1200`
+3. Sendok-Garpu Plastik — Qty `5` — Harga `15000`
+4. Toples Plastik — Qty `30` — Harga `8000`
+
+**GRN** (`/goods-receipts`, 8 Agustus, delivery note `SJ-SUMBERPLASTIK-021`, bill ref `GRN-SUMBERPLASTIK-021`, akun sama seperti Tahap 3): qty diterima persis sesuai PO, gak ada selisih. AP bill: `60×1.500 + 60×1.200 + 5×15.000 + 30×8.000 = 90.000+72.000+75.000+240.000 = Rp477.000`.
+
+`inventory_balances`: Piring 0→**60 @ 1.500**, Gelas 0→**60 @ 1.200**, Sendok-Garpu 0→**5 pack @ 15.000**, Toples 0→**30 @ 8.000**.
+
+## Tahap 6 — Stock Position (Kartu Stok Semua Item, read-only)
+
+**Menu:** Inventory → **Stock Position** (`/inventory`). Halaman read-only, murni derived dari `inventory_balances` — gak ada form apa pun, cuma tombol **Refresh**. Tampil tabel: Item, Avg Cost, Qty Tersisa, Nilai Persediaan, plus **Grand Total** nilai seluruh persediaan di bawah tabel. Pak Herman cek sekilas di sini tiap mau lapor ke bank buat pengajuan modal tambahan (`docs/story/company-profile.md`) — gak perlu buka tiap item satu-satu.
+
+## Tahap 7 — Bikin Resep Paket Alat Makan (BOM)
+
+**Menu:** Inventory → **BOM** (`/bom`). Klik **+ New**.
+
+- **Barang Jadi**: `Paket Alat Makan (pcs)` — satu-satunya opsi karena dropdown ini cuma nampilin item `FINISHED_GOOD`
+- **Output per Batch**: `12`
+- Baris Bahan Baku (klik **+ Tambah bahan baku**):
+  1. Piring Plastik — Qty/Batch `12`
+  2. Gelas Plastik — Qty/Batch `12`
+  3. Sendok-Garpu Plastik — Qty/Batch `1` (1 pack isi 12 pas buat 12 paket)
+
+Klik **Simpan Resep**. List BOM nambah 1 baris: `Paket Alat Makan — 12 pcs/batch — [3 bahan baku] — Aktif`. Klik baris → `/bom/[id]`: detail resep + tabel bahan baku. Resep ini **mutable** (bisa dibikin baru/revisi kapan saja) — production order snapshot qty & biaya aktualnya sendiri, gak look-up ulang ke sini di kemudian hari.
+
+## Tahap 8 — Jalankan Produksi #1 (Production Order, 20 Agustus 2026)
+
+**Menu:** Inventory → **Production Orders** (`/production-orders`). Klik **+ New**.
+
+- **Resep (BOM)**: `Paket Alat Makan (12 pcs/batch)`
+- **Qty Diproduksi**: `12` (1 batch persis)
+- **Tanggal Produksi**: `2026-08-20`
+- **Rujukan dokumen**: `PROD-PAKET-001`
+- **Akun Persediaan Barang Jadi (debit)**: `1420 — Persediaan Barang Jadi`
+- **Akun Persediaan Bahan Baku (kredit)**: `1400 — Persediaan Bahan Baku`
+
+Klik **Jalankan Produksi**. Bahan baku dikonsumsi otomatis sesuai resep — gak diinput manual. Klik baris hasil di list → `/production-orders/[id]`: tabel "Konsumsi Bahan Baku" (Piring 12 pcs = 18.000, Gelas 12 pcs = 14.400, Sendok-Garpu 1 pack = 15.000, **Total Biaya 47.400**) + "Jurnal Terkait":
+```
+Debit  1420 Persediaan Barang Jadi    47.400
+Kredit 1400 Persediaan Bahan Baku              47.400
+```
+Masih **bukan HPP** — baru tukar bentuk aset (bahan baku → barang jadi), belum terjual. `inventory_balances` Paket Alat Makan: 0→**12 pcs @ avg Rp3.950** (47.400÷12). Sisa bahan baku: Piring 48, Gelas 48, Sendok-Garpu 4 pack.
+
+## Tahap 9 — Sales Order Toko Serba Ada Barokah (Pesanan Acara, Stok Belum Cukup, 22 Agustus 2026)
+
+Toko Serba Ada Barokah (pelanggan grosir volume besar) mau 30 Paket Alat Makan buat acara — tapi stok gudang cuma 12 (posisi Tahap 8). **Menu:** Inventory → **Sales Orders** (`/sales-orders`). Klik **+ New**.
+
+- **Customer**: `Toko Serba Ada Barokah`
+- **Tanggal Pesan**: `2026-08-22`
+- **Butuh Tanggal**: `2026-08-30`
+- **Rujukan dokumen**: `SO-BAROKAH-005`
+- Baris: Paket Alat Makan — Qty Pesan `30` — Harga/Unit `6000`
+
+Klik **Simpan Sales Order**. List nambah baris dengan badge **OPEN**. **Gak ada jurnal apa pun di titik ini** (halaman ini eksplisit bilang itu di atas form) — piutang & pendapatan baru diakui pas barang beneran dikirim lewat Goods Issue.
+
+## Tahap 10 — Produksi Tambahan (Production Order #2, 24 Agustus 2026)
+
+Sama pola Tahap 8: **Resep** `Paket Alat Makan`, **Qty Diproduksi** `24` (2 batch, pas habisin sisa 48 piring/48 gelas/4 pack sendok-garpu), **Tanggal Produksi** `2026-08-24`, **Rujukan** `PROD-PAKET-002`. Klik **Jalankan Produksi**.
+
+Biaya batch ini sama per-unit (harga komponen gak berubah): 24×3.950=94.800. `inventory_balances` Paket Alat Makan: `(12×3.950 + 24×3.950) ÷ 36 = Rp3.950/pcs` (avg gak berubah karena harga komponen konsisten), qty_on_hand → **36 pcs**.
+
+## Tahap 11 — Kirim Bertahap ke Toko Serba Ada Barokah (Fulfillment dari Detail SO, 26 & 29 Agustus 2026)
+
+Buka `/sales-orders/[id]` punya SO-BAROKAH-005 (klik baris di list Sales Orders). Karena status belum `FULLY_FULFILLED`, ada tombol **Kirim / Penuhi** di pojok kanan atas — **ini aksi transaksional, hidup di halaman detail, bukan di row list** (`memory/preferences/ui/admin-shell-design.md`).
+
+**Pengiriman 1 (26 Agustus, 18 pcs):** klik **Kirim / Penuhi** → form muncul, baris "Item (sisa SO)" ter-prefill qty sisa (`30`). Isi:
+- **Tanggal Kirim/Invoice**: `2026-08-26`
+- **Rujukan dokumen**: `Nota kirim tahap 1`
+- **Deskripsi**: `Kirim tahap 1 dari SO Barokah`
+- **Akun Piutang Usaha (debit)**: `1300 — Piutang Usaha`
+- **Akun Pendapatan (kredit)**: `4200 — Pendapatan Penjualan Grosir`
+- **Akun HPP (debit, jurnal kedua)**: `5100 — Harga Pokok Penjualan`
+- **Akun Persediaan Barang Jadi (kredit, jurnal kedua)**: `1420 — Persediaan Barang Jadi`
+- Ubah **Qty Kirim** baris Paket Alat Makan dari `30` jadi `18`. "Nilai invoice" otomatis update jadi `108.000` (18×6.000).
+
+Klik **Kirim & Terbitkan Invoice**. Trigger `goods_issue_lines_no_over_issue` cek 18 ≤ 30, lolos. Section "Pengiriman (Goods Issue + Invoice)" di halaman SO nambah 1 baris, badge status SO jadi **PARTIALLY_FULFILLED** (18/30 terkirim).
+
+Jurnal (2 sekaligus):
+```
+Debit  1300 Piutang Usaha              108.000
+Kredit 4200 Pendapatan Penjualan Grosir          108.000
+
+Debit  5100 Harga Pokok Penjualan       71.100   (18 × 3.950)
+Kredit 1420 Persediaan Barang Jadi                71.100
 ```
 
-## Tahap 3 — Pesan & terima gula (PO 3 Agustus → GRN+Bill 8 Agustus 2026)
+**Pengiriman 2 (29 Agustus, 12 pcs sisa):** klik **Kirim / Penuhi** lagi (baris sisa sekarang `12`). **Tanggal**: `2026-08-29`, **Rujukan**: `Nota kirim tahap 2`, akun-akun sama. Qty Kirim `12` (sisa penuh). Klik **Kirim & Terbitkan Invoice** → invoice KEDUA terbit terpisah:
+```
+Debit  1300 Piutang Usaha               72.000   (12 × 6.000)
+Kredit 4200 Pendapatan Penjualan Grosir           72.000
 
-Bu Nur pesan ke Toko Gula Sejahtera: 20kg Gula Pasir @ Rp13.000, datang 8 Agustus persis sesuai pesanan.
+Debit  5100 Harga Pokok Penjualan       47.400   (12 × 3.950)
+Kredit 1420 Persediaan Barang Jadi                47.400
+```
+Total terkirim 18+12=30 = qty_ordered → status SO jadi **FULLY_FULFILLED**, tombol "Kirim / Penuhi" hilang dari halaman detail (gak ada sisa buat dikirim). Klik salah satu baris di "Pengiriman" → lompat ke `/goods-issues/[id]` invoice itu, keliatan detail lengkap + jurnal HPP.
 
-`inventory_balances` (Gula Pasir): qty_on_hand 0 → **20kg**, avg_cost = **Rp13.000** (penerimaan pertama). `ap_bills`: amount Rp260.000, due_date = 8 Agustus + 7 hari = **15 Agustus**.
+`inventory_balances` Paket Alat Makan: 36→**6 pcs** (avg tetap 3.950, konsumsi gak ngubah rata-rata).
 
-Jurnal: `Debit Persediaan Bahan Baku 260.000 / Kredit Utang Usaha 260.000`
+## Tahap 12 — Penjualan Langsung ke Warung Bu Siti (Goods Issue Tanpa SO, Multi-Unit + Saran Harga, 2 September 2026)
 
-## Tahap 4 — Pesan tepung lagi, harga naik (PO 10 Agustus → GRN+Bill 15 Agustus 2026)
+Warung Bu Siti (grosir kecil) datang langsung minta 1 paket besar (isi 5) — barang ready, gak perlu lewat Sales Order. **Menu:** Inventory → **Goods Issues** (`/goods-issues`). Klik **+ New**.
 
-Bu Nur pesan lagi 50kg tepung, harapan harga sama (Rp10.000). Pas datang 15 Agustus, **harga naik jadi Rp11.000/kg** — dicatat apa adanya, gak diblokir (price variance informasional, cuma qty yang dijaga ketat terhadap PO).
+- **Customer**: `Warung Bu Siti`
+- **Tanggal**: `2026-09-02`
+- **Rujukan dokumen**: `Nota grosir #101`
+- **Deskripsi**: `Jual Paket Alat Makan ke Warung Bu Siti`
+- Baris "Barang Jadi Keluar": **Item** = `Paket Alat Makan (pcs)`, **Satuan Jual** = `paket besar (@28.000)`, **Qty** = `1`
+- Klik tombol **Saran** di sebelah field "Jumlah Pendapatan" → otomatis keisi `28000` (qty 1 × harga satuan `paket besar`). Field ini tetap bisa diedit manual kalau harga disepakati beda.
+- **Akun Piutang Usaha (debit)**: `1300 — Piutang Usaha`
+- **Akun Pendapatan (kredit)**: `4200 — Pendapatan Penjualan Grosir`
+- **Akun HPP (debit, jurnal kedua)**: `5100 — Harga Pokok Penjualan`
+- **Akun Persediaan Barang Jadi (kredit, jurnal kedua)**: `1420 — Persediaan Barang Jadi`
+- **Kategori Pendapatan Tambahan (opsional)**: dipakai kalau ada biaya tambahan yang mau ditagih terpisah (mis. "Jasa Antar") — kategorinya harus sudah didaftarkan lebih dulu di Settings → Kategori & Pajak (`/settings/charges`); di transaksi ini dikosongkan.
+- **Checkbox PPN Keluaran**: cuma muncul kalau `tax_settings.is_active = true` (diaktifkan admin di Settings → Kategori & Pajak). Kalau aktif dan dicentang, PPN dihitung otomatis dari subtotal saat submit — di transaksi ini dibiarkan gak dicentang.
 
-`goods_receipt_lines`: qty 50kg, unit_cost Rp11.000 (beda dari PO Rp10.000). `inventory_balances` (Tepung Terigu): rata-rata dihitung ulang — (50kg×10.000 + 50kg×11.000) ÷ 100kg = 1.050.000 ÷ 100 = **Rp10.500/kg**. qty_on_hand jadi **100kg**. `ap_bills`: amount Rp550.000, due_date = **29 Agustus**.
+Klik **Simpan Penjualan**. Konversi qty satuan jual → satuan dasar terjadi **di browser sebelum RPC dipanggil**: 1 paket besar × faktor 5 = **5 pcs** yang dikirim ke `create_goods_issue` (RPC tetap terima qty di satuan dasar, gak pernah lihat "1 paket besar").
 
-Kartu stok Tepung Terigu sekarang: qty_on_hand 100kg, avg_cost Rp10.500/kg — satu angka gabungan, gak ada lagi jejak "yang mana dari batch mana".
-
-## Tahap 5 — Gula datang lagi, harga turun (GRN+Bill, 20 Agustus 2026)
-
-20kg gula lagi, kali ini harga turun jadi Rp12.000/kg.
-
-`inventory_balances` (Gula Pasir): rata-rata dihitung ulang — (20kg×13.000 + 20kg×12.000) ÷ 40kg = 500.000 ÷ 40 = **Rp12.500/kg**. qty_on_hand jadi **40kg**.
-
-## Tahap 6 — Produksi 1 batch roti (Production Order, 22 Agustus 2026)
-
-Jalankan resep: pakai 5kg tepung + 1kg gula → hasil 50 buah Roti Tawar.
-
-`production_orders`: bom = Roti Tawar, qty_produced = 50 buah. `production_order_lines`: Tepung 5kg, Gula 1kg. `inventory_balances` (Tepung Terigu): konsumsi 5kg @ avg Rp10.500 = **Rp52.500** (`consumption_type = PRODUCTION_INPUT`), qty_on_hand turun ke 95kg, avg_cost **tetap** Rp10.500 (konsumsi cuma ngurangin qty, gak ngubah rata-rata). `inventory_balances` (Gula Pasir): konsumsi 1kg @ avg Rp12.500 = **Rp12.500**, sisa 39kg, avg tetap Rp12.500 — Weighted Average gak butuh baris per-lot kayak dulu, cukup update langsung `qty_on_hand` item itu.
-
-Total biaya produksi = Rp52.500 (tepung) + Rp12.500 (gula) = **Rp65.000** untuk 50 buah roti → **biaya per roti = Rp1.300**.
+`total_cost` dihitung dari `avg_cost` berlaku, bukan diketik manual: 5 pcs × Rp3.950 = **Rp19.750**.
 
 Jurnal:
 ```
-Debit  Persediaan Barang Jadi (Roti Tawar)   65.000
-Kredit Persediaan Bahan Baku                          65.000
+Debit  1300 Piutang Usaha              28.000
+Kredit 4200 Pendapatan Penjualan Grosir          28.000
+
+Debit  5100 Harga Pokok Penjualan       19.750
+Kredit 1420 Persediaan Barang Jadi                19.750
 ```
-Masih **bukan HPP** — roti belum terjual, baru pindah bentuk dari bahan mentah jadi barang jadi.
+**Laba kotor: Rp28.000 − Rp19.750 = Rp8.250.** Kalau dijual lepasan 5×Rp6.000=Rp30.000, marginnya lebih besar — tapi itu konsekuensi diskon grosir per-satuan yang disengaja (harga `paket besar` independen, bukan hasil kali otomatis dari harga `pcs`).
 
-**Output produksi ini masuk `inventory_balances` Roti Tawar** (bukan lot terpisah — konsep lot udah gak ada): qty_on_hand 0 → **50 buah**, avg_cost = **Rp1.300** (penerimaan pertama buat item ini, sama mekanisme kayak penerimaan pembelian — cuma sumbernya `PRODUCTION_INPUT/OUTPUT`, bukan `PURCHASE_RECEIPT`). Ini yang bakal jadi sumber HPP pas rotinya kejual.
+Klik baris di list Goods Issues → `/goods-issues/[id]`: detail invoice terkait, total HPP, tabel "Barang Keluar" (qty dalam **satuan dasar**, `5 pcs`), dan "Jurnal HPP Terkait".
 
-Perhatikan: production order Tahap 6 ini menyentuh **2 arah sekaligus** — Tepung Terigu (dan Gula Pasir) **keluar** dari `inventory_balances` masing-masing, sementara Roti Tawar **masuk** ke `inventory_balances`-nya sendiri. Dua kejadian berlawanan arah, dipicu 1 production order yang sama, dua-duanya cuma update qty_on_hand/avg_cost — gak ada lagi pemisahan mekanisme "konsumsi lot" vs "lot baru".
+`inventory_balances` Paket Alat Makan: 6→**1 pcs** (avg tetap 3.950).
 
-## Tahap 7 — Roti terjual ke Warung Pak Budi (Goods Issue + Invoice, 25 Agustus 2026)
+## Tahap 13 — Stock Opname (Hitung Fisik Bulanan, 10 September 2026)
 
-Jual 30 dari 50 buah roti, harga Rp2.000/buah = **Rp60.000 pendapatan**. Biaya pokok 30 buah = 30 × Rp1.300 = **Rp39.000**.
+Akhir bulan, Pak Herman hitung fisik gudang dan bandingin ke catatan sistem. **Menu:** Inventory → **Stock Opname** (`/stock-opnames`). Klik **+ New**.
 
-`goods_issues` (nunjuk `ar_invoices` yang dibuat bersamaan) + `goods_issue_lines`: 30 buah Roti Tawar. `total_cost`-nya **bukan angka manual** — dihitung dari `avg_cost` Roti Tawar yang berlaku saat itu di `inventory_balances`: 30 buah × Rp1.300 = **Rp39.000** (`consumption_type = SALES_ISSUE`). qty_on_hand Roti Tawar turun ke 20 buah, avg_cost tetap Rp1.300 (konsumsi gak ngubah rata-rata, cuma ngurangin qty).
+| Item | Qty Sistem | Hasil Hitung Fisik | Selisih | Sebab (narasi) |
+|---|---|---|---|---|
+| Ember Plastik 10L | 80 | 76 | −4 | Susut/kemungkinan hilang, gak ketauan sebabnya persis |
+| Toples Plastik | 30 | 26 | −4 | Pecah di gudang (rawan pecah) |
+| Kursi Plastik Lipat | 10 | 11 | +1 | Ada unit lama yang kelewat dicatat masuk |
 
-Dua jurnal jalan bersamaan (titik HPP akhirnya diakui):
+Isi form:
+- **Tanggal Opname**: `2026-09-10`
+- **Rujukan dokumen (nomor berita acara opname)**: `Opname-2026-09`
+- **Akun Beban Selisih Persediaan (selisih kurang)**: `6000 — Beban Selisih Persediaan`
+- **Akun Pendapatan Selisih Persediaan (selisih lebih)**: `4400 — Pendapatan Selisih Persediaan`
+- 3 baris (klik **+ Tambah item** buat tiap baris): pilih item di dropdown → kolom "Qty Sistem" otomatis nampilin qty berjalan (read-only, dari `inventory_balances`) → isi "Qty Hasil Hitung": Ember `76`, Toples `26`, Kursi `11`.
+
+Klik **Simpan Opname**. RPC `record_stock_opname` bikin **3 jurnal terpisah per baris** (BUKAN di-netting jadi 1 angka):
 ```
-(a) Debit Piutang Usaha        60.000
-    Kredit Pendapatan Penjualan          60.000
-
-(b) Debit Harga Pokok Penjualan (HPP)   39.000
-    Kredit Persediaan Barang Jadi                 39.000
+Ember (kurang):  Debit 6000 Beban Selisih Persediaan   76.000   / Kredit 1400 Persediaan Bahan Baku   76.000  (4 × 19.000)
+Toples (kurang): Debit 6000 Beban Selisih Persediaan   32.000   / Kredit 1400 Persediaan Bahan Baku   32.000  (4 × 8.000)
+Kursi (lebih):   Debit 1400 Persediaan Bahan Baku       45.000   / Kredit 4400 Pendapatan Selisih Persediaan 45.000 (1 × 45.000)
 ```
+Klik baris sesi opname di list → `/stock-opnames/[id]`: header nunjukin total "Beban Selisih (kurang)" `108.000` dan "Pendapatan Selisih (lebih)" `45.000` terpisah (bukan net Rp63.000), tabel per-item + "Jurnal Terkait" (3 baris jurnal).
 
-**Laba kotor transaksi ini: Rp60.000 − Rp39.000 = Rp21.000** (margin 35%).
-
-## Posisi Akhir per 25 Agustus 2026
-
-| Item | Sisa Qty | Nilai Persediaan |
-|---|---|---|
-| Tepung Terigu (Weighted Avg) | 95kg @ Rp10.500 | **Rp997.500** |
-| Gula Pasir (Weighted Avg) | 39kg @ Rp12.500 | **Rp487.500** |
-| Roti Tawar (barang jadi, Weighted Avg) | 20 buah @ Rp1.300 | **Rp26.000** |
-
-Total Persediaan = Rp997.500 + Rp487.500 + Rp26.000 = **Rp1.511.000**, ini yang muncul di Neraca. HPP Rp39.000 muncul di Laporan Laba Rugi bulan Agustus.
-
-## Tahap 8 — Jual pakai satuan "lusin" (Goods Issue + Invoice, 30 Agustus 2026)
-
-Lanjutan cross-modul: antara 25–30 Agustus, 3 buah Roti Tawar dari Tahap 7 sempat diretur rusak lalu ditukar garansi (`docs/story/accounts-receivable.md` Skenario 6 & 6b) — qty Roti Tawar per 30 Agustus jadi **17 buah @ Rp1.300** (gak berubah dari avg_cost, cuma qty yang turun karena penukaran barang).
-
-Barokah mulai nawarin satuan **lusin** (isi 12) buat pembelian grosir. Warung Bu Imas beli **1 lusin**.
-
-RPC `create_goods_issue` dipanggil — **qty yang dikirim tetap di satuan dasar** (`buah`), bukan "1" (maksudnya 1 lusin). Konversi terjadi di UI sebelum RPC dipanggil: 1 lusin × 12 (faktor konversi) = **12 buah**.
-
-```
-Qty dikonsumsi dari stok = 12 buah
-HPP = 12 buah × Rp1.300 (avg_cost berlaku)     = Rp15.600
-Pendapatan = 1 lusin × Rp22.000 (harga/lusin)  = Rp22.000
-```
-
-Dua jurnal jalan bersamaan (persis pola Tahap 7, cuma nominalnya dari harga per-lusin, bukan per-buah):
-```
-Debit Piutang Usaha        22.000
-  Kredit Pendapatan Penjualan     22.000
-
-Debit Harga Pokok Penjualan (HPP)  15.600
-  Kredit Persediaan Barang Jadi           15.600
-```
-
-**Laba kotor: Rp22.000 − Rp15.600 = Rp6.400.** Kalau dijual lepasan 12 buah @ Rp2.000 = Rp24.000, laba kotornya akan Rp24.000−15.600=Rp8.400 — lebih besar, tapi itu konsekuensi diskon grosir yang memang disengaja (harga per lusin bukan hasil kali otomatis dari harga per buah).
-
-`inventory_balances` Roti Tawar: qty_on_hand 17 → **5 buah** (avg_cost tetap Rp1.300, konsumsi gak ngubah rata-rata).
-
-## Tahap 9 — Stock Opname (Penyesuaian Stok Fisik, 10 September 2026)
-
-Lanjutan cross-modul: Gula Pasir sempat kena Opsi A retur (4kg, `docs/story/accounts-payable.md` Skenario 6) dan Opsi C write-off (2kg, Skenario 10) — posisi per 5 September jadi **33kg @ Rp12.500**.
-
-Awal bulan, Bu Nur hitung fisik seluruh gudang (bukan dipicu kejadian tertentu — cuma rutinitas bulanan) dan bandingin ke catatan sistem:
-
-| Item | Catatan Sistem | Hasil Hitung Fisik | Selisih |
-|---|---|---|---|
-| Tepung Terigu | 95kg | **90kg** | **Kurang 5kg** — kemungkinan lembap/susut, gak ketauan sebabnya persis |
-| Gula Pasir | 33kg | **36kg** | **Lebih 3kg** — kemungkinan ada penerimaan lama yang kelewat dicatat |
-
-RPC `record_stock_opname` dipanggil 1 kali buat kedua item sekaligus (1 sesi opname). Nilai selisih dihitung dari `avg_cost` masing-masing item **saat opname** (bukan harga historis):
-
-```
-Tepung Terigu: selisih 5kg × Rp10.500 (avg_cost berlaku) = Rp52.500 (kurang, jadi beban)
-Gula Pasir:    selisih 3kg × Rp12.500 (avg_cost berlaku) = Rp37.500 (lebih, jadi pendapatan)
-```
-
-Dua jurnal terpisah (BUKAN di-netting jadi 1 angka Rp15.000):
-
-```
-Tepung Terigu (kurang):
-Debit Beban Selisih Persediaan       52.500
-  Kredit Persediaan Bahan Baku              52.500
-
-Gula Pasir (lebih):
-Debit Persediaan Bahan Baku          37.500
-  Kredit Pendapatan Selisih Persediaan       37.500
-```
-
-`inventory_balances` disesuaikan langsung ke hasil hitung fisik — Tepung Terigu qty_on_hand 95 → **90kg** (avg_cost tetap Rp10.500, gak berubah), Gula Pasir qty_on_hand 33 → **36kg** (avg_cost tetap Rp12.500). Roti Tawar gak dihitung ulang sesi ini (hasil hitungnya pas 5 buah, sesuai catatan) — gak ada baris/jurnal buat item itu sama sekali.
+`inventory_balances` disesuaikan langsung ke hasil fisik (avg_cost gak berubah): Ember 80→**76**, Toples 30→**26**, Kursi 10→**11**.
 
 ## Posisi Akhir per 10 September 2026
 
-| Item | Sisa Qty | Nilai Persediaan |
-|---|---|---|
-| Tepung Terigu (Weighted Avg) | 90kg @ Rp10.500 | **Rp945.000** |
-| Gula Pasir (Weighted Avg) | 36kg @ Rp12.500 | **Rp450.000** |
-| Roti Tawar (barang jadi, Weighted Avg) | 5 buah @ Rp1.300 | **Rp6.500** |
+| Item | Qty | Avg Cost | Nilai Persediaan |
+|---|---|---|---|
+| Ember Plastik 10L | 76 pcs | 19.000 | 1.444.000 |
+| Kursi Plastik Lipat | 11 pcs | 45.000 | 495.000 |
+| Rak Plastik Serbaguna | 8 pcs | 60.000 | 480.000 |
+| Piring Plastik | 48 pcs | 1.500 | 72.000 |
+| Gelas Plastik | 48 pcs | 1.200 | 57.600 |
+| Sendok-Garpu Plastik | 4 pack | 15.000 | 60.000 |
+| Toples Plastik | 26 pcs | 8.000 | 208.000 |
+| Paket Alat Makan | 1 pcs | 3.950 | 3.950 |
 
-Total Persediaan = Rp945.000 + Rp450.000 + Rp6.500 = **Rp1.401.500**. Laporan Laba Rugi bulan September kena tambahan 2 baris: Beban Selisih Persediaan Rp52.500 dan Pendapatan Selisih Persediaan Rp37.500 — net-nya rugi Rp15.000, tapi keduanya tetap keliatan terpisah, gak ketimbun jadi 1 angka.
-
-## Tahap 10 — Pesanan Warung Pak Budi Dikirim Bertahap (Sales Order, 28 September – 2 Oktober 2026)
-
-Warung Pak Budi mau pesan 30 buah Roti Tawar buat acara syukuran RT, harga tetap Rp2.000/buah — tapi stok gudang saat ini cuma sisa 5 buah (posisi 10 September). Beda dari `Tahap 7`/`Tahap 8` (barang ready, langsung kirim), kali ini barangnya belum cukup pas dipesan.
-
-**28 September — Sales Order dibuat.** `create_sales_order`: customer Warung Pak Budi, 1 baris (Roti Tawar, `qty_ordered` 30, `unit_price` Rp2.000). **Gak ada jurnal apa pun** — belum ada piutang, belum ada pendapatan diakui, karena barangnya belum pindah tangan sama sekali.
-
-**29 September — Produksi tambahan.** Lewat mekanisme yang sama seperti `Tahap 6` (Production Order, konsumsi bahan baku via Weighted Average), gudang nambah 30 buah Roti Tawar baru — avg_cost tetap Rp1.300/buah. Stok sekarang 35 buah.
-
-**1 Oktober — Kirim tahap pertama (18 buah).** `create_goods_issue` dipanggil dengan baris `{item_id: Roti Tawar, qty_issued: 18, so_line_id: <baris SO Pak Budi>}`. Ini kejadian akuntansi pertama dari pesanan ini:
-```
-(a) Debit Piutang Usaha        36.000   (18 × Rp2.000)
-    Kredit Pendapatan Penjualan          36.000
-
-(b) Debit Harga Pokok Penjualan (HPP)   23.400   (18 × Rp1.300)
-    Kredit Persediaan Barang Jadi                 23.400
-```
-Trigger `goods_issue_lines_no_over_issue` ngecek: 18 ≤ 30 (qty_ordered), lolos. Status Sales Order jadi `PARTIALLY_FULFILLED` (18 dari 30 terkirim). Stok Roti Tawar sisa 17 buah.
-
-**2 Oktober — Kirim tahap kedua (12 buah, sisa pesanan).** `create_goods_issue` lagi, baris yang sama `so_line_id`-nya, `qty_issued: 12`. Invoice KEDUA terbit terpisah dari yang pertama:
-```
-(a) Debit Piutang Usaha        24.000   (12 × Rp2.000)
-    Kredit Pendapatan Penjualan          24.000
-
-(b) Debit Harga Pokok Penjualan (HPP)   15.600   (12 × Rp1.300)
-    Kredit Persediaan Barang Jadi                 15.600
-```
-Total terkirim sekarang 18 + 12 = 30, pas sama `qty_ordered` — status Sales Order jadi `FULLY_FULFILLED`. Kalau dipaksa kirim lagi (misal salah input 1 buah lebih), trigger nolak karena udah gak ada sisa qty_ordered.
-
-**Hasil akhir:** total piutang dari pesanan Pak Budi tetap Rp60.000 (sama kayak kalau dikirim sekaligus), cuma diakui di 2 invoice terpisah pada 2 tanggal berbeda — masing-masing persis sebesar barang yang beneran udah dikirim hari itu, bukan diakui penuh dari tanggal SO dibuat (28 September).
-
-## Simulasi Interface (rencana)
-
-Sama pola modul lain: setelah DDL (`inventory-schema.md`) dibangun + migration diterapkan, web app bakal punya halaman `/items` (master data barang + metode costing + kelola satuan jual & harga per satuan), `/purchase-orders` (bikin PO), `/goods-receipts` (terima barang, cocokkan ke PO, sekaligus bikin bill), `/bom` (kelola resep), `/production-orders` (jalankan produksi), `/stock-opnames` (list+create sesi hitung fisik, tiap baris input qty hasil hitung per item, selisih & jurnal dihitung otomatis pas submit), dan integrasi di `/ar-invoices` buat sekaligus bikin goods issue pas invoice dibuat. Form Goods Issue punya pemilih satuan jual per baris item (bukan cuma qty) — begitu satuan+qty dipilih, UI otomatis konversi ke satuan dasar & saranin nominal dari harga satuan itu. Detail flow menyusul pas fase UI dikerjakan.
+Total Persediaan ≈ **Rp2.820.550** — cek angka ini di `/inventory` (Stock Position, Grand Total di bawah tabel), muncul di Neraca. HPP bulan berjalan (Rp71.100 + Rp47.400 + Rp19.750 = Rp138.250) + Beban/Pendapatan Selisih Persediaan (Rp108.000 / Rp45.000) muncul di Laporan Laba Rugi.
 
 ## Lanjutan Story
 
-Fase berikutnya (Fixed Assets) akan menyusutkan oven tambahan & motor yang dibeli 2025 pakai pinjaman KUR (`company-profile.md`) — biaya penyusutan itu nanti juga jadi komponen biaya operasional di Laporan Laba Rugi, melengkapi gambaran biaya CV Roti Barokah di luar HPP bahan baku yang sudah dihitung di sini.
+Fase berikutnya (`docs/story/fixed-assets.md`) menyusutkan Mobil Pickup Antar Barang & Rak Display Toko — biaya penyusutan itu jadi komponen biaya operasional di Laporan Laba Rugi, melengkapi gambaran biaya Toko Plastik Makmur Jaya di luar HPP yang sudah dihitung di sini.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Account } from "@/lib/accounts/schema";
-import { computeAccountBalances, sumBalances } from "./balances";
+import { computeAccountBalances, rollupAccountBalances, sumBalances } from "./balances";
 import { computeTrialBalance } from "./trial-balance";
 import { computeIncomeStatement } from "./income-statement";
 import { computeBalanceSheet } from "./balance-sheet";
@@ -252,6 +252,42 @@ describe("computeCashFlow — angka domain doc", () => {
     expect(cf.netChange).toBe(500_000);
     expect(cf.beginningCash + cf.netChange).toBe(cf.endingCash);
     expect(cf.endingCash).toBe(10_500_000);
+  });
+});
+
+describe("rollupAccountBalances (memory/scope-debt/trial-balance-rollup.md)", () => {
+  const balances = computeAccountBalances(accounts, linesUpTo("2026-07-31"));
+  const rolled = rollupAccountBalances(accounts, balances);
+  const byCode = (code: string) => rolled.find((b) => b.code === code)?.balance;
+
+  it("sums leaf children up to their header account", () => {
+    // 1000 Kas = 1100 Kas (10.500.000), header sendiri gak pernah diposting langsung.
+    expect(byCode("1000")).toBe(10_500_000);
+  });
+
+  it("subtracts contra children from a header, not adds them", () => {
+    // 1600 Aset Tetap = 1610 Aset Tetap (15.000.000) - 1630 Akumulasi Penyusutan (250.000, kontra).
+    expect(byCode("1600")).toBe(14_750_000);
+  });
+
+  it("leaves leaf balances untouched", () => {
+    expect(byCode("1300")).toBe(4_000_000);
+  });
+
+  it("drops accounts with 0 rollup (no header without active descendants)", () => {
+    const noActivityHeader: Account = account({
+      code: "9000",
+      category: "asset",
+      normal_balance: "debit",
+    });
+    const noActivityLeaf: Account = account({
+      code: "9100",
+      category: "asset",
+      normal_balance: "debit",
+      parent_id: "9000",
+    });
+    const withEmpty = rollupAccountBalances([...accounts, noActivityHeader, noActivityLeaf], balances);
+    expect(withEmpty.some((b) => b.code === "9000")).toBe(false);
   });
 });
 

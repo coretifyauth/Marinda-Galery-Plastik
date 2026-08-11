@@ -1,111 +1,160 @@
-# Story — POS / Jualan Eceran: CV Roti Barokah
+# Story — POS / Jualan Eceran: Toko Plastik Makmur Jaya
 
-Konteks bisnis: `docs/story/company-profile.md` (poin: "1 kios kecil, jualan langsung ke pelanggan, bayar cash/QRIS di tempat"). Konsep: `docs/domain/pos.md`. ERD & DDL: belum dibangun, menyusul setelah desain data selesai.
+Konteks bisnis lengkap: `docs/story/company-profile.md` — baca itu dulu kalau belum. Konsep: `docs/domain/pos.md`. Struktur data & RPC: `memory/architecture/data/pos-schema.md`.
 
-Dibangun di luar urutan linear roadmap (Tax Handling/Fase 8 belum digarap) — kios ini sudah ada sejak awal cerita perusahaan, cuma belum pernah tercatat di sistem. Lanjutan langsung dari `docs/story/inventory.md` — posisi stok Roti Tawar per 10 September 2026: **5 buah @ avg_cost Rp1.300**.
+**Beda dari file story lain**: tujuan file ini bukan cuma ngerti konsepnya, tapi bener-bener **jalan-jalan di UI beneran** — buka app-nya, klik menu, isi field, klik tombol, cek hasilnya. Tiap bagian di bawah pola-nya: narasi singkat (kenapa ini kejadian di cerita toko Pak Herman) → langkah UI konkret → apa yang harus muncul di layar.
 
-> **Catatan latar belakang:** 30 Juli 2026, waktu Warung Pak Budi kena Credit Hold (`docs/story/accounts-receivable.md` Skenario 4), Bu Nur tetap kirim roti hari itu dan minta Pak Budi bayar cash — dicatat manual di luar sistem waktu itu (belum ada mekanisme resmi). POS sekarang jadi jalur resmi buat kejadian semacam itu.
+Dua app kepisah, dua login kepisah:
+- **`apps/pos`** — kios kasir. Layar penuh, tanpa sidebar admin, cuma dipakai Mbak Rina (role `cashier`). Kalau dijalankan lokal biasanya di port sendiri (misal `localhost:3001` kalau `apps/erp` sudah pakai `3000`) — sesuaikan sama setup `dev` kamu.
+- **`apps/erp`** — dipakai Pak Herman (role `admin`) buat lihat riwayat transaksi kios (`/pos-sales`), pembatalan, dan setup katalog biaya tambahan + pajak (`/settings/charges`).
 
-## Harga & Akun
+Mbak Rina **gak punya akses sama sekali** ke `apps/erp` — role `cashier` cuma bisa lewat RPC `create_pos_sale`, gak ada insert langsung ke tabel finansial manapun (`memory/architecture/data/pos-schema.md`).
 
-Kios pakai harga jual yang sama dengan harga dasar Roti Tawar (Rp2.000/buah, `item_units` di `docs/story/inventory.md`), tapi dicatat ke akun pendapatan yang **beda** dari penjualan ke warung — COA memang sudah dari awal menyediakan `4100 Pendapatan Penjualan Toko` terpisah dari `4200 Pendapatan Penjualan Grosir`, biar dua channel jualan ini kelihatan terpisah di laporan.
+## 1. Mbak Rina Login ke Kios
 
-## Skenario 1 — Penjualan tunai biasa (12 September 2026)
+Jam 8 pagi, Mbak Rina buka laptop kasir di ruko.
 
-Pelanggan lewat beli 2 buah Roti Tawar, bayar tunai. Walk-in, gak ada `customer_id`.
+**UI:**
+1. Buka `apps/pos` di browser (root URL langsung ke `/login` kalau belum ada sesi).
+2. Halaman **"Masuk Kasir — Toko Plastik Makmur Jaya"** muncul — form 2 field: **Email** dan **Password**.
+3. Isi email+password akun yang sudah dibuatkan Pak Herman sebelumnya (akun kasir gak bisa daftar sendiri di layar ini — teks kecil di bawah judul sudah bilang itu).
+4. Klik tombol **Masuk**.
+5. Berhasil → redirect ke `/` (halaman checkout). Kalau salah password, muncul pesan error merah di atas tombol.
+
+## 2. Checkout — Pembelian Retail Tunai (12 Agustus 2026)
+
+Ibu-ibu warga sekitar mampir beli perlengkapan dapur plastik buat rumah. Bayar tunai, gak ada relasi ke pelanggan grosir manapun.
+
+**UI (halaman checkout, `apps/pos` `/`):**
+1. Layar terbagi 2: kiri **grid katalog barang** (kartu per item: nama, harga per satuan, sisa stok), kanan **panel Keranjang**.
+2. Katalog cuma nampilin barang `item_type = FINISHED_GOOD` yang punya harga jual (`item_units`) — jadi barang yang emang siap dijual ke pembeli, misalnya **Ember Plastik 10L** (Rp35.000), **Piring Plastik** (Rp30.000/pack isi 6), **Gelas Plastik** (Rp28.000/pack isi 6).
+3. Klik kartu **Ember Plastik 10L** 2×. Tiap klik nambah qty di keranjang (kalau item belum ada di keranjang, klik pertama nambahin baris baru qty 1).
+4. Klik kartu **Piring Plastik** 1×.
+5. Di panel Keranjang, tiap baris ada tombol **−**/**+** buat ubah qty langsung (tombol **+** otomatis disabled kalau qty udah nyentuh stok tersedia — no-oversell dicek dari `qtyOnHand` yang di-load bareng katalog) dan tombol **✕** buat hapus baris.
+6. Section **"Metode Bayar"** — klik tombol **Tunai** (default sudah kepilih, background gelap nandain aktif).
+7. Section **"Pelanggan (opsional)"** — biarin di **"Walk-in (tanpa nama)"**, gak usah pilih apa-apa (pembeli retail beneran, bukan salah satu dari 3 pelanggan grosir di `company-profile.md`).
+8. Cek ringkasan di bawah: Subtotal Barang = `2×35.000 + 1×30.000 = 100.000`. Belum ada Biaya Tambahan/PPN (belum diisi), jadi **Total = Rp100.000**.
+9. Klik tombol besar **Checkout** di paling bawah.
+10. Muncul pesan hijau **"Transaksi berhasil — total Rp100.000"**, keranjang otomatis kosong lagi, katalog di-refresh (stok Ember Plastik 10L & Piring Plastik berkurang sesuai qty yang barusan dibeli).
+
+**Yang kejadian di belakang layar** (RPC `create_pos_sale`, `security definer` — satu-satunya jalur tulis role `cashier`, lihat `memory/architecture/data/pos-schema.md`): 2 jurnal otomatis tercatat,
+```
+Debit Kas Toko (1100)                     100.000
+  Kredit Pendapatan Penjualan Toko (4100)         100.000
+
+Debit Harga Pokok Penjualan (5100)      <avg_cost>
+  Kredit Persediaan Barang Jadi (1420)            <avg_cost>
+```
+`Pendapatan Penjualan Toko` sengaja beda akun dari `Pendapatan Penjualan Grosir` yang dipakai AR Invoice ke 3 pelanggan grosir — biar dua channel jualan kelihatan terpisah di laporan.
+
+## 3. Checkout — Bayar QRIS (12 Agustus 2026)
+
+Pembeli lain beli **1 Kursi Plastik Lipat** (Rp75.000), bayar QRIS — duitnya masuk rekening bank toko, bukan laci kas fisik.
+
+**UI:**
+1. Klik kartu **Kursi Plastik Lipat** sekali.
+2. Di panel Metode Bayar, klik tombol **QRIS** (background gelap pindah ke situ, Tunai jadi gak aktif).
+3. Total tetap Rp75.000, klik **Checkout**.
+
+Jurnalnya beda cuma di akun debit: `Debit Kas di Bank (1200) 75.000 / Kredit Pendapatan Penjualan Toko 75.000`, plus baris HPP/Persediaan seperti biasa — akun bank kepilih otomatis dari `payment_method` yang kamu klik, bukan field terpisah yang perlu diisi manual.
+
+## 4. Setup Dulu di `apps/erp`: Kategori Biaya Tambahan & PPN
+
+Sebelum kasir bisa nambahin biaya packing atau kena PPN pas checkout, **Pak Herman (admin) wajib setup dulu** di `apps/erp` — kasir gak pernah pilih akun bebas, cuma milih dari katalog yang udah disiapkan.
+
+**UI (`apps/erp` `/settings/charges`, grup sidebar "Settings"):**
+1. Halaman **"Kategori & Pajak"** — 4 kartu berurutan: **Kategori Biaya Tambahan — POS**, **Kategori Pendapatan Tambahan — AR Invoice**, **Kategori Beban/Persediaan Tambahan — AP Bill**, **Pengaturan Pajak (PPN)**.
+2. Di kartu **"Kategori Biaya Tambahan — POS"**: isi field **Nama Kategori** dengan `Biaya Packing`, pilih **Akun** dari dropdown (misal akun pendapatan jasa yang udah ada di COA, atau akun baru kalau Pak Herman udah nambahin lewat `/accounts`). Klik **+ Tambah**.
+3. Baris baru muncul di tabel di atasnya: Nama "Biaya Packing", Akun terpilih, Status **Aktif** (badge hijau). Ada tombol **Nonaktifkan** di ujung kanan tiap baris kalau suatu saat kategori ini mau dipensiunkan (bukan dihapus — `archived_at` di-set, bukan delete row).
+4. Scroll ke kartu **"Pengaturan Pajak (PPN)"**. Centang checkbox **"Kios ini wajib pungut PPN (PKP)"**.
+5. Isi **Tarif PPN (%)** — default `11`, biarin apa adanya (tarif PPN Indonesia).
+6. Pilih **Akun PPN Keluaran (AR/POS)** dari dropdown (akun liability, misal "PPN Keluaran" kalau sudah ada di COA).
+7. Klik **Simpan Pengaturan Pajak**. Muncul teks kecil hijau "Tersimpan." di bawah tombol.
+
+Cuma role **admin** yang bisa isi form-form ini — kalau login sebagai `accountant`/role lain, field-nya kebaca tapi disabled dan gak ada tombol Simpan/Tambah (teks di atas halaman kasih tau: "Cuma role admin yang bisa ubah — kamu cuma bisa lihat").
+
+## 5. Checkout — Biaya Packing + PPN dalam 1 Transaksi (13 Agustus 2026)
+
+Toko Serba Ada Barokah (salah satu pelanggan grosir) kirim orang buat beli langsung di kios — borongan **10 Ember Plastik 10L** (Rp35.000/pcs) buat dibawa pulang saat itu juga, bukan lewat invoice grosir. Minta dibungkus rapi (kena Biaya Packing), dan diasumsikan kios ini sudah PKP jadi kena PPN 11% (mengikuti setup bagian 4 di atas).
+
+**UI (`apps/pos`):**
+1. Klik kartu **Ember Plastik 10L** sampai qty di keranjang jadi **10** (klik 10× atau klik lalu edit qty pakai tombol **+**).
+2. Subtotal Barang di ringkasan: `10 × 35.000 = 350.000`.
+3. Di section **"Biaya Tambahan (opsional)"**, klik **+ Tambah kategori** — muncul 1 baris baru: dropdown kategori + input nominal.
+4. Pilih **"Biaya Packing"** dari dropdown, isi nominal `10000` di kotak angka sebelahnya.
+5. Karena PPN sudah diaktifkan Pak Herman (bagian 4), muncul checkbox **"Kena PPN (11%)"** — centang.
+6. Ringkasan otomatis update:
+   ```
+   Subtotal Barang       350.000
+   Biaya Tambahan          10.000
+   PPN                     39.600   (11% × (350.000+10.000))
+   Total                   399.600
+   ```
+7. Pilih metode bayar **Tunai**, opsional pilih pelanggan **Toko Serba Ada Barokah** dari dropdown "Pelanggan" (murni buat riwayat/traceability — transaksi ini TETAP POS Sale tunai, bukan jadi piutang AR).
+8. Klik **Checkout** → sukses, total Rp399.600.
+
+Jurnal yang kebentuk otomatis (1 kredit basket item + 1 kredit packing + 1 kredit PPN, tetap 1 jurnal Kas yang sama — bukan 3 jurnal terpisah):
+```
+Debit Kas Toko                           399.600
+  Kredit Pendapatan Penjualan Toko               350.000
+  Kredit Biaya Packing (akun dari katalog)        10.000
+  Kredit PPN Keluaran                             39.600
+
+Debit Harga Pokok Penjualan            <total avg_cost 10 Ember>
+  Kredit Persediaan Barang Jadi                  <sama>
+```
+PPN dihitung sistem, bukan diketik kasir — kasir cuma centang checkbox.
+
+## 6. Checkout — Ditolak Karena Stok Gak Cukup
+
+Ada pembeli mau borong **50 Rak Plastik Serbaguna** sekaligus, padahal stok yang keliatan di kartu katalog cuma tinggal **12**.
+
+**UI:**
+1. Klik kartu Rak Plastik Serbaguna — tombol **+** di panel keranjang otomatis disabled begitu qty nyentuh 12 (dicek client-side dari `qtyOnHand`), jadi secara UI kamu gak bisa naikin lebih dari stok yang keliatan.
+2. Kalaupun devicenya sempat kerja dari data stok basi (jarang, tapi ini kenapa checkout WAJIB online) dan qty ilegal sempat ke-submit, `create_pos_sale` tetap ngecek ulang `inventory_balances` real-time di server SEBELUM bikin jurnal apa pun — kalau qty > stok beneran, RPC `raise exception`, checkout gagal total (no partial write), pesan error merah muncul di panel keranjang, keranjang gak ke-clear.
+
+## 7. Pak Herman Lihat Riwayat Transaksi Kios
+
+Sore hari, Pak Herman mau ngecek transaksi kios hari ini.
+
+**UI (`apps/erp` `/pos-sales`):**
+1. Halaman **"POS Sales — Toko Plastik Makmur Jaya"** — tabel list, kolom: Tanggal, Source Ref, Pelanggan, Metode Bayar, Total, Status.
+2. Transaksi bagian 2 (Ember+Piring tunai) muncul: Pelanggan **"Walk-in"**, Metode Bayar **"Kas Toko"**, Total **100.000**, Status badge hijau **"Normal"**.
+3. Transaksi bagian 5 (borongan + packing + PPN) muncul dengan Pelanggan **"Toko Serba Ada Barokah"**, Total **399.600**.
+4. Klik tombol **Refresh** di toolbar kalau mau re-fetch data terbaru tanpa reload halaman.
+5. **Klik salah satu baris** (misal transaksi Kursi Plastik Lipat QRIS bagian 3) — navigasi ke halaman detail `/pos-sales/[id]`.
+
+## 8. Detail Transaksi + Pembatalan (Void)
+
+Ternyata transaksi Kursi Plastik Lipat di bagian 3 salah — Mbak Rina kepencet QRIS padahal pembeli sebenarnya bayar tunai.
+
+**UI (`apps/erp` `/pos-sales/[id]`):**
+1. Header halaman: nama pelanggan/"Walk-in" + Source Ref, badge status ("Normal"), tanggal + "Bayar via Kas di Bank", dan di kanan atas **Total Rp75.000** + tombol **Batalkan** (cuma muncul kalau kamu login sebagai `admin`/`accountant` DAN transaksi belum pernah dibatalkan).
+2. Kartu info: Pelanggan, Akun Pendapatan, Total HPP.
+3. Tabel **"Barang Terjual"**: baris per item — Kursi Plastik Lipat, qty, harga satuan, total, HPP.
+4. Tabel **"Jurnal Terkait"**: 2 baris entry (jurnal Kas/Pendapatan dan jurnal HPP/Persediaan), tiap baris nunjukin semua `journal_lines`-nya (kode+nama akun, D/K nominal).
+5. Klik tombol **Batalkan**. Muncul `window.prompt` — isi rujukan dokumen buat entry pembalik, misal `Pembatalan salah metode bayar`. Klik OK.
+6. Setelah berhasil: badge status berubah jadi merah **"Dibatalkan"**, tombol Batalkan hilang (gak bisa dibatalkan dua kali), tabel Jurnal Terkait sekarang menampilkan 4 entry (2 asli + 2 pembalik).
+7. Mbak Rina input ulang transaksi yang benar (1 Kursi Plastik Lipat, Tunai) lewat `apps/pos` seperti bagian 2 — POS Sale baru, bukan edit yang lama (row asli TETAP ada di histori, gak pernah di-`UPDATE`/`DELETE`, konsisten pola immutability seluruh sistem).
+
+**Yang kejadian di balik layar** (`void_pos_sale`, `security invoker` — beda dari `create_pos_sale`, cuma admin/accountant yang manggil dan mereka udah lolos RLS biasa): kedua jurnal asli dibalik via `reverse_journal_entry`, DAN `inventory_balances` di-update manual buat balikin `qty_on_hand` Kursi Plastik Lipat (`avg_cost` gak disentuh) — beda dari sisi jurnal doang, karena reversing entry gak otomatis mulihin stok.
+
+## Ringkasan Alur
 
 ```
-Debit Kas Toko                    4.000
-  Kredit Pendapatan Penjualan Toko        4.000
-
-Debit Harga Pokok Penjualan       2.600   (2 buah × Rp1.300 avg_cost)
-  Kredit Persediaan Barang Jadi            2.600
+Mbak Rina (apps/pos)                    Pak Herman (apps/erp)
+─────────────────────                   ─────────────────────
+Login kasir
+Klik item → keranjang
+Pilih metode bayar
+(opsional) Biaya tambahan + PPN   <──── /settings/charges: siapkan
+(opsional) Pilih pelanggan               katalog kategori + Pengaturan Pajak
+Checkout → create_pos_sale
+                                          /pos-sales: lihat riwayat
+                                          /pos-sales/[id]: detail + Batalkan
+                                          → void_pos_sale kalau salah input
 ```
-
-`inventory_balances` Roti Tawar: qty_on_hand 5 → **3 buah** (avg_cost tetap Rp1.300). Laba kotor: Rp4.000 − Rp2.600 = **Rp1.400**.
-
-## Skenario 2 — Penjualan QRIS (12 September 2026)
-
-Pelanggan lain beli 1 buah, bayar QRIS — uangnya masuk rekening bank, bukan laci kas fisik.
-
-```
-Debit Kas di Bank                 2.000
-  Kredit Pendapatan Penjualan Toko        2.000
-
-Debit Harga Pokok Penjualan       1.300
-  Kredit Persediaan Barang Jadi            1.300
-```
-
-`inventory_balances` Roti Tawar: qty_on_hand 3 → **2 buah**.
-
-## Skenario 3 — Ditolak karena stok gak cukup (12 September 2026)
-
-Rombongan pelanggan mau beli 5 buah sekaligus. Stok tersisa cuma 2 buah.
-
-`create_pos_sale` cek stok real-time ke `inventory_balances` SEBELUM bikin jurnal apa pun — 5 > 2, `raise exception`. Transaksi gak jadi tercatat sama sekali (no partial write), kasir kasih tau pelanggan stok gak cukup. Ini persis alasan checkout POS wajib online (`docs/domain/pos.md`) — kalau devicenya sempat kerja dari data stok yang gak ter-update, dua kasir/dua pelanggan bisa sama-sama "berhasil" checkout barang yang sama padahal stoknya cuma cukup buat satu.
-
-## Skenario 4 — Pembatalan (Void), kasir salah input (12 September 2026)
-
-Kasir sadar transaksi Skenario 2 salah — pelanggan sebenarnya bayar tunai, bukan QRIS (salah pencet metode bayar). Transaksi dibatalkan lewat `void_pos_sale`, dicatat ulang yang benar.
-
-```
-Debit Pendapatan Penjualan Toko   2.000
-  Kredit Kas di Bank                       2.000
-
-Debit Persediaan Barang Jadi      1.300
-  Kredit Harga Pokok Penjualan             1.300
-```
-
-`inventory_balances` Roti Tawar: qty_on_hand 2 → **3 buah** (balik). Transaksi Skenario 2 tetap ada di histori (bukan dihapus), status "dibatalkan" — kasir input ulang transaksi yang benar (1 buah, tunai) sebagai POS Sale baru, jurnalnya sama pola Skenario 1 tapi nominal Rp2.000/Rp1.300. `inventory_balances` Roti Tawar akhirnya qty_on_hand **2 buah**.
-
-## Skenario 5 — Cash sale dikaitkan ke customer AR existing (13 September 2026)
-
-Pak Budi mampir langsung ke kios (bukan lewat jalur kirim ke warungnya), beli 1 buah Roti Tawar buat dimakan sendiri, bayar tunai. Kasir mengaitkan transaksi ini ke `customer_id` Pak Budi yang sudah terdaftar di AR — murni buat riwayat/traceability ("Pak Budi ini pelanggan lama"), **bukan** berarti transaksi ini jadi piutang. Jurnalnya identik Skenario 1 (Debit Kas Toko / Kredit Pendapatan Penjualan Toko, plus HPP/Persediaan), cuma baris `pos_sales.customer_id` terisi. Gak nyentuh `ar_invoices`/`ar_payments` sama sekali, gak kepengaruh status Credit Hold Pak Budi di AR.
-
-```
-Debit Kas Toko                    2.000
-  Kredit Pendapatan Penjualan Toko        2.000
-
-Debit Harga Pokok Penjualan       1.300
-  Kredit Persediaan Barang Jadi            1.300
-```
-
-`inventory_balances` Roti Tawar: qty_on_hand 2 → **1 buah**.
-
-## Posisi Akhir per 13 September 2026
-
-| Item | Sisa Qty | Nilai Persediaan |
-|---|---|---|
-| Roti Tawar (barang jadi, Weighted Avg) | 1 buah @ Rp1.300 | **Rp1.300** |
-
-Pendapatan Penjualan Toko (kumulatif skenario di atas, net dari void): Rp4.000 (Skenario 1) + Rp2.000 (Skenario 4, transaksi pengganti) + Rp2.000 (Skenario 5) = **Rp8.000**. Kas Toko bertambah Rp6.000 (Skenario 1 + pengganti Skenario 4), Kas di Bank net **Rp0** (Skenario 2 dan pembalikannya di Skenario 4 saling meniadakan).
-
-## Interface (sudah dibangun, 2026-08-09; diperluas 2026-08-10)
-
-App `apps/pos` (checkout kasir, laptop/desktop, layout sendiri tanpa admin shell, login sendiri) — layar tunggal: klik item buat nambah ke keranjang, keranjang jalan (running total, +/− qty per baris), pilih metode bayar (Tunai/QRIS), opsional pilih customer, tombol checkout manggil `create_pos_sale`. Riwayat transaksi ada di `apps/erp` — `/pos-sales` (list, grup sidebar baru "POS/Retail") + `/pos-sales/[id]` (detail: rincian baris item, 2 jurnal terkait, tombol "Batalkan" buat admin/accountant manggil `void_pos_sale`).
-
-Sejak 2026-08-10, checkout kasir juga punya baris "Biaya Tambahan" (pilih kategori dari katalog + isi nominal, bisa lebih dari 1 baris) dan checkbox "Kena PPN" (cuma muncul kalau admin sudah mengaktifkan PPN). Admin mengelola katalog kategori & Pengaturan Pajak di `apps/erp` `/settings/charges` (grup sidebar baru "Settings").
-
-## Skenario 6 — Biaya Packing + PPN dalam 1 Transaksi (14 September 2026, ilustrasi)
-
-**Catatan:** skenario ini murni ilustrasi cara kerja fitur "Kategori Biaya Tambahan & PPN" (migration `0025_compound_transactional_entries_schema.sql`) — CV Roti Barokah di cerita ini **belum** benar-benar terdaftar PKP (`tax_settings.is_active` tetap `false` secara default), jadi bagian PPN di bawah bersifat andaikata.
-
-Setelah restock produksi tambahan (mekanisme sama seperti `Tahap 6`/Sales Order `Tahap 9`), stok Roti Tawar cukup untuk pesanan borongan 10 buah, avg_cost tetap Rp1.300/buah. Pelanggan minta dibungkus rapi pakai kotak (kena **biaya packing Rp1.000**, kategori terpisah dari harga roti), dan diandaikan kios ini sudah PKP sehingga kena **PPN 11%**.
-
-Sebelum transaksi ini, Bu Nur sudah menyiapkan 1 kategori di halaman Pengaturan: "Biaya Packing" → akun `Pendapatan Jasa Packing`. Perhitungan: barang 10×Rp2.000 = Rp20.000, packing Rp1.000, dasar pengenaan pajak = Rp21.000, PPN 11% = Rp2.310.
-
-```
-Debit Kas Toko                          23.310
-  Kredit Pendapatan Penjualan Toko               20.000
-  Kredit Pendapatan Jasa Packing                  1.000
-  Kredit PPN Keluaran                             2.310
-
-Debit Harga Pokok Penjualan             13.000   (10 × Rp1.300)
-  Kredit Persediaan Barang Jadi                   13.000
-```
-
-Kasir cuma memilih "Biaya Packing" dari daftar + isi nominal, dan mencentang "Kena PPN" — PPN-nya sendiri dihitung otomatis, bukan diketik. Kalau transaksi ini salah input dan dibatalkan lewat `void_pos_sale`, KETIGA baris kredit (Pendapatan, Packing, PPN) ikut terbalik sekaligus — beda dari interim lama yang pernah dipertimbangkan (jurnal PPN manual terpisah, gak nempel ke `pos_sales` mana pun dan gak ikut kebalik otomatis).
 
 ## Lanjutan Story
 
-Kebijakan retur kios masih belum diputuskan Bu Nur (`memory/special-case/pos-retur-policy.md`) — begitu diputuskan, submodule baru bakal ditambahkan di sini.
+Kebijakan retur kios masih belum diputuskan (`memory/special-case/pos-retur-policy.md`) — begitu diputuskan, submodule baru bakal ditambahkan di sini.

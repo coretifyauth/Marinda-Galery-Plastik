@@ -1,110 +1,100 @@
-# Story — Chart of Accounts: CV Roti Barokah
+# Story — Chart of Accounts: Toko Plastik Makmur Jaya
 
-Fase 1. Konteks bisnis lengkap: `docs/story/company-profile.md`. Konsep COA: `docs/domain/chart-of-accounts.md`. Schema: `docs/architecture/coa-schema.md`.
+Fase 1. Konteks bisnis lengkap: `docs/story/company-profile.md`. Konsep COA: `docs/domain/chart-of-accounts.md`. Schema: `memory/architecture/data/coa-schema.md`.
 
-## Daftar Akun Bu Nur
+Beda dari versi lama file ini — sekarang ditulis sebagai **tutorial klik-per-klik di UI beneran**, bukan cuma cerita di atas kertas. Jalankan app-nya (`apps/erp`), login sebagai Pak Herman, terus ikutin langkah di bawah sambil beneran klik.
 
-Ini COA nyata yang dipakai buat CV Roti Barokah, disusun dari kebutuhan bisnisnya (bukan template generik):
+## Daftar Akun Pak Herman
+
+Ini COA yang dipakai buat Toko Plastik Makmur Jaya, disusun dari kebutuhan bisnisnya (retail + grosir, bukan template generik):
 
 ```
 1000 Kas                              (header)
-├── 1100 Kas Toko                     — laci kasir kios, cash/QRIS harian
-└── 1200 Kas di Bank                  — rekening operasional
-1300 Piutang Usaha                    — tagihan ke 3 warung langganan
-1400 Persediaan Bahan Baku            — tepung, gula, mentega, dst
+├── 1100 Kas Toko                     — laci kasir POS, cash/QRIS harian dipegang Mbak Rina
+└── 1200 Kas di Bank                  — rekening operasional Pak Herman
+1300 Piutang Usaha                    — tagihan ke 3 pelanggan grosir langganan
+1400 Persediaan Barang Dagang         — ember, kursi, rak, piring, gelas, dst
 1600 Aset Tetap                       (header)
-├── 1610 Peralatan Oven
-└── 1620 Kendaraan Motor              — motor antar ke warung
+├── 1610 Mobil Pickup Antar Barang    — dibeli 2024 pakai pinjaman bank
+└── 1620 Rak Display Toko             — dibeli 2023
 
-2100 Utang Usaha                      — utang ke 2 supplier tepung/gula
-2200 Utang Bank                       — pinjaman KUR 2025
+2100 Utang Usaha                      — utang ke PT Plastindo Jaya & CV Sumber Plastik
+2200 Utang Bank                       — cicilan pinjaman beli mobil pickup
 
 3100 Modal Pemilik
 3200 Laba Ditahan
 
-4100 Pendapatan Penjualan Toko        — jual langsung di kios
-4200 Pendapatan Penjualan Grosir      — jual ke 3 warung langganan
+4100 Pendapatan Penjualan Toko        — jual langsung ke pembeli umum di ruko
+4200 Pendapatan Penjualan Grosir      — jual ke 3 pelanggan grosir langganan
 
-5100 Harga Pokok Penjualan            — HPP roti terjual
-5200 Beban Gaji Karyawan
-5300 Beban Sewa Toko
+5100 Harga Pokok Penjualan            — HPP barang plastik terjual
+5200 Beban Gaji Karyawan              — gaji Mbak Rina
+5300 Beban Sewa Ruko
 5400 Beban Listrik dan Air
-5500 Beban Bunga Bank                 — bunga cicilan KUR
+5500 Beban Bunga Bank                 — bunga cicilan pinjaman mobil pickup
 ```
 
 **Kenapa dipisah gini:**
-- `1000 Kas` jadi header karena Bu Nur butuh 2 kebutuhan beda: tau kas fisik di laci kios (buat rekonsiliasi harian sama kasir) vs saldo bank (buat transfer/cek pinjaman) — tapi direksi/Bu Nur sendiri kadang cuma mau tau "kas total berapa", makanya di-rollup ke `1000`.
-- `4100` vs `4200` dipisah karena marginnya beda — jual di kios harga normal, jual grosir ke warung ada potongan harga. Bu Nur perlu tau mana yang lebih untung.
-- **Sengaja gak** dibikin akun kas per-cabang atau per-hari — itu common mistake over-granular yang disebut di `docs/domain/chart-of-accounts.md`. Kalau nanti kios nambah, cukup tambah dimensi lain (bukan akun baru).
-- **Belum ada** akun "Akumulasi Penyusutan" untuk oven/motor — itu bagian modul Fixed Assets (fase 6), sengaja ditunda karena butuh desain contra-asset yang belum dicover di schema `normal_balance` generated column sekarang (asset selalu debit; akun kontra-asset butuh perlakuan khusus, bukan celah yang perlu ditutup di fase 1).
+- `1000 Kas` jadi header karena Pak Herman butuh 2 kebutuhan beda: kas fisik di laci kios (rekonsiliasi harian sama Mbak Rina) vs saldo bank (transfer ke supplier, cek cicilan) — tapi kadang Pak Herman cuma mau tau "kas total berapa", makanya di-rollup ke `1000`.
+- `4100` vs `4200` dipisah karena marginnya beda — jual retail harga normal, jual grosir ke 3 pelanggan langganan ada potongan harga. Pak Herman perlu tau mana yang lebih untung.
+- **Sengaja gak** dibikin akun kas per-cabang atau per-hari — cuma 1 toko fisik, itu common mistake over-granular yang disebut di `docs/domain/chart-of-accounts.md`.
+- **Belum ada** akun "Akumulasi Penyusutan" untuk Mobil Pickup/Rak Display di daftar di atas — itu dipasang lewat modul Fixed Assets (lihat bagian "Akun Kontra" di bawah), bukan dibuat manual lewat form COA ini.
 
-Data ini beneran diinsert ke Supabase project kamu lewat `supabase/migrations/0003_seed_demo_coa.sql` — bukan cuma cerita di atas kertas, tapi data yang nempel di database asli dan bakal dipakai lagi pas fase Journal Entry (transaksi jual-beli roti bakal posting ke akun-akun ini).
+## Langkah 1 — Buka Chart of Accounts
 
-## Simulasi Interface
+Sidebar kiri → grup **Accounting** (icon Calculator, klik label buat expand kalau masih collapsed) → klik **Chart of Accounts**. URL: `/accounts`.
 
-Web app-nya sendiri sudah ada (`/login`, `/signup`, `/accounts` — lihat `src/app/`), tapi buat ngerasain lapisan RLS/grant secara eksplisit (bukan cuma "berhasil/gagal" di form), langkah di bawah masih pakai **Supabase Studio** (dashboard project kamu) + **curl ke REST API** langsung. Cara paling gampang buat punya akun sekarang: buka `/signup` di web app, isi email+password — gak perlu curl lagi buat langkah 4b.
+Yang harus muncul: tabel akun berbentuk tree (indentasi sesuai `parent_id`), kolom Kode/Nama/Kategori/Normal Balance, toolbar di atas tabel nunjukin judul list + jumlah akun. Kalau seed COA di atas udah jalan, cari `1600 Aset Tetap` — harusnya punya 2 anak (`1610`, `1620`) yang keindent ke kanan.
 
-### Langkah 1 — Jalankan seed data
+## Langkah 2 — Filter list by kategori
 
-Sudah dijalankan otomatis lewat `npx supabase db push` (migration `0003`). Kalau belum, jalankan itu dulu di terminal kamu.
+Klik tombol **Filter** di toolbar (kanan atas tabel, sebelah Refresh). Muncul baris filter di bawah toolbar dengan dropdown **Kategori**. Pilih `liability` — tabel harusnya cuma nyisain `2100 Utang Usaha` dan `2200 Utang Bank`. Balikin ke `Semua` buat lihat semua akun lagi.
 
-### Langkah 2 — Lihat hasilnya kayak user beneran
+## Langkah 3 — Tambah akun baru
 
-Buka Supabase Studio (dashboard project kamu) → **Table Editor** → tabel `accounts`. Urutkan by `code`. Perhatikan:
-- Kolom `normal_balance` **udah keisi otomatis** (debit/credit) — kamu gak pernah input itu manual, itu generated column dari `category`. Coba klik salah satu baris `liability`/`equity`/`revenue`, lihat semua otomatis `credit`.
-- Kolom `parent_id` di baris `1100`/`1200`/`1610`/`1620` nunjuk ke `id` baris `1000`/`1600` — itu yang bikin hierarki jalan tanpa perlu kolom "level" terpisah.
+Klik **+ New** (tombol biru di toolbar, cuma muncul kalau role kamu `admin`/`accountant` — Pak Herman punya `admin`). Form "Tambah Akun" muncul di bawah tabel, isi:
 
-### Langkah 3 — Coba "salah kategori" (common mistake) secara sengaja
+- **Kode**: `5600`
+- **Nama akun**: `Beban Pemeliharaan Kendaraan`
+- **Kategori**: pilih `expense` dari dropdown
+- **Akun induk**: biarin `Tanpa parent (header baru)` — ini bakal jadi leaf langsung di root, bukan child dari akun lain
 
-Di Table Editor, insert 1 baris percobaan: `code='9999'`, `name='Utang Coba-coba'`, `category='asset'` (padahal namanya kedengeran kayak utang/liability). Perhatikan: **sistem tetap nerima**, `normal_balance` keisi `debit` (ngikut category asset). Ini bukti nyata dari common mistake di domain doc — DB cuma jamin `normal_balance` konsisten sama `category`, tapi gak bisa cegah manusia salah pilih category dari sisi makna bisnisnya. Itu tanggung jawab proses/training user, bukan constraint DB. Habis dicoba, hapus lagi baris ini (`delete` di Table Editor) — dia cuma buat latihan, bukan bagian story asli.
+Klik **Simpan**. Perhatikan: kamu **gak pernah isi `normal_balance` manual** — field itu gak ada di form sama sekali, karena `normal_balance` derived otomatis dari `category` (`expense` → `debit`). Setelah simpan, scroll tabel — `5600 Beban Pemeliharaan Kendaraan` muncul dengan kolom Normal Balance = `debit`, tanpa kamu pernah isi itu.
 
-### Langkah 4 — Rasain RLS kayak app beneran (lewat curl)
+Coba juga bikin child account: ulangi form, **Kode** `1611`, **Nama** `Sparepart Mobil Pickup`, **Kategori** `asset`, **Akun induk** pilih `1610 — Mobil Pickup Antar Barang`. Setelah simpan, `1611` muncul terindent di bawah `1610` — itu hierarki lewat `parent_id`, bukan kolom "level" terpisah.
 
-Ganti `<ANON_KEY>` dan `<PROJECT_URL>` pakai punya kamu sendiri (ada di `.env.local`).
+## Langkah 4 — Klik ke Account Detail
 
-**4a. Coba baca tanpa login (anon) — harus ketolak:**
-```bash
-curl -s "<PROJECT_URL>/rest/v1/accounts?select=code,name" \
-  -H "apikey: <ANON_KEY>" -H "Authorization: Bearer <ANON_KEY>"
-```
-Ini bakal `permission denied` — sesuai desain, `accounts_select` policy nolak yang belum login.
+Klik salah satu baris akun (misal `1300 Piutang Usaha`) — seluruh row clickable, navigasi ke `/accounts/[id]`. Yang muncul di detail:
 
-**4b. Bikin 1 user test (misal karyawan admin Bu Nur), lalu login dapetin token:**
+- Header: kode + nama akun, badge kategori, badge "Normal debit/credit", badge "Diarsipkan" kalau ada.
+- Tab **Detail** (default aktif) — field Kode, Nama, Kategori, Normal Balance, Akun Induk, Status, ditampilkan read-only (`<dl>`, bukan form input).
+- Tab **Ledger** — histori transaksi akun ini (lihat Langkah 6).
 
-Cara termudah: daftar lewat `/signup` di web app (`admin@rotibarokah.test` / password bebas min. 6 karakter). Kalau mau ambil `access_token`-nya buat curl di langkah berikutnya, login lewat REST langsung:
-```bash
-curl -s "<PROJECT_URL>/auth/v1/token?grant_type=password" \
-  -H "apikey: <ANON_KEY>" -H "Content-Type: application/json" \
-  -d '{"email":"admin@rotibarokah.test","password":"TestPass123!"}'
-```
-(Atau kalau mau tetap murni curl tanpa web app, daftar dulu lewat `<PROJECT_URL>/auth/v1/signup` dengan body JSON yang sama sebelum login.)
+**Gap yang jujur harus dicatat**: halaman detail ini **belum punya form edit** — semua field cuma ditampilin, gak ada tombol "Save"/"Edit" di mana pun untuk akun. Jadi walau field kritikal (`code`, `category`, `normal_balance`, `parent_id`, `is_contra`) secara desain terkunci begitu akun dipakai di jurnal (`accounts_published_lock` trigger, DB-level) dan `name`/`archived_at` secara desain masih bebas diubah, saat ini **gak ada jalur UI buat beneran ubah nama atau arsipkan akun** — itu baru bisa lewat SQL langsung. Kalau kamu nemuin ini pas jalan-jalan di UI, itu memang belum digarap, bukan bug yang kamu lewatkan.
 
-**4c. Baca `accounts` pakai `access_token` dari langkah 4b (bukan anon key lagi) — sekarang harus berhasil:**
-```bash
-curl -s "<PROJECT_URL>/rest/v1/accounts?select=code,name" \
-  -H "apikey: <ANON_KEY>" -H "Authorization: Bearer <ACCESS_TOKEN>"
-```
-Berhasil, karena user ini sudah `authenticated` (walau belum punya role apa-apa) — sesuai desain, `accounts_select` emang dibuka buat semua yang login.
+## Langkah 5 — Lihat published-lock kerja (lewat jurnal, bukan lewat form edit)
 
-**4d. Coba insert akun baru pakai user ini — harus ketolak (belum ada role):**
-```bash
-curl -s "<PROJECT_URL>/rest/v1/accounts" -X POST \
-  -H "apikey: <ANON_KEY>" -H "Authorization: Bearer <ACCESS_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"code":"9998","name":"Test Insert","category":"asset"}'
-```
-Ketolak — `accounts_insert` butuh role `admin`/`accountant` di `user_roles`, user ini belum ada di situ.
+Karena belum ada form edit, cara paling konkret buat "ngerasain" published-lock adalah lewat banner di detail page. Buka akun yang **udah pernah dipakai** di journal entry (setelah kamu ikutin `docs/story/general-ledger.md` dan bikin minimal 1 entry yang nyentuh, misal, `1200 Kas di Bank`), balik ke `/accounts/[id]` akun itu, tab **Detail** — bakal muncul banner kuning:
 
-**4e. Kasih role `accountant` ke user ini** (lewat SQL Editor di Supabase Studio, bukan API — karena `user_roles` sengaja belum ada policy insert dari client):
-```sql
-insert into user_roles (user_id, role_name)
-select id, 'accountant' from auth.users where email = 'admin@rotibarokah.test';
-```
+> 🔒 Akun ini sudah dipakai di jurnal — code/category/normal_balance/parent_id/is_contra terkunci (`accounts_published_lock`). Cuma `name`/`archived_at` yang masih bisa diubah.
 
-**4f. Ulangi langkah 4d** — sekarang harusnya berhasil (201), karena RLS ngecek ulang dan user ini sekarang match `role_name in ('admin','accountant')`.
+Akun yang **belum pernah** dipakai (baru dibuat, misal `5600` dari Langkah 3) gak nampilin banner ini — itu bedanya "belum published" vs "udah published".
 
-Ini nunjukin end-to-end: schema, RLS, sama grant yang kita bangun kemarin beneran nyambung dan jalan kayak yang dirancang — bukan cuma lolos migration doang.
+## Langkah 6 — Tab Ledger di Account Detail
+
+Masih di `/accounts/[id]` akun yang sudah punya transaksi (misal `1200 Kas di Bank`), klik tab **Ledger**. Tabelnya nunjukin Tanggal, Deskripsi, Source Ref, Debit, Kredit, dan **Saldo Berjalan** (running balance, dihitung client-side dari urutan tanggal). Header halaman di atas tab juga nunjukin saldo akhir akun itu di pojok kanan atas — harus sama persis dengan baris terakhir kolom Saldo Berjalan di tab Ledger.
+
+Ini tab yang sama fungsinya kayak halaman `/general-ledger` yang berdiri sendiri (lihat `docs/story/general-ledger.md`) — bedanya di sini kamu udah "masuk" dari sisi akunnya (gak perlu pilih dari dropdown lagi).
+
+## Langkah 7 — Coba pelanggaran leaf-only posting
+
+Aturan: cuma akun **leaf** (gak punya child) yang boleh diposting transaksi — akun header (`1000 Kas`, `1600 Aset Tetap`) cuma nampung rollup. Balik ke Chart of Accounts (`/accounts`), lalu buka `/journal-entries` (lihat `docs/story/general-ledger.md` buat detail form-nya) — begitu kamu klik dropdown **Akun** di baris jurnal, `1000 Kas` dan `1600 Aset Tetap` **gak akan muncul di pilihan sama sekali**, cuma leaf account (`1100`, `1200`, `1300`, dst) yang kelihatan. Dropdown-nya udah difilter di client (`getLeafAccounts`), jadi kamu gak bisa salah pilih dari form manapun — trigger DB `journal_lines_leaf_only` cuma jadi jaring pengaman kalau ada yang nembak lewat RPC/SQL langsung, bukan sesuatu yang bisa kamu picu dari UI.
+
+## Akun Kontra (is_contra) — kenapa gak ada di form "+ New"
+
+Badge "Kontra" muncul di header detail page kalau `is_contra = true` (contoh nantinya: `Akumulasi Penyusutan Mobil Pickup`, contra dari `1610`). Tapi coba cek lagi form Langkah 3 — **gak ada field `is_contra` di sana sama sekali**. Itu bukan kelewatan nulis dokumen ini: `is_contra` cuma diset lewat modul Fixed Assets (posting depresiasi pertama kali otomatis bikin akun kontra-nya kalau belum ada) atau langsung lewat migration/SQL, bukan lewat form Chart of Accounts biasa — karena akun kontra butuh dipasangkan sama akun induknya secara sengaja, bukan sesuatu yang aman dibiarkan user pilih bebas dari dropdown kategori umum.
 
 ## Lanjutan Story
 
-Fase berikutnya (General Ledger + Journal Entries) bakal nulis transaksi pertama Bu Nur (jual roti hari ini, beli tepung minggu ini) yang posting ke akun-akun di atas. File barunya: `docs/story/general-ledger.md` (dibuat pas fase itu mulai).
+Fase berikutnya (General Ledger + Journal Entries) bakal nulis transaksi pertama Toko Plastik Makmur Jaya (setoran modal, jual retail, kirim ke pelanggan grosir) yang posting ke akun-akun di atas. File: `docs/story/general-ledger.md`.

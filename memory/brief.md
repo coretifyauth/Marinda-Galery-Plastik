@@ -70,8 +70,9 @@ Padanan naratif non-teknis (ERD dalam tabel, tanpa DDL/RPC/trigger mentah): `doc
 Ledger keputusan desain yang sengaja ditunda. 1 file = 1 konsep: kasus, kenapa ditunda, kapan perlu digarap, referensi balik ke domain/schema doc terkait. **Dihapus begitu statusnya jadi Selesai** (lihat "Aturan siklus hidup dokumen" di atas).
 
 Status saat ini — semua di bawah ini masih **Ditunda**:
-- `trial-balance-rollup.md` — dependency GL ke Fase 7.
 - `user-role-admin-assignment.md` — policy admin assign role, butuh `security definer` function.
+
+Item `trial-balance-rollup.md` sudah **Selesai** (2026-08-11) — `rollupAccountBalances`+`accountDepth` (`apps/erp/src/lib/reports/balances.ts`), dipakai halaman `/reports/trial-balance` buat nampilin akun header (rollup rekursif dari leaf child lewat `parent_id`, kontra dikurangkan). Detail: `memory/architecture/data/financial-reports-schema.md`. Sudah dihapus dari folder ini.
 
 Item `pos-offline-capability.md` **dihapus** (2026-08-10, bukan Selesai — ini bukan fitur yang ditunda buat dibangun nanti, tapi keputusan arsitektur yang dari awal isinya sudah "Keputusan final", jadi gak pernah benar-benar cocok sebagai scope-debt "Ditunda") — POS sengaja gak dibuat offline-capable, bentrok sama aturan no-oversell Inventory, keputusan pegang no-oversell (checkout wajib online) sudah diimplementasikan sejak POS pertama dibangun (2026-08-09). Rationale-nya dipindah jadi permanen di `memory/domain/pos.md` submodule "Konsep Inti" (poin no-oversell) — termasuk syarat kalau nanti direvisit harus bareng rediskusi kebijakan no-oversell Inventory, gak bisa sepihak. Ketauan gak konsisten pas user nanya kenapa file ini belum ikut dihapus bareng `compound-transactional-entries.md`/`tax-handling.md` — beda kasus sama sekali (dua itu emang fitur yang belum dibangun, ini keputusan yang sudah final & terimplementasi dari awal).
 

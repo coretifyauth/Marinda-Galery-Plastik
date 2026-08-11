@@ -1,186 +1,191 @@
-# Story — Financial Reports: CV Roti Barokah
+# Story — Financial Reports: Toko Plastik Makmur Jaya
 
-Fase 7. Konteks bisnis: `docs/story/company-profile.md` (poin 7 — tujuan akhir seluruh cerita: laporan keuangan yang bisa dibawa Bu Nur ke bank). Konsep: `docs/domain/financial-reports.md`. ERD & struktur data: `docs/architecture/financial-reports-schema.md`. 4 laporan (Trial Balance/Income Statement/Balance Sheet/Cash Flow) **gak ada migration baru** — murni agregasi read-only dari data yang sudah di-seed sepanjang cerita sejauh ini (COA `0003`, General Ledger `0005`, AR `0008`+`0009`, AP `0011`, Inventory `0013`, Fixed Assets `0015`). Period Closing beda — **ada migration baru**: `0016_period_closing.sql` (schema) + `0017_seed_demo_period_closing.sql` (nutup 2 periode beneran, lihat bagian 5 di bawah). Ini pertama kalinya story menggabungkan **seluruh fase sekaligus** jadi 1 set laporan utuh.
+Konteks bisnis lengkap: `docs/story/company-profile.md` — baca itu dulu kalau belum (poin: kenapa Pak Herman butuh laporan keuangan yang bener, bukan cuma buku tulis, buat suatu saat ajukan pinjaman modal tambahan ke bank). Konsep: `docs/domain/financial-reports.md`. Struktur data/read-model: `memory/architecture/data/financial-reports-schema.md`.
 
-Rentang waktu laporan ini: **10 Januari 2025** (akuisisi oven pertama, `docs/story/fixed-assets.md`) sampai **25 Agustus 2026** (transaksi terakhir yang ke-seed, penjualan roti ke Warung Pak Budi, `docs/story/inventory.md`). Semua angka di bawah dihitung langsung dari jurnal riil yang sudah tercatat di migration-migration itu — bukan angka ilustrasi (angka ilustrasi generik ada di `docs/domain/financial-reports.md`).
+**Beda dari file story lain**: tujuan file ini bukan cuma ngerti konsepnya, tapi bener-bener **jalan-jalan di UI beneran** — buka halaman, isi tanggal, baca tabel, klik tombol tutup buku. Tiap bagian pola-nya: narasi singkat → langkah UI konkret (menu/URL, field, tombol) → apa yang harus muncul di layar.
 
-## Kenapa Rentang Waktunya Sepanjang Ini (Sebelum Tutup Buku)
+4 laporan pertama (Trial Balance/Income Statement/Balance Sheet/Cash Flow) murni **read-only** — dihitung on-demand dari `journal_lines` yang sudah kamu isi lewat modul-modul sebelumnya (COA, General Ledger, AR, AP, Inventory, Fixed Assets — semuanya berbasis persona Pak Herman/Toko Plastik Makmur Jaya, tapi seed sekarang cuma COA doang, jadi angka di bawah ini **ilustrasi buat latihan** — silakan input sendiri transaksi serupa lewat `/journal-entries`, `/ar-invoices`, `/ap-bills`, `/pos-sales`, `/fixed-assets` biar laporan di sini beneran keisi pas kamu coba). Tutup Buku (Period Closing) beda — itu satu-satunya bagian modul ini yang **menulis** data.
 
-Bagian 1-4 di bawah ini adalah **snapshot SEBELUM `0017_seed_demo_period_closing.sql` dijalankan** — sengaja dipertahankan apa adanya (bukan dihapus/ditulis ulang) karena ini demonstrasi konkret kenapa Period Closing dibutuhkan. Tanpa Period Closing, akun Revenue/Expense di sistem ini gak pernah direset, jadi Income Statement & Cash Flow di bawah bukan "Laba Rugi Agustus 2026" yang bersih, tapi **kumulatif sejak transaksi pertama tercatat** (Januari 2025). Bagian 5 nunjukin gimana `close_period` (dibangun di migration `0016`) beneran menyelesaikan ini.
+## Skenario Latihan — Angka yang Dipakai di File Ini
 
-## Sumber Data
+Bayangin Pak Herman sudah jalanin sistem dari **1 Januari 2026**. Sampai **31 Agustus 2026**, riwayat transaksinya (disederhanakan jadi 7 kejadian, cukup buat nunjukin 4 laporan nyambung satu sama lain):
 
-| Fase | Migration | Kontribusi ke laporan |
-|---|---|---|
-| 1. COA | `0003_seed_demo_coa.sql` | Daftar akun awal |
-| 2. General Ledger | `0005_seed_demo_journal_entries.sql` | 6 transaksi generik Juli 2026 (modal, jual tunai, kirim grosir, beli bahan, gaji, cicilan KUR) |
-| 3. AR | `0008_seed_demo_ar.sql` | 3 invoice + 3 payment customer |
-| 4. AP | `0011_seed_demo_ap.sql` (+ akun kontra dari `0015`) | 6 bill + 4 payment supplier, 1 bill dibatalkan |
-| 5. Inventory | `0013_seed_demo_inventory.sql` (+ akun `1420` dari migration ini sendiri) | 4 penerimaan barang, 1 produksi, 1 penjualan barang jadi |
-| 6. Fixed Assets | `0015_seed_demo_fixed_assets.sql` | 2 akuisisi aset + 13 posting penyusutan (12x oven, 1x motor) |
+Saldo awal (1 Jan 2026): **Kas Toko Rp10.000.000**, **Modal Pemilik Rp10.000.000** (setoran awal Pak Herman).
 
-## 1. Trial Balance per 25 Agustus 2026
+1. **10 Jan** — Beli **Mobil Pickup Antar Barang** Rp15.000.000, langsung via pinjaman bank (KUR), gak ada kas yang kesentuh sama sekali: `Debit Aset Tetap (Mobil Pickup) 15.000.000 / Kredit Utang Bank 15.000.000`.
+2. **5 Feb** — Restock barang dari **PT Plastindo Jaya** (Ember Plastik 10L, Kursi Plastik Lipat) Rp3.000.000, setengah cash setengah utang: `Debit Persediaan Barang Jadi 3.000.000 / Kredit Kas Toko 1.500.000 / Kredit Utang Usaha 1.500.000`.
+3. **Sepanjang Feb–Agu** — Total penjualan Rp8.000.000: **Rp4.000.000 retail lewat kios** (POS, tunai, `docs/story/pos.md`) dan **Rp4.000.000 grosir ke Warung Bu Siti** (AR Invoice, belum lunas — masih Piutang):
+   ```
+   Debit Kas Toko                    4.000.000
+     Kredit Pendapatan Penjualan Toko        4.000.000
+   Debit Piutang Usaha                4.000.000
+     Kredit Pendapatan Penjualan Grosir      4.000.000
+   ```
+4. **Sama tanggal transaksi #3** — HPP atas penjualan itu: `Debit Harga Pokok Penjualan 2.000.000 / Kredit Persediaan Barang Jadi 2.000.000`.
+5. **Tiap bulan** — Gaji Mbak Rina (kasir) total Rp1.500.000 sampai Agustus: `Debit Beban Gaji Karyawan 1.500.000 / Kredit Kas Toko 1.500.000`.
+6. **Tiap bulan** — Penyusutan Mobil Pickup Rp250.000: `Debit Beban Penyusutan Mobil Pickup 250.000 / Kredit Akumulasi Penyusutan Mobil Pickup 250.000`.
+7. **Agustus** — Bayar cicilan utang ke PT Plastindo Jaya Rp500.000 tunai: `Debit Utang Usaha 500.000 / Kredit Kas Toko 500.000`.
+
+Angka-angka di 4 bagian laporan di bawah semuanya turunan langsung dari 7 kejadian ini — kalau kamu input ulang persis ini lewat UI, laporan yang kamu lihat harus persis sama.
+
+## 1. Trial Balance
+
+**UI:** buka `apps/erp` → sidebar **Accounting**... sebenarnya laporan gak masuk grup itu, dari topbar/menu **Reports** langsung ke `/reports` (halaman landing "Financial Reports"), klik kartu **Trial Balance** (icon timbangan) → `/reports/trial-balance`.
+
+1. Field **"Per Tanggal"** — isi `2026-08-31`, laporan otomatis reload tiap ganti tanggal (gak ada tombol submit terpisah).
+2. Tabel muncul, kolom: Kode, Akun, Kategori, Debit, Kredit.
 
 | Akun | Saldo | Sisi |
 |---|---|---|
-| 1100 Kas Toko | 500.000 | Debit |
-| 1200 Kas di Bank | 6.680.000 | Debit |
-| 1300 Piutang Usaha | 1.260.000 | Debit |
-| 1400 Persediaan Bahan Baku | 3.855.000 | Debit |
-| 1420 Persediaan Barang Jadi | 26.000 | Debit |
-| 1610 Peralatan Oven | 15.000.000 | Debit |
-| 1620 Kendaraan Motor | 24.000.000 | Debit |
-| 5100 Harga Pokok Penjualan | 39.000 | Debit |
-| 5200 Beban Gaji Karyawan | 2.000.000 | Debit |
-| 5500 Beban Bunga Bank | 150.000 | Debit |
-| 5600 Beban Penyusutan Oven | 3.000.000 | Debit |
-| 5610 Beban Penyusutan Motor | 9.600.000 | Debit |
-| 1630 Akumulasi Penyusutan Oven | 3.000.000 | Kredit (kontra) |
-| 1640 Akumulasi Penyusutan Motor | 9.600.000 | Kredit (kontra) |
-| 2100 Utang Usaha | 2.350.000 | Kredit |
-| 2200 Utang Bank | 38.000.000 | Kredit |
+| 1000 Kas *(header rollup, 1100+1200)* | 10.500.000 | Debit |
+| 1300 Piutang Usaha | 4.000.000 | Debit |
+| 1420 Persediaan Barang Jadi | 1.000.000 | Debit |
+| 1600 Aset Tetap *(header rollup, hanya 1620 Kendaraan Motor yang kepakai di skenario ini)* | 15.000.000 | Debit |
+| 1640 Akumulasi Penyusutan Motor | 250.000 | Kredit (kontra) |
+| 2100 Utang Usaha | 1.000.000 | Kredit |
+| 2200 Utang Bank | 15.000.000 | Kredit |
 | 3100 Modal Pemilik | 10.000.000 | Kredit |
-| 4100 Pendapatan Penjualan Toko | 500.000 | Kredit |
-| 4200 Pendapatan Penjualan Grosir | 2.660.000 | Kredit |
+| 4100 Pendapatan Penjualan Toko | 4.000.000 | Kredit |
+| 4200 Pendapatan Penjualan Grosir | 4.000.000 | Kredit |
+| 5100 Harga Pokok Penjualan | 2.000.000 | Debit |
+| 5200 Beban Gaji Karyawan | 1.500.000 | Debit |
+| 5610 Beban Penyusutan Motor | 250.000 | Debit |
 
-Total Debit = `500.000+6.680.000+1.260.000+3.855.000+26.000+15.000.000+24.000.000+39.000+2.000.000+150.000+3.000.000+9.600.000 = 66.110.000`
-Total Kredit = `3.000.000+9.600.000+2.350.000+38.000.000+10.000.000+500.000+2.660.000 = 66.110.000` ✓ **Balance.**
+Total Debit = `10.500.000+4.000.000+1.000.000+15.000.000+2.000.000+1.500.000+250.000 = 34.250.000`
+Total Kredit = `250.000+1.000.000+15.000.000+10.000.000+4.000.000+4.000.000 = 34.250.000` ✓
 
-(`1000 Kas` dan `1600 Aset Tetap` adalah akun header, gak pernah diposting langsung — leaf-only posting rule sejak Fase 1 — makanya gak muncul baris sendiri di sini, saldonya sudah terwakili anak-anaknya: `1100`+`1200` dan `1610`+`1620`.)
+3. Perhatiin baris **"1000 Kas"** dan **"1600 Aset Tetap"** — ini akun HEADER (`parent_id` null yang punya anak), ditampilin **tebal**, indentasinya lebih dangkal dari anak-anaknya (`1100 Kas Toko`/`1200 Kas di Bank` di bawahnya sedikit menjorok ke kanan). Ini fitur rollup (`rollupAccountBalances`/`accountDepth`, `apps/erp/src/lib/reports/balances.ts`) — header gak pernah diposting langsung (leaf-only posting rule), saldonya otomatis dijumlah dari leaf-nya buat tampilan. Total kolom Debit/Kredit di baris **Total** paling bawah tabel tetap dari leaf doang, biar gak dobel-hitung.
+4. Di bawah tabel muncul teks **"✓ Balance — total debit sama total kredit."** warna hijau. Kalau suatu saat merah ("✗ Gak balance"), itu bug di laporan turunan, BUKAN toleransi pembulatan yang boleh diabaikan.
 
-## 2. Income Statement (kumulatif, 10 Jan 2025 – 25 Agustus 2026)
+## 2. Income Statement (Laba Rugi)
+
+**UI:** dari `/reports`, klik kartu **Income Statement** (icon panah naik) → `/reports/income-statement`.
+
+1. Dua field tanggal: **"Dari Tanggal"** dan **"Sampai Tanggal"** — isi `2026-01-01` sampai `2026-08-31`.
+2. Section **Pendapatan**: baris per akun revenue + Total Pendapatan.
+3. Section **Beban**: baris per akun expense + Total Beban.
+4. Baris besar paling bawah: **Laba Bersih** (hijau) atau **Rugi Bersih** (merah) tergantung tanda.
 
 ```
-Pendapatan Penjualan Toko          500.000
-Pendapatan Penjualan Grosir      2.660.000
-Total Pendapatan                 3.160.000
+Pendapatan Penjualan Toko          4.000.000
+Pendapatan Penjualan Grosir        4.000.000
+Total Pendapatan                   8.000.000
 
-Harga Pokok Penjualan               39.000
-Beban Gaji Karyawan               2.000.000
-Beban Bunga Bank                    150.000
-Beban Penyusutan Oven             3.000.000
-Beban Penyusutan Motor            9.600.000
-Total Beban                      14.789.000
+Harga Pokok Penjualan              2.000.000
+Beban Gaji Karyawan                1.500.000
+Beban Penyusutan Motor               250.000
+Total Beban                        3.750.000
 
-Laba (Rugi) Bersih              (11.629.000)
+Laba Bersih                        4.250.000
 ```
 
-## 3. Balance Sheet per 25 Agustus 2026
+Beda dari Trial Balance: ini rentang tanggal, bukan 1 titik waktu — pindahin salah satu field tanggal, angkanya berubah total (misal persempit ke `2026-08-01`–`2026-08-31` doang, cuma transaksi Agustus yang kehitung).
+
+## 3. Balance Sheet (Neraca)
+
+**UI:** dari `/reports`, klik kartu **Balance Sheet** (icon bangunan) → `/reports/balance-sheet`.
+
+1. Field **"Per Tanggal"** — isi `2026-08-31`.
+2. Layout 2 kolom: kiri **Aset**, kanan **Liabilitas** + **Ekuitas** ditumpuk.
 
 ```
 Aset:
-  Kas (1100+1200)                              7.180.000
-  Piutang Usaha                                 1.260.000
-  Persediaan (1400+1420)                        3.881.000
-  Aset Tetap (nilai perolehan, 1610+1620)      39.000.000
-  Akumulasi Penyusutan (1630+1640)            (12.600.000)
-  Total Aset                                   38.721.000
+  Kas (1100+1200)                              10.500.000
+  Piutang Usaha                                  4.000.000
+  Persediaan Barang Jadi                         1.000.000
+  Aset Tetap (nilai perolehan)                  15.000.000
+  Akumulasi Penyusutan                            (250.000)
+  Total Aset                                    30.250.000
 
 Liabilitas:
-  Utang Usaha                                   2.350.000
-  Utang Bank                                   38.000.000
-  Total Liabilitas                             40.350.000
+  Utang Usaha                                    1.000.000
+  Utang Bank                                    15.000.000
+  Total Liabilitas                              16.000.000
 
 Ekuitas:
-  Modal Pemilik                                10.000.000
-  Laba Ditahan (closing dari Income Statement)(11.629.000)
-  Total Ekuitas                                (1.629.000)
+  Modal Pemilik                                 10.000.000
+  Laba Ditahan (dihitung ulang dari Income Statement)  4.250.000
+  Total Ekuitas                                 14.250.000
 
-Liabilitas + Ekuitas = 40.350.000 + (1.629.000) = 38.721.000 = Total Aset ✓ Balance.
+Total Liabilitas + Ekuitas = 16.000.000 + 14.250.000 = 30.250.000 = Total Aset ✓
 ```
 
-`Laba Ditahan` di sini **bukan baris yang pernah diposting via journal entry** — dihitung langsung oleh laporan ini dari Laba Bersih Income Statement (persis seperti dijelaskan di `docs/domain/financial-reports.md`: "Laba Bersih 'masuk' ke Equity lewat closing entry", yang levelnya laporan/kalkulasi, bukan transaksi baru di `journal_lines`).
+3. Perhatiin baris **Akumulasi Penyusutan** ditampilin dalam kurung `(250.000)` dengan badge kuning **"Kontra"** di sebelah namanya — ini kontra-aset, dikurangkan dari total Aset, bukan ditambah.
+4. Baris **"Laba Ditahan (dihitung ulang dari Income Statement)"** — ini BUKAN saldo dari akun `3200 Laba Ditahan` yang pernah diposting via jurnal, ini dihitung ulang tiap kali halaman ini dibuka dari Laba Bersih (bagian 2). Detail kenapa gitu: `memory/architecture/data/financial-reports-schema.md` bagian Balance Sheet.
+5. Di bawah, teks **"✓ Balance — Total Aset sama dengan Total Liabilitas + Ekuitas."**
 
-## 4. Cash Flow — Indirect Method (10 Jan 2025 – 25 Agustus 2026)
+## 4. Cash Flow (Arus Kas) — Indirect Method
+
+**UI:** dari `/reports`, klik kartu **Cash Flow** (icon ombak) → `/reports/cash-flow`.
+
+1. Field **"Dari Tanggal"** `2026-01-01`, **"Sampai Tanggal"** `2026-08-31`.
+2. 3 section: **Operating**, **Investing**, **Financing**, lalu kotak abu-abu di bawah buat rekonsiliasi.
 
 ```
 Operating:
-  Laba (Rugi) Bersih                         (11.629.000)
-  + Beban Penyusutan (add-back, 3.000.000+9.600.000)   12.600.000
-  - Kenaikan Piutang Usaha (0 -> 1.260.000)              (1.260.000)
-  - Kenaikan Persediaan (0 -> 3.881.000)                 (3.881.000)
-  + Kenaikan Utang Usaha (0 -> 2.350.000)                 2.350.000
-  = Kas Bersih Operating                                 (1.820.000)
+  Laba Bersih                                4.250.000
+  + Beban Penyusutan (add-back)                250.000
+  − Kenaikan Piutang Usaha (0 → 4.000.000)  (4.000.000)
+  − Kenaikan Persediaan (0 → 1.000.000)     (1.000.000)
+  + Kenaikan Utang Usaha (0 → 1.000.000)     1.000.000
+  Kas Bersih Operating                         500.000
 
 Investing:
-  Akuisisi Oven & Motor — non-kas (langsung Utang Bank via KUR)         0
+  Kas Bersih Investing                               0
 
 Financing:
-  Setoran Modal Pemilik                                  10.000.000
-  Bayar cicilan pokok Utang Bank (KUR)                    (1.000.000)
-  = Kas Bersih Financing                                   9.000.000
+  Kas Bersih Financing                               0
 
-Kenaikan Kas Bersih                                        7.180.000
+Kenaikan (Penurunan) Kas Bersih                  500.000
+
+Kas Awal                                    10.000.000
++ Kenaikan Kas Bersih                          500.000
+= Kas Akhir (hasil hitungan)                10.500.000
+Saldo Kas di Trial Balance (fakta)          10.500.000
 ```
 
-Investing bernilai 0 bukan kelalaian — akuisisi oven (`KUR-OVEN-001`) dan motor (`KUR-MOTOR-001`) di `0015_seed_demo_fixed_assets.sql` sama-sama `Debit Aset / Kredit Utang Bank`, gak ada baris Kas tersentuh sama sekali. Persis kasus "non-cash investing & financing" yang dijelaskan di `docs/domain/financial-reports.md` — cuma di sini bukan lagi contoh ilustrasi, ini transaksi asli yang ke-seed.
+3. **Investing bernilai 0** bukan kelalaian — Mobil Pickup (transaksi #1) dibeli `Debit Aset Tetap / Kredit Utang Bank` langsung, gak ada baris Kas yang kesentuh. Ini "non-cash investing & financing", tetap dilaporkan sebagai footnote (nilai 0 di section-nya), bukan disembunyikan.
+4. Di bawah, teks **"✓ Match — Kas Akhir hasil hitungan sama dengan saldo Kas di Trial Balance."** — ini validasi wajib: kalau gak match, bug-nya di logic Cash Flow, bukan di Trial Balance (yang selalu benar langsung dari `journal_lines`).
 
-Bunga cicilan KUR (Rp150.000, `5500 Beban Bunga Bank`) sudah otomatis lewat lewat Laba Bersih di Operating (Indirect method gak butuh baris terpisah buat itu); yang muncul terpisah di Financing cuma pokok pinjamannya (Rp1.000.000), karena itu murni transaksi neraca (mengurangi Utang Bank), bukan beban.
+## 5. Tutup Buku (Period Closing) — Satu-satunya Laporan yang Menulis
 
-### Validasi
+Akhir Agustus 2026, Pak Herman mau nutup buku periode Januari–Agustus 2026 biar Laba Bersih periode ini "resmi" — gak keubah diam-diam kalau ada transaksi telat masuk nanti, dan biar Revenue/Expense ke-reset buat mulai periode baru.
+
+**UI:** dari `/reports`, klik kartu **Tutup Buku** (icon gembok) → `/reports/period-closing`. **Cuma role `admin`/`accountant` yang bisa lihat form ini** — role lain cuma lihat riwayat penutupan di bawahnya.
+
+1. Kartu **"Tutup Periode Baru"** — kalau ini penutupan pertama, gak ada hint periode sebelumnya. Isi:
+   - **Dari Tanggal**: `2026-01-01`
+   - **Sampai Tanggal**: `2026-08-31`
+   - **Akun Laba Ditahan**: pilih dari dropdown (cuma nampilin akun kategori `equity`) — pilih `3200 Laba Ditahan`.
+   - **Rujukan Dokumen**: isi bebas, misal `TUTUP-BUKU-2026-S1`.
+2. Baca dulu hint di bawah form: *"Saldo Pendapatan/Beban dihitung ulang langsung dari data jurnal saat ini... Setelah ditutup, rentang ini gak bisa dibuka lagi — koreksi cuma bisa lewat entry baru di periode berjalan."* — **ini beneran gak ada tombol undo**, jangan klik kalau masih ragu tanggalnya.
+3. Klik tombol **Tutup Periode**. RPC `close_period` jalan: hitung ulang saldo semua akun Revenue/Expense yang aktif di rentang itu LANGSUNG dari `journal_lines` (gak percaya angka dari laporan yang mungkin sudah kamu lihat sebelumnya), bikin 1 closing entry buat nol-in semuanya + pindahin selisihnya ke `3200 Laba Ditahan`, lalu kunci rentang `2026-01-01`–`2026-08-31` dari transaksi baru.
+4. Setelah sukses, tabel **"Riwayat Penutupan"** di bawah nambah 1 baris: Dari `2026-01-01`, Sampai `2026-08-31`, Rujukan `TUTUP-BUKU-2026-S1`, Closing Entry **"Ada (nol-in Pendapatan/Beban)"**.
+5. Coba isi form lagi buat nutup periode yang OVERLAP (misal `2026-06-01`–`2026-07-31`, yang udah masuk rentang tertutup) — submit bakal ditolak, `FormError` merah muncul dengan pesan dari database (constraint `exclude using gist` + validasi kontiguitas di RPC).
+
+### Efek Setelah Tutup Buku — Coba Balik Lagi ke Trial Balance & Income Statement
+
+6. Buka lagi `/reports/trial-balance`, tanggal `2026-08-31` — **totalnya TETAP 34.250.000**, gak berubah. Tapi sekarang akun `4100`/`4200`/`5100`/`5200`/`5610` semuanya **0** (udah dinolkan closing entry), dan `3200 Laba Ditahan` sekarang punya saldo **nyata, keposting**, Rp4.250.000 — bukan lagi cuma dihitung ulang kayak sebelum ditutup.
+7. Buka lagi `/reports/income-statement`, isi tanggal PERSIS rentang yang barusan ditutup (`2026-01-01`–`2026-08-31`) — **HARUS tetap muncul Pendapatan 8.000.000 / Beban 3.750.000 / Laba Bersih 4.250.000**, angka historis yang sama, BUKAN 0. Ini titik penting: closing entry Periode ini sendiri bertanggal `2026-08-31`, persis di ujung rentang yang di-query ulang — kalau baris closing entry ikut kehitung, dia bakal MEMBATALKAN BALIK saldo yang baru aja dinolkan, hasilnya 0 padahal seharusnya nampilin angka historis. `getIncomeStatement` secara eksplisit **mengabaikan baris dari closing entry** (`fetchClosingJournalEntryIds()`, cek `period_closings.journal_entry_id`) sebelum menjumlahkan, jadi angka historis tetap kebaca kapan pun laporan ini dibuka lagi.
+8. Trial Balance & Balance Sheet **SENGAJA gak exclude** baris closing entry (beda dari Income Statement) — keduanya justru butuh efek closing entry ikut kehitung, biar saldo kumulatif Revenue/Expense beneran keliatan udah dinol-in.
+9. Coba catat transaksi baru lewat modul mana pun (misal `/journal-entries` bikin entry manual) dengan tanggal `2026-07-15` (masuk rentang tertutup) — bakal ditolak trigger database dengan pesan *"Tanggal 2026-07-15 sudah masuk periode yang ditutup..."*. Ganti tanggalnya ke `2026-09-01` (periode berjalan, belum ditutup) — berhasil normal.
+
+## Ringkasan Alur
 
 ```
-Kas Awal (sebelum transaksi pertama sistem, 10 Jan 2025)                   0
-+ Kenaikan Kas Bersih (hasil hitungan Cash Flow di atas)          7.180.000
-= Kas Akhir (hasil hitungan Cash Flow)                            7.180.000
-                          HARUS SAMA DENGAN
-Saldo Kas di Trial Balance sekarang (1100+1200)                  7.180.000
+Trial Balance (1 titik waktu, semua akun)
+      ↓ Revenue/Expense
+Income Statement (1 rentang tanggal) ──→ Laba Bersih
+      ↓
+Balance Sheet (1 titik waktu) ──→ Laba Ditahan = Laba Bersih
+      ↓ + 2× Trial Balance (awal & akhir rentang)
+Cash Flow (1 rentang tanggal) ──→ rekonsiliasi ke Kas Trial Balance
+
+Tutup Buku (nulis) ──→ nol-in Revenue/Expense periode itu, kunci dari transaksi retroaktif,
+                        Income Statement tetap bisa di-query ulang buat periode itu (angka historis
+                        gak berubah), gak ada jalur buka lagi.
 ```
-
-**Match** — 4 laporan konsisten dari ujung ke ujung, ditarik dari data riil lintas 6 fase, gak ada angka yang "bocor" di tengah jalan.
-
-## Catatan: Kenapa Laba Bersih-nya Minus (Rugi)
-
-Angka Rp11.629.000 rugi ini keliatan mengkhawatirkan, tapi ini **artefak bentuk data demo**, bukan cerminan bisnis Bu Nur beneran gagal — dan justru ini pelajaran pentingnya:
-
-- **Beban Penyusutan (Rp12.600.000) mewakili SATU TAHUN PENUH 2025** (12x posting bulanan oven + 1x posting tahunan motor) untuk 2 aset besar (Rp15jt & Rp24jt) yang dibeli sekaligus di awal.
-- **Pendapatan (Rp3.160.000) cuma mewakili segelintir transaksi ilustratif** dari cerita Juli-Agustus 2026 (6 baris General Ledger + beberapa invoice AR + 1 penjualan roti) — jauh dari skala transaksi harian CV Roti Barokah yang sebenarnya (kios + 3 warung langganan, tiap hari).
-- Karena bagian 1-4 di atas itu snapshot **sebelum** Period Closing dijalankan, kedua angka yang beda skala waktu ini (beban 1 tahun penuh vs pendapatan sepotong 2 bulan) numpuk jadi 1 angka kumulatif yang timpang — persis skenario yang diperingatkan di `docs/domain/financial-reports.md` bagian Period Closing: tanpa reset per periode, laporan yang keliatan **bukan performa periode tertentu**, gampang menyesatkan kalau dibawa ke bank apa adanya.
-
-Bagian 5 di bawah nunjukin gimana `close_period` menyelesaikan ini beneran — bukan cuma teori.
-
-## 5. Tutup Buku Sungguhan — `0017_seed_demo_period_closing.sql`
-
-Data di atas ditutup jadi **2 periode kontigu**, dipilih di titik yang masuk akal secara bisnis (batas tahun buku 2025/2026):
-
-```sql
-select close_period('2025-01-01', '2025-12-31', (select id from accounts where code = '3200'), 'TUTUP-BUKU-2025');
-select close_period('2026-01-01', '2026-08-25', (select id from accounts where code = '3200'), 'TUTUP-BUKU-2026-S1');
-```
-
-**Periode A (2025 penuh)** — cuma ada akuisisi & penyusutan aset, belum ada penjualan sama sekali:
-```
-Total Pendapatan                        0
-Total Beban (penyusutan oven+motor)    12.600.000
-Laba (Rugi) Bersih Periode A          (12.600.000)
-```
-Closing entry: `Debit Laba Ditahan 12.600.000 / Kredit Beban Penyusutan Oven 3.000.000 / Kredit Beban Penyusutan Motor 9.600.000`.
-
-**Periode B (1 Jan – 25 Agu 2026)** — seluruh transaksi General Ledger, AR, AP, Inventory yang udah di-seed, semuanya jatuh persis di rentang ini:
-```
-Total Pendapatan                3.160.000
-Total Beban (HPP+gaji+bunga)    2.189.000
-Laba Bersih Periode B             971.000
-```
-Closing entry: `Debit Pendapatan Penjualan Toko 500.000 / Debit Pendapatan Penjualan Grosir 2.660.000 / Kredit HPP 39.000 / Kredit Beban Gaji 2.000.000 / Kredit Beban Bunga Bank 150.000 / Kredit Laba Ditahan 971.000`.
-
-### Posisi Setelah Tutup Buku (masih per 25 Agustus 2026)
-
-Total Trial Balance **gak berubah** dari bagian 1 di atas (masih 66.110.000) dan Total Balance Sheet **gak berubah** dari bagian 3 (masih 38.721.000) — closing gak mengubah kebenaran angka, cuma memindah lokasinya:
-- Semua akun `4100`/`4200`/`5100`/`5200`/`5500`/`5600`/`5610` sekarang **0** (udah dinolkan 2x closing entry).
-- `3200 Laba Ditahan` sekarang punya saldo **nyata, keposting** `(12.600.000) + 971.000 = (11.629.000)` — bukan lagi dihitung ulang tiap kali laporan dibuka kayak di bagian 3.
-- Periode yang masih **terbuka** mulai **26 Agustus 2026** — transaksi baru apa pun (dari modul mana pun) bertanggal ≤ 25 Agustus 2026 bakal ditolak sistem.
-
-### Gotcha yang Ketemu (dan Sudah Diperbaiki): Income Statement Sempat Gak Bisa Di-Re-Query buat Periode yang Udah Ditutup
-
-Waktu bagian 5 ini pertama ditulis, ketauan: kalau `getIncomeStatement('2026-01-01','2026-08-25')` dijalankan LAGI setelah closing di atas, hasilnya **0 Pendapatan, 0 Beban, 0 Laba** — bukan angka 971.000 yang barusan dihitung. Sebabnya: closing entry Periode B bertanggal `2026-08-25`, PERSIS di dalam rentang yang di-query ulang, jadi baris-baris penolan tadi (debit Pendapatan, kredit Beban) ikut kehitung dan membatalkan balik saldo yang baru aja dinolkan.
-
-Ini gap nyata (sempat dicatat sebagai scope-debt, sekarang ditutup) — perbaikannya: `getIncomeStatement` sekarang secara eksplisit **mengabaikan baris dari closing entry** (dicek lewat `period_closings.journal_entry_id`) sebelum menjumlahkan saldo. Jadi `getIncomeStatement('2026-01-01','2026-08-25')` sekarang tetap balikin **Pendapatan 3.160.000, Beban 2.189.000, Laba 971.000** — persis angka historis Periode B — meski dijalankan berkali-kali kapan pun, sebelum atau sesudah periode itu ditutup. Trial Balance & Balance Sheet SENGAJA gak ikut diubah (`docs/architecture/financial-reports-schema.md` bagian "Tutup Buku") — keduanya justru butuh closing entry ikut kehitung, biar saldo kumulatif beneran nunjukin Pendapatan/Beban yang udah dinolkan.
-
-## Simulasi Interface
-
-Web app punya halaman `/reports` — 4 laporan read-only (`/reports/trial-balance`, `/reports/income-statement`, `/reports/balance-sheet`, `/reports/cash-flow`) dengan filter tanggal/rentang tanggal, plus `/reports/period-closing` (role `admin`/`accountant`) buat eksekusi `close_period` beneran + riwayat periode yang udah ditutup.
 
 ## Lanjutan Story
 
-Ini laporan yang jadi tujuan akhir motivasi bisnis di `company-profile.md` — dan sekarang beneran bisa dibawa Bu Nur ke bank per periode yang jelas (bukan cuma kumulatif sejak awal), berkat Period Closing di bagian 5. Fase berikutnya di roadmap (`AGENTS.md`): **Tax handling** — pajak yang bakal dipotong dari Laba Bersih (atau omzet, tergantung skema) yang baru pertama kali punya angka konkret per periode buat dihitung di fase ini.
+Laporan ini yang jadi tujuan akhir motivasi bisnis Pak Herman (`company-profile.md`) — bisa dibawa ke bank per periode yang jelas (bukan cuma kumulatif sejak awal) berkat Tutup Buku di bagian 5. Fase berikutnya di roadmap (`AGENTS.md`): perluasan skenario tax handling (PPN Masukan dari sisi AP — sudah ada field-nya di `/settings/charges`, tinggal skenario transaksinya digarap).

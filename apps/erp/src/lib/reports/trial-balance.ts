@@ -1,5 +1,5 @@
 import type { Account } from "@/lib/accounts/schema";
-import { computeAccountBalances, fetchAccounts, fetchLinesUpTo } from "./balances";
+import { computeAccountBalances, fetchAccounts, fetchLinesUpTo, rollupAccountBalances } from "./balances";
 import type { ReportLine, TrialBalance } from "./types";
 
 /**
@@ -18,8 +18,9 @@ export function computeTrialBalance(
   const totalCredit = balances
     .filter((b) => b.normal_balance === "credit")
     .reduce((sum, b) => sum + b.balance, 0);
+  const rolledBalances = rollupAccountBalances(accounts, balances);
 
-  return { asOfDate, balances, totalDebit, totalCredit };
+  return { asOfDate, balances, rolledBalances, totalDebit, totalCredit };
 }
 
 export async function getTrialBalance(asOfDate: string): Promise<TrialBalance> {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getTrialBalance } from "@/lib/reports/trial-balance";
+import { accountDepth } from "@/lib/reports/balances";
 import type { TrialBalance } from "@/lib/reports/types";
 import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
@@ -111,29 +112,36 @@ export default function TrialBalancePage() {
               </tr>
             )}
             {!loading &&
-              report?.balances
+              report?.rolledBalances
                 .slice()
                 .sort((a, b) => a.code.localeCompare(b.code))
-                .map((b) => (
-                  <tr key={b.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-2 font-mono">{b.code}</td>
-                    <td className="px-4 py-2 text-black">
-                      {b.name}
-                      {b.is_contra && (
-                        <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">
-                          Kontra
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 capitalize text-slate-500">{b.category}</td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {b.normal_balance === "debit" ? b.balance.toLocaleString("id-ID") : ""}
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {b.normal_balance === "credit" ? b.balance.toLocaleString("id-ID") : ""}
-                    </td>
-                  </tr>
-                ))}
+                .map((b) => {
+                  const isHeader = report.rolledBalances.some((c) => c.parent_id === b.id);
+                  const depth = accountDepth(b, report.rolledBalances);
+                  return (
+                    <tr key={b.id} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="whitespace-nowrap px-4 py-2 font-mono">{b.code}</td>
+                      <td
+                        className={`px-4 py-2 text-black ${isHeader ? "font-semibold" : ""}`}
+                        style={{ paddingLeft: `${1 + depth * 1.25}rem` }}
+                      >
+                        {b.name}
+                        {b.is_contra && (
+                          <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700">
+                            Kontra
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 capitalize text-slate-500">{b.category}</td>
+                      <td className={`px-4 py-2 text-right font-mono ${isHeader ? "font-semibold" : ""}`}>
+                        {b.normal_balance === "debit" ? b.balance.toLocaleString("id-ID") : ""}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${isHeader ? "font-semibold" : ""}`}>
+                        {b.normal_balance === "credit" ? b.balance.toLocaleString("id-ID") : ""}
+                      </td>
+                    </tr>
+                  );
+                })}
           </tbody>
           {report && report.balances.length > 0 && (
             <tfoot>

@@ -73,3 +73,52 @@ export async function fetchLinesBetween(startDate: string, endDate: string): Pro
 export function sumBalances(balances: AccountBalance[]): number {
   return balances.reduce((sum, b) => sum + (b.is_contra ? -b.balance : b.balance), 0);
 }
+
+/**
+ * Rollup saldo akun header (mis. "1000 Kas") dari total leaf child-nya lewat
+ * `parent_id`, rekursif (header bisa punya header lagi). Kontra tetap
+ * dikurangkan ke parent-nya, sama aturan `sumBalances`. Header tanpa
+ * transaksi aktif di child-nya gak ikut muncul (balance 0 di-filter), sama
+ * kayak leaf tanpa transaksi. Cuma buat TAMPILAN — total kolom Debit/Kredit
+ * Trial Balance tetap dari leaf doang (`computeTrialBalance`), biar gak
+ * dobel-hitung (`memory/scope-debt/trial-balance-rollup.md`).
+ */
+export function rollupAccountBalances(accounts: Account[], leafBalances: AccountBalance[]): AccountBalance[] {
+  const direct = new Map(leafBalances.map((b) => [b.id, b.balance]));
+  const childrenOf = new Map<string, Account[]>();
+  for (const a of accounts) {
+    if (!a.parent_id) continue;
+    const list = childrenOf.get(a.parent_id) ?? [];
+    list.push(a);
+    childrenOf.set(a.parent_id, list);
+  }
+
+  const resolved = new Map<string, number>();
+  function resolve(a: Account): number {
+    const cached = resolved.get(a.id);
+    if (cached !== undefined) return cached;
+    const children = childrenOf.get(a.id) ?? [];
+    const total =
+      children.length > 0
+        ? children.reduce((sum, c) => sum + (c.is_contra ? -resolve(c) : resolve(c)), 0)
+        : (direct.get(a.id) ?? 0);
+    resolved.set(a.id, total);
+    return total;
+  }
+
+  return accounts.map((a) => ({ ...a, balance: resolve(a) })).filter((a) => a.balance !== 0);
+}
+
+/** Kedalaman akun di hirarki `parent_id`, buat indentasi tampilan tree. */
+export function accountDepth(account: Account, accounts: Account[]): number {
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  let depth = 0;
+  let current = account;
+  while (current.parent_id) {
+    const parent = byId.get(current.parent_id);
+    if (!parent) break;
+    depth++;
+    current = parent;
+  }
+  return depth;
+}

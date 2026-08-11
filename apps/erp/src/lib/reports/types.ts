@@ -16,6 +16,8 @@ export type AccountBalance = Account & { balance: number };
 export type TrialBalance = {
   asOfDate: string;
   balances: AccountBalance[];
+  /** `balances` + akun header (rollup dari leaf child lewat `parent_id`) — cuma buat tampilan tree. */
+  rolledBalances: AccountBalance[];
   totalDebit: number;
   totalCredit: number;
 };
