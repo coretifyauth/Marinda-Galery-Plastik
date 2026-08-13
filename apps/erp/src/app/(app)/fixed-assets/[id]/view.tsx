@@ -5,11 +5,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { Account } from "@/lib/accounts/schema";
 import { postDepreciationSchema, type FixedAsset, type DepreciationEntry } from "@/lib/fixed-assets/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError, FormHint } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { Modal } from "@/components/ui/modal";
+import { DetailRows } from "@/components/ui/detail-rows";
 
 export function FixedAssetDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -22,7 +25,6 @@ export function FixedAssetDetailView({ id }: { id: string }) {
 
   const [showPostForm, setShowPostForm] = useState(false);
   const [postPeriod, setPostPeriod] = useState("");
-  const [postSourceRef, setPostSourceRef] = useState("");
   const [postOverride, setPostOverride] = useState("");
   const [postError, setPostError] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
@@ -81,7 +83,6 @@ export function FixedAssetDetailView({ id }: { id: string }) {
     const parsed = postDepreciationSchema.safeParse({
       fixed_asset_id: id,
       period: postPeriod,
-      source_ref: postSourceRef,
       amount_override: postOverride || undefined,
     });
     if (!parsed.success) {
@@ -90,10 +91,18 @@ export function FixedAssetDetailView({ id }: { id: string }) {
     }
 
     setPosting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("depreciation_entries");
+    } catch (err) {
+      setPosting(false);
+      setPostError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("post_depreciation", {
       p_fixed_asset_id: parsed.data.fixed_asset_id,
       p_period: parsed.data.period,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_amount_override: parsed.data.amount_override ?? null,
     });
     setPosting(false);
@@ -104,7 +113,6 @@ export function FixedAssetDetailView({ id }: { id: string }) {
 
     setShowPostForm(false);
     setPostPeriod("");
-    setPostSourceRef("");
     setPostOverride("");
     await load();
   }
@@ -139,147 +147,120 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const isPublished = entries.length > 0;
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
-  return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
-      <BackLink href="/fixed-assets" label="Kembali ke Fixed Assets" />
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">{asset.name}</h1>
+  const detailGroups = [
+    {
+      title: "Informasi Aset",
+      rows: [
+        { label: "Nama", value: asset.name },
+        {
+          label: "Metode Penyusutan",
+          value: (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
               {asset.depreciation_method === "straight_line"
                 ? "Straight-Line"
                 : `Declining Balance (${(asset.depreciation_rate! * 100).toFixed(0)}%)`}
             </span>
-            {asset.archived_at && (
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                Diarsipkan
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-start gap-4">
-          <div className="text-right">
-            <div className="text-xs uppercase text-slate-400">Nilai Buku</div>
-            <div className="font-mono text-lg font-medium text-black">
-              {bookValue.toLocaleString("id-ID")}
-            </div>
-            <div className="text-sm text-slate-500">
-              Akumulasi {accumulated.toLocaleString("id-ID")} / cap {cap.toLocaleString("id-ID")}
-            </div>
-          </div>
-          {canWrite && (
-            <Button variant="toolbar" onClick={() => setShowPostForm((v) => !v)}>
-              {showPostForm ? "Batal" : "Posting Penyusutan"}
-            </Button>
-          )}
-        </div>
+          ),
+        },
+        { label: "Nilai Perolehan", value: asset.acquisition_cost.toLocaleString("id-ID") },
+        { label: "Nilai Residu", value: asset.salvage_value.toLocaleString("id-ID") },
+        { label: "Umur Manfaat", value: `${asset.useful_life_months} bulan` },
+        { label: "Tanggal Akuisisi", value: asset.acquisition_date },
+        { label: "Akun Aset Tetap", value: assetAccount ? `${assetAccount.code} — ${assetAccount.name}` : "-" },
+        {
+          label: "Akun Akumulasi Penyusutan",
+          value: accumAccount ? `${accumAccount.code} — ${accumAccount.name}` : "-",
+        },
+        {
+          label: "Akun Beban Penyusutan",
+          value: expenseAccount ? `${expenseAccount.code} — ${expenseAccount.name}` : "-",
+        },
+        { label: "Status", value: asset.archived_at ? "Diarsipkan" : "Aktif" },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [
+        { label: "Nilai Buku", value: bookValue.toLocaleString("id-ID") },
+        { label: "Akumulasi", value: accumulated.toLocaleString("id-ID") },
+        { label: "Cap (Perolehan − Residu)", value: cap.toLocaleString("id-ID") },
+      ],
+    },
+  ];
+
+  return (
+    <div className="flex w-full flex-1 flex-col gap-6">
+      <BackLink href="/fixed-assets" label="Kembali ke Fixed Assets" />
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">Fixed Asset Details</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      {showPostForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="mb-3 text-sm text-slate-500">
-            Jumlah penyusutan dihitung otomatis sesuai metode aset ini (
-            {asset.depreciation_method === "straight_line"
-              ? "straight-line: nilai perolehan dibagi umur manfaat"
-              : "declining balance: nilai buku dikali tarif"}
-            ) — biasanya gak perlu isi apapun selain periode & rujukan dokumen.
-          </p>
-          <form onSubmit={handlePost} className="flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="post_period">Periode</Label>
-              <Input
-                id="post_period"
-                type="date"
-                value={postPeriod}
-                onChange={(e) => setPostPeriod(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="post_source_ref">Rujukan dokumen</Label>
-              <Input
-                id="post_source_ref"
-                placeholder="mis. PENYST-OVEN-2026-01"
-                value={postSourceRef}
-                onChange={(e) => setPostSourceRef(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="post_override">Jumlah Manual (jarang dipakai)</Label>
-              <Input
-                id="post_override"
-                type="number"
-                min="0"
-                placeholder="kosongkan — biarkan dihitung otomatis"
-                value={postOverride}
-                onChange={(e) => setPostOverride(e.target.value)}
-              />
-            </div>
-            <Button type="submit" disabled={posting}>
-              {posting ? "Memproses..." : "Post"}
-            </Button>
-          </form>
+      <Modal open={showPostForm} onClose={() => setShowPostForm(false)} title="Posting Penyusutan">
+        <p className="mb-3 text-sm text-slate-500">
+          Jumlah penyusutan dihitung otomatis sesuai metode aset ini (
+          {asset.depreciation_method === "straight_line"
+            ? "straight-line: nilai perolehan dibagi umur manfaat"
+            : "declining balance: nilai buku dikali tarif"}
+          ) — biasanya gak perlu isi apapun selain periode & rujukan dokumen.
+        </p>
+        <form onSubmit={handlePost} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="post_period">Periode</Label>
+            <Input
+              id="post_period"
+              type="date"
+              value={postPeriod}
+              onChange={(e) => setPostPeriod(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="post_override">Jumlah Manual (jarang dipakai)</Label>
+            <Input
+              id="post_override"
+              type="number"
+              min="0"
+              placeholder="kosongkan — biarkan dihitung otomatis"
+              value={postOverride}
+              onChange={(e) => setPostOverride(e.target.value)}
+            />
+          </div>
           <FormHint>
             Isi kolom &quot;Jumlah Manual&quot; cuma kalau ini periode TERAKHIR aset declining
             balance & mau dipotong biar nilai buku pas berhenti di nilai residu (lihat catatan
             teknis di <code>docs/domain/human/fixed-assets.md</code>). Selain itu, selalu
             kosongkan.
           </FormHint>
-          {postError && (
-            <div className="mt-2">
-              <FormError>{postError}</FormError>
-            </div>
-          )}
-        </div>
+          {postError && <FormError>{postError}</FormError>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowPostForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={posting}>
+              {posting ? "Memproses..." : "Post"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {isPublished && (
+        <p className="text-sm text-amber-600">
+          🔒 Aset ini udah punya penyusutan — nilai perolehan/residu/umur manfaat/metode/akun
+          terkunci (<code>fixed_assets_published_lock</code>). Cuma <code>name</code>/
+          <code>archived_at</code> yang masih bisa diubah.
+        </p>
       )}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        {isPublished && (
-          <p className="mb-4 text-sm text-amber-600">
-            🔒 Aset ini udah punya penyusutan — nilai perolehan/residu/umur manfaat/metode/akun
-            terkunci (<code>fixed_assets_published_lock</code>). Cuma <code>name</code>/
-            <code>archived_at</code> yang masih bisa diubah.
-          </p>
-        )}
-        <dl className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Nilai Perolehan</dt>
-            <dd className="font-mono text-black">{asset.acquisition_cost.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Nilai Residu</dt>
-            <dd className="font-mono text-black">{asset.salvage_value.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Umur Manfaat</dt>
-            <dd className="text-black">{asset.useful_life_months} bulan</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Tanggal Akuisisi</dt>
-            <dd className="text-black">{asset.acquisition_date}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Akun Aset Tetap</dt>
-            <dd className="text-black">
-              {assetAccount ? `${assetAccount.code} — ${assetAccount.name}` : "-"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Akun Akumulasi Penyusutan</dt>
-            <dd className="text-black">
-              {accumAccount ? `${accumAccount.code} — ${accumAccount.name}` : "-"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Akun Beban Penyusutan</dt>
-            <dd className="text-black">
-              {expenseAccount ? `${expenseAccount.code} — ${expenseAccount.name}` : "-"}
-            </dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
+
+      {canWrite && (
+        <div className="flex justify-end">
+          <Button variant="toolbar" onClick={() => setShowPostForm(true)}>
+            Posting Penyusutan
+          </Button>
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-4 py-2">

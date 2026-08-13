@@ -6,11 +6,13 @@ import { supabase } from "@/lib/supabase/client";
 import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
 import { createSalesOrderSchema, soStatus, type SalesOrder } from "@/lib/sales-orders/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
 
 type LineInput = { item_id: string; qty_ordered: string; unit_price: string };
 
@@ -36,13 +38,10 @@ export default function SalesOrdersPage() {
   const [customerId, setCustomerId] = useState("");
   const [soDate, setSoDate] = useState("");
   const [expectedDate, setExpectedDate] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-
-  const finishedGoods = items.filter((i) => i.item_type === "FINISHED_GOOD");
 
   const loadOrders = useCallback(async () => {
     const { data, error } = await supabase
@@ -116,7 +115,6 @@ export default function SalesOrdersPage() {
       customer_id: customerId,
       so_date: soDate,
       expected_date: expectedDate || undefined,
-      source_ref: sourceRef,
       lines: lines.map((l) => ({
         item_id: l.item_id,
         qty_ordered: l.qty_ordered,
@@ -129,11 +127,19 @@ export default function SalesOrdersPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("sales_orders");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_sales_order", {
       p_customer_id: parsed.data.customer_id,
       p_so_date: parsed.data.so_date,
       p_expected_date: parsed.data.expected_date || null,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
     });
     setSubmitting(false);
@@ -145,7 +151,6 @@ export default function SalesOrdersPage() {
     setCustomerId("");
     setSoDate("");
     setExpectedDate("");
-    setSourceRef("");
     setLines([emptyLine()]);
     setShowForm(false);
     await loadOrders();
@@ -158,9 +163,9 @@ export default function SalesOrdersPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Sales Orders — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Sales Orders</h1>
         <p className="text-sm text-slate-500">
           Pesanan customer yang belum tentu bisa dikirim sekaligus — komitmen dulu, kirim
           belakangan (bisa dicicil). Buat penjualan langsung yang barangnya udah ready, pakai{" "}
@@ -187,7 +192,7 @@ export default function SalesOrdersPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -240,21 +245,19 @@ export default function SalesOrdersPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Buat Sales Order</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <p className="mb-4 text-sm text-slate-500">
-            Belum ada jurnal apa pun di titik ini — piutang & pendapatan baru diakui nanti pas
-            barang beneran dikirim, lewat <span className="font-medium">Goods Issues</span>{" "}
-            (halaman detail sales order ini).
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Buat Sales Order" maxWidth="max-w-3xl">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
           </p>
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+        )}
+        <p className="mb-4 text-sm text-slate-500">
+          Belum ada jurnal apa pun di titik ini — piutang & pendapatan baru diakui nanti pas
+          barang beneran dikirim, lewat <span className="font-medium">Goods Issues</span>{" "}
+          (halaman detail sales order ini).
+        </p>
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="customer">Customer</Label>
@@ -280,15 +283,6 @@ export default function SalesOrdersPage() {
                   onChange={(e) => setExpectedDate(e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. SO-PAKBUDI-001"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -302,7 +296,7 @@ export default function SalesOrdersPage() {
                 <div key={i} className="grid grid-cols-[1fr_6rem_8rem_2.5rem] gap-2">
                   <Select value={line.item_id} onChange={(e) => updateLine(i, { item_id: e.target.value })}>
                     <option value="">Pilih item...</option>
-                    {finishedGoods.map((item) => (
+                    {items.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.name} ({item.uom})
                       </option>
@@ -340,12 +334,16 @@ export default function SalesOrdersPage() {
 
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
-              {submitting ? "Menyimpan..." : "Simpan Sales Order"}
-            </Button>
-          </form>
-        </div>
-      )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Menyimpan..." : "Simpan Sales Order"}
+              </Button>
+            </div>
+        </form>
+      </Modal>
     </div>
   );
 }

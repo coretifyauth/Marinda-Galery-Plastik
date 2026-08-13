@@ -67,9 +67,9 @@ export default function PosSalesPage() {
   }
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">POS Sales — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">POS Sales</h1>
         <p className="text-sm text-slate-500">
           Riwayat penjualan tunai kios — transaksi dibuat lewat aplikasi kasir (apps/pos), bukan di sini.
         </p>

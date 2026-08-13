@@ -11,7 +11,6 @@ export const createGoodsIssueSchema = z.object({
   customer_id: z.string().uuid("Pilih customer"),
   invoice_date: z.string().min(1, "Tanggal wajib diisi"),
   description: z.string().optional(),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   credit_lines: z.array(chargeLineSchema).min(1, "Minimal 1 baris kredit"),
   receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
   hpp_account_id: z.string().uuid("Pilih akun HPP"),

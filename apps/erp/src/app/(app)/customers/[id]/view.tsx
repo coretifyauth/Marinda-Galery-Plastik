@@ -11,6 +11,9 @@ import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Modal } from "@/components/ui/modal";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -37,6 +40,10 @@ export function CustomerDetailView({ id }: { id: string }) {
   const [editOverdueThresholdDays, setEditOverdueThresholdDays] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState("invoices");
+
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     const [
@@ -55,7 +62,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       supabase
         .from("ar_invoices")
         .select(
-          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
         )
         .eq("customer_id", id)
         .order("invoice_date", { ascending: false }),
@@ -142,6 +149,38 @@ export function CustomerDetailView({ id }: { id: string }) {
     await load();
   }
 
+  async function handleDelete() {
+    if (!customer) return;
+    if (!window.confirm(`Hapus customer "${customer.name}"?`)) return;
+    setDeleteError(null);
+    setDeleting(true);
+    const { data, error } = await supabase.rpc("delete_customer", { p_customer_id: customer.id });
+    setDeleting(false);
+    if (error) {
+      setDeleteError(error.message);
+      return;
+    }
+    if (data === "deleted") {
+      router.push("/customers");
+      return;
+    }
+    window.alert("Customer ini sudah pernah dipakai di transaksi, jadi diarsipkan (bukan dihapus permanen).");
+    await load();
+  }
+
+  async function handleReactivate() {
+    if (!customer) return;
+    setDeleteError(null);
+    setDeleting(true);
+    const { error } = await supabase.from("customers").update({ archived_at: null }).eq("id", customer.id);
+    setDeleting(false);
+    if (error) {
+      setDeleteError(error.message);
+      return;
+    }
+    await load();
+  }
+
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -168,53 +207,78 @@ export function CustomerDetailView({ id }: { id: string }) {
     (customer.overdue_threshold_days != null && maxOverdueDays > customer.overdue_threshold_days);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
+  const detailGroups = [
+    {
+      title: "Informasi Customer",
+      rows: [
+        { label: "Nama", value: customer.name },
+        { label: "Kontak", value: customer.contact ?? "-" },
+        { label: "Termin", value: `net-${customer.payment_term_days}` },
+        {
+          label: "Credit Limit",
+          value: customer.credit_limit != null ? customer.credit_limit.toLocaleString("id-ID") : "Tanpa batas",
+        },
+        { label: "Toleransi Telat", value: `${customer.overdue_threshold_days ?? "Tanpa batas"} hari` },
+        {
+          label: "Status",
+          value: (
+            <span className="flex items-center gap-1.5">
+              {customer.archived_at ? "Diarsipkan" : "Aktif"}
+              {isOnHold && (
+                <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+                  Credit Hold
+                </span>
+              )}
+            </span>
+          ),
+        },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [{ label: "Total Outstanding", value: totalOutstanding.toLocaleString("id-ID") }],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "invoices", label: "AR Invoices", badge: invoices.length },
+    { key: "payments", label: "AR Payments", badge: payments.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/customers" label="Kembali ke Customers" />
       <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">{customer.name}</h1>
-            {isOnHold && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-                Credit Hold
-              </span>
+        <h1 className="text-xl font-semibold text-black">Customer Details</h1>
+        {canWrite && (
+          <div className="flex gap-2">
+            <Button variant="toolbar" onClick={() => setEditing(true)}>
+              Edit
+            </Button>
+            {customer.archived_at ? (
+              <Button variant="toolbar" onClick={handleReactivate} disabled={deleting}>
+                {deleting ? "Memproses..." : "Aktifkan"}
+              </Button>
+            ) : (
+              <Button variant="toolbar" onClick={handleDelete} disabled={deleting}>
+                {deleting ? "Memproses..." : "Hapus"}
+              </Button>
             )}
           </div>
-          <p className="text-sm text-slate-500">
-            {customer.contact ?? "-"} · Termin net-{customer.payment_term_days} · Credit limit{" "}
-            {customer.credit_limit != null ? customer.credit_limit.toLocaleString("id-ID") : "tanpa batas"}
-            {" "}· Toleransi telat {customer.overdue_threshold_days ?? "tanpa batas"} hari
-            {customer.archived_at && " · Diarsipkan"}
-          </p>
-        </div>
-        <div className="flex items-start gap-4">
-          <div className="text-right">
-            <div className="text-xs uppercase text-slate-400">Total Outstanding</div>
-            <div className="font-mono text-lg font-medium text-black">
-              {totalOutstanding.toLocaleString("id-ID")}
-            </div>
-          </div>
-          {canWrite && (
-            <Button variant="toolbar" onClick={() => setEditing((v) => !v)}>
-              {editing ? "Batal" : "Edit"}
-            </Button>
-          )}
-        </div>
+        )}
       </div>
 
-      {editing && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Edit Customer</h2>
-          <form onSubmit={handleSaveEdit} className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_name">Nama</Label>
-              <Input id="edit_name" value={editName} onChange={(e) => setEditName(e.target.value)} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_contact">Kontak</Label>
-              <Input id="edit_contact" value={editContact} onChange={(e) => setEditContact(e.target.value)} />
-            </div>
+      <Modal open={editing} onClose={() => setEditing(false)} title="Edit Customer">
+        <form onSubmit={handleSaveEdit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edit_name">Nama</Label>
+            <Input id="edit_name" value={editName} onChange={(e) => setEditName(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edit_contact">Kontak</Label>
+            <Input id="edit_contact" value={editContact} onChange={(e) => setEditContact(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="edit_payment_term_days">Termin (hari)</Label>
               <Input
@@ -223,16 +287,6 @@ export function CustomerDetailView({ id }: { id: string }) {
                 min="1"
                 value={editPaymentTermDays}
                 onChange={(e) => setEditPaymentTermDays(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_credit_limit">Credit Limit (kosongkan = tanpa batas)</Label>
-              <Input
-                id="edit_credit_limit"
-                type="number"
-                min="0"
-                value={editCreditLimit}
-                onChange={(e) => setEditCreditLimit(e.target.value)}
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -245,114 +299,120 @@ export function CustomerDetailView({ id }: { id: string }) {
                 onChange={(e) => setEditOverdueThresholdDays(e.target.value)}
               />
             </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="edit_credit_limit">Credit Limit (kosongkan = tanpa batas)</Label>
+            <Input
+              id="edit_credit_limit"
+              type="number"
+              min="0"
+              value={editCreditLimit}
+              onChange={(e) => setEditCreditLimit(e.target.value)}
+            />
+          </div>
+          {editError && <FormError>{editError}</FormError>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setEditing(false)}>
+              Batal
+            </Button>
             <Button type="submit" disabled={saving}>
               {saving ? "Menyimpan..." : "Simpan"}
             </Button>
-          </form>
-          {editError && (
-            <div className="mt-3">
-              <FormError>{editError}</FormError>
-            </div>
-          )}
+          </div>
+        </form>
+      </Modal>
+
+      {loadError && <FormError>{loadError}</FormError>}
+      {deleteError && <FormError>{deleteError}</FormError>}
+
+      <DetailRows groups={detailGroups} />
+
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
+      {activeTab === "invoices" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Jatuh Tempo</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2 text-right">Jumlah</th>
+                <th className="px-4 py-2 text-right">Outstanding</th>
+                <th className="px-4 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map((inv) => {
+                const isCancelled = reversedEntryIds.has(inv.journal_entry_id);
+                const { status, outstanding } = invoiceStatus(inv, isCancelled);
+                const overdue =
+                  status !== "lunas" &&
+                  status !== "dibatalkan" &&
+                  inv.due_date < new Date().toISOString().slice(0, 10);
+                return (
+                  <tr key={inv.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{inv.invoice_date}</td>
+                    <td className="whitespace-nowrap px-4 py-2">
+                      {inv.due_date}
+                      {overdue && (
+                        <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">Telat</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">{inv.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{inv.amount.toLocaleString("id-ID")}</td>
+                    <td className="px-4 py-2 text-right font-mono">{outstanding.toLocaleString("id-ID")}</td>
+                    <td className="px-4 py-2">
+                      <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
+                        {status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {invoices.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada invoice.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {loadError && <FormError>{loadError}</FormError>}
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">AR Invoices</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {invoices.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Jatuh Tempo</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Jumlah</th>
-              <th className="px-4 py-2 text-right">Outstanding</th>
-              <th className="px-4 py-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.map((inv) => {
-              const isCancelled = reversedEntryIds.has(inv.journal_entry_id);
-              const { status, outstanding } = invoiceStatus(inv, isCancelled);
-              const overdue =
-                status !== "lunas" &&
-                status !== "dibatalkan" &&
-                inv.due_date < new Date().toISOString().slice(0, 10);
-              return (
-                <tr key={inv.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="whitespace-nowrap px-4 py-2">{inv.invoice_date}</td>
-                  <td className="whitespace-nowrap px-4 py-2">
-                    {inv.due_date}
-                    {overdue && (
-                      <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">
-                        Telat
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">{inv.source_ref}</td>
-                  <td className="px-4 py-2 text-right font-mono">{inv.amount.toLocaleString("id-ID")}</td>
-                  <td className="px-4 py-2 text-right font-mono">{outstanding.toLocaleString("id-ID")}</td>
-                  <td className="px-4 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
-                      {status}
-                    </span>
+      {activeTab === "payments" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2 text-right">Jumlah</th>
+                <th className="px-4 py-2">Invoice</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map((p) => (
+                <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
+                  <td className="px-4 py-2">{p.source_ref}</td>
+                  <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2">{p.ar_invoices.source_ref}</td>
+                </tr>
+              ))}
+              {payments.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada pembayaran.
                   </td>
                 </tr>
-              );
-            })}
-            {invoices.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada invoice.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">AR Payments</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {payments.length}
-          </span>
+              )}
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Jumlah</th>
-              <th className="px-4 py-2">Invoice</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payments.map((p) => (
-              <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
-                <td className="px-4 py-2">{p.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2">{p.ar_invoices.source_ref}</td>
-              </tr>
-            ))}
-            {payments.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada pembayaran.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      )}
     </div>
   );
 }

@@ -28,7 +28,7 @@ Fase 1. Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini 
 | `category` | asset / liability / equity / revenue / expense | 1 dari 5 kategori baku akuntansi |
 | `normal_balance` | debit / kredit | **Dihitung otomatis** dari kategori, gak bisa diisi manual |
 | `parent_id` | menunjuk ke akun lain (atau kosong) | Ini yang bikin akun bisa jadi "header" (kalau punya anak) atau "leaf" (kalau gak punya anak) |
-| status aktif/arsip | ada tidaknya tanggal arsip | Akun lama gak pernah dihapus permanen, cuma diarsipkan |
+| status aktif/arsip | ada tidaknya tanggal arsip | Akun yang udah pernah dipakai di jurnal cuma bisa diarsipkan (gak bisa dihapus permanen) — akun yang belum pernah dipakai sama sekali boleh dihapus permanen |
 
 **Alur Teknis (RPC)**
 
@@ -37,7 +37,7 @@ Fase 1. Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini 
 | Tambah akun baru | — (insert langsung ke `accounts`, bukan financial write jadi gak lewat RPC) | Insert baris baru; `normal_balance` otomatis terhitung dari `category` | RLS `accounts_insert` (admin/accountant); trigger `accounts_no_retroactive_header` menolak kalau `parent_id` nunjuk akun yang sudah dipakai transaksi (bakal jadi header retroaktif) |
 | Ubah akun | — (update langsung) | Update kolom | RLS `accounts_update` (admin/accountant); trigger `accounts_published_lock` menolak perubahan `code`/`category`/`normal_balance`/`parent_id`/`is_contra` begitu akun sudah dipakai di `journal_lines` — `name`/`archived_at` tetap bebas diubah |
 | Posting transaksi ke akun (modul Journal Entry) | `create_journal_entry` | Insert `journal_lines` menunjuk `account_id` | Trigger `journal_lines_leaf_only` menolak posting ke akun yang masih punya child (header) |
-| Hapus akun | — | Tidak pernah bisa terjadi | RLS `accounts` gak ada policy `DELETE` → default deny |
+| Hapus akun | Klik "Hapus" di halaman detail akun | Akun belum pernah dipakai di jurnal → dihapus permanen. Akun sudah pernah dipakai (atau masih punya akun anak) → diarsipkan, bukan dihapus | Fungsi `delete_account` — coba hapus permanen dulu, baru arsipkan kalau ternyata masih direferensikan di tempat lain |
 | Assign peran ke user lain | — (belum ada, masih manual/migration) | — | Butuh fungsi `security definer` biar gak circular-check ke `user_roles` sendiri — belum digarap, ditunda sampai ada layar user management |
 
 **Aturan Bisnis → RPC**
@@ -48,7 +48,7 @@ Fase 1. Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini 
 | Transaksi cuma boleh posting ke akun leaf | Trigger `journal_lines_leaf_only` (didefinisikan di modul Journal Entry, dipasang ke `journal_lines`) |
 | Akun leaf yang sudah dipakai gak boleh diam-diam jadi header | Trigger `accounts_no_retroactive_header` |
 | Field kritikal akun terkunci setelah dipakai transaksi | Trigger `accounts_published_lock` (`code`/`category`/`normal_balance`/`parent_id`/`is_contra`) |
-| Akun gak pernah dihapus permanen | RLS `accounts` tanpa policy `DELETE` + `archived_at` sebagai satu-satunya penanda lifecycle |
+| Akun gak bisa dihapus permanen kalau udah pernah dipakai | Fungsi `delete_account` — hapus permanen cuma berhasil kalau belum ada referensi apa pun di tempat lain, kalau ada otomatis diarsipkan lewat `archived_at` sebagai fallback |
 | Peran dikelola lewat lookup table, bukan enum, biar nambah peran baru gak butuh migration `ALTER TYPE` | Tabel `roles` + `user_roles` (PK komposit `user_id, role_name`) |
 
 **Interaksi Antar Tabel**

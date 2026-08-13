@@ -4,7 +4,6 @@ export const recordApPaymentSchema = z.object({
   supplier_id: z.string().uuid("Pilih supplier"),
   payment_date: z.string().min(1, "Tanggal wajib diisi"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
-  source_ref: z.string().min(1, "Rujukan dokumen sumber wajib diisi"),
   payable_account_id: z.string().uuid("Pilih akun Utang Usaha"),
   cash_account_id: z.string().uuid("Pilih akun Kas/Bank"),
   bill_id: z.string().uuid("Pilih bill"),

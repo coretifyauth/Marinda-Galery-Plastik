@@ -14,7 +14,6 @@ export const createJournalEntrySchema = z
   .object({
     entry_date: z.string().min(1, "Tanggal wajib diisi"),
     description: z.string().optional(),
-    source_ref: z.string().min(1, "Rujukan dokumen sumber wajib diisi"),
     lines: z.array(journalLineSchema).min(2, "Minimal 2 baris"),
   })
   .refine(

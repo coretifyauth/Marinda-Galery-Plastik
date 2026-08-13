@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { JournalEntry } from "@/lib/journal-entries/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DetailRows } from "@/components/ui/detail-rows";
 
 export function JournalEntryDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -68,61 +69,52 @@ export function JournalEntryDetailView({ id }: { id: string }) {
   const totalDebit = entry.journal_lines.reduce((sum, l) => sum + l.debit, 0);
   const totalCredit = entry.journal_lines.reduce((sum, l) => sum + l.credit, 0);
 
+  const detailGroups = [
+    {
+      title: "Informasi Entry",
+      rows: [
+        { label: "Tanggal", value: entry.entry_date },
+        { label: "Deskripsi", value: entry.description || "-" },
+        { label: "Source Ref", value: entry.source_ref },
+        {
+          label: "Status",
+          value: (
+            <span className="flex items-center gap-2">
+              {entry.reverses_entry_id && (
+                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Reversal</span>
+              )}
+              {pairedEntry && !entry.reverses_entry_id && (
+                <span className="rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">Sudah Direversal</span>
+              )}
+              {pairedEntry && (
+                <button
+                  type="button"
+                  onClick={() => router.push(`/journal-entries/${pairedEntry.id}`)}
+                  className="text-slate-700 underline hover:text-black"
+                >
+                  {entry.reverses_entry_id ? "Membalik entry: " : "Dibalik oleh entry: "}
+                  {pairedEntry.description || pairedEntry.source_ref} ({pairedEntry.entry_date})
+                </button>
+              )}
+              {!entry.reverses_entry_id && !pairedEntry && "-"}
+            </span>
+          ),
+        },
+      ],
+    },
+  ];
+
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/journal-entries" label="Kembali ke Journal Entries" />
 
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">
-              {entry.description || entry.source_ref}
-            </h1>
-            {entry.reverses_entry_id && (
-              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
-                Reversal
-              </span>
-            )}
-            {pairedEntry && !entry.reverses_entry_id && (
-              <span className="rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">
-                Sudah Direversal
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-slate-500">{entry.entry_date}</p>
-        </div>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">Journal Entry Details</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Tanggal</dt>
-            <dd className="text-black">{entry.entry_date}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Deskripsi</dt>
-            <dd className="text-black">{entry.description || "-"}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Source Ref</dt>
-            <dd className="text-black">{entry.source_ref}</dd>
-          </div>
-        </dl>
-        {pairedEntry && (
-          <p className="mt-4 text-sm text-slate-500">
-            {entry.reverses_entry_id ? "Membalik entry: " : "Dibalik oleh entry: "}
-            <button
-              type="button"
-              onClick={() => router.push(`/journal-entries/${pairedEntry.id}`)}
-              className="text-slate-700 underline hover:text-black"
-            >
-              {pairedEntry.description || pairedEntry.source_ref} ({pairedEntry.entry_date})
-            </button>
-          </p>
-        )}
-      </div>
+      <DetailRows groups={detailGroups} />
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">

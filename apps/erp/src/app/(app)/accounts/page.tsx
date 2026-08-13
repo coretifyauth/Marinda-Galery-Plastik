@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
 
 type TreeNode = Account & { children: TreeNode[] };
 
@@ -149,9 +150,9 @@ export default function AccountsPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Chart of Accounts — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Chart of Accounts</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0
@@ -178,7 +179,7 @@ export default function AccountsPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -224,17 +225,15 @@ export default function AccountsPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tambah Akun</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan
-              bakal ketolak RLS. Ini expected behavior, bukan bug (lihat
-              docs/story/chart-of-accounts.md).
-            </p>
-          )}
-          <form onSubmit={handleCreate} className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Akun">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan
+            bakal ketolak RLS. Ini expected behavior, bukan bug (lihat
+            docs/story/chart-of-accounts.md).
+          </p>
+        )}
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="code">Kode</Label>
             <Input
@@ -253,44 +252,46 @@ export default function AccountsPage() {
               onChange={(e) => setName(e.target.value)}
             />
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="category">Kategori</Label>
-            <Select
-              id="category"
-              value={category}
-              onChange={(e) =>
-                setCategory(e.target.value as (typeof accountCategories)[number])
-              }
-            >
-              {accountCategories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="parent">Akun induk</Label>
-            <Select id="parent" value={parentId} onChange={(e) => setParentId(e.target.value)}>
-              <option value="">Tanpa parent (header baru)</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.code} — {a.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <Button type="submit" disabled={submitting}>
-            {submitting ? "Menyimpan..." : "Simpan"}
-          </Button>
-        </form>
-          {formError && (
-            <div className="mt-3">
-              <FormError>{formError}</FormError>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="category">Kategori</Label>
+              <Select
+                id="category"
+                value={category}
+                onChange={(e) =>
+                  setCategory(e.target.value as (typeof accountCategories)[number])
+                }
+              >
+                {accountCategories.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
             </div>
-          )}
-        </div>
-      )}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="parent">Akun induk</Label>
+              <Select id="parent" value={parentId} onChange={(e) => setParentId(e.target.value)}>
+                <option value="">Tanpa parent (header baru)</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          {formError && <FormError>{formError}</FormError>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? "Menyimpan..." : "Simpan"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -63,9 +63,9 @@ export default function ReportsPage() {
   }
 
   return (
-    <div className="flex w-full max-w-3xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Financial Reports — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Financial Reports</h1>
         <p className="text-sm text-slate-500">
           4 laporan pertama murni agregasi read-only. Tutup Buku beda — itu tindakan menulis
           (nol-in Pendapatan/Beban, kunci periode dari transaksi baru).

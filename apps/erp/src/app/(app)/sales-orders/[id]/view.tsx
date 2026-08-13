@@ -3,15 +3,24 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { soStatus, lineRemaining, type SalesOrder } from "@/lib/sales-orders/schema";
 import { createGoodsIssueSchema } from "@/lib/goods-issues/schema";
+import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
+import type { TaxSettings } from "@/lib/tax-settings/schema";
+import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { Modal } from "@/components/ui/modal";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 type FulfillmentRow = {
   id: string;
@@ -20,7 +29,7 @@ type FulfillmentRow = {
   total_cost: number;
   so_line_id: string | null;
   items: { name: string; uom: string };
-  goods_issues: { id: string; issue_date: string; ar_invoices: { source_ref: string; amount: number } };
+  goods_issues: { id: string; invoice_id: string; issue_date: string; ar_invoices: { source_ref: string; amount: number } };
 };
 
 type FulfillLineInput = { so_line_id: string; item_id: string; item_label: string; qty_issued: string; unit_price: number };
@@ -36,23 +45,21 @@ export function SalesOrderDetailView({ id }: { id: string }) {
   const [checkingSession, setCheckingSession] = useState(true);
   const [so, setSo] = useState<SalesOrder | null>(null);
   const [fulfillments, setFulfillments] = useState<FulfillmentRow[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("lines");
 
   const [showFulfillForm, setShowFulfillForm] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState("");
   const [description, setDescription] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
-  const [receivableAccountId, setReceivableAccountId] = useState("");
-  const [revenueAccountId, setRevenueAccountId] = useState("");
-  const [hppAccountId, setHppAccountId] = useState("");
-  const [finishedGoodAccountId, setFinishedGoodAccountId] = useState("");
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [fulfillLines, setFulfillLines] = useState<FulfillLineInput[]>([]);
+  const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
+  const [chargeTypes, setChargeTypes] = useState<ArInvoiceChargeType[]>([]);
+  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
+  const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const leafAccounts = getLeafAccounts(accounts);
 
   const load = useCallback(async () => {
     const { data: soData, error: soErr } = await supabase
@@ -74,7 +81,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
       const { data: fulfillData } = await supabase
         .from("goods_issue_lines")
         .select(
-          "id, item_id, qty_issued, total_cost, so_line_id, items(name, uom), goods_issues(id, issue_date, ar_invoices(source_ref, amount))"
+          "id, item_id, qty_issued, total_cost, so_line_id, items(name, uom), goods_issues(id, invoice_id, issue_date, ar_invoices(source_ref, amount))"
         )
         .in("so_line_id", soLineIds)
         .order("id");
@@ -83,12 +90,21 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     setLoadError(null);
   }, [id]);
 
-  const loadAccounts = useCallback(async () => {
+  const loadDefaultAccounts = useCallback(async () => {
+    setDefaultAccounts(await fetchDefaultAccounts());
+  }, []);
+
+  const loadChargeTypes = useCallback(async () => {
     const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+      .from("ar_invoice_charge_types")
+      .select("id, name, account_id, archived_at, accounts(code, name)")
+      .order("name");
+    setChargeTypes((data ?? []) as unknown as ArInvoiceChargeType[]);
+  }, []);
+
+  const loadTaxSettings = useCallback(async () => {
+    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
+    setTaxSettings((data ?? null) as TaxSettings | null);
   }, []);
 
   useEffect(() => {
@@ -104,13 +120,13 @@ export function SalesOrderDetailView({ id }: { id: string }) {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([load(), loadAccounts()]);
+      await Promise.all([load(), loadDefaultAccounts(), loadChargeTypes(), loadTaxSettings()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, load, loadAccounts]);
+  }, [router, load, loadDefaultAccounts, loadChargeTypes, loadTaxSettings]);
 
   function openFulfillForm() {
     if (!so) return;
@@ -125,6 +141,8 @@ export function SalesOrderDetailView({ id }: { id: string }) {
           unit_price: l.unit_price,
         }))
     );
+    setExtraLines([]);
+    setApplyTax(false);
     setShowFulfillForm(true);
   }
 
@@ -144,20 +162,25 @@ export function SalesOrderDetailView({ id }: { id: string }) {
 
     const activeLines = fulfillLines.filter((l) => parseFloat(l.qty_issued) > 0);
 
+    const creditLines = [
+      { account_id: defaultAccounts["ar.revenue"]?.id ?? "", amount: fulfillAmount },
+      ...resolveChargeLines(extraLines, chargeTypes),
+    ];
+
     const parsed = createGoodsIssueSchema.safeParse({
       customer_id: so.customer_id,
       invoice_date: invoiceDate,
       description,
-      source_ref: sourceRef,
-      credit_lines: [{ account_id: revenueAccountId, amount: fulfillAmount }],
-      receivable_account_id: receivableAccountId,
-      hpp_account_id: hppAccountId,
-      finished_good_account_id: finishedGoodAccountId,
+      credit_lines: creditLines,
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
+      hpp_account_id: defaultAccounts["inventory.hpp"]?.id ?? "",
+      finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id ?? "",
       lines: activeLines.map((l) => ({
         item_id: l.item_id,
         qty_issued: l.qty_issued,
         so_line_id: l.so_line_id,
       })),
+      apply_tax: applyTax,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -165,11 +188,19 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_invoices");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_goods_issue", {
       p_customer_id: parsed.data.customer_id,
       p_invoice_date: parsed.data.invoice_date,
       p_description: parsed.data.description || null,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_credit_lines: parsed.data.credit_lines,
       p_receivable_account_id: parsed.data.receivable_account_id,
       p_lines: parsed.data.lines,
@@ -185,12 +216,9 @@ export function SalesOrderDetailView({ id }: { id: string }) {
 
     setInvoiceDate("");
     setDescription("");
-    setSourceRef("");
-    setReceivableAccountId("");
-    setRevenueAccountId("");
-    setHppAccountId("");
-    setFinishedGoodAccountId("");
     setFulfillLines([]);
+    setExtraLines([]);
+    setApplyTax(false);
     setShowFulfillForm(false);
     await load();
   }
@@ -207,130 +235,140 @@ export function SalesOrderDetailView({ id }: { id: string }) {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canFulfill = canWrite && status !== "FULLY_FULFILLED";
 
+  const detailGroups = [
+    {
+      title: "Informasi Sales Order",
+      rows: [
+        { label: "Customer", value: so.customers.name },
+        { label: "Rujukan Dokumen", value: so.source_ref },
+        { label: "Tanggal Pesan", value: so.so_date },
+        { label: "Butuh Tanggal", value: so.expected_date ?? "-" },
+        {
+          label: "Status",
+          value: <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>{status}</span>,
+        },
+      ],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "lines", label: "Item Dipesan", badge: so.sales_order_lines.length },
+    { key: "fulfillments", label: "Pengiriman (Goods Issue + Invoice)", badge: fulfillments.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/sales-orders" label="Kembali ke Sales Orders" />
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">
-              {so.customers.name} — {so.source_ref}
-            </h1>
-            <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>{status}</span>
-          </div>
-          <p className="text-sm text-slate-500">{so.so_date}</p>
-        </div>
-        {canFulfill && (
-          <Button variant="toolbar-primary" onClick={() => (showFulfillForm ? setShowFulfillForm(false) : openFulfillForm())}>
-            {showFulfillForm ? "Batal" : "Kirim / Penuhi"}
-          </Button>
-        )}
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">Sales Order Details</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Tanggal Pesan</dt>
-            <dd className="text-black">{so.so_date}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Butuh Tanggal</dt>
-            <dd className="text-black">{so.expected_date ?? "-"}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Rujukan Dokumen</dt>
-            <dd className="text-black">{so.source_ref}</dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Item Dipesan</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {so.sales_order_lines.length}
-          </span>
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
+      {activeTab === "lines" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Item</th>
+                <th className="px-4 py-2 text-right">Qty Pesan</th>
+                <th className="px-4 py-2 text-right">Qty Terkirim</th>
+                <th className="px-4 py-2 text-right">Harga/Unit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {so.sales_order_lines.map((l) => {
+                const issued = l.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0);
+                return (
+                  <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-2 font-medium text-black">
+                      {l.items.name} ({l.items.uom})
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">{l.qty_ordered}</td>
+                    <td className="px-4 py-2 text-right font-mono">{issued}</td>
+                    <td className="px-4 py-2 text-right font-mono">{l.unit_price.toLocaleString("id-ID")}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Item</th>
-              <th className="px-4 py-2 text-right">Qty Pesan</th>
-              <th className="px-4 py-2 text-right">Qty Terkirim</th>
-              <th className="px-4 py-2 text-right">Harga/Unit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {so.sales_order_lines.map((l) => {
-              const issued = l.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0);
-              return (
-                <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium text-black">
-                    {l.items.name} ({l.items.uom})
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono">{l.qty_ordered}</td>
-                  <td className="px-4 py-2 text-right font-mono">{issued}</td>
-                  <td className="px-4 py-2 text-right font-mono">{l.unit_price.toLocaleString("id-ID")}</td>
+      )}
+
+      {activeTab === "fulfillments" && (
+        <div className="flex flex-col gap-3">
+          {canFulfill && (
+            <div className="flex justify-end">
+              <Button variant="toolbar-primary" onClick={openFulfillForm}>
+                Kirim / Penuhi
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Invoice</th>
+                  <th className="px-4 py-2">Item</th>
+                  <th className="px-4 py-2 text-right">Qty Dikirim</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Pengiriman (Goods Issue + Invoice)</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {fulfillments.length}
-          </span>
+              </thead>
+              <tbody>
+                {fulfillments.map((f) => (
+                  <tr
+                    key={f.id}
+                    className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                    onClick={() => router.push(`/goods-issues/${f.goods_issues.id}`)}
+                  >
+                    <td className="px-4 py-2 text-blue-600">{f.goods_issues.issue_date}</td>
+                    <td className="px-4 py-2">
+                      <button
+                        type="button"
+                        className="text-blue-600 hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          router.push(`/ar-invoices/${f.goods_issues.invoice_id}`);
+                        }}
+                      >
+                        {f.goods_issues.ar_invoices.source_ref}
+                      </button>
+                    </td>
+                    <td className="px-4 py-2">
+                      {f.items.name} ({f.items.uom})
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">{f.qty_issued}</td>
+                  </tr>
+                ))}
+                {fulfillments.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada pengiriman.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Invoice</th>
-              <th className="px-4 py-2">Item</th>
-              <th className="px-4 py-2 text-right">Qty Dikirim</th>
-            </tr>
-          </thead>
-          <tbody>
-            {fulfillments.map((f) => (
-              <tr
-                key={f.id}
-                className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
-                onClick={() => router.push(`/goods-issues/${f.goods_issues.id}`)}
-              >
-                <td className="px-4 py-2 text-blue-600">{f.goods_issues.issue_date}</td>
-                <td className="px-4 py-2">{f.goods_issues.ar_invoices.source_ref}</td>
-                <td className="px-4 py-2">
-                  {f.items.name} ({f.items.uom})
-                </td>
-                <td className="px-4 py-2 text-right font-mono">{f.qty_issued}</td>
-              </tr>
-            ))}
-            {fulfillments.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada pengiriman.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      )}
 
-      {showFulfillForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Kirim Barang (bisa sebagian)</h2>
-          <p className="mb-4 text-sm text-slate-500">
-            Tiap kali dikirim, invoice baru terbit senilai qty yang dikirim SEKARANG — bukan
-            nunggu sales order ini terpenuhi penuh (ref: `docs/domain/inventory.md` submodule
-            &quot;Sales Order &amp; Pemenuhan Bertahap&quot;).
-          </p>
-          <form onSubmit={handleFulfill} className="flex flex-col gap-4">
+      <Modal
+        open={showFulfillForm}
+        onClose={() => setShowFulfillForm(false)}
+        title="Kirim Barang (bisa sebagian)"
+        maxWidth="max-w-3xl"
+      >
+        <p className="mb-4 text-sm text-slate-500">
+          Tiap kali dikirim, invoice baru terbit senilai qty yang dikirim SEKARANG — bukan
+          nunggu sales order ini terpenuhi penuh (ref: `docs/domain/inventory.md` submodule
+          &quot;Sales Order &amp; Pemenuhan Bertahap&quot;).
+        </p>
+        <form onSubmit={handleFulfill} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="invoice_date">Tanggal Kirim/Invoice</Label>
@@ -342,15 +380,6 @@ export function SalesOrderDetailView({ id }: { id: string }) {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. Nota kirim tahap 1"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="description">Deskripsi</Label>
                 <Input
                   id="description"
@@ -359,58 +388,26 @@ export function SalesOrderDetailView({ id }: { id: string }) {
                   onChange={(e) => setDescription(e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="receivable_account">Akun Piutang Usaha (debit)</Label>
-                <Select
-                  id="receivable_account"
-                  value={receivableAccountId}
-                  onChange={(e) => setReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="revenue_account">Akun Pendapatan (kredit)</Label>
-                <Select id="revenue_account" value={revenueAccountId} onChange={(e) => setRevenueAccountId(e.target.value)}>
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="hpp_account">Akun HPP (debit, jurnal kedua)</Label>
-                <Select id="hpp_account" value={hppAccountId} onChange={(e) => setHppAccountId(e.target.value)}>
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="finished_good_account">Akun Persediaan Barang Jadi (kredit, jurnal kedua)</Label>
-                <Select
-                  id="finished_good_account"
-                  value={finishedGoodAccountId}
-                  onChange={(e) => setFinishedGoodAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <LockedAccountField
+                label="Akun Piutang Usaha (debit)"
+                htmlFor="receivable_account"
+                resolved={defaultAccounts["ar.receivable"]}
+              />
+              <LockedAccountField
+                label="Akun Pendapatan (kredit)"
+                htmlFor="revenue_account"
+                resolved={defaultAccounts["ar.revenue"]}
+              />
+              <LockedAccountField
+                label="Akun HPP (debit, jurnal kedua)"
+                htmlFor="hpp_account"
+                resolved={defaultAccounts["inventory.hpp"]}
+              />
+              <LockedAccountField
+                label="Akun Persediaan Barang Jadi (kredit, jurnal kedua)"
+                htmlFor="finished_good_account"
+                resolved={defaultAccounts["inventory.finished_good"]}
+              />
             </div>
 
             <div className="flex flex-col gap-2">
@@ -437,14 +434,36 @@ export function SalesOrderDetailView({ id }: { id: string }) {
               </p>
             </div>
 
+            <ChargeLinesEditor
+              label="Kategori Pendapatan Tambahan (opsional — mis. jasa antar)"
+              lines={extraLines}
+              chargeTypes={chargeTypes}
+              onChange={setExtraLines}
+            />
+
+            {taxSettings?.is_active && (
+              <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={applyTax}
+                  onChange={(e) => setApplyTax(e.target.checked)}
+                />
+                Kena PPN Keluaran ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
+              </label>
+            )}
+
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
-              {submitting ? "Menyimpan..." : "Kirim & Terbitkan Invoice"}
-            </Button>
-          </form>
-        </div>
-      )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowFulfillForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Menyimpan..." : "Kirim & Terbitkan Invoice"}
+              </Button>
+            </div>
+        </form>
+      </Modal>
     </div>
   );
 }

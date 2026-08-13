@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 
 type CatalogItem = {
   id: string;
@@ -234,9 +235,18 @@ export default function CheckoutPage() {
         return { account_id: type?.account_id ?? "", amount: Number(l.amount) };
       });
 
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("pos_sales");
+    } catch (err) {
+      setSubmitting(false);
+      setCheckoutError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+
     const { error } = await supabase.rpc("create_pos_sale", {
       p_sale_date: new Date().toISOString().slice(0, 10),
-      p_source_ref: `POS-${Date.now()}`,
+      p_source_ref: sourceRef,
       p_customer_id: customerId || null,
       p_cash_account_id: cashAccountId,
       p_revenue_account_id: accountIds[ACCOUNT_CODES.PENDAPATAN_TOKO],
@@ -277,7 +287,7 @@ export default function CheckoutPage() {
   return (
     <div className="flex h-screen">
       <div className="flex-1 overflow-y-auto p-6">
-        <h1 className="mb-4 text-xl font-semibold">Kasir — CV Roti Barokah</h1>
+        <h1 className="mb-4 text-xl font-semibold">Kasir</h1>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {catalog.map((item) => (
             <button

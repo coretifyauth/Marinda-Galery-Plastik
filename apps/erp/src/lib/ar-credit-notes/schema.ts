@@ -10,7 +10,6 @@ export const createArCreditNoteSchema = z
   .object({
     invoice_id: z.string().uuid("Pilih invoice"),
     credit_note_date: z.string().min(1, "Tanggal wajib diisi"),
-    source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
     amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
     contra_revenue_account_id: z.string().uuid("Pilih akun Retur & Potongan Penjualan"),
     receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),

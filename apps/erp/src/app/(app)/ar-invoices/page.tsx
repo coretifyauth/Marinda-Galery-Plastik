@@ -3,18 +3,21 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Customer } from "@/lib/customers/schema";
-import { createArInvoiceSchema, invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
+import { createArInvoiceSchema, invoiceStatus, invoiceOrigin, type ArInvoice } from "@/lib/ar-invoices/schema";
 import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
 import type { TaxSettings } from "@/lib/tax-settings/schema";
 import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
+import { Modal } from "@/components/ui/modal";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -24,10 +27,21 @@ const statusStyle: Record<string, string> = {
   dihapusbukukan: "bg-red-50 text-red-700",
 };
 
+const originLabel: Record<string, string> = {
+  sales_order: "Dari Sales Order",
+  goods_issue: "Goods Issue Langsung",
+  financial_only: "Financial Only",
+};
+
+const originStyle: Record<string, string> = {
+  sales_order: "bg-blue-50 text-blue-700",
+  goods_issue: "bg-slate-100 text-slate-600",
+  financial_only: "bg-purple-50 text-purple-700",
+};
+
 export default function ArInvoicesPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [invoices, setInvoices] = useState<ArInvoice[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
@@ -37,10 +51,8 @@ export default function ArInvoicesPage() {
   const [customerId, setCustomerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
   const [description, setDescription] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
   const [amount, setAmount] = useState("");
-  const [receivableAccountId, setReceivableAccountId] = useState("");
-  const [revenueAccountId, setRevenueAccountId] = useState("");
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
   const [chargeTypes, setChargeTypes] = useState<ArInvoiceChargeType[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
@@ -48,8 +60,6 @@ export default function ArInvoicesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-
-  const leafAccounts = getLeafAccounts(accounts);
 
   const loadReversedEntryIds = useCallback(async () => {
     const { data } = await supabase
@@ -65,7 +75,7 @@ export default function ArInvoicesPage() {
     const { data, error } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount), goods_issues(id, goods_issue_lines(so_line_id))"
       )
       .order("invoice_date", { ascending: false });
     if (error) {
@@ -84,12 +94,8 @@ export default function ArInvoicesPage() {
     setCustomers((data ?? []) as Customer[]);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+  const loadDefaultAccounts = useCallback(async () => {
+    setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
 
   const loadChargeTypes = useCallback(async () => {
@@ -120,7 +126,7 @@ export default function ArInvoicesPage() {
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await Promise.all([
         loadCustomers(),
-        loadAccounts(),
+        loadDefaultAccounts(),
         loadInvoices(),
         loadReversedEntryIds(),
         loadChargeTypes(),
@@ -131,14 +137,14 @@ export default function ArInvoicesPage() {
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadAccounts, loadInvoices, loadReversedEntryIds, loadChargeTypes, loadTaxSettings]);
+  }, [router, loadCustomers, loadDefaultAccounts, loadInvoices, loadReversedEntryIds, loadChargeTypes, loadTaxSettings]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
     const creditLines = [
-      { account_id: revenueAccountId, amount: Number(amount) },
+      { account_id: defaultAccounts["ar.revenue"]?.id ?? "", amount: Number(amount) },
       ...resolveChargeLines(extraLines, chargeTypes),
     ];
 
@@ -146,9 +152,8 @@ export default function ArInvoicesPage() {
       customer_id: customerId,
       invoice_date: invoiceDate,
       description,
-      source_ref: sourceRef,
       credit_lines: creditLines,
-      receivable_account_id: receivableAccountId,
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
       apply_tax: applyTax,
     });
     if (!parsed.success) {
@@ -157,11 +162,19 @@ export default function ArInvoicesPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_invoices");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_ar_invoice", {
       p_customer_id: parsed.data.customer_id,
       p_invoice_date: parsed.data.invoice_date,
       p_description: parsed.data.description || null,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_credit_lines: parsed.data.credit_lines,
       p_receivable_account_id: parsed.data.receivable_account_id,
       p_apply_tax: parsed.data.apply_tax,
@@ -175,10 +188,7 @@ export default function ArInvoicesPage() {
     setCustomerId("");
     setInvoiceDate("");
     setDescription("");
-    setSourceRef("");
     setAmount("");
-    setReceivableAccountId("");
-    setRevenueAccountId("");
     setExtraLines([]);
     setApplyTax(false);
     setShowForm(false);
@@ -192,9 +202,9 @@ export default function ArInvoicesPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">AR Invoices — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">AR Invoices</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -216,7 +226,7 @@ export default function ArInvoicesPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -229,6 +239,7 @@ export default function ArInvoicesPage() {
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Jatuh Tempo</th>
               <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Tipe</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
               <th className="px-4 py-2 text-right">Outstanding</th>
               <th className="px-4 py-2">Status</th>
@@ -260,6 +271,13 @@ export default function ArInvoicesPage() {
                     )}
                   </td>
                   <td className="px-4 py-2">{inv.source_ref}</td>
+                  <td className="px-4 py-2">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs ${originStyle[invoiceOrigin(inv)]}`}
+                    >
+                      {originLabel[invoiceOrigin(inv)]}
+                    </span>
+                  </td>
                   <td className="px-4 py-2 text-right font-mono">
                     {inv.amount.toLocaleString("id-ID")}
                   </td>
@@ -281,7 +299,7 @@ export default function ArInvoicesPage() {
             })}
             {invoices.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
                   Belum ada invoice.
                 </td>
               </tr>
@@ -290,124 +308,97 @@ export default function ArInvoicesPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tambah AR Invoice</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="customer">Customer</Label>
-                <Select id="customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                  <option value="">Pilih customer...</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} (net-{c.payment_term_days})
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="invoice_date">Tanggal</Label>
-                <Input
-                  id="invoice_date"
-                  type="date"
-                  value={invoiceDate}
-                  onChange={(e) => setInvoiceDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. Nota grosir #005"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="description">Deskripsi</Label>
-                <Input
-                  id="description"
-                  placeholder="mis. Kirim roti ke Warung Bu Imas"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="amount">Jumlah</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="receivable_account">Akun Piutang Usaha (debit)</Label>
-                <Select
-                  id="receivable_account"
-                  value={receivableAccountId}
-                  onChange={(e) => setReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="revenue_account">Akun Pendapatan (kredit)</Label>
-                <Select
-                  id="revenue_account"
-                  value={revenueAccountId}
-                  onChange={(e) => setRevenueAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah AR Invoice" maxWidth="max-w-2xl">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
+          </p>
+        )}
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="customer">Customer</Label>
+              <Select id="customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+                <option value="">Pilih customer...</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} (net-{c.payment_term_days})
+                  </option>
+                ))}
+              </Select>
             </div>
-
-            <ChargeLinesEditor
-              label="Kategori Pendapatan Tambahan (opsional — mis. jasa antar)"
-              lines={extraLines}
-              chargeTypes={chargeTypes}
-              onChange={setExtraLines}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="invoice_date">Tanggal</Label>
+              <Input
+                id="invoice_date"
+                type="date"
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="description">Deskripsi</Label>
+              <Input
+                id="description"
+                placeholder="mis. Kirim barang ke Warung Bu Siti"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="amount">Jumlah</Label>
+              <Input
+                id="amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+            <LockedAccountField
+              label="Akun Piutang Usaha (debit)"
+              htmlFor="receivable_account"
+              resolved={defaultAccounts["ar.receivable"]}
             />
+            <LockedAccountField
+              label="Akun Pendapatan (kredit)"
+              htmlFor="revenue_account"
+              resolved={defaultAccounts["ar.revenue"]}
+            />
+          </div>
 
-            {taxSettings?.is_active && (
-              <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={applyTax}
-                  onChange={(e) => setApplyTax(e.target.checked)}
-                />
-                Kena PPN Keluaran ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
-              </label>
-            )}
+          <ChargeLinesEditor
+            label="Kategori Pendapatan Tambahan (opsional — mis. jasa antar)"
+            lines={extraLines}
+            chargeTypes={chargeTypes}
+            onChange={setExtraLines}
+          />
 
-            {formError && <FormError>{formError}</FormError>}
+          {taxSettings?.is_active && (
+            <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={applyTax}
+                onChange={(e) => setApplyTax(e.target.checked)}
+              />
+              Kena PPN Keluaran ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
+            </label>
+          )}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
+          {formError && <FormError>{formError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={submitting}>
               {submitting ? "Menyimpan..." : "Simpan Invoice"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

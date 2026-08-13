@@ -88,9 +88,9 @@ export default function GeneralLedgerPage() {
   }, []);
 
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">General Ledger — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">General Ledger</h1>
         <p className="text-sm text-slate-500">Histori transaksi + saldo berjalan per akun.</p>
       </div>
 

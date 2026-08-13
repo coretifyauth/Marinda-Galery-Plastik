@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { BomHeader } from "@/lib/bom/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DetailRows } from "@/components/ui/detail-rows";
 
 export function BomDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -52,36 +53,38 @@ export function BomDetailView({ id }: { id: string }) {
     return <FormError>{loadError ?? "BOM gak ditemukan."}</FormError>;
   }
 
+  const detailGroups = [
+    {
+      title: "Informasi BOM",
+      rows: [
+        { label: "Barang Jadi", value: bom.items.name },
+        { label: "Output per Batch", value: `${bom.output_qty} ${bom.items.uom}` },
+        {
+          label: "Status",
+          value: (
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs ${
+                bom.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-400"
+              }`}
+            >
+              {bom.is_active ? "Aktif" : "Nonaktif"}
+            </span>
+          ),
+        },
+      ],
+    },
+  ];
+
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/bom" label="Kembali ke BOM" />
-      <div className="flex items-center gap-2">
-        <h1 className="text-xl font-semibold text-black">{bom.items.name}</h1>
-        <span
-          className={`rounded-full px-2 py-0.5 text-xs ${
-            bom.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-400"
-          }`}
-        >
-          {bom.is_active ? "Aktif" : "Nonaktif"}
-        </span>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">BOM Details</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Barang Jadi</dt>
-            <dd className="text-black">{bom.items.name}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Output per Batch</dt>
-            <dd className="font-mono text-black">
-              {bom.output_qty} {bom.items.uom}
-            </dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="border-b border-slate-100 px-4 py-2">

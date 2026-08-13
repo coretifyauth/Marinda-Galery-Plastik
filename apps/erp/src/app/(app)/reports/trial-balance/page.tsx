@@ -59,7 +59,7 @@ export default function TrialBalancePage() {
   const isBalanced = report ? report.totalDebit === report.totalCredit : false;
 
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/reports" label="Kembali ke Financial Reports" />
       <div>
         <h1 className="text-xl font-semibold text-black">Trial Balance</h1>

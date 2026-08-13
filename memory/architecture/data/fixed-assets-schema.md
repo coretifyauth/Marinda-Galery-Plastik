@@ -59,7 +59,7 @@ Trigger-nya sendiri (`accounts_published_lock_trigger`) gak perlu dibuat ulang �
 
 #### `fixed_assets` — master data tiap unit aset tetap
 
-Satu baris = satu unit aset fisik (1 oven, 1 motor), bukan kategori. Yang perlu diperhatiin dari kolomnya:
+Satu baris = satu unit aset fisik (1 kendaraan, 1 mesin), bukan kategori. Yang perlu diperhatiin dari kolomnya:
 - `asset_account_id`, `accumulated_depreciation_account_id`, `depreciation_expense_account_id` — 3 akun COA yang dipetakan ke aset ini. Divalidasi lewat trigger `fixed_assets_validate_accounts` (bukan `CHECK` constraint biasa — Postgres gak bisa `CHECK` yang query tabel lain).
 - `useful_life_months` — satuan bulan (bukan tahun), biar penyusutan bulanan presisi tanpa pembagian ulang di RPC.
 - `depreciation_method`/`depreciation_rate` — 2 metode in-scope, `depreciation_rate` nullable, wajib keisi kalau `depreciation_method='declining_balance'`, wajib `null` kalau `straight_line` (ditegakkan `check` constraint biasa, karena ini validasi antar-kolom di baris yang sama, bukan lintas tabel). Detail rationale & formula: submodule "Metode Penyusutan".

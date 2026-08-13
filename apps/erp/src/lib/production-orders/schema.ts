@@ -4,7 +4,6 @@ export const createProductionOrderSchema = z.object({
   bom_header_id: z.string().uuid("Pilih resep (BOM)"),
   qty_produced: z.coerce.number().positive("Qty produksi harus lebih dari 0"),
   production_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   finished_good_debit_account_id: z.string().uuid("Pilih akun Persediaan Barang Jadi"),
   raw_material_credit_account_id: z.string().uuid("Pilih akun Persediaan Bahan Baku"),
 });

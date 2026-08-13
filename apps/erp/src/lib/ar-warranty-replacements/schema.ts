@@ -8,7 +8,6 @@ export const warrantyReplacementLineSchema = z.object({
 export const createWarrantyReplacementSchema = z.object({
   credit_note_id: z.string().uuid("Pilih credit note"),
   replacement_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   lines: z.array(warrantyReplacementLineSchema).min(1, "Isi minimal 1 baris item"),
   hpp_account_id: z.string().uuid("Pilih akun HPP"),
   finished_good_account_id: z.string().uuid("Pilih akun Persediaan Barang Jadi"),

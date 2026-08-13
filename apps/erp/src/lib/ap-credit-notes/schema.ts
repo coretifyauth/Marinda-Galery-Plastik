@@ -16,7 +16,6 @@ export const purchaseReturnLineSchema = z.object({
 export const createApCreditNoteSchema = z.object({
   bill_id: z.string().uuid("Pilih bill"),
   credit_note_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
   payable_account_id: z.string().uuid("Pilih akun Utang Usaha"),
   credit_account_id: z.string().uuid("Pilih akun Persediaan/Beban"),

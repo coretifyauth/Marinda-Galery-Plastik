@@ -52,7 +52,9 @@ Effect table:
 
 **Published-lock**
 
-Field kritikal (`code`, `category`, `normal_balance`, `parent_id`, `is_contra`) sebuah akun terkunci begitu akun itu pernah dipakai di `journal_lines` — mencegah histori laporan lama berubah makna diam-diam. `name`/`archived_at` tetap bebas diubah kapan pun. Derived/ditegakkan via DB trigger (`accounts_published_lock`), BUKAN kolom status — trigger-nya juga baru bisa ditulis pas modul Journal Entry (fase 2) dibangun, karena butuh tabel `journal_lines` yang belum ada di fase 1. Full DDL: `memory/architecture/data/journal-entry-schema.md`.
+Field kritikal (`code`, `category`, `normal_balance`, `parent_id`, `is_contra`) sebuah akun terkunci begitu akun itu pernah dipakai di `journal_lines` — mencegah histori laporan lama berubah makna diam-diam. `name`/`archived_at` tetap bebas diubah kapan pun. Derived/ditegakkan via DB trigger (`accounts_published_lock`), BUKAN kolom status — trigger-nya juga baru bisa ditulis pas modul Journal Entry (fase 2) dibangun, karena butuh tabel `journal_lines` yang belum ada di fase 1. Full DDL: `memory/architecture/data/journal-entry-schema.md`. **Bug generated-column ditemukan & diperbaiki `0014` (2026-08-12)** — lihat `memory/architecture/data/coa-schema.md` submodule "Trigger".
+
+**Delete**: akun yang belum pernah dipakai boleh dihapus permanen; yang udah pernah dipakai (atau masih punya akun anak) diarsipkan sebagai fallback — bukan lagi tertutup total. Detail: `memory/architecture/data/coa-schema.md` submodule "Smart Delete Master Data".
 
 **Common Mistakes**
 

@@ -73,14 +73,14 @@ const openingLines: FixtureLine[] = [
 ];
 
 const periodLines: FixtureLine[] = [
-  // 1. Beli oven, non-cash (langsung Utang Bank)
+  // 1. Beli aset tetap, non-cash (langsung Utang Bank)
   { journal_entry_id: "e1", account_id: asetTetap.id, debit: 15_000_000, credit: 0, entry_date: "2026-07-05" },
   { journal_entry_id: "e1", account_id: utangBank.id, debit: 0, credit: 15_000_000, entry_date: "2026-07-05" },
   // 2. Beli bahan baku, separuh cash separuh utang
   { journal_entry_id: "e2", account_id: persediaan.id, debit: 3_000_000, credit: 0, entry_date: "2026-07-06" },
   { journal_entry_id: "e2", account_id: kas.id, debit: 0, credit: 1_500_000, entry_date: "2026-07-06" },
   { journal_entry_id: "e2", account_id: utangUsaha.id, debit: 0, credit: 1_500_000, entry_date: "2026-07-06" },
-  // 3. Jual roti, separuh cash separuh piutang
+  // 3. Jual barang, separuh cash separuh piutang
   { journal_entry_id: "e3", account_id: kas.id, debit: 4_000_000, credit: 0, entry_date: "2026-07-10" },
   { journal_entry_id: "e3", account_id: piutang.id, debit: 4_000_000, credit: 0, entry_date: "2026-07-10" },
   { journal_entry_id: "e3", account_id: pendapatan.id, debit: 0, credit: 8_000_000, entry_date: "2026-07-10" },
@@ -90,7 +90,7 @@ const periodLines: FixtureLine[] = [
   // 5. Bayar gaji cash
   { journal_entry_id: "e5", account_id: bebanGaji.id, debit: 1_500_000, credit: 0, entry_date: "2026-07-15" },
   { journal_entry_id: "e5", account_id: kas.id, debit: 0, credit: 1_500_000, entry_date: "2026-07-15" },
-  // 6. Penyusutan oven bulan ini
+  // 6. Penyusutan aset tetap bulan ini
   { journal_entry_id: "e6", account_id: bebanPenyusutan.id, debit: 250_000, credit: 0, entry_date: "2026-07-20" },
   { journal_entry_id: "e6", account_id: akumulasiPenyusutan.id, debit: 0, credit: 250_000, entry_date: "2026-07-20" },
   // 7. Bayar sebagian Utang Usaha cash
@@ -252,6 +252,64 @@ describe("computeCashFlow — angka domain doc", () => {
     expect(cf.netChange).toBe(500_000);
     expect(cf.beginningCash + cf.netChange).toBe(cf.endingCash);
     expect(cf.endingCash).toBe(10_500_000);
+  });
+
+  it("operatingWorkingCapital lists exactly Piutang/Persediaan/Utang Usaha with correct sign", () => {
+    const byCode = (code: string) => cf.operatingWorkingCapital.find((l) => l.code === code);
+    expect(byCode("1300")?.contribution).toBe(-4_000_000);
+    expect(byCode("1400")?.contribution).toBe(-1_000_000);
+    expect(byCode("2100")?.contribution).toBe(1_000_000);
+    // Aset Tetap (1610) dan kontra-nya (1630) TIDAK ikut di sini — 1610 sudah
+    // kehitung di Investing, 1630 sudah kehitung via depreciationAddBack.
+    expect(byCode("1610")).toBeUndefined();
+    expect(byCode("1630")).toBeUndefined();
+  });
+});
+
+describe("computeCashFlow — akun neraca baru otomatis ke-track (regresi bug mismatch Cash Flow)", () => {
+  // Akun neraca baru yang lahir belakangan (mis. Piutang Retur Supplier dari fitur
+  // retur AP) — dulu gak ada di daftar hardcode AR/Inventory/AP, jadi mutasinya
+  // "hilang" dari Operating walau Kas-nya beneran bergerak. Reproduksi persis
+  // temuan nyata di data live (2026-08-12): retur bill lunas -> excess reklasifikasi
+  // jadi Piutang Retur Supplier, Kas kekurangan tanpa penyeimbang di laporan lama.
+  const piutangRetur = account({ code: "1350", category: "asset", normal_balance: "debit" });
+  const accountsWithNewLine = [...accounts, piutangRetur];
+
+  const newLines: FixtureLine[] = [
+    ...periodLines,
+    // Retur bill yang udah lunas -> excess dikreditkan dari Kas ke Piutang Retur Supplier.
+    { journal_entry_id: "e8", account_id: piutangRetur.id, debit: 300_000, credit: 0, entry_date: "2026-07-28" },
+    { journal_entry_id: "e8", account_id: kas.id, debit: 0, credit: 300_000, entry_date: "2026-07-28" },
+  ];
+  function linesUpToNew(date: string) {
+    return [...openingLines, ...newLines].filter((l) => l.entry_date <= date);
+  }
+  function linesBetweenNew(start: string, end: string) {
+    return [...openingLines, ...newLines].filter((l) => l.entry_date >= start && l.entry_date <= end);
+  }
+
+  const tbStart = computeTrialBalance(accountsWithNewLine, linesUpToNew("2026-06-30"), "2026-06-30");
+  const tbEnd = computeTrialBalance(accountsWithNewLine, linesUpToNew("2026-07-31"), "2026-07-31");
+  const cf = computeCashFlow(
+    accountsWithNewLine,
+    linesBetweenNew("2026-07-01", "2026-07-31"),
+    linesBetweenNew("2026-07-01", "2026-07-31"),
+    tbStart,
+    tbEnd,
+    "2026-07-01",
+    "2026-07-31"
+  );
+
+  it("Piutang Retur Supplier ikut ke-track di operatingWorkingCapital tanpa perlu hardcode", () => {
+    const line = cf.operatingWorkingCapital.find((l) => l.code === "1350");
+    expect(line?.delta).toBe(300_000);
+    expect(line?.contribution).toBe(-300_000);
+  });
+
+  it("tetap reconciled walau ada akun neraca baru yang gak pernah di-hardcode", () => {
+    expect(cf.beginningCash + cf.netChange).toBe(cf.endingCash);
+    expect(cf.endingCash).toBe(10_200_000); // 10.500.000 dari fixture asal, dikurangi 300.000
+    expect(cf.operating).toBe(200_000); // 500.000 dari fixture asal, dikurangi kontribusi -300.000
   });
 });
 

@@ -168,7 +168,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 ## Kategori Campur & PPN (Compounding)
 
 **Cara Kerja**
-- Dulu `create_ar_invoice` cuma bisa 1 kategori pendapatan per invoice. Sekarang bisa dipecah beberapa kategori dalam **1 invoice yang sama** (mis. Pendapatan Roti + Pendapatan Jasa Antar) — debit (Piutang Usaha) tetap 1 baris, cuma sisi kredit yang jadi array.
+- Dulu `create_ar_invoice` cuma bisa 1 kategori pendapatan per invoice. Sekarang bisa dipecah beberapa kategori dalam **1 invoice yang sama** (mis. Pendapatan Penjualan Barang + Pendapatan Jasa Antar) — debit (Piutang Usaha) tetap 1 baris, cuma sisi kredit yang jadi array.
 - Kategori dipilih dari katalog preset (`ar_invoice_charge_types`) yang disiapkan admin — nama + akun tujuan — bukan pilih akun COA mentah tiap transaksi. Nominal tetap diinput manual per invoice (gak ada nilai default).
 - PPN Keluaran (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Piutang Usaha (customer ikut berutang pajaknya) — bukan diketik manual.
 - Berlaku juga buat invoice yang lahir dari `create_goods_issue` (submodule "Penjualan & Pengakuan HPP" di `inventory.md`) — RPC itu manggil `create_ar_invoice` di dalamnya, jadi ikut dapat kemampuan yang sama.

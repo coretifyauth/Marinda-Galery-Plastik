@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
 
 type PosSaleDetail = {
   id: string;
@@ -44,6 +47,7 @@ export function PosSaleDetailView({ id }: { id: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [activeTab, setActiveTab] = useState("lines");
 
   const load = useCallback(async () => {
     const { data: s, error: sErr } = await supabase
@@ -99,14 +103,18 @@ export function PosSaleDetailView({ id }: { id: string }) {
 
   async function handleVoid() {
     if (!sale) return;
-    const ref = window.prompt(
-      `Batalkan transaksi POS ${sale.source_ref}?\nMasukin rujukan dokumen buat entry pembalik:`,
-      `Pembatalan ${sale.source_ref}`
-    );
-    if (!ref) return;
+    if (!window.confirm(`Batalkan transaksi POS ${sale.source_ref}?`)) return;
 
     setCancelError(null);
     setCancelling(true);
+    let ref: string;
+    try {
+      ref = await generateDocumentNumber("journal_entries");
+    } catch (err) {
+      setCancelling(false);
+      setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("void_pos_sale", {
       p_sale_id: sale.id,
       p_entry_date: new Date().toISOString().slice(0, 10),
@@ -133,143 +141,129 @@ export function PosSaleDetailView({ id }: { id: string }) {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canVoid = canWrite && !isCancelled;
 
+  const detailGroups = [
+    {
+      title: "Informasi Transaksi",
+      rows: [
+        { label: "Pelanggan", value: sale.customers?.name ?? "Walk-in (anonim)" },
+        { label: "Rujukan Dokumen", value: sale.source_ref },
+        { label: "Tanggal", value: sale.sale_date },
+        { label: "Bayar via", value: sale.cash_account?.name ?? "—" },
+        { label: "Akun Pendapatan", value: sale.revenue_account?.name ?? "—" },
+        {
+          label: "Status",
+          value: isCancelled ? (
+            <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">Dibatalkan</span>
+          ) : (
+            <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Normal</span>
+          ),
+        },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [
+        { label: "Total", value: total.toLocaleString("id-ID") },
+        { label: "Total HPP", value: totalCost.toLocaleString("id-ID") },
+      ],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "lines", label: "Barang Terjual", badge: sale.pos_sale_lines.length },
+    { key: "jurnal", label: "Jurnal Terkait", badge: journalEntries.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/pos-sales" label="Kembali ke POS Sales" />
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">
-              {sale.customers?.name ?? "Walk-in"} — {sale.source_ref}
-            </h1>
-            {isCancelled ? (
-              <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">
-                Dibatalkan
-              </span>
-            ) : (
-              <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">
-                Normal
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-slate-500">
-            {sale.sale_date} · Bayar via {sale.cash_account?.name ?? "—"}
-          </p>
-        </div>
-        <div className="flex items-start gap-4">
-          <div className="text-right">
-            <div className="text-xs uppercase text-slate-400">Total</div>
-            <div className="font-mono text-lg font-medium text-black">
-              {total.toLocaleString("id-ID")}
-            </div>
-          </div>
-          {canVoid && (
-            <Button variant="toolbar" onClick={handleVoid} disabled={cancelling}>
-              {cancelling ? "Membatalkan..." : "Batalkan"}
-            </Button>
-          )}
-        </div>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">POS Sale Details</h1>
+        {canVoid && (
+          <Button variant="toolbar" onClick={handleVoid} disabled={cancelling}>
+            {cancelling ? "Membatalkan..." : "Batalkan"}
+          </Button>
+        )}
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
       {cancelError && <FormError>{cancelError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Pelanggan</dt>
-            <dd className="text-black">{sale.customers?.name ?? "Walk-in (anonim)"}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Akun Pendapatan</dt>
-            <dd className="text-black">{sale.revenue_account?.name ?? "—"}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Total HPP</dt>
-            <dd className="font-mono text-black">{totalCost.toLocaleString("id-ID")}</dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Barang Terjual</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {sale.pos_sale_lines.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Item</th>
-              <th className="px-4 py-2 text-right">Qty</th>
-              <th className="px-4 py-2 text-right">Harga Satuan</th>
-              <th className="px-4 py-2 text-right">Total</th>
-              <th className="px-4 py-2 text-right">HPP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sale.pos_sale_lines.map((l) => (
-              <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{l.items.name}</td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {l.qty_sold} {l.items.uom}
-                </td>
-                <td className="px-4 py-2 text-right font-mono">{l.unit_price.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2 text-right font-mono">{l.line_amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2 text-right font-mono">{l.total_cost.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Jurnal Terkait</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {journalEntries.length}
-          </span>
+      {activeTab === "lines" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Item</th>
+                <th className="px-4 py-2 text-right">Qty</th>
+                <th className="px-4 py-2 text-right">Harga Satuan</th>
+                <th className="px-4 py-2 text-right">Total</th>
+                <th className="px-4 py-2 text-right">HPP</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sale.pos_sale_lines.map((l) => (
+                <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="px-4 py-2">{l.items.name}</td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {l.qty_sold} {l.items.uom}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{l.unit_price.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2 text-right font-mono">{l.line_amount.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2 text-right font-mono">{l.total_cost.toLocaleString("id-ID")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Deskripsi</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Baris</th>
-            </tr>
-          </thead>
-          <tbody>
-            {journalEntries.map((entry) => (
-              <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
-                <td className="px-4 py-2">{entry.description}</td>
-                <td className="px-4 py-2">{entry.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {entry.journal_lines.map((line) => (
-                      <li key={line.id}>
-                        {line.accounts.code} {line.accounts.name} —{" "}
-                        {line.debit > 0
-                          ? `D ${line.debit.toLocaleString("id-ID")}`
-                          : `K ${line.credit.toLocaleString("id-ID")}`}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
+      )}
+
+      {activeTab === "jurnal" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Deskripsi</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Baris</th>
               </tr>
-            ))}
-            {journalEntries.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada jurnal.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {journalEntries.map((entry) => (
+                <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
+                  <td className="px-4 py-2">{entry.description}</td>
+                  <td className="px-4 py-2">{entry.source_ref}</td>
+                  <td className="px-4 py-2">
+                    <ul className="space-y-0.5">
+                      {entry.journal_lines.map((line) => (
+                        <li key={line.id}>
+                          {line.accounts.code} {line.accounts.name} —{" "}
+                          {line.debit > 0
+                            ? `D ${line.debit.toLocaleString("id-ID")}`
+                            : `K ${line.credit.toLocaleString("id-ID")}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                </tr>
+              ))}
+              {journalEntries.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada jurnal.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Custom ERP — CV Roti Barokah",
+  title: "Custom ERP",
   description: "Chart of Accounts",
 };
 

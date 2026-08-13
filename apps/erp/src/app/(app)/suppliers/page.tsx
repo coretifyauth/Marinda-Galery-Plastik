@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
 
 export default function SuppliersPage() {
   const router = useRouter();
@@ -90,9 +91,9 @@ export default function SuppliersPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-3xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Suppliers — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Suppliers</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -114,7 +115,7 @@ export default function SuppliersPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -151,55 +152,53 @@ export default function SuppliersPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tambah Supplier</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <form onSubmit={handleCreate} className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="name">Nama</Label>
-              <Input
-                id="name"
-                placeholder="mis. Toko Gula Sejahtera"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="contact">Kontak</Label>
-              <Input
-                id="contact"
-                placeholder="mis. 022-xxxx-1002"
-                value={contact}
-                onChange={(e) => setContact(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="payment_term_days">Termin (hari)</Label>
-              <Input
-                id="payment_term_days"
-                type="number"
-                min="1"
-                value={paymentTermDays}
-                onChange={(e) => setPaymentTermDays(e.target.value)}
-              />
-            </div>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Supplier">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
+          </p>
+        )}
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="name">Nama</Label>
+            <Input
+              id="name"
+              placeholder="mis. Toko Gula Sejahtera"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="contact">Kontak</Label>
+            <Input
+              id="contact"
+              placeholder="mis. 022-xxxx-1002"
+              value={contact}
+              onChange={(e) => setContact(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="payment_term_days">Termin (hari)</Label>
+            <Input
+              id="payment_term_days"
+              type="number"
+              min="1"
+              value={paymentTermDays}
+              onChange={(e) => setPaymentTermDays(e.target.value)}
+            />
+          </div>
+          {formError && <FormError>{formError}</FormError>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
             <Button type="submit" disabled={submitting}>
               {submitting ? "Menyimpan..." : "Simpan"}
             </Button>
-          </form>
-          {formError && (
-            <div className="mt-3">
-              <FormError>{formError}</FormError>
-            </div>
-          )}
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

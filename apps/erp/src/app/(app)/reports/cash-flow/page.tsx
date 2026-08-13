@@ -78,7 +78,7 @@ export default function CashFlowPage() {
   const reconciled = report ? report.beginningCash + report.netChange === report.endingCash : false;
 
   return (
-    <div className="flex w-full max-w-3xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/reports" label="Kembali ke Financial Reports" />
       <div>
         <h1 className="text-xl font-semibold text-black">Cash Flow (Arus Kas) — Indirect Method</h1>
@@ -111,9 +111,9 @@ export default function CashFlowPage() {
               <p className="mb-1.5 text-xs font-medium uppercase text-slate-400">Operating</p>
               <Row label={report.netIncome >= 0 ? "Laba Bersih" : "Rugi Bersih"} value={report.netIncome} />
               <Row label="+ Beban Penyusutan (add-back)" value={report.depreciationAddBack} indent />
-              <Row label="− Kenaikan Piutang Usaha" value={-report.deltaAccountsReceivable} indent />
-              <Row label="− Kenaikan Persediaan" value={-report.deltaInventory} indent />
-              <Row label="+ Kenaikan Utang Usaha" value={report.deltaAccountsPayable} indent />
+              {report.operatingWorkingCapital.map((line) => (
+                <Row key={line.accountId} label={`Δ ${line.code} — ${line.name}`} value={line.contribution} indent />
+              ))}
               <div className="mt-1 flex justify-between border-t border-slate-100 pt-1 font-medium text-black">
                 <span>Kas Bersih Operating</span>
                 <span className="font-mono">{report.operating.toLocaleString("id-ID")}</span>

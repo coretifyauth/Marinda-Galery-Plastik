@@ -3,14 +3,19 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { forfeitApDepositSchema, refundApDepositSchema, depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { Modal } from "@/components/ui/modal";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 type JournalEntryDetail = {
   id: string;
@@ -37,31 +42,25 @@ export function ApDepositDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [deposit, setDeposit] = useState<ApDeposit | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("jurnal");
 
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [refundAmount, setRefundAmount] = useState("");
   const [refundDate, setRefundDate] = useState("");
-  const [refundSourceRef, setRefundSourceRef] = useState("");
-  const [refundCashAccountId, setRefundCashAccountId] = useState("");
-  const [refundDepositAssetAccountId, setRefundDepositAssetAccountId] = useState("");
+  const [refundCashMethod, setRefundCashMethod] = useState<CashMethod>("TUNAI");
   const [refundError, setRefundError] = useState<string | null>(null);
   const [refundSubmitting, setRefundSubmitting] = useState(false);
 
   const [showForfeitForm, setShowForfeitForm] = useState(false);
   const [forfeitAmount, setForfeitAmount] = useState("");
   const [forfeitDate, setForfeitDate] = useState("");
-  const [forfeitSourceRef, setForfeitSourceRef] = useState("");
-  const [forfeitLossExpenseAccountId, setForfeitLossExpenseAccountId] = useState("");
-  const [forfeitDepositAssetAccountId, setForfeitDepositAssetAccountId] = useState("");
   const [forfeitError, setForfeitError] = useState<string | null>(null);
   const [forfeitSubmitting, setForfeitSubmitting] = useState(false);
-
-  const leafAccounts = getLeafAccounts(accounts);
 
   const load = useCallback(async () => {
     const { data: dep, error: depErr } = await supabase
@@ -78,11 +77,8 @@ export function ApDepositDetailView({ id }: { id: string }) {
     const loadedDeposit = dep as unknown as ApDeposit;
     setDeposit(loadedDeposit);
 
-    const [{ data: accs }, { data: reversedRows }, { data: entries, error: entriesErr }] = await Promise.all([
-      supabase
-        .from("accounts")
-        .select("id, code, name, category, normal_balance, parent_id, archived_at")
-        .order("code"),
+    const [resolvedDefaultAccounts, { data: reversedRows }, { data: entries, error: entriesErr }] = await Promise.all([
+      fetchDefaultAccounts(),
       supabase
         .from("journal_entries")
         .select("reverses_entry_id")
@@ -96,7 +92,7 @@ export function ApDepositDetailView({ id }: { id: string }) {
         .order("entry_date"),
     ]);
 
-    setAccounts((accs ?? []) as Account[]);
+    setDefaultAccounts(resolvedDefaultAccounts);
     setReversedEntryIds(
       new Set(((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
     );
@@ -129,9 +125,7 @@ export function ApDepositDetailView({ id }: { id: string }) {
     setRefundError(null);
     setRefundAmount("");
     setRefundDate("");
-    setRefundSourceRef("");
-    setRefundCashAccountId("");
-    setRefundDepositAssetAccountId("");
+    setRefundCashMethod("TUNAI");
     setShowRefundForm(true);
   }
 
@@ -144,9 +138,8 @@ export function ApDepositDetailView({ id }: { id: string }) {
       deposit_id: deposit.id,
       amount: refundAmount,
       refund_date: refundDate,
-      source_ref: refundSourceRef,
-      cash_account_id: refundCashAccountId,
-      deposit_asset_account_id: refundDepositAssetAccountId,
+      cash_account_id: resolveCashAccount(refundCashMethod, defaultAccounts)?.id ?? "",
+      deposit_asset_account_id: defaultAccounts["ap.deposit_asset"]?.id ?? "",
     });
     if (!parsed.success) {
       setRefundError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -154,11 +147,19 @@ export function ApDepositDetailView({ id }: { id: string }) {
     }
 
     setRefundSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ap_deposit_refunds");
+    } catch (err) {
+      setRefundSubmitting(false);
+      setRefundError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("refund_ap_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_amount: parsed.data.amount,
       p_refund_date: parsed.data.refund_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_cash_account_id: parsed.data.cash_account_id,
       p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
     });
@@ -176,9 +177,6 @@ export function ApDepositDetailView({ id }: { id: string }) {
     setForfeitError(null);
     setForfeitAmount("");
     setForfeitDate("");
-    setForfeitSourceRef("");
-    setForfeitLossExpenseAccountId("");
-    setForfeitDepositAssetAccountId("");
     setShowForfeitForm(true);
   }
 
@@ -191,9 +189,8 @@ export function ApDepositDetailView({ id }: { id: string }) {
       deposit_id: deposit.id,
       amount: forfeitAmount,
       forfeiture_date: forfeitDate,
-      source_ref: forfeitSourceRef,
-      loss_expense_account_id: forfeitLossExpenseAccountId,
-      deposit_asset_account_id: forfeitDepositAssetAccountId,
+      loss_expense_account_id: defaultAccounts["ap.deposit_loss_expense"]?.id ?? "",
+      deposit_asset_account_id: defaultAccounts["ap.deposit_asset"]?.id ?? "",
     });
     if (!parsed.success) {
       setForfeitError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -201,11 +198,19 @@ export function ApDepositDetailView({ id }: { id: string }) {
     }
 
     setForfeitSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ap_deposit_forfeitures");
+    } catch (err) {
+      setForfeitSubmitting(false);
+      setForfeitError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("forfeit_ap_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_amount: parsed.data.amount,
       p_forfeiture_date: parsed.data.forfeiture_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_loss_expense_account_id: parsed.data.loss_expense_account_id,
       p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
     });
@@ -237,394 +242,337 @@ export function ApDepositDetailView({ id }: { id: string }) {
     reversedEntryIds.has(a.journal_entry_id)
   );
 
+  const detailGroups = [
+    {
+      title: "Informasi Deposit",
+      rows: [
+        { label: "Supplier", value: deposit.suppliers.name },
+        { label: "Rujukan Dokumen", value: deposit.source_ref },
+        { label: "Tanggal Deposit", value: deposit.deposit_date },
+        {
+          label: "Status",
+          value: <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>{statusLabel[status]}</span>,
+        },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [
+        { label: "Jumlah Deposit", value: deposit.amount.toLocaleString("id-ID") },
+        { label: "Diterapkan", value: applied.toLocaleString("id-ID") },
+        { label: "Direfund", value: refunded.toLocaleString("id-ID") },
+        { label: "Hangus", value: forfeited.toLocaleString("id-ID") },
+        { label: "Sisa", value: remaining.toLocaleString("id-ID") },
+      ],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
+    { key: "applications", label: "Diterapkan ke Bill", badge: deposit.ap_deposit_applications.length },
+    { key: "refund", label: "Refund Tunai", badge: deposit.ap_deposit_refunds.length },
+    { key: "hangus", label: "Hangus", badge: deposit.ap_deposit_forfeitures.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ap-deposits" label="Kembali ke AP Deposits" />
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">
-              {deposit.suppliers.name} — {deposit.source_ref}
-            </h1>
-            <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>
-              {statusLabel[status]}
-            </span>
-          </div>
-          <p className="text-sm text-slate-500">{deposit.deposit_date}</p>
-        </div>
-        <div className="flex items-start gap-4">
-          <div className="text-right">
-            <div className="text-xs uppercase text-slate-400">Sisa Belum Dipakai</div>
-            <div className="font-mono text-lg font-medium text-black">
-              {remaining.toLocaleString("id-ID")}
-            </div>
-          </div>
-          {canSpend && (
-            <div className="flex gap-1.5">
-              <Button variant="toolbar" onClick={() => (showRefundForm ? setShowRefundForm(false) : openRefundForm())}>
-                {showRefundForm ? "Batal Refund" : "Refund Tunai"}
-              </Button>
-              <Button variant="toolbar" onClick={() => (showForfeitForm ? setShowForfeitForm(false) : openForfeitForm())}>
-                {showForfeitForm ? "Batal Hanguskan" : "Hanguskan"}
-              </Button>
-            </div>
-          )}
-        </div>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">AP Deposit Details</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-5">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Jumlah Deposit</dt>
-            <dd className="font-mono text-black">{deposit.amount.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Diterapkan</dt>
-            <dd className="font-mono text-black">{applied.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Direfund</dt>
-            <dd className="font-mono text-black">{refunded.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Hangus</dt>
-            <dd className="font-mono text-black">{forfeited.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Sisa</dt>
-            <dd className="font-mono font-medium text-black">{remaining.toLocaleString("id-ID")}</dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Jurnal Terkait</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {journalEntries.length}
-          </span>
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
+      {activeTab === "jurnal" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Deskripsi</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Baris</th>
+              </tr>
+            </thead>
+            <tbody>
+              {journalEntries.map((entry) => (
+                <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
+                  <td className="px-4 py-2">
+                    {entry.description}
+                    {entry.reverses_entry_id && (
+                      <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
+                        Reversal
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2">{entry.source_ref}</td>
+                  <td className="px-4 py-2">
+                    <ul className="space-y-0.5">
+                      {entry.journal_lines.map((line) => (
+                        <li key={line.id}>
+                          {line.accounts.code} {line.accounts.name} —{" "}
+                          {line.debit > 0
+                            ? `D ${line.debit.toLocaleString("id-ID")}`
+                            : `K ${line.credit.toLocaleString("id-ID")}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                </tr>
+              ))}
+              {journalEntries.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada jurnal.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Deskripsi</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Baris</th>
-            </tr>
-          </thead>
-          <tbody>
-            {journalEntries.map((entry) => (
-              <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
-                <td className="px-4 py-2">
-                  {entry.description}
-                  {entry.reverses_entry_id && (
-                    <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
-                      Reversal
+      )}
+
+      {activeTab === "applications" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Bill</th>
+                <th className="px-4 py-2 text-right">Nominal</th>
+                <th className="px-4 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeApplications.map((a) => (
+                <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="px-4 py-2">{a.source_ref}</td>
+                  <td className="px-4 py-2">{a.ap_bills.source_ref}</td>
+                  <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2">
+                    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">Aktif</span>
+                  </td>
+                </tr>
+              ))}
+              {reversedApplications.map((a) => (
+                <tr key={a.id} className="border-b border-slate-100 text-slate-400 hover:bg-slate-50">
+                  <td className="px-4 py-2 line-through">{a.source_ref}</td>
+                  <td className="px-4 py-2 line-through">{a.ap_bills.source_ref}</td>
+                  <td className="px-4 py-2 text-right font-mono line-through">
+                    {a.amount.toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-4 py-2">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                      Dibatalkan (bill-nya dibatalkan)
                     </span>
-                  )}
-                </td>
-                <td className="px-4 py-2">{entry.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {entry.journal_lines.map((line) => (
-                      <li key={line.id}>
-                        {line.accounts.code} {line.accounts.name} —{" "}
-                        {line.debit > 0
-                          ? `D ${line.debit.toLocaleString("id-ID")}`
-                          : `K ${line.credit.toLocaleString("id-ID")}`}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
-              </tr>
-            ))}
-            {journalEntries.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada jurnal.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Diterapkan ke Bill</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {deposit.ap_deposit_applications.length}
-          </span>
+                  </td>
+                </tr>
+              ))}
+              {deposit.ap_deposit_applications.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum pernah diterapkan.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Bill</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-              <th className="px-4 py-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {activeApplications.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{a.source_ref}</td>
-                <td className="px-4 py-2">{a.ap_bills.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2">
-                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">Aktif</span>
-                </td>
-              </tr>
-            ))}
-            {reversedApplications.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 text-slate-400 hover:bg-slate-50">
-                <td className="px-4 py-2 line-through">{a.source_ref}</td>
-                <td className="px-4 py-2 line-through">{a.ap_bills.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono line-through">
-                  {a.amount.toLocaleString("id-ID")}
-                </td>
-                <td className="px-4 py-2">
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
-                    Dibatalkan (bill-nya dibatalkan)
-                  </span>
-                </td>
-              </tr>
-            ))}
-            {deposit.ap_deposit_applications.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum pernah diterapkan.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      )}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Refund Tunai</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {deposit.ap_deposit_refunds.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {deposit.ap_deposit_refunds.map((r) => (
-              <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{r.refund_date}</td>
-                <td className="px-4 py-2">{r.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{r.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {deposit.ap_deposit_refunds.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum pernah direfund.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Hangus</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {deposit.ap_deposit_forfeitures.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {deposit.ap_deposit_forfeitures.map((f) => (
-              <tr key={f.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{f.forfeiture_date}</td>
-                <td className="px-4 py-2">{f.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{f.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {deposit.ap_deposit_forfeitures.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum pernah hangus.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {showRefundForm && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Refund Tunai Uang Muka</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Terima kembali sisa deposit ini dari supplier dalam bentuk kas/bank — gak ada
-            dampak Laba Rugi, murni reklasifikasi aset. Boleh sebagian.
-          </p>
-          <form onSubmit={handleRefundSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_amount">Nominal Refund (maks {remaining.toLocaleString("id-ID")})</Label>
-                <Input
-                  id="refund_amount"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={refundAmount}
-                  onChange={(e) => setRefundAmount(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_date">Tanggal</Label>
-                <Input id="refund_date" type="date" value={refundDate} onChange={(e) => setRefundDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="refund_source_ref"
-                  placeholder="mis. Refund-DP-001"
-                  value={refundSourceRef}
-                  onChange={(e) => setRefundSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_cash_account">Akun Kas/Bank (debit)</Label>
-                <Select
-                  id="refund_cash_account"
-                  value={refundCashAccountId}
-                  onChange={(e) => setRefundCashAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="refund_deposit_asset_account">Akun Uang Muka Pembelian (kredit)</Label>
-                <Select
-                  id="refund_deposit_asset_account"
-                  value={refundDepositAssetAccountId}
-                  onChange={(e) => setRefundDepositAssetAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+      {activeTab === "refund" && (
+        <div className="flex flex-col gap-3">
+          {canSpend && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openRefundForm}>
+                Refund Tunai
+              </Button>
             </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2 text-right">Nominal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deposit.ap_deposit_refunds.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{r.refund_date}</td>
+                    <td className="px-4 py-2">{r.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{r.amount.toLocaleString("id-ID")}</td>
+                  </tr>
+                ))}
+                {deposit.ap_deposit_refunds.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                      Belum pernah direfund.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
-            {refundError && <FormError>{refundError}</FormError>}
+      {activeTab === "hangus" && (
+        <div className="flex flex-col gap-3">
+          {canSpend && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openForfeitForm}>
+                Hanguskan
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2 text-right">Nominal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deposit.ap_deposit_forfeitures.map((f) => (
+                  <tr key={f.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{f.forfeiture_date}</td>
+                    <td className="px-4 py-2">{f.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{f.amount.toLocaleString("id-ID")}</td>
+                  </tr>
+                ))}
+                {deposit.ap_deposit_forfeitures.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                      Belum pernah hangus.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
-            <Button type="submit" disabled={refundSubmitting} className="w-fit">
+      <Modal
+        open={showRefundForm}
+        onClose={() => setShowRefundForm(false)}
+        title="Refund Tunai Uang Muka"
+        maxWidth="max-w-xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Terima kembali sisa deposit ini dari supplier dalam bentuk kas/bank — gak ada
+          dampak Laba Rugi, murni reklasifikasi aset. Boleh sebagian.
+        </p>
+        <form onSubmit={handleRefundSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="refund_amount">Nominal Refund (maks {remaining.toLocaleString("id-ID")})</Label>
+              <Input
+                id="refund_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={refundAmount}
+                onChange={(e) => setRefundAmount(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="refund_date">Tanggal</Label>
+              <Input id="refund_date" type="date" value={refundDate} onChange={(e) => setRefundDate(e.target.value)} />
+            </div>
+          </div>
+          <CashMethodField
+            label="Akun Kas/Bank (debit)"
+            htmlFor="refund_cash_account"
+            method={refundCashMethod}
+            onChange={setRefundCashMethod}
+            defaultAccounts={defaultAccounts}
+          />
+          <LockedAccountField
+            label="Akun Uang Muka Pembelian (kredit)"
+            htmlFor="refund_deposit_asset_account"
+            resolved={defaultAccounts["ap.deposit_asset"]}
+          />
+
+          {refundError && <FormError>{refundError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowRefundForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={refundSubmitting}>
               {refundSubmitting ? "Menyimpan..." : "Refund"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
 
-      {showForfeitForm && (
-        <div className="rounded-xl border border-red-200 bg-red-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Hanguskan Deposit</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Sisa deposit dianggap hangus (supplier gak mau/gak bisa balikin) — jadi Beban
-            Kerugian Uang Muka. Boleh sebagian.
-          </p>
-          <form onSubmit={handleForfeitSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forfeit_amount">Nominal Hangus (maks {remaining.toLocaleString("id-ID")})</Label>
-                <Input
-                  id="forfeit_amount"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={forfeitAmount}
-                  onChange={(e) => setForfeitAmount(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forfeit_date">Tanggal</Label>
-                <Input
-                  id="forfeit_date"
-                  type="date"
-                  value={forfeitDate}
-                  onChange={(e) => setForfeitDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forfeit_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="forfeit_source_ref"
-                  placeholder="mis. Pembatalan pesanan"
-                  value={forfeitSourceRef}
-                  onChange={(e) => setForfeitSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forfeit_loss_expense_account">Akun Beban Kerugian Uang Muka (debit)</Label>
-                <Select
-                  id="forfeit_loss_expense_account"
-                  value={forfeitLossExpenseAccountId}
-                  onChange={(e) => setForfeitLossExpenseAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="forfeit_deposit_asset_account">Akun Uang Muka Pembelian (kredit)</Label>
-                <Select
-                  id="forfeit_deposit_asset_account"
-                  value={forfeitDepositAssetAccountId}
-                  onChange={(e) => setForfeitDepositAssetAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+      <Modal
+        open={showForfeitForm}
+        onClose={() => setShowForfeitForm(false)}
+        title="Hanguskan Deposit"
+        maxWidth="max-w-xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Sisa deposit dianggap hangus (supplier gak mau/gak bisa balikin) — jadi Beban
+          Kerugian Uang Muka. Boleh sebagian.
+        </p>
+        <form onSubmit={handleForfeitSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="forfeit_amount">Nominal Hangus (maks {remaining.toLocaleString("id-ID")})</Label>
+              <Input
+                id="forfeit_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={forfeitAmount}
+                onChange={(e) => setForfeitAmount(e.target.value)}
+              />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="forfeit_date">Tanggal</Label>
+              <Input
+                id="forfeit_date"
+                type="date"
+                value={forfeitDate}
+                onChange={(e) => setForfeitDate(e.target.value)}
+              />
+            </div>
+          </div>
+          <LockedAccountField
+            label="Akun Beban Kerugian Uang Muka (debit)"
+            htmlFor="forfeit_loss_expense_account"
+            resolved={defaultAccounts["ap.deposit_loss_expense"]}
+          />
+          <LockedAccountField
+            label="Akun Uang Muka Pembelian (kredit)"
+            htmlFor="forfeit_deposit_asset_account"
+            resolved={defaultAccounts["ap.deposit_asset"]}
+          />
 
-            {forfeitError && <FormError>{forfeitError}</FormError>}
+          {forfeitError && <FormError>{forfeitError}</FormError>}
 
-            <Button type="submit" disabled={forfeitSubmitting} className="w-fit">
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForfeitForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={forfeitSubmitting}>
               {forfeitSubmitting ? "Memproses..." : "Hanguskan"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -106,7 +106,7 @@ Full body: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### RLS & Grant (Konsep Inti)
 
-Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Beda dari tabel transaksional di submodule lain — `items` dan `inventory_balances` dapat policy `update` juga: `items` (+`archived_at` lewat update biasa, gak ada delete), `inventory_balances` (state yang di-update RPC, bukan cuma insert-only).
+Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Beda dari tabel transaksional di submodule lain — `items` dan `inventory_balances` dapat policy `update` juga: `items` (+`archived_at` lewat update biasa), `inventory_balances` (state yang di-update RPC, bukan cuma insert-only). Gak ada policy/grant `delete` langsung buat `items` — tapi sejak `0013_master_data_smart_delete.sql` ada jalur terkontrol lewat RPC `delete_item()` (`security definer`, submodule "Smart Delete Master Data" di `memory/architecture/data/coa-schema.md`).
 
 ```sql
 grant select, insert, update on items to authenticated;
@@ -229,22 +229,26 @@ create function create_purchase_order(
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-Full body: `supabase/migrations/0012_inventory_schema.sql`.
+Full body: `supabase/migrations/0004_inventory_schema.sql`.
 
 ### RPC `create_goods_receipt` — GRN + Bill + update Persediaan sekaligus
 
-Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) hitung total amount dari lines, (2) panggil `create_ap_bill` (reuse, **0 perubahan**) buat bikin bill+jurnal utang, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO) jalan otomatis pas langkah (3).
+Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) hitung total amount dari lines (baris Persediaan dasar) + gabung sama `p_extra_debit_lines` kalau ada, (2) panggil `create_ap_bill` (reuse) buat bikin bill+jurnal utang, ikut kirim `p_apply_tax`, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO) jalan otomatis pas langkah (3).
+
+**Kategori Campur & PPN (migration `0012_grn_compound_ppn.sql`, closes `memory/scope-debt/grn-kategori-campur-ppn.md`)** — dulu signature ini cuma terima 1 `p_debit_account_id` tunggal dan gak pernah kirim `p_apply_tax` ke `create_ap_bill`, beda dari `create_ap_bill` yang dipanggil manual lewat `/ap-bills` (sudah kategori campur+PPN sejak `0025_compound_transactional_entries_schema.sql`). Sekarang disamakan: 2 param baru **di akhir** signature (`p_extra_debit_lines` default `null`, `p_apply_tax` default `false`) — additive, `create or replace function` gak butuh drop dulu, caller lama yang belum kirim param baru tetap jalan (default null/false = perilaku identik sebelum `0012`).
 
 ```sql
-create function create_goods_receipt(
+create or replace function create_goods_receipt(
   p_purchase_order_id uuid, p_receipt_date date, p_delivery_note_ref text,
   p_lines jsonb, -- array of {"po_line_id":uuid,"item_id":uuid,"qty_received":numeric,"unit_cost":numeric}
   p_bill_description text, p_bill_source_ref text,
-  p_debit_account_id uuid, p_payable_account_id uuid
+  p_debit_account_id uuid, p_payable_account_id uuid,
+  p_extra_debit_lines jsonb default null, -- array of {"account_id":uuid,"amount":numeric} -- Beban tambahan (ongkir, dst), BUKAN kategori Persediaan
+  p_apply_tax boolean default false
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-Full body: `supabase/migrations/0012_inventory_schema.sql`.
+Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) + `supabase/migrations/0012_grn_compound_ppn.sql` (perluasan kategori campur & PPN).
 
 ### RLS & Grant (Purchase Order & Penerimaan Barang)
 
@@ -257,7 +261,7 @@ grant select, insert on goods_receipt_notes to authenticated;
 grant select, insert on goods_receipt_lines to authenticated;
 ```
 
-Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
+Detail lengkap: `supabase/migrations/0004_inventory_schema.sql`.
 
 ## Produksi (Bill of Materials & Production Order)
 
@@ -427,7 +431,7 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### Keputusan Desain
 
-- **Cerminan `purchase_orders` di sisi jual, tapi OPSIONAL (bukan wajib).** Beda dari PO yang `not null` di `goods_receipt_notes.purchase_order_id`, `goods_issue_lines.so_line_id` nullable — jalur `create_goods_issue` tanpa SO (jual langsung) tetap jalan 0 perubahan. Alasan asimetri: pembelian di bisnis ini selalu keputusan terencana (Bu Nur yang inisiatif), wajar dipaksa PO tiap kali; penjualan punya 2 pola sekaligus — spontan (kios walk-in) dan terencana (pesanan customer qty besar) — maksa SO buat SEMUA penjualan nambah 1 tabel+1 RPC call ekstra buat transaksi spontan yang gak butuh komitmen apa pun.
+- **Cerminan `purchase_orders` di sisi jual, tapi OPSIONAL (bukan wajib).** Beda dari PO yang `not null` di `goods_receipt_notes.purchase_order_id`, `goods_issue_lines.so_line_id` nullable — jalur `create_goods_issue` tanpa SO (jual langsung) tetap jalan 0 perubahan. Alasan asimetri: pembelian di bisnis ini selalu keputusan terencana (pemilik usaha yang inisiatif), wajar dipaksa PO tiap kali; penjualan punya 2 pola sekaligus — spontan (kios walk-in) dan terencana (pesanan customer qty besar) — maksa SO buat SEMUA penjualan nambah 1 tabel+1 RPC call ekstra buat transaksi spontan yang gak butuh komitmen apa pun.
 - **Gak ada journal entry di `create_sales_order`** — sama alasan PO: baru komitmen, belum ada barang berpindah tangan. Piutang & Pendapatan cuma boleh diakui pas barang beneran dikirim (revenue recognition), bukan pas SO dibuat — kalau dipaksa diakui di depan, invoice/piutang jadi overstated buat bagian yang belum tentu jadi dikirim.
 - **`create_goods_issue` di-extend TANPA ubah signature (waktu itu, `0024`)** — `p_lines` (jsonb array) cuma nambah key opsional `so_line_id` per objek baris, bukan parameter baru di level fungsi. Ini `create or replace function` yang aman buat project live-linked (gak ada breaking change ke caller lama), beda dari kalau nambah parameter baru di level tanda tangan fungsi (butuh default value atau bikin overload). **Update `0025`**: signature-nya JUSTRU berubah belakangan, tapi karena alasan lain sama sekali (compounding `p_credit_lines`, lihat submodule "RPC `create_goods_issue`" di atas) — bukan gara-gara SO. Mekanisme `so_line_id` di `p_lines` sendiri gak kesentuh sama sekali oleh perubahan itu.
 - **Fulfillment per pengiriman = per invoice, gak nunggu SO lunas.** Tiap kali `create_goods_issue` dipanggil dengan `so_line_id` keisi, itu jadi 1 invoice tersendiri senilai qty yang dikirim SAAT ITU — bisa dipanggil berkali-kali sampai `SUM(qty_issued)` = `qty_ordered`. Ini konsisten sama prinsip pengakuan pendapatan (diakui sebesar kewajiban yang udah terpenuhi), dan konsisten sama pola PO/GRN yang juga bisa dicicil (`0/N` penerimaan per PO line).

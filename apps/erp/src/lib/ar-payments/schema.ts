@@ -4,7 +4,6 @@ export const recordArPaymentSchema = z.object({
   customer_id: z.string().uuid("Pilih customer"),
   payment_date: z.string().min(1, "Tanggal wajib diisi"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
-  source_ref: z.string().min(1, "Rujukan dokumen sumber wajib diisi"),
   cash_account_id: z.string().uuid("Pilih akun Kas/Bank"),
   receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
   invoice_id: z.string().uuid("Pilih invoice"),

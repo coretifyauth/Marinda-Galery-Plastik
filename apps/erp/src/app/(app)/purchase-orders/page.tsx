@@ -6,11 +6,13 @@ import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
 import type { Item } from "@/lib/items/schema";
 import { createPurchaseOrderSchema, poStatus, type PurchaseOrder } from "@/lib/purchase-orders/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
 
 type LineInput = { item_id: string; qty_ordered: string; unit_cost_expected: string };
 
@@ -36,7 +38,6 @@ export default function PurchaseOrdersPage() {
   const [supplierId, setSupplierId] = useState("");
   const [poDate, setPoDate] = useState("");
   const [expectedDate, setExpectedDate] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -116,7 +117,6 @@ export default function PurchaseOrdersPage() {
       supplier_id: supplierId,
       po_date: poDate,
       expected_date: expectedDate || undefined,
-      source_ref: sourceRef,
       lines: lines.map((l) => ({
         item_id: l.item_id,
         qty_ordered: l.qty_ordered,
@@ -129,11 +129,19 @@ export default function PurchaseOrdersPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("purchase_orders");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_purchase_order", {
       p_supplier_id: parsed.data.supplier_id,
       p_po_date: parsed.data.po_date,
       p_expected_date: parsed.data.expected_date || null,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
     });
     setSubmitting(false);
@@ -145,7 +153,6 @@ export default function PurchaseOrdersPage() {
     setSupplierId("");
     setPoDate("");
     setExpectedDate("");
-    setSourceRef("");
     setLines([emptyLine()]);
     setShowForm(false);
     await loadOrders();
@@ -158,9 +165,9 @@ export default function PurchaseOrdersPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Purchase Orders — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Purchase Orders</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -182,7 +189,7 @@ export default function PurchaseOrdersPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -235,16 +242,14 @@ export default function PurchaseOrdersPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Buat Purchase Order</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Buat Purchase Order" maxWidth="max-w-3xl">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
+          </p>
+        )}
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="supplier">Supplier</Label>
@@ -268,15 +273,6 @@ export default function PurchaseOrdersPage() {
                   type="date"
                   value={expectedDate}
                   onChange={(e) => setExpectedDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. PO-TEPUNG-003"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
                 />
               </div>
             </div>
@@ -330,12 +326,16 @@ export default function PurchaseOrdersPage() {
 
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
-              {submitting ? "Menyimpan..." : "Simpan PO"}
-            </Button>
-          </form>
-        </div>
-      )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Menyimpan..." : "Simpan PO"}
+              </Button>
+            </div>
+        </form>
+      </Modal>
     </div>
   );
 }

@@ -14,8 +14,8 @@ export default function DocsLandingPage() {
       <div>
         <h1 className="text-2xl font-semibold text-black">Documentation</h1>
         <p className="text-sm text-slate-500">
-          Knowledge base project ini — konsep bisnis/akuntansi, struktur data, dan skenario CV Roti
-          Barokah.
+          Knowledge base project ini — konsep bisnis/akuntansi, struktur data, dan skenario Toko
+          Plastik Makmur Jaya.
         </p>
       </div>
 

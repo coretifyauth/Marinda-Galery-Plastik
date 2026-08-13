@@ -96,7 +96,7 @@ create trigger accounts_set_updated_at
 
 Selesai, dibangun di `memory/architecture/data/journal-entry-schema.md` (Fase 2, begitu `journal_lines` ada):
 - `journal_lines_leaf_only` — tolak posting `journal_lines` ke akun yang masih punya child (header-only rule).
-- `accounts_published_lock` — kunci `code`/`category`/`normal_balance`/`parent_id` (plus `is_contra` sejak Fase 6, lihat submodule "Akun Kontra") begitu akun dipakai di `journal_lines` mana pun. `name`/`archived_at` tetap bebas diubah kapan pun.
+- `accounts_published_lock` — kunci `code`/`category`/`parent_id`/`is_contra` (sejak Fase 6, lihat submodule "Akun Kontra") begitu akun dipakai di `journal_lines` mana pun. `name`/`archived_at` tetap bebas diubah kapan pun. **Bugfix `0014_fix_accounts_published_lock_generated_column_bug.sql` (2026-08-12)**: perbandingan aslinya ikut nyertain `normal_balance` (kolom `generated always as (...) stored`, turunan `category`+`is_contra`) — tapi Postgres BELUM ngitung ulang stored generated column di titik trigger `BEFORE UPDATE` jalan, jadi `NEW.normal_balance` di dalam trigger ini SELALU `NULL`, bikin kondisi lock-nya SELALU true buat akun published, nutup total SEMUA update (bukan cuma 5 kolom yang dimaksud) — termasuk `name`/`archived_at` yang harusnya tetap bebas. Bug ini gak ketauan sampai fitur smart-delete (submodule di bawah) pertama kali coba update `archived_at` pada akun published, dibuktikan lewat probe trigger langsung ke DB live. Fix: keluarkan `normal_balance` dari perbandingan (aman, murni fungsi deterministik dari `category`+`is_contra` yang tetap dicek langsung).
 - `accounts_no_retroactive_header` — edge case yang ketemu waktu bedah domain Fase 2: tanpa ini, akun leaf yang udah keposting bisa diam-diam jadi header cuma dengan nambah akun baru yang `parent_id`-nya nunjuk ke situ, ngelanggar leaf-only-posting secara retroaktif buat histori yang udah ada. Trigger ini nolak `insert` akun baru kalau calon parent-nya udah "published" (udah dipakai di jurnal).
 
 Full DDL ketiganya (fungsi + trigger): `memory/architecture/data/journal-entry-schema.md`.
@@ -109,7 +109,7 @@ RLS = aturan "siapa boleh apa" yang ditegakkan Postgres sendiri di level baris, 
 
 **`accounts_insert`** dan **`accounts_update`** — cuma boleh dilakuin user yang punya role `admin` atau `accountant` (dicek lewat subquery ke `user_roles`). `viewer` otomatis ketolak karena gak match kondisi ini.
 
-**Sengaja gak ada policy `DELETE`** — RLS defaultnya deny kalau gak ada policy yang match. Jadi hard-delete ke tabel `accounts` tertutup total buat siapa pun lewat client, termasuk admin. Ini negasin keputusan non-hard-delete kita (arsip doang lewat `archived_at`).
+**Gak ada policy `DELETE` langsung** — RLS defaultnya deny kalau gak ada policy yang match, jadi hard-delete ke tabel `accounts` lewat client (`.from("accounts").delete()`) tetap tertutup total buat siapa pun, termasuk admin. Sejak `0013_master_data_smart_delete.sql` ada 1 jalur terkontrol: RPC `delete_account()` (lihat submodule "Smart Delete Master Data" di bawah) — bukan buka grant/policy DELETE di tabel, cuma nambah 1 pintu sempit yang logikanya dikunci di server.
 
 **`user_roles_select_self`** — user cuma boleh lihat role dirinya sendiri (`user_id = auth.uid()`), gak bisa liat role user lain. Belum ada policy INSERT/UPDATE di tabel ini — assign role masih manual/lewat service role, karena butuh `security definer` function biar gak circular-check. Ref: `memory/scope-debt/user-role-admin-assignment.md`.
 
@@ -160,6 +160,24 @@ create policy roles_select on roles
 ### Assign role user lain — belum digarap
 
 Policy admin buat assign role user lain — butuh `security definer` function biar gak circular-check ke tabel sendiri (policy INSERT/UPDATE ke `user_roles` yang subquery ke `user_roles` sendiri buat cek "apakah pemanggil admin" = circular). Digarap pas ada screen user management. Ref: `memory/scope-debt/user-role-admin-assignment.md`.
+
+## Smart Delete Master Data
+
+Migration `0013_master_data_smart_delete.sql` (2026-08-12, diminta user langsung — merevisi kebijakan lama "hard delete tertutup total" di `accounts`/`items`/`customers`/`suppliers`, lihat `memory/preferences/system/state-naming-convention.md`). Berlaku ke 4 tabel master data ini doang — **bukan** tabel transaksional (`journal_lines`/`ap_bills`/`ar_invoices`/dst tetap immutable total, gak kesentuh perubahan ini sama sekali).
+
+**Cara Kerja**
+- 4 RPC baru: `delete_item(p_item_id)`, `delete_customer(p_customer_id)`, `delete_supplier(p_supplier_id)`, `delete_account(p_account_id)` — masing-masing `returns text` (`'deleted'` atau `'archived'`).
+- Tiap fungsi coba `DELETE` baris aslinya duluan. Semua kolom `item_id`/`customer_id`/`supplier_id`/`account_id` di tabel lain di seluruh project ini adalah FK sungguhan **tanpa** `on delete cascade` (diaudit lewat grep semua migration) — jadi Postgres sendiri yang otomatis nolak (`foreign_key_violation`, SQLSTATE 23503) begitu ADA baris lain yang masih nunjuk ke situ, di tabel MANA PUN, termasuk modul yang ditambah nanti. Gak perlu enumerasi manual tabel referensi satu-satu (rawan kelewat & gampang basi begitu ada modul baru) — integritas referensial DB sendiri jadi satu-satunya sumber kebenaran soal "record ini pernah dipakai atau belum".
+- Exception itu ditangkap di dalam fungsi, fallback ke `UPDATE ... SET archived_at = now()` (arsipkan, pola sama kayak sebelumnya) — bukan gagal total/nolak user.
+- Khusus `delete_item`: `item_units` (satuan jual/harga, FK `item_id` tanpa cascade) dianggap **konfigurasi item itu sendiri**, bukan riwayat transaksi eksternal — dihapus bareng item-nya, di DALAM blok exception yang sama (bukan sebelumnya — pernah jadi bug, lihat "Kesalahan yang Sempat Kejadian" di bawah), supaya kalau item-nya sendiri ternyata masih dipakai di tabel lain dan jatuh ke jalur arsip, `item_units`-nya tetap utuh (arsip harus reversible, `state-naming-convention.md`).
+- `security definer` wajib (`set search_path = public, pg_temp`, pola sama `create_pos_sale`/`generate_document_number`) — gak ada grant/policy `DELETE` ke `authenticated` di tabel manapun (tetap gitu, sengaja), jadi fungsi ini yang jalan pakai privilege pemilik fungsi buat bisa DELETE. Cek role `admin`/`accountant` dilakukan manual di baris pertama tiap fungsi (security definer bypass RLS), mirror kondisi policy `_update` yang udah ada di tiap tabel.
+- UI: tombol "Hapus" (kalau aktif) / "Aktifkan" (kalau `archived_at` udah keisi, plain `UPDATE archived_at = null`, gak butuh RPC khusus — reaktivasi selalu aman) di header halaman detail `/items/[id]`, `/customers/[id]`, `/suppliers/[id]`, `/accounts/[id]`. Klik "Hapus" -> RPC dipanggil -> kalau hasilnya `'archived'`, UI kasih tau lewat alert kenapa (bukan gagal diam-diam).
+
+**Kesalahan yang Sempat Kejadian (ditemukan & diperbaiki sebelum dianggap siap, keduanya lewat live-test terhadap DB beneran, bukan cuma baca kode)**
+1. **`item_units` premature delete** — draft awal `delete_item` nge-`DELETE item_units` di LUAR blok `begin/exception` yang isinya percobaan `DELETE items`. Di PL/pgSQL, `begin/exception` cuma bikin savepoint di titik `begin`-nya — statement SEBELUM blok itu gak ikut rollback kalau exception ketangkep. Akibatnya: item yang ternyata masih dipakai (jatuh ke jalur arsip) kehilangan `item_units`-nya permanen walau item-nya sendiri masih hidup — ketauan `schema-reviewer` sebelum di-push. Fix: pindahkan `delete item_units` ke DALAM blok yang sama.
+2. **`accounts_published_lock_trigger` gak sengaja ketauan rusak** — pas nguji jalur arsip `delete_account` terhadap akun published beneran di DB live, `UPDATE accounts SET archived_at = now()` (yang katanya harusnya tetap boleh) malah kena tolak sama trigger yang harusnya cuma ngunci 5 kolom lain. Ternyata trigger itu (dari Fase 2, `journal-entry-schema.md`) udah lama salah baca `NEW.normal_balance` (generated column belum kehitung ulang di titik `BEFORE UPDATE` trigger jalan, jadi selalu `NULL`) — bug ini SELALU ada, cuma gak pernah ketauan karena gak ada kode yang pernah nyoba update akun published sebelum fitur ini. Detail fix: submodule "Trigger" di atas, migration `0014_fix_accounts_published_lock_generated_column_bug.sql`.
+
+**Referensi:** `memory/preferences/system/state-naming-convention.md` (kebijakan lama vs baru), `memory/architecture/data/inventory-schema.md`/`ar-schema.md`/`ap-schema.md` (RLS `items`/`customers`/`suppliers` — masing-masing nunjuk balik ke sini).
 
 ## Akun Kontra (Contra Account)
 

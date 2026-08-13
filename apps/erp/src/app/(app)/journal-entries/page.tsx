@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { createJournalEntrySchema, type JournalEntry } from "@/lib/journal-entries/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
 
 type LineInput = { account_id: string; debit: string; credit: string };
 
@@ -27,7 +29,6 @@ export default function JournalEntriesPage() {
 
   const [entryDate, setEntryDate] = useState("");
   const [description, setDescription] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine(), emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -102,7 +103,6 @@ export default function JournalEntriesPage() {
     const parsed = createJournalEntrySchema.safeParse({
       entry_date: entryDate,
       description,
-      source_ref: sourceRef,
       lines: lines.map((l) => ({
         account_id: l.account_id,
         debit: l.debit === "" ? 0 : Number(l.debit),
@@ -115,10 +115,18 @@ export default function JournalEntriesPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("journal_entries");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_journal_entry", {
       p_entry_date: parsed.data.entry_date,
       p_description: parsed.data.description || null,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
     });
     setSubmitting(false);
@@ -129,7 +137,6 @@ export default function JournalEntriesPage() {
 
     setEntryDate("");
     setDescription("");
-    setSourceRef("");
     setLines([emptyLine(), emptyLine()]);
     setShowForm(false);
     await loadEntries();
@@ -142,9 +149,9 @@ export default function JournalEntriesPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Journal Entries — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Journal Entries</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -166,7 +173,7 @@ export default function JournalEntriesPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -234,9 +241,7 @@ export default function JournalEntriesPage() {
         </table>
       </div>
 
-      {showForm && (
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="mb-4 font-semibold text-black">Tambah Journal Entry</h2>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Journal Entry" maxWidth="max-w-3xl">
         {!canWrite && (
           <p className="mb-4 text-sm text-amber-600">
             Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
@@ -258,18 +263,9 @@ export default function JournalEntriesPage() {
               <Label htmlFor="description">Deskripsi</Label>
               <Input
                 id="description"
-                placeholder="mis. Jual roti tunai"
+                placeholder="mis. Jual barang tunai"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-              <Input
-                id="source_ref"
-                placeholder="mis. Nota #003"
-                value={sourceRef}
-                onChange={(e) => setSourceRef(e.target.value)}
               />
             </div>
           </div>
@@ -337,12 +333,16 @@ export default function JournalEntriesPage() {
 
           {formError && <FormError>{formError}</FormError>}
 
-          <Button type="submit" disabled={submitting || !isBalanced} className="w-fit">
-            {submitting ? "Menyimpan..." : "Simpan Entry"}
-          </Button>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={submitting || !isBalanced}>
+              {submitting ? "Menyimpan..." : "Simpan Entry"}
+            </Button>
+          </div>
         </form>
-      </div>
-      )}
+      </Modal>
     </div>
   );
 }

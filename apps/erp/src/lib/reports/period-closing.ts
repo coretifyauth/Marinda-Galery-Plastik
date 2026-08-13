@@ -6,7 +6,6 @@ export const closePeriodSchema = z
     start_date: z.string().min(1, "Tanggal mulai wajib diisi"),
     end_date: z.string().min(1, "Tanggal akhir wajib diisi"),
     retained_earnings_account_id: z.string().uuid("Pilih akun Laba Ditahan"),
-    source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   })
   .refine((v) => v.end_date >= v.start_date, {
     message: "Tanggal akhir gak boleh sebelum tanggal mulai",

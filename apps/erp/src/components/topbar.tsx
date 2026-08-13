@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
-import { Bell, BookOpen, ChevronDown } from "lucide-react";
+import { BookOpen, ChevronDown } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
 const routeLabels: Record<string, string> = {
@@ -12,14 +12,10 @@ const routeLabels: Record<string, string> = {
   "/general-ledger": "General Ledger",
   "/customers": "Customers",
   "/ar-invoices": "AR Invoices",
-  "/ar-payments": "AR Payments",
   "/ar-deposits": "AR Deposits",
-  "/ar-return-credits": "AR Return Credit",
   "/suppliers": "Suppliers",
   "/ap-bills": "AP Bills",
-  "/ap-payments": "AP Payments",
   "/ap-deposits": "AP Deposits",
-  "/ap-return-credits": "AP Return Credit",
   "/items": "Items",
   "/inventory": "Stock Position",
   "/purchase-orders": "Purchase Orders",
@@ -30,6 +26,7 @@ const routeLabels: Record<string, string> = {
   "/goods-issues": "Goods Issues",
   "/stock-opnames": "Stock Opname",
   "/fixed-assets": "Fixed Assets",
+  "/settings/charges": "Settings",
 };
 
 function getBreadcrumb(pathname: string): string[] {
@@ -78,7 +75,6 @@ export function Topbar() {
         <Link href="/docs" title="Documentation" className="flex items-center text-slate-400 hover:text-slate-600">
           <BookOpen className="h-4.5 w-4.5" />
         </Link>
-        <Bell className="h-4.5 w-4.5 text-slate-400" />
         <button
           onClick={() => setMenuOpen((v) => !v)}
           className="flex items-center gap-2 rounded-full text-sm"

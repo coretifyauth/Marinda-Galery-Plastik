@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chargeLineSchema } from "@/lib/charge-lines/schema";
 
 export const grnLineSchema = z.object({
   po_line_id: z.string().uuid("Baris PO gak valid"),
@@ -12,10 +13,11 @@ export const createGoodsReceiptSchema = z.object({
   receipt_date: z.string().min(1, "Tanggal wajib diisi"),
   delivery_note_ref: z.string().optional(),
   bill_description: z.string().optional(),
-  bill_source_ref: z.string().min(1, "Rujukan dokumen bill wajib diisi"),
   debit_account_id: z.string().uuid("Pilih akun Persediaan"),
   payable_account_id: z.string().uuid("Pilih akun Utang Usaha"),
   lines: z.array(grnLineSchema).min(1, "Minimal 1 baris item"),
+  extra_debit_lines: z.array(chargeLineSchema).optional(),
+  apply_tax: z.boolean().default(false),
 });
 
 export type CreateGoodsReceiptInput = z.infer<typeof createGoodsReceiptSchema>;

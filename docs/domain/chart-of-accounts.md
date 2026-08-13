@@ -116,7 +116,7 @@ Menetapkan peran ke user lain lewat aplikasi (misal layar "User Management") sek
 
 Begitu sebuah akun pernah dipakai mencatat transaksi, kode, kategori, sisi normal, posisi induk, dan status kontra akun itu gak bisa diubah lagi — mencegah histori laporan lama berubah makna secara diam-diam (misal akun yang tadinya dicatat sebagai "Kas" tau-tau diubah kategorinya jadi "Piutang" padahal udah dipakai bertransaksi bertahun-tahun, bikin laporan lama jadi salah baca). Nama akun tetap boleh diganti kapan saja (misal typo) — itu gak mengubah makna histori.
 
-Akun tidak pernah benar-benar dihapus. Yang bisa dilakukan cuma "arsipkan" — akun lama tetap ada di histori supaya laporan masa lalu tetap bisa dibaca dengan benar.
+Akun yang sudah pernah dipakai mencatat transaksi tidak pernah benar-benar dihapus — cuma bisa "diarsipkan", supaya akun itu tetap ada di histori dan laporan masa lalu tetap bisa dibaca dengan benar. Akun yang belum pernah dipakai sama sekali (baru dibuat, salah bikin, dsb) boleh dihapus permanen — gak ada histori yang perlu dijaga.
 
 Beberapa kesalahan pemahaman yang sering kejadian di seputar konsep inti ini:
 - Bikin akun terlalu granular di awal (misal akun kas per meja kasir per cabang) — bikin COA bengkak, susah maintain. Solusi: pakai dimensi lain (cost center/department), bukan bikin akun baru.

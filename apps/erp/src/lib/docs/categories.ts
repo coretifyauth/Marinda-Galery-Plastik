@@ -27,7 +27,7 @@ export const DOC_CATEGORIES: DocCategory[] = [
     id: "story",
     label: "Story",
     description:
-      "Skenario bisnis CV Roti Barokah — data nyata yang dipakai buat simulasi tiap fase.",
+      "Skenario bisnis Toko Plastik Makmur Jaya — data nyata yang dipakai buat simulasi tiap fase.",
   },
 ];
 

@@ -160,7 +160,7 @@ Menutup `memory/scope-debt/compound-transactional-entries.md` (sudah dihapus). S
 - **`ap_bill_debit_lines`** — 1 baris per elemen `p_debit_lines` + 1 baris `is_tax=true` kalau `p_apply_tax`. Immutable, FK `ap_bill_id` (index `ap_bill_debit_lines_ap_bill_id_idx`).
 - **`ap_bill_expense_categories`** — katalog master data buat UI (dropdown kategori di form AP Bill), struktur identik `ar_invoice_charge_types` (lihat `ar-schema.md` submodule "Compounding & PPN" buat detail penuh pola ini + `tax_settings`) — `account_id` di sini biasanya nunjuk akun kategori `expense` (bukan `revenue`).
 - **PPN Masukan** — `p_apply_tax=true` baca `tax_settings.ppn_masukan_account_id`/`ppn_rate` (tabel singleton didefinisikan penuh di `ar-schema.md`, dipakai bareng ketiga RPC AP/AR/POS), dihitung server-side dari `v_subtotal`, **ditambahkan ke `p_payable_account_id`** (utang ke supplier termasuk pajak yang bisa dikreditkan). Beda dari `p_debit_lines` yang tetap dipercaya dari klien.
-- **`create_goods_receipt`** (`memory/architecture/data/inventory-schema.md`) manggil `create_ap_bill` di dalamnya — signature EKSTERNAL-nya (`p_debit_account_id` tunggal) **SENGAJA GAK DIUBAH** (PO/GRN gak pernah butuh kategori campur, 1 GRN = barang dari 1 PO = 1 kategori Persediaan), cukup dibungkus jadi array 1 elemen sebelum manggil `create_ap_bill` — UI `goods-receipts/page.tsx` gak kena dampak sama sekali. Ini beda perlakuan dari `create_goods_issue` (AR) yang memang expose `p_credit_lines` ke UI-nya.
+- **`create_goods_receipt`** (`memory/architecture/data/inventory-schema.md`) manggil `create_ap_bill` di dalamnya. Awalnya signature eksternalnya (`p_debit_account_id` tunggal) sengaja gak diubah sama sekali oleh `0025` (asumsi waktu itu: PO/GRN gak pernah butuh kategori campur, 1 GRN = barang dari 1 PO = 1 kategori Persediaan) — tapi ketauan gak selalu benar (nota dari PO tetap bisa campur ongkir/PPN). Ditutup migration `0012_grn_compound_ppn.sql` (2026-08-12, closes `memory/scope-debt/grn-kategori-campur-ppn.md`, filenya udah dihapus): 2 param baru di akhir signature (`p_extra_debit_lines`, `p_apply_tax`), internal-nya gabungin baris Persediaan dasar + baris tambahan jadi 1 array `p_debit_lines` sebelum manggil `create_ap_bill`. UI `goods-receipts/page.tsx` sekarang dapat `ChargeLinesEditor` + toggle PPN, sama pola `ap-bills/page.tsx`.
 
 #### `record_ap_payment` — bikin payment + journal entry sekaligus, langsung ke 1 bill (terakhir didefinisi `0011`)
 
@@ -252,7 +252,7 @@ $$;
 
 ### RLS Policy
 
-Pola identik AR — `select` terbuka buat semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `update`/`delete` di 3 tabel transaksional (immutability), `suppliers` boleh `update` (master data) tapi gak ada `delete`.
+Pola identik AR — `select` terbuka buat semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `update`/`delete` di 3 tabel transaksional (immutability), `suppliers` boleh `update` (master data), gak ada `delete` policy langsung tapi ada jalur terkontrol lewat RPC `delete_supplier()` sejak `0013_master_data_smart_delete.sql` (submodule "Smart Delete Master Data" di `memory/architecture/data/coa-schema.md`).
 
 ```sql
 alter table suppliers enable row level security;
@@ -327,6 +327,8 @@ Perubahan:
 Direview `schema-reviewer` sebelum apply — gak ada blocker. UI (`/ap-payments` form + list + detail, `/ap-bills/[id]` tabel "Pembayaran", `/suppliers/[id]` tabel "AP Payments") disederhanakan bareng di sesi yang sama — pilih 1 bill langsung (bukan lagi form multi-baris alokasi), field `ApBill.ap_payment_allocations` di `src/lib/ap-bills/schema.ts` diganti `ap_payments`.
 
 ## Retur Barang ke Supplier
+
+Ditutup 2026-08-13. `p_payable_account_id` terkunci ke `default_account_settings["ap.payable"]` lewat `LockedAccountField` (bukan dropdown bebas lagi — resolusi ini datang dari fitur Default Akun, `0017_default_account_settings_schema.sql`, sebelum sesi ini). `p_credit_account_id` jalur financial-only (`!goodsReceipt`) di UI difilter buang akun yang ada di `items.inventory_account_id` (`ap-bills/[id]/view.tsx`, fungsi `returCreditAccountOptions()`) — dan `create_ap_credit_note` sendiri sekarang menolak (`raise exception`) kalau jalur financial-only tetap mencoba pakai akun Persediaan, migration `0019_ap_credit_note_financial_only_inventory_guard.sql`. Retur akun Persediaan sekarang wajib lewat jalur fisik (`p_lines` terisi, bill wajib punya `goods_receipt_notes`).
 
 Ref bisnis: `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier". Ref DDL yang di-reuse: `journal-entry-schema.md` (`create_journal_entry`, `block_edit_delete`), `inventory-schema.md` (`consume_weighted_average`, `goods_receipt_notes`/`goods_receipt_lines`). 0 perubahan struktur ke `ap_bills`/`ap_payments`/`suppliers` (gak ada kolom baru) — tapi 2 fungsi existing dari `0010 pra-squash` diperluas (`create or replace`): `ap_payment_allocations_no_over_allocation` (fungsi ini sendiri sudah di-drop total migration `0011`, lihat submodule "Konsep Inti") dan `cancel_ap_bill`, lihat bagian `ap_bill_remaining` di bawah. Migration `0035_ap_credit_notes_schema.sql` (skema awal) + `0036_seed_demo_ap_credit_notes.sql` (seed) + `0009_ap_remove_return_credit_apply.sql` (pencabutan disposisi kedua, digabung ke submodule ini karena lahir langsung dari fitur retur).
 

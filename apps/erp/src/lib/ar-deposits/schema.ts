@@ -3,7 +3,6 @@ import { z } from "zod";
 export const createArDepositSchema = z.object({
   customer_id: z.string().uuid("Pilih customer"),
   deposit_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
   cash_account_id: z.string().uuid("Pilih akun Kas/Bank"),
   deposit_liability_account_id: z.string().uuid("Pilih akun Uang Muka Penjualan"),
@@ -15,7 +14,6 @@ export const applyArDepositSchema = z.object({
   invoice_id: z.string().uuid("Pilih invoice"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
   entry_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   deposit_liability_account_id: z.string().uuid("Pilih akun Uang Muka Penjualan"),
   receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
 });
@@ -25,7 +23,6 @@ export const refundArDepositSchema = z.object({
   deposit_id: z.string().uuid("Pilih deposit"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
   refund_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   deposit_liability_account_id: z.string().uuid("Pilih akun Uang Muka Penjualan"),
   cash_account_id: z.string().uuid("Pilih akun Kas/Bank"),
 });
@@ -35,7 +32,6 @@ export const forfeitArDepositSchema = z.object({
   deposit_id: z.string().uuid("Pilih deposit"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
   forfeiture_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   deposit_liability_account_id: z.string().uuid("Pilih akun Uang Muka Penjualan"),
   other_revenue_account_id: z.string().uuid("Pilih akun Pendapatan Lain-lain"),
 });

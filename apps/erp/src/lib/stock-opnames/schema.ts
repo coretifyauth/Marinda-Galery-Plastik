@@ -12,7 +12,6 @@ export const stockOpnameLineSchema = z.object({
 
 export const recordStockOpnameSchema = z.object({
   opname_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   shortage_expense_account_id: z.string().uuid("Pilih akun Beban Selisih Persediaan"),
   surplus_revenue_account_id: z.string().uuid("Pilih akun Pendapatan Selisih Persediaan"),
   lines: z.array(stockOpnameLineSchema).min(1, "Isi minimal 1 baris item"),

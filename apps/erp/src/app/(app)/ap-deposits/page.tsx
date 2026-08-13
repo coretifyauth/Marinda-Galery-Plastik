@@ -3,14 +3,18 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Supplier } from "@/lib/suppliers/schema";
 import { createApDepositSchema, depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 const statusLabel: Record<string, string> = {
   belum_dipakai: "Belum Dipakai",
@@ -27,7 +31,6 @@ const statusStyle: Record<string, string> = {
 export default function ApDepositsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [deposits, setDeposits] = useState<ApDeposit[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
@@ -36,15 +39,12 @@ export default function ApDepositsPage() {
 
   const [supplierId, setSupplierId] = useState("");
   const [depositDate, setDepositDate] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
   const [amount, setAmount] = useState("");
-  const [depositAssetAccountId, setDepositAssetAccountId] = useState("");
-  const [cashAccountId, setCashAccountId] = useState("");
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
+  const [cashMethod, setCashMethod] = useState<CashMethod>("TUNAI");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-
-  const leafAccounts = getLeafAccounts(accounts);
 
   const loadReversedEntryIds = useCallback(async () => {
     const { data } = await supabase
@@ -79,12 +79,8 @@ export default function ApDepositsPage() {
     setSuppliers((data ?? []) as Supplier[]);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+  const loadDefaultAccounts = useCallback(async () => {
+    setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
 
   useEffect(() => {
@@ -100,13 +96,13 @@ export default function ApDepositsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadSuppliers(), loadAccounts(), loadDeposits(), loadReversedEntryIds()]);
+      await Promise.all([loadSuppliers(), loadDefaultAccounts(), loadDeposits(), loadReversedEntryIds()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadAccounts, loadDeposits, loadReversedEntryIds]);
+  }, [router, loadSuppliers, loadDefaultAccounts, loadDeposits, loadReversedEntryIds]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -115,10 +111,9 @@ export default function ApDepositsPage() {
     const parsed = createApDepositSchema.safeParse({
       supplier_id: supplierId,
       deposit_date: depositDate,
-      source_ref: sourceRef,
       amount,
-      deposit_asset_account_id: depositAssetAccountId,
-      cash_account_id: cashAccountId,
+      deposit_asset_account_id: defaultAccounts["ap.deposit_asset"]?.id ?? "",
+      cash_account_id: resolveCashAccount(cashMethod, defaultAccounts)?.id ?? "",
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -126,10 +121,18 @@ export default function ApDepositsPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ap_deposits");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_ap_deposit", {
       p_supplier_id: parsed.data.supplier_id,
       p_deposit_date: parsed.data.deposit_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_amount: parsed.data.amount,
       p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
@@ -142,10 +145,8 @@ export default function ApDepositsPage() {
 
     setSupplierId("");
     setDepositDate("");
-    setSourceRef("");
     setAmount("");
-    setDepositAssetAccountId("");
-    setCashAccountId("");
+    setCashMethod("TUNAI");
     setShowForm(false);
     await loadDeposits();
   }
@@ -157,9 +158,9 @@ export default function ApDepositsPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">AP Deposits (Uang Muka ke Supplier) — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">AP Deposits (Uang Muka ke Supplier)</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -181,7 +182,7 @@ export default function ApDepositsPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -235,93 +236,77 @@ export default function ApDepositsPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Bayar Uang Muka ke Supplier</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="supplier">Supplier</Label>
-                <Select id="supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-                  <option value="">Pilih supplier...</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="deposit_date">Tanggal</Label>
-                <Input
-                  id="deposit_date"
-                  type="date"
-                  value={depositDate}
-                  onChange={(e) => setDepositDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. DP Santan Bubuk Toko Kelapa Makmur"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="amount">Jumlah</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="deposit_asset_account">Akun Uang Muka Pembelian (debit)</Label>
-                <Select
-                  id="deposit_asset_account"
-                  value={depositAssetAccountId}
-                  onChange={(e) => setDepositAssetAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="cash_account">Akun Kas/Bank (kredit)</Label>
-                <Select id="cash_account" value={cashAccountId} onChange={(e) => setCashAccountId(e.target.value)}>
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="Bayar Uang Muka ke Supplier"
+        maxWidth="max-w-xl"
+      >
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
+          </p>
+        )}
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="supplier">Supplier</Label>
+            <Select id="supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+              <option value="">Pilih supplier...</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="deposit_date">Tanggal</Label>
+              <Input
+                id="deposit_date"
+                type="date"
+                value={depositDate}
+                onChange={(e) => setDepositDate(e.target.value)}
+              />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="amount">Jumlah</Label>
+              <Input
+                id="amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+          </div>
+          <LockedAccountField
+            label="Akun Uang Muka Pembelian (debit)"
+            htmlFor="deposit_asset_account"
+            resolved={defaultAccounts["ap.deposit_asset"]}
+          />
+          <CashMethodField
+            label="Akun Kas/Bank (kredit)"
+            htmlFor="cash_account"
+            method={cashMethod}
+            onChange={setCashMethod}
+            defaultAccounts={defaultAccounts}
+          />
 
-            {formError && <FormError>{formError}</FormError>}
+          {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={submitting}>
               {submitting ? "Menyimpan..." : "Simpan Deposit"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

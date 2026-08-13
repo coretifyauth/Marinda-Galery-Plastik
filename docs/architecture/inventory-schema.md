@@ -119,7 +119,7 @@ erDiagram
 | Purchase Order tidak bikin jurnal | `create_purchase_order` cuma insert data, tidak memicu transaksi jurnal apa pun |
 | Penerimaan barang tidak boleh melebihi sisa qty yang dipesan | Pengaman otomatis pada baris penerimaan barang, dicek per barang terhadap Purchase Order-nya |
 | Pembelian bahan baku selalu masuk Persediaan, tidak pernah ke Beban | `create_goods_receipt` selalu mendebit akun Persediaan barang itu (bukan akun Beban) saat membuat tagihan |
-| Penerimaan barang dari 1 PO selalu 1 kategori Persediaan, gak butuh kategori campur | `create_goods_receipt` signature-nya gak berubah (`docs/architecture/ap-schema.md` bagian "Kategori Campur & PPN") — beda dari alur jual (Goods Issue) yang memang expose kategori campur ke UI-nya, karena kebutuhan bisnisnya beda |
+| Penerimaan barang dari 1 PO boleh punya kategori Persediaan campur (mis. + Beban Ongkir) dan PPN Masukan | `create_goods_receipt` diperluas kategori tambahan & PPN (`docs/architecture/ap-schema.md` bagian "Kategori Campur & PPN"), mirror alur jual (Goods Issue) yang sudah lebih dulu expose kategori campur ke UI-nya |
 | Penerimaan barang tertelusur ke Purchase Order + tagihan yang menyertainya | `goods_receipt_notes` wajib menunjuk baik Purchase Order maupun tagihan (bill) yang dibuat bersamaan |
 
 **Interaksi Antar Tabel**

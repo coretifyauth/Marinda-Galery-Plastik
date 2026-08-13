@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
@@ -11,12 +10,16 @@ import { createGoodsIssueSchema, type GoodsIssue } from "@/lib/goods-issues/sche
 import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
 import type { TaxSettings } from "@/lib/tax-settings/schema";
 import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
+import { Modal } from "@/components/ui/modal";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 type LineInput = { item_id: string; unit_id: string; qty: string };
 
@@ -27,7 +30,6 @@ function emptyLine(): LineInput {
 export default function GoodsIssuesPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
@@ -38,12 +40,8 @@ export default function GoodsIssuesPage() {
   const [customerId, setCustomerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
   const [description, setDescription] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
   const [amount, setAmount] = useState("");
-  const [receivableAccountId, setReceivableAccountId] = useState("");
-  const [revenueAccountId, setRevenueAccountId] = useState("");
-  const [hppAccountId, setHppAccountId] = useState("");
-  const [finishedGoodAccountId, setFinishedGoodAccountId] = useState("");
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
   const [chargeTypes, setChargeTypes] = useState<ArInvoiceChargeType[]>([]);
@@ -52,9 +50,6 @@ export default function GoodsIssuesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-
-  const leafAccounts = getLeafAccounts(accounts);
-  const finishedGoods = items.filter((i) => i.item_type === "FINISHED_GOOD");
 
   const loadIssues = useCallback(async () => {
     const { data, error } = await supabase
@@ -91,12 +86,8 @@ export default function GoodsIssuesPage() {
     setItemUnits((units ?? []) as ItemUnit[]);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+  const loadDefaultAccounts = useCallback(async () => {
+    setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
 
   const loadChargeTypes = useCallback(async () => {
@@ -128,7 +119,7 @@ export default function GoodsIssuesPage() {
       await Promise.all([
         loadCustomers(),
         loadItems(),
-        loadAccounts(),
+        loadDefaultAccounts(),
         loadIssues(),
         loadChargeTypes(),
         loadTaxSettings(),
@@ -138,7 +129,7 @@ export default function GoodsIssuesPage() {
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadItems, loadAccounts, loadIssues, loadChargeTypes, loadTaxSettings]);
+  }, [router, loadCustomers, loadItems, loadDefaultAccounts, loadIssues, loadChargeTypes, loadTaxSettings]);
 
   function updateLineItem(index: number, itemId: string) {
     // Ganti item -> satuan jual sebelumnya gak relevan lagi, reset.
@@ -201,7 +192,7 @@ export default function GoodsIssuesPage() {
     });
 
     const creditLines = [
-      { account_id: revenueAccountId, amount: Number(amount) },
+      { account_id: defaultAccounts["ar.revenue"]?.id ?? "", amount: Number(amount) },
       ...resolveChargeLines(extraLines, chargeTypes),
     ];
 
@@ -209,11 +200,10 @@ export default function GoodsIssuesPage() {
       customer_id: customerId,
       invoice_date: invoiceDate,
       description,
-      source_ref: sourceRef,
       credit_lines: creditLines,
-      receivable_account_id: receivableAccountId,
-      hpp_account_id: hppAccountId,
-      finished_good_account_id: finishedGoodAccountId,
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
+      hpp_account_id: defaultAccounts["inventory.hpp"]?.id ?? "",
+      finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id ?? "",
       lines: convertedLines,
       apply_tax: applyTax,
     });
@@ -223,11 +213,21 @@ export default function GoodsIssuesPage() {
     }
 
     setSubmitting(true);
+    // Doc type ar_invoices, bukan goods_issues -- create_goods_issue sekaligus bikin baris
+    // ar_invoices (form ini "Invoice + Goods Issue"), 1 source_ref dipakai bareng keduanya.
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_invoices");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_goods_issue", {
       p_customer_id: parsed.data.customer_id,
       p_invoice_date: parsed.data.invoice_date,
       p_description: parsed.data.description || null,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_credit_lines: parsed.data.credit_lines,
       p_receivable_account_id: parsed.data.receivable_account_id,
       p_lines: parsed.data.lines,
@@ -244,12 +244,7 @@ export default function GoodsIssuesPage() {
     setCustomerId("");
     setInvoiceDate("");
     setDescription("");
-    setSourceRef("");
     setAmount("");
-    setReceivableAccountId("");
-    setRevenueAccountId("");
-    setHppAccountId("");
-    setFinishedGoodAccountId("");
     setLines([emptyLine()]);
     setExtraLines([]);
     setApplyTax(false);
@@ -264,9 +259,9 @@ export default function GoodsIssuesPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Goods Issues — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Goods Issues</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -288,7 +283,7 @@ export default function GoodsIssuesPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -344,16 +339,19 @@ export default function GoodsIssuesPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Jual Barang Jadi (Invoice + Goods Issue)</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="Jual Barang Jadi (Invoice + Goods Issue)"
+        maxWidth="max-w-4xl"
+      >
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
+          </p>
+        )}
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="customer">Customer</Label>
@@ -376,19 +374,10 @@ export default function GoodsIssuesPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. Nota grosir #006"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="description">Deskripsi</Label>
                 <Input
                   id="description"
-                  placeholder="mis. Jual roti ke Warung Pak Budi"
+                  placeholder="mis. Jual barang ke Toko Kelontong Sumber Rejeki"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                 />
@@ -409,62 +398,26 @@ export default function GoodsIssuesPage() {
                   </Button>
                 </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="receivable_account">Akun Piutang Usaha (debit)</Label>
-                <Select
-                  id="receivable_account"
-                  value={receivableAccountId}
-                  onChange={(e) => setReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="revenue_account">Akun Pendapatan (kredit)</Label>
-                <Select
-                  id="revenue_account"
-                  value={revenueAccountId}
-                  onChange={(e) => setRevenueAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="hpp_account">Akun HPP (debit, jurnal kedua)</Label>
-                <Select id="hpp_account" value={hppAccountId} onChange={(e) => setHppAccountId(e.target.value)}>
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="finished_good_account">Akun Persediaan Barang Jadi (kredit, jurnal kedua)</Label>
-                <Select
-                  id="finished_good_account"
-                  value={finishedGoodAccountId}
-                  onChange={(e) => setFinishedGoodAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <LockedAccountField
+                label="Akun Piutang Usaha (debit)"
+                htmlFor="receivable_account"
+                resolved={defaultAccounts["ar.receivable"]}
+              />
+              <LockedAccountField
+                label="Akun Pendapatan (kredit)"
+                htmlFor="revenue_account"
+                resolved={defaultAccounts["ar.revenue"]}
+              />
+              <LockedAccountField
+                label="Akun HPP (debit, jurnal kedua)"
+                htmlFor="hpp_account"
+                resolved={defaultAccounts["inventory.hpp"]}
+              />
+              <LockedAccountField
+                label="Akun Persediaan Barang Jadi (kredit, jurnal kedua)"
+                htmlFor="finished_good_account"
+                resolved={defaultAccounts["inventory.finished_good"]}
+              />
             </div>
 
             <div className="flex flex-col gap-2">
@@ -480,7 +433,7 @@ export default function GoodsIssuesPage() {
                   <div key={i} className="grid grid-cols-[1fr_10rem_7rem_2.5rem] gap-2">
                     <Select value={line.item_id} onChange={(e) => updateLineItem(i, e.target.value)}>
                       <option value="">Pilih item...</option>
-                      {finishedGoods.map((item) => (
+                      {items.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name} ({item.uom})
                         </option>
@@ -545,12 +498,16 @@ export default function GoodsIssuesPage() {
 
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
-              {submitting ? "Menyimpan..." : "Simpan Penjualan"}
-            </Button>
-          </form>
-        </div>
-      )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Menyimpan..." : "Simpan Penjualan"}
+              </Button>
+            </div>
+        </form>
+      </Modal>
     </div>
   );
 }

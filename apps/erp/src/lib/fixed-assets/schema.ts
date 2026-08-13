@@ -33,7 +33,6 @@ export type CreateFixedAssetInput = z.infer<typeof createFixedAssetSchema>;
 export const postDepreciationSchema = z.object({
   fixed_asset_id: z.string().uuid("Pilih aset"),
   period: z.string().min(1, "Periode wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   amount_override: z.coerce.number().positive().optional(),
 });
 

@@ -3,7 +3,7 @@ import { fetchAccounts, fetchLinesBetween, fetchLinesUpTo } from "./balances";
 import { computeIncomeStatement } from "./income-statement";
 import { fetchClosingJournalEntryIds } from "./period-closing";
 import { computeTrialBalance } from "./trial-balance";
-import type { CashFlow, EntryLine, TrialBalance } from "./types";
+import type { CashFlow, EntryLine, OperatingWorkingCapitalLine, TrialBalance } from "./types";
 
 /**
  * Kode akun Beban Penyusutan yang di-add-back di Operating — hardcode,
@@ -33,12 +33,51 @@ function sumByAccountIds(balances: TrialBalance["balances"], accountIds: Set<str
 }
 
 /**
+ * Delta tiap akun neraca "operasional" (asset/liability) antara 2 titik waktu —
+ * auto-discover dari `accounts`, BUKAN daftar kode akun hardcode (AR/Inventory/AP
+ * lama). Excluded: Kas (sudah dipisah sebagai Kas Awal/Akhir), seluruh keluarga
+ * Aset Tetap termasuk kontra-nya (non-kontra sudah kehitung di Investing lewat
+ * `classifyInvestingFinancing`, kontra/Akumulasi Penyusutan sudah kehitung lewat
+ * `depreciationAddBack` — includeIn di sini bakal double-count keduanya), dan akun
+ * liability yang di-hardcode Financing (`FINANCING_LIABILITY_CODES`). Sisanya
+ * (Piutang Usaha, Persediaan, Utang Usaha, dan akun neraca baru mana pun ke depan
+ * kayak Uang Muka/PPN/Piutang Retur) otomatis ke-track tanpa perlu edit kode ini lagi.
+ * Ref bug yang ditutup: `Kas Awal + Operating + Investing + Financing != Kas Akhir`
+ * begitu ada akun neraca baru yang gak ada di daftar hardcode lama.
+ */
+function operatingWorkingCapitalDeltas(
+  accounts: Account[],
+  tbStart: TrialBalance,
+  tbEnd: TrialBalance
+): OperatingWorkingCapitalLine[] {
+  const kasAccountIds = new Set(childrenOf(accounts, "1000").map((a) => a.id));
+  const fixedAssetFamilyIds = new Set(childrenOf(accounts, "1600").map((a) => a.id));
+  const startById = new Map(tbStart.balances.map((b) => [b.id, b.balance]));
+  const endById = new Map(tbEnd.balances.map((b) => [b.id, b.balance]));
+
+  const lines: OperatingWorkingCapitalLine[] = [];
+  for (const account of accounts) {
+    if (account.category !== "asset" && account.category !== "liability") continue;
+    if (kasAccountIds.has(account.id)) continue;
+    if (fixedAssetFamilyIds.has(account.id)) continue;
+    if (account.category === "liability" && FINANCING_LIABILITY_CODES.includes(account.code)) continue;
+
+    const delta = (endById.get(account.id) ?? 0) - (startById.get(account.id) ?? 0);
+    if (delta === 0) continue;
+
+    const contribution = account.normal_balance === "debit" ? -delta : delta;
+    lines.push({ accountId: account.id, code: account.code, name: account.name, delta, contribution });
+  }
+  return lines;
+}
+
+/**
  * Klasifikasi Investing/Financing: cuma proses journal entry yang PUNYA
  * baris Kas (entry non-kas, mis. akuisisi aset via KUR langsung, dilewatin
  * total — itu yang bikin "non-cash investing/financing" = 0, bukan bug).
  * Baris non-kas di dalam entry yang lolos itu diklasifikasi lewat akun
  * lawannya: Aset Tetap non-kontra -> Investing, Ekuitas/Utang Bank -> Financing,
- * selain itu diabaikan (sudah kehitung di Operating lewat Laba Bersih/delta AR-Inv-AP).
+ * selain itu diabaikan (sudah kehitung di Operating lewat `operatingWorkingCapitalDeltas`).
  * Closing entry gak perlu di-exclude di sini secara eksplisit — dia gak pernah
  * punya baris Kas (cuma nyentuh Revenue/Expense/Equity), jadi otomatis kelewat
  * dari `hasKasLine` check di bawah.
@@ -80,7 +119,7 @@ export function classifyInvestingFinancing(
       } else if (account.category === "equity" || FINANCING_LIABILITY_CODES.includes(account.code)) {
         financing += contribution;
       }
-      // selain itu (revenue/expense/AR/Inventory/Utang Usaha): sudah kehitung di Operating, diabaikan di sini.
+      // selain itu (revenue/expense/akun neraca operasional): sudah kehitung di Operating, diabaikan di sini.
     }
   }
 
@@ -103,21 +142,12 @@ export function computeCashFlow(
     .filter((b) => DEPRECIATION_ACCOUNT_CODES.includes(b.code))
     .reduce((sum, b) => sum + b.balance, 0);
 
-  const arIds = new Set(accounts.filter((a) => a.code === "1300").map((a) => a.id));
-  const inventoryIds = new Set(accounts.filter((a) => ["1400", "1420"].includes(a.code)).map((a) => a.id));
-  const apIds = new Set(accounts.filter((a) => a.code === "2100").map((a) => a.id));
   const kasIds = new Set(childrenOf(accounts, "1000").map((a) => a.id));
 
-  const deltaAccountsReceivable = sumByAccountIds(tbEnd.balances, arIds) - sumByAccountIds(tbStart.balances, arIds);
-  const deltaInventory = sumByAccountIds(tbEnd.balances, inventoryIds) - sumByAccountIds(tbStart.balances, inventoryIds);
-  const deltaAccountsPayable = sumByAccountIds(tbEnd.balances, apIds) - sumByAccountIds(tbStart.balances, apIds);
+  const operatingWorkingCapital = operatingWorkingCapitalDeltas(accounts, tbStart, tbEnd);
+  const workingCapitalContribution = operatingWorkingCapital.reduce((sum, l) => sum + l.contribution, 0);
 
-  const operating =
-    incomeStatement.netIncome +
-    depreciationAddBack -
-    deltaAccountsReceivable -
-    deltaInventory +
-    deltaAccountsPayable;
+  const operating = incomeStatement.netIncome + depreciationAddBack + workingCapitalContribution;
 
   const { investing, financing } = classifyInvestingFinancing(accounts, entryLines);
   const netChange = operating + investing + financing;
@@ -130,9 +160,7 @@ export function computeCashFlow(
     endDate,
     netIncome: incomeStatement.netIncome,
     depreciationAddBack,
-    deltaAccountsReceivable,
-    deltaInventory,
-    deltaAccountsPayable,
+    operatingWorkingCapital,
     operating,
     investing,
     financing,

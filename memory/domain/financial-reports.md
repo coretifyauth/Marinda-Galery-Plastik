@@ -23,7 +23,7 @@ Cash Flow is the only report needing data from 2 points in time, not 1.
 
 **Worked example** (1 period, fully validated end-to-end, angka ilustrasi generik — angka riil tervalidasi lintas 6 fase: `docs/story/financial-reports.md`)
 
-Opening: Kas 10.000.000, Modal Pemilik 10.000.000. 7 transactions: (1) buy oven 15.000.000 via Utang Bank direct (non-cash), (2) buy inventory 3.000.000 half cash/half AP, (3) sell 8.000.000 half cash/half AR, (4) COGS 2.000.000 on that sale, (5) pay salary 1.500.000 cash, (6) depreciation 250.000, (7) pay down AP 500.000 cash.
+Opening: Kas 10.000.000, Modal Pemilik 10.000.000. 7 transactions: (1) buy fixed asset 15.000.000 via Utang Bank direct (non-cash), (2) buy inventory 3.000.000 half cash/half AP, (3) sell 8.000.000 half cash/half AR, (4) COGS 2.000.000 on that sale, (5) pay salary 1.500.000 cash, (6) depreciation 250.000, (7) pay down AP 500.000 cash.
 
 Trial Balance (end): Kas 10.500.000, Piutang 4.000.000, Persediaan 1.000.000, Aset Tetap 15.000.000, HPP 2.000.000, Beban Gaji 1.500.000, Beban Penyusutan 250.000 (debit side, total 34.250.000) = Akumulasi Penyusutan 250.000, Utang Usaha 1.000.000, Utang Bank 15.000.000, Modal 10.000.000, Pendapatan 8.000.000 (credit side, total 34.250.000). Balances.
 
@@ -31,7 +31,7 @@ Income Statement: `8.000.000 - 2.000.000 - 1.500.000 - 250.000 = 4.250.000` Laba
 
 Balance Sheet: Asset `10.500.000+4.000.000+1.000.000+15.000.000-250.000=30.250.000` = Liability `1.000.000+15.000.000=16.000.000` + Equity `10.000.000+4.250.000(Laba Ditahan)=14.250.000` → `30.250.000=30.250.000`. Balances.
 
-Cash Flow (indirect): Operating = `4.250.000+250.000-4.000.000(ΔAR)+1.000.000(ΔAP)-1.000.000(ΔInv) = 500.000`. Investing=0, Financing=0 (oven acquisition never touched Kas). Kenaikan Kas = 500.000.
+Cash Flow (indirect): Operating = `4.250.000+250.000-4.000.000(ΔAR)+1.000.000(ΔAP)-1.000.000(ΔInv) = 500.000`. Investing=0, Financing=0 (fixed asset acquisition never touched Kas). Kenaikan Kas = 500.000.
 
 Validation: `Kas Awal 10.000.000 + 500.000 = 10.500.000` = Kas balance in Trial Balance (10.500.000). Match.
 
@@ -88,7 +88,7 @@ Laba Bersih
 
 **Why Indirect chosen**: all inputs (Laba Bersih, AR/Inventory/AP deltas) already exist from the other 3 reports — zero extra schema.
 
-**Non-cash investing/financing**: if an asset is acquired directly against a liability (no Kas account touched at all — see actual seed `0015_seed_demo_fixed_assets.sql`: `Debit Peralatan Oven / Kredit Utang Bank`, zero cash lines), both Investing and Financing show 0 for that event. Not a bug — disclosed as a supplemental non-cash footnote per accounting standards, never hidden.
+**Non-cash investing/financing**: if an asset is acquired directly against a liability (no Kas account touched at all — see real example `docs/story/fixed-assets.md` Tahap 1: `Debit Mobil Pickup Antar Barang / Kredit Utang Bank`, zero cash lines), both Investing and Financing show 0 for that event. Not a bug — disclosed as a supplemental non-cash footnote per accounting standards, never hidden.
 
 **Investing vs Financing grouping is still hardcoded by account code** (`2200 Utang Bank` mutation = Financing, `16xx` Aset Tetap accounts touching Kas = Investing) — no generic category flag on `journal_entries`/`journal_lines` yet. If a new liability-type account is added later, this hardcoded list needs manual update.
 
@@ -116,11 +116,11 @@ Deferred from phase 2 to phase 7 — needs Income Statement to know the definiti
 
 **Real problem**: banks request reports for a SPECIFIC period ("Laba Rugi Juli 2026") and make lending decisions off that exact number. If a late-discovered transaction (e.g. a missed July receipt) is allowed to post retroactively into July after that report was already handed to the bank, Laba Bersih silently changes — the bank never knows the number it decided on has shifted. Different from reversing entries (phase 2, `general-ledger.md` constraint #4) — those are *visible* corrections in the history; this is about a period already "sealed" and handed to an external party, which must never silently change.
 
-**Secondary problem**: without resetting Revenue/Expense each period, Bu Nur can't compare month-to-month performance (numbers accumulate since 2023, company founding — `docs/story/company-profile.md`) to decide things like raising bread prices or switching suppliers.
+**Secondary problem**: without resetting Revenue/Expense each period, the owner can't compare month-to-month performance (numbers accumulate since company founding — `docs/story/company-profile.md`) to decide things like raising prices or switching suppliers.
 
 **Mechanism** (detail: `general-ledger.md`): RPC `close_period(start_date, end_date, retained_earnings_account_id, source_ref)` — hitung ulang saldo Revenue/Expense periode itu langsung dari `journal_lines`, nol-in via closing entry ke `create_journal_entry` yang udah ada, catat rentangnya di `period_closings` (ledger append-only, bukan tabel "periode" dengan status). Trigger baru di `journal_entries` nolak entry baru yang bertanggal masuk ke rentang tertutup. Wajib berurutan-bersambung, gak ada reopen.
 
-**Rekomendasi cadence buat skala UMKM (CV Roti Barokah)**: hard close tahunan, bukan bulanan — selaras SPT Tahunan pajak + momen lapor ke bank, minim risiko transaksi telat kejebak. Review bulanan cukup pakai `getIncomeStatement` biasa (soft, gak dikunci). Detail + contoh angka pemecahan periode 2025 vs 2026: `docs/domain/general-ledger.md` bagian "Best Practice buat Skala UMKM" dan "Contoh — Kenapa Pemecahan Periode Penting".
+**Rekomendasi cadence buat skala UMKM**: hard close tahunan, bukan bulanan — selaras SPT Tahunan pajak + momen lapor ke bank, minim risiko transaksi telat kejebak. Review bulanan cukup pakai `getIncomeStatement` biasa (soft, gak dikunci). Detail + contoh angka pemecahan periode 2025 vs 2026: `docs/domain/general-ledger.md` bagian "Best Practice buat Skala UMKM" dan "Contoh — Kenapa Pemecahan Periode Penting".
 
 **Belum ada UI preview closing entry sebelum submit** — `close_period` langsung eksekusi, belum ada langkah "lihat dulu draft-nya" di level RPC (bisa disimulasikan dari UI dengan manggil `getIncomeStatement` buat rentang yang sama sebelum submit, tapi itu 2 pemanggilan terpisah, gak dijamin data belum berubah di antaranya).
 

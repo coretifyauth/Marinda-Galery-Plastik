@@ -2,13 +2,13 @@
 
 ## Masalah yang Diselesaikan
 
-CV Roti Barokah punya 2 jalur jual: 3 warung langganan yang bayar termin (sudah dinaungi Accounts Receivable), dan 1 kios kecil yang pelanggannya bayar tunai/QRIS langsung di tempat. Jalur kedua ini belum tercatat di sistem sama sekali — padahal ini salah satu dari dua sumber pendapatan utama Bu Nur.
+Bisnis retail/grosir kecil sering punya 2 jalur jual: pelanggan langganan yang bayar termin (sudah dinaungi Accounts Receivable), dan penjualan tunai langsung di kios/toko fisik yang pelanggannya bayar tunai/QRIS di tempat. Jalur kedua ini butuh pencatatan tersendiri, karena mekanisme akuntansinya beda dari penjualan termin.
 
 Kios bukan sekadar "AR Invoice versi lebih sederhana". Bedanya fundamental: penjualan termin mengakui piutang duluan (Kas belum masuk, baru masuk belakangan pas customer bayar), sementara penjualan kios mengakui Kas dan Pendapatan **bersamaan, di titik yang sama** — gak pernah ada tahap "piutang" sama sekali. Modul ini (POS) menutup gap itu: mencatat penjualan tunai kios sebagai kejadian akuntansi yang lengkap, bukan cuma catatan kas manual di luar sistem.
 
 ## Konsep Inti
 
-- **Penjualan Kios (POS Sale)** — 1 transaksi kasir, boleh berisi banyak jenis barang sekaligus (misal 5 Roti Tawar + 3 Roti Cokelat dalam 1 kali bayar). Tiap transaksi bikin 2 jurnal bersamaan:
+- **Penjualan Kios (POS Sale)** — 1 transaksi kasir, boleh berisi banyak jenis barang sekaligus (misal 5 unit Barang A + 3 unit Barang B dalam 1 kali bayar). Tiap transaksi bikin 2 jurnal bersamaan:
   ```
   Debit Kas/Bank [total harga jual]        Kredit Pendapatan Penjualan Toko [total harga jual]
   Debit Harga Pokok Penjualan [biaya pokok] Kredit Persediaan Barang Jadi [biaya pokok]
@@ -49,7 +49,7 @@ Kios bukan sekadar "AR Invoice versi lebih sederhana". Bedanya fundamental: penj
 - Kasir tidak pernah memilih akun pembukuan secara langsung, baik untuk kategori tambahan maupun PPN.
 
 **Skenario**
-- Pelanggan beli 10 Roti Tawar borongan, minta dibungkus kotak (kena biaya packing terpisah), dan kiosnya sudah PKP jadi kena PPN — kasir pilih "Biaya Packing" dari daftar + isi nominalnya, centang "Kena PPN" kalau relevan, sistem menghitung total akhir dan mencatat semuanya dalam 1 transaksi.
+- Pelanggan beli barang borongan, minta dibungkus rapi (kena biaya packing terpisah), dan kiosnya sudah PKP jadi kena PPN — kasir pilih "Biaya Packing" dari daftar + isi nominalnya, centang "Kena PPN" kalau relevan, sistem menghitung total akhir dan mencatat semuanya dalam 1 transaksi.
 
 **Common Mistakes**
 - Membiarkan PPN dicatat manual di luar transaksi kasir — gak ada jaminan nempel ke transaksi yang benar, dan gak ikut terbalik kalau transaksinya dibatalkan.

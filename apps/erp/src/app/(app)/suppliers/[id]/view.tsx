@@ -8,6 +8,9 @@ import { billStatus, type ApBill } from "@/lib/ap-bills/schema";
 import type { ApPayment } from "@/lib/ap-payments/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { Button } from "@/components/ui/button";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -24,6 +27,10 @@ export function SupplierDetailView({ id }: { id: string }) {
   const [payments, setPayments] = useState<ApPayment[]>([]);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("bills");
+  const [roles, setRoles] = useState<string[]>([]);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     const [
@@ -40,7 +47,7 @@ export function SupplierDetailView({ id }: { id: string }) {
       supabase
         .from("ap_bills")
         .select(
-          "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount)"
+          "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
         )
         .eq("supplier_id", id)
         .order("bill_date", { ascending: false }),
@@ -73,6 +80,12 @@ export function SupplierDetailView({ id }: { id: string }) {
         router.replace("/login");
         return;
       }
+      const { data: roleRows } = await supabase
+        .from("user_roles")
+        .select("role_name")
+        .eq("user_id", session.user.id);
+      if (!active) return;
+      setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await load();
       if (active) setCheckingSession(false);
     });
@@ -80,6 +93,38 @@ export function SupplierDetailView({ id }: { id: string }) {
       active = false;
     };
   }, [router, load]);
+
+  async function handleDelete() {
+    if (!supplier) return;
+    if (!window.confirm(`Hapus supplier "${supplier.name}"?`)) return;
+    setDeleteError(null);
+    setDeleting(true);
+    const { data, error } = await supabase.rpc("delete_supplier", { p_supplier_id: supplier.id });
+    setDeleting(false);
+    if (error) {
+      setDeleteError(error.message);
+      return;
+    }
+    if (data === "deleted") {
+      router.push("/suppliers");
+      return;
+    }
+    window.alert("Supplier ini sudah pernah dipakai di transaksi, jadi diarsipkan (bukan dihapus permanen).");
+    await load();
+  }
+
+  async function handleReactivate() {
+    if (!supplier) return;
+    setDeleteError(null);
+    setDeleting(true);
+    const { error } = await supabase.from("suppliers").update({ archived_at: null }).eq("id", supplier.id);
+    setDeleting(false);
+    if (error) {
+      setDeleteError(error.message);
+      return;
+    }
+    await load();
+  }
 
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
@@ -89,126 +134,145 @@ export function SupplierDetailView({ id }: { id: string }) {
     return <FormError>{loadError ?? "Supplier gak ditemukan."}</FormError>;
   }
 
+  const canWrite = roles.includes("admin") || roles.includes("accountant");
+
   const totalOutstanding = bills.reduce((sum, bill) => {
     const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
     return sum + billStatus(bill, isCancelled).outstanding;
   }, 0);
 
+  const detailGroups = [
+    {
+      title: "Informasi Supplier",
+      rows: [
+        { label: "Nama", value: supplier.name },
+        { label: "Kontak", value: supplier.contact ?? "-" },
+        { label: "Termin", value: `net-${supplier.payment_term_days}` },
+        { label: "Status", value: supplier.archived_at ? "Diarsipkan" : "Aktif" },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [{ label: "Total Outstanding", value: totalOutstanding.toLocaleString("id-ID") }],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "bills", label: "AP Bills", badge: bills.length },
+    { key: "payments", label: "AP Payments", badge: payments.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/suppliers" label="Kembali ke Suppliers" />
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-black">{supplier.name}</h1>
-          <p className="text-sm text-slate-500">
-            {supplier.contact ?? "-"} · Termin net-{supplier.payment_term_days}
-            {supplier.archived_at && " · Diarsipkan"}
-          </p>
-        </div>
-        <div className="text-right">
-          <div className="text-xs uppercase text-slate-400">Total Outstanding</div>
-          <div className="font-mono text-lg font-medium text-black">
-            {totalOutstanding.toLocaleString("id-ID")}
+        <h1 className="text-xl font-semibold text-black">Supplier Details</h1>
+        {canWrite && (
+          <div className="flex gap-2">
+            {supplier.archived_at ? (
+              <Button variant="toolbar" onClick={handleReactivate} disabled={deleting}>
+                {deleting ? "Memproses..." : "Aktifkan"}
+              </Button>
+            ) : (
+              <Button variant="toolbar" onClick={handleDelete} disabled={deleting}>
+                {deleting ? "Memproses..." : "Hapus"}
+              </Button>
+            )}
           </div>
-        </div>
+        )}
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
+      {deleteError && <FormError>{deleteError}</FormError>}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">AP Bills</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {bills.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Jatuh Tempo</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Jumlah</th>
-              <th className="px-4 py-2 text-right">Outstanding</th>
-              <th className="px-4 py-2">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bills.map((bill) => {
-              const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
-              const { status, outstanding } = billStatus(bill, isCancelled);
-              const overdue =
-                status !== "lunas" &&
-                status !== "dibatalkan" &&
-                bill.due_date < new Date().toISOString().slice(0, 10);
-              return (
-                <tr key={bill.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="whitespace-nowrap px-4 py-2">{bill.bill_date}</td>
-                  <td className="whitespace-nowrap px-4 py-2">
-                    {bill.due_date}
-                    {overdue && (
-                      <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">
-                        Telat
+      <DetailRows groups={detailGroups} />
+
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
+      {activeTab === "bills" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Jatuh Tempo</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2 text-right">Jumlah</th>
+                <th className="px-4 py-2 text-right">Outstanding</th>
+                <th className="px-4 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bills.map((bill) => {
+                const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
+                const { status, outstanding } = billStatus(bill, isCancelled);
+                const overdue =
+                  status !== "lunas" &&
+                  status !== "dibatalkan" &&
+                  bill.due_date < new Date().toISOString().slice(0, 10);
+                return (
+                  <tr key={bill.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{bill.bill_date}</td>
+                    <td className="whitespace-nowrap px-4 py-2">
+                      {bill.due_date}
+                      {overdue && (
+                        <span className="ml-2 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">Telat</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">{bill.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{bill.amount.toLocaleString("id-ID")}</td>
+                    <td className="px-4 py-2 text-right font-mono">{outstanding.toLocaleString("id-ID")}</td>
+                    <td className="px-4 py-2">
+                      <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
+                        {status}
                       </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2">{bill.source_ref}</td>
-                  <td className="px-4 py-2 text-right font-mono">{bill.amount.toLocaleString("id-ID")}</td>
-                  <td className="px-4 py-2 text-right font-mono">{outstanding.toLocaleString("id-ID")}</td>
-                  <td className="px-4 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
-                      {status}
-                    </span>
+                    </td>
+                  </tr>
+                );
+              })}
+              {bills.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada bill.
                   </td>
                 </tr>
-              );
-            })}
-            {bills.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada bill.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">AP Payments</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {payments.length}
-          </span>
+              )}
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Jumlah</th>
-              <th className="px-4 py-2">Bill</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payments.map((p) => (
-              <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
-                <td className="px-4 py-2">{p.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                <td className="px-4 py-2">{p.ap_bills.source_ref}</td>
+      )}
+
+      {activeTab === "payments" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2 text-right">Jumlah</th>
+                <th className="px-4 py-2">Bill</th>
               </tr>
-            ))}
-            {payments.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada pembayaran.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {payments.map((p) => (
+                <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
+                  <td className="px-4 py-2">{p.source_ref}</td>
+                  <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2">{p.ap_bills.source_ref}</td>
+                </tr>
+              ))}
+              {payments.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada pembayaran.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

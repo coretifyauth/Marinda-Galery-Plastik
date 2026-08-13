@@ -3,15 +3,18 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { Item } from "@/lib/items/schema";
 import type { InventoryBalance } from "@/lib/inventory/schema";
 import { recordStockOpnameSchema, type StockOpname } from "@/lib/stock-opnames/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 type LineInput = { item_id: string; qty_actual: string };
 
@@ -22,7 +25,7 @@ function emptyLine(): LineInput {
 export default function StockOpnamesPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [items, setItems] = useState<Item[]>([]);
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [opnames, setOpnames] = useState<StockOpname[]>([]);
@@ -30,15 +33,10 @@ export default function StockOpnamesPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [opnameDate, setOpnameDate] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
-  const [shortageAccountId, setShortageAccountId] = useState("");
-  const [surplusAccountId, setSurplusAccountId] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
-
-  const leafAccounts = getLeafAccounts(accounts);
 
   const loadOpnames = useCallback(async () => {
     const { data, error } = await supabase
@@ -67,12 +65,8 @@ export default function StockOpnamesPage() {
     setBalances((bal ?? []) as InventoryBalance[]);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+  const loadDefaultAccounts = useCallback(async () => {
+    setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
 
   useEffect(() => {
@@ -88,20 +82,17 @@ export default function StockOpnamesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadItems(), loadAccounts(), loadOpnames()]);
+      await Promise.all([loadItems(), loadDefaultAccounts(), loadOpnames()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems, loadAccounts, loadOpnames]);
+  }, [router, loadItems, loadDefaultAccounts, loadOpnames]);
 
   function openForm() {
     setFormError(null);
     setOpnameDate("");
-    setSourceRef("");
-    setShortageAccountId("");
-    setSurplusAccountId("");
     setLines([emptyLine()]);
     setShowForm(true);
   }
@@ -145,9 +136,8 @@ export default function StockOpnamesPage() {
 
     const parsed = recordStockOpnameSchema.safeParse({
       opname_date: opnameDate,
-      source_ref: sourceRef,
-      shortage_expense_account_id: shortageAccountId,
-      surplus_revenue_account_id: surplusAccountId,
+      shortage_expense_account_id: defaultAccounts["inventory.shortage_expense"]?.id ?? "",
+      surplus_revenue_account_id: defaultAccounts["inventory.surplus_revenue"]?.id ?? "",
       lines: activeLines,
     });
     if (!parsed.success) {
@@ -156,9 +146,17 @@ export default function StockOpnamesPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("stock_opnames");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("record_stock_opname", {
       p_opname_date: parsed.data.opname_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
       p_shortage_expense_account_id: parsed.data.shortage_expense_account_id,
       p_surplus_revenue_account_id: parsed.data.surplus_revenue_account_id,
@@ -180,9 +178,9 @@ export default function StockOpnamesPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Stock Opname — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Stock Opname</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -204,8 +202,8 @@ export default function StockOpnamesPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => (showForm ? setShowForm(false) : openForm())}>
-                {showForm ? "Batal" : "+ New"}
+              <Button variant="toolbar-primary" onClick={() => openForm()}>
+                + New
               </Button>
             )}
           </div>
@@ -257,21 +255,19 @@ export default function StockOpnamesPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Catat Sesi Opname</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <p className="mb-4 text-sm text-slate-600">
-            Isi hasil hitung fisik per item. Item yang hasil hitungnya sama dengan catatan
-            sistem otomatis dilewati — gak perlu dihapus dari daftar, cukup biarin kosong atau
-            isi sama persis.
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Catat Sesi Opname" maxWidth="max-w-3xl">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
           </p>
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+        )}
+        <p className="mb-4 text-sm text-slate-600">
+          Isi hasil hitung fisik per item. Item yang hasil hitungnya sama dengan catatan
+          sistem otomatis dilewati — gak perlu dihapus dari daftar, cukup biarin kosong atau
+          isi sama persis.
+        </p>
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="opname_date">Tanggal Opname</Label>
@@ -282,45 +278,16 @@ export default function StockOpnamesPage() {
                   onChange={(e) => setOpnameDate(e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (nomor berita acara opname)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. Opname-2026-09"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="shortage_account">Akun Beban Selisih Persediaan (selisih kurang)</Label>
-                <Select
-                  id="shortage_account"
-                  value={shortageAccountId}
-                  onChange={(e) => setShortageAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="surplus_account">Akun Pendapatan Selisih Persediaan (selisih lebih)</Label>
-                <Select
-                  id="surplus_account"
-                  value={surplusAccountId}
-                  onChange={(e) => setSurplusAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <LockedAccountField
+                label="Akun Beban Selisih Persediaan (selisih kurang)"
+                htmlFor="shortage_account"
+                resolved={defaultAccounts["inventory.shortage_expense"]}
+              />
+              <LockedAccountField
+                label="Akun Pendapatan Selisih Persediaan (selisih lebih)"
+                htmlFor="surplus_account"
+                resolved={defaultAccounts["inventory.surplus_revenue"]}
+              />
             </div>
 
             <div className="flex flex-col gap-2">
@@ -368,12 +335,16 @@ export default function StockOpnamesPage() {
 
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
-              {submitting ? "Menyimpan..." : "Simpan Opname"}
-            </Button>
-          </form>
-        </div>
-      )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Menyimpan..." : "Simpan Opname"}
+              </Button>
+            </div>
+        </form>
+      </Modal>
     </div>
   );
 }

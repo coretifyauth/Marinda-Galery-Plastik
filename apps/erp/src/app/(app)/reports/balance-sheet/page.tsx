@@ -82,7 +82,7 @@ export default function BalanceSheetPage() {
   const isBalanced = report ? report.totalAssets === report.totalLiabilities + report.totalEquity : false;
 
   return (
-    <div className="flex w-full max-w-3xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/reports" label="Kembali ke Financial Reports" />
       <div>
         <h1 className="text-xl font-semibold text-black">Balance Sheet (Neraca)</h1>

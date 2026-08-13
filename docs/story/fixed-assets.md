@@ -8,14 +8,14 @@ Timeline: **akuisisi 2023–2024** (sesuai `company-profile.md`), penyusutan dip
 
 **Peta menu.** Sidebar kiri, grup sendiri **Fixed Assets** (ikon `Building2`, terpisah dari grup Inventory) → 1 item menu: **Fixed Assets** (`/fixed-assets`). List-nya klik-baris-ke-detail; satu-satunya aksi transaksional ("Posting Penyusutan") hidup di halaman detail `/fixed-assets/[id]`, bukan di row list (`memory/preferences/ui/admin-shell-design.md`).
 
-**Catatan akun (baca sebelum mulai):** RPC `create_fixed_asset` butuh 3 akun — aset (kategori `asset`, non-kontra), akumulasi penyusutan (kategori `asset`, **wajib `is_contra=true`**), beban penyusutan (kategori `expense`). Form `/accounts` (Chart of Accounts) buat bikin akun baru **gak punya toggle `is_contra`** — akun baru dari situ selalu `is_contra=false`. Artinya akun kontra-aset baru cuma bisa dibuat lewat migration SQL, gak ada jalur UI. Seed awal cuma nyediain 2 pasang akun kontra siap pakai: `1610/1630/5600` dan `1620/1640/5610` (nama akunnya warisan skenario lama — "Oven"/"Motor" — tapi struktur perannya pas: aset non-kontra / akumulasi kontra / beban). Walkthrough ini pakai ulang dua pasang itu apa adanya buat Mobil Pickup & Rak Display Toko — bukan salah ketik, ini keterbatasan UI nyata yang sengaja didemoin di sini, bukan didiemin.
+**Catatan akun (baca sebelum mulai):** RPC `create_fixed_asset` butuh 3 akun — aset (kategori `asset`, non-kontra), akumulasi penyusutan (kategori `asset`, **wajib `is_contra=true`**), beban penyusutan (kategori `expense`). Form `/accounts` (Chart of Accounts) buat bikin akun baru **gak punya toggle `is_contra`** — akun baru dari situ selalu `is_contra=false`. Artinya akun kontra-aset baru cuma bisa dibuat lewat migration SQL, gak ada jalur UI. Seed nyediain 2 pasang akun kontra siap pakai buat 2 aset di story ini: `1610/1630/5600` (Rak Display Toko) dan `1620/1640/5610` (Mobil Pickup Antar Barang).
 
 ## Master Data Aset
 
 | Aset | Nilai Perolehan | Nilai Residu | Umur Manfaat | Metode | Akun Aset | Akun Kontra | Akun Beban | Dibiayai |
 |---|---|---|---|---|---|---|---|---|
-| Mobil Pickup Antar Barang | Rp180.000.000 | Rp30.000.000 | 5 tahun (60 bulan) | **Declining Balance** (35%/tahun) | `1620 Kendaraan Motor` | `1640 Akumulasi Penyusutan Motor` | `5610 Beban Penyusutan Motor` | Pinjaman Bank (`2200 Utang Bank`) |
-| Rak Display Toko | Rp15.000.000 | Rp0 | 5 tahun (60 bulan) | **Straight-Line** | `1610 Peralatan Oven` | `1630 Akumulasi Penyusutan Oven` | `5600 Beban Penyusutan Oven` | Kas (`1200 Kas di Bank`) |
+| Mobil Pickup Antar Barang | Rp180.000.000 | Rp30.000.000 | 5 tahun (60 bulan) | **Declining Balance** (35%/tahun) | `1620 Mobil Pickup Antar Barang` | `1640 Akumulasi Penyusutan Mobil Pickup Antar Barang` | `5610 Beban Penyusutan Mobil Pickup Antar Barang` | Pinjaman Bank (`2200 Utang Bank`) |
+| Rak Display Toko | Rp15.000.000 | Rp0 | 5 tahun (60 bulan) | **Straight-Line** | `1610 Rak Display Toko` | `1630 Akumulasi Penyusutan Rak Display Toko` | `5600 Beban Penyusutan Rak Display Toko` | Kas (`1200 Kas di Bank`) |
 
 Dua metode beda sengaja dipilih: kendaraan cepat kehilangan nilai di tahun-tahun awal (declining balance cocok), rak display manfaatnya rata tiap tahun (straight-line cocok) — sama alasan yang dipakai `docs/domain/fixed-assets.md` bagian "Metode Penyusutan".
 
@@ -26,9 +26,9 @@ Beli mobil pickup buat antar barang ke 3 pelanggan grosir, dibayar pakai pinjama
 **Menu:** Fixed Assets → **Fixed Assets** (`/fixed-assets`). Klik **+ New**.
 
 - **Nama Aset**: `Mobil Pickup Antar Barang`
-- **Akun Aset Tetap**: `1620 — Kendaraan Motor`
-- **Akun Akumulasi Penyusutan**: `1640 — Akumulasi Penyusutan Motor`
-- **Akun Beban Penyusutan**: `5610 — Beban Penyusutan Motor`
+- **Akun Aset Tetap**: `1620 — Mobil Pickup Antar Barang`
+- **Akun Akumulasi Penyusutan**: `1640 — Akumulasi Penyusutan Mobil Pickup Antar Barang`
+- **Akun Beban Penyusutan**: `5610 — Beban Penyusutan Mobil Pickup Antar Barang`
 - **Nilai Perolehan**: `180000000`
 - **Nilai Residu**: `30000000`
 - **Umur Manfaat (bulan)**: `60`
@@ -40,7 +40,7 @@ Klik **Simpan Aset**. Baris baru muncul di list Fixed Assets: Nama, badge Metode
 
 **Jurnal akuisisi dicatat terpisah, bukan lewat RPC ini** (form eksplisit bilang ini di atas): buka menu Accounting → Journal Entries, bikin jurnal umum manual:
 ```
-Debit  1620 Kendaraan Motor    180.000.000
+Debit  1620 Mobil Pickup Antar Barang    180.000.000
 Kredit 2200 Utang Bank                       180.000.000
 ```
 (`create_fixed_asset` cuma nyimpen master data — dasar penyusutan berikutnya, gak nyentuh Journal Entries sama sekali.)
@@ -52,9 +52,9 @@ Beli rak-rak display buat toko fisik, dibayar cash dari kas bank.
 Di `/fixed-assets`, klik **+ New** lagi:
 
 - **Nama Aset**: `Rak Display Toko`
-- **Akun Aset Tetap**: `1610 — Peralatan Oven`
-- **Akun Akumulasi Penyusutan**: `1630 — Akumulasi Penyusutan Oven`
-- **Akun Beban Penyusutan**: `5600 — Beban Penyusutan Oven`
+- **Akun Aset Tetap**: `1610 — Rak Display Toko`
+- **Akun Akumulasi Penyusutan**: `1630 — Akumulasi Penyusutan Rak Display Toko`
+- **Akun Beban Penyusutan**: `5600 — Beban Penyusutan Rak Display Toko`
 - **Nilai Perolehan**: `15000000`
 - **Nilai Residu**: `0`
 - **Umur Manfaat (bulan)**: `60`
@@ -65,7 +65,7 @@ Klik **Simpan Aset**. List Fixed Assets sekarang 2 baris.
 
 Jurnal akuisisi (Journal Entries, manual):
 ```
-Debit  1610 Peralatan Oven      15.000.000
+Debit  1610 Rak Display Toko      15.000.000
 Kredit 1200 Kas di Bank                      15.000.000
 ```
 
@@ -114,7 +114,7 @@ Setelah tahu triggernya jalan, klik **Batal** buat nutup form tanpa nyoba lagi.
 | Rak Display Toko | 15.000.000 | 3.000.000 | **12.000.000** |
 | Mobil Pickup Antar Barang | 180.000.000 | 103.950.000 | **76.050.000** |
 
-Cek angka ini langsung di list `/fixed-assets` (kolom Nilai Perolehan/Akumulasi Penyusutan/Nilai Buku, tanpa perlu buka detail satu-satu). Ini yang muncul di Neraca: `Aset Tetap` (gross, 2 baris) dikurangi `Akumulasi Penyusutan` (2 baris kontra), Nilai Buku total = Rp88.050.000. `Beban Penyusutan Motor` (Rp103.950.000 kumulatif) + `Beban Penyusutan Oven` (Rp3.000.000 kumulatif) muncul di Laporan Laba Rugi sebagai biaya operasional — komponen biaya di luar HPP yang sudah dihitung di `docs/story/inventory.md`.
+Cek angka ini langsung di list `/fixed-assets` (kolom Nilai Perolehan/Akumulasi Penyusutan/Nilai Buku, tanpa perlu buka detail satu-satu). Ini yang muncul di Neraca: `Aset Tetap` (gross, 2 baris) dikurangi `Akumulasi Penyusutan` (2 baris kontra), Nilai Buku total = Rp88.050.000. `Beban Penyusutan Mobil Pickup Antar Barang` (Rp103.950.000 kumulatif) + `Beban Penyusutan Rak Display Toko` (Rp3.000.000 kumulatif) muncul di Laporan Laba Rugi sebagai biaya operasional — komponen biaya di luar HPP yang sudah dihitung di `docs/story/inventory.md`.
 
 **Belum ada mekanisme pelepasan aset** (disposal) — kalau suatu saat Mobil Pickup dijual/rusak total, sistem belum punya RPC/tabel buat mencatat pelepasan & laba-rugi dari situ (`memory/domain/fixed-assets.md`, belum ada scope-debt file buat ini). Di luar cakupan walkthrough ini.
 

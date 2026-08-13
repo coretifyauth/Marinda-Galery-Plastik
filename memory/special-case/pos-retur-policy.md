@@ -4,11 +4,11 @@
 
 ## Kondisi
 
-Kios CV Roti Barokah jual roti tunai langsung ke pelanggan lewat (walk-in). Belum ada keputusan jelas dari Bu Nur soal: kalau pelanggan mau retur roti yang udah dibeli di kios (rusak, gak sesuai, dll), apakah itu boleh atau enggak.
+Kios Toko Plastik Makmur Jaya (`apps/pos`) jual barang plastik rumah tangga tunai langsung ke pelanggan walk-in. Belum ada keputusan jelas dari Pak Herman soal: kalau pelanggan mau retur barang yang udah dibeli di kios (rusak, gak sesuai, dll), apakah itu boleh atau enggak.
 
 ## Kenapa ini grey area, bukan scope-debt
 
-Beda dari item scope-debt biasa (yang nunggu tekanan/bukti kebutuhan teknis buat mulai dikerjakan), ini bukan soal kesiapan teknis — bikin retur POS secara teknis gak sulit (tinggal reuse pola `ar_credit_note`, klasifikasi kondisi RESALABLE/DAMAGED yang udah ada di AR, lihat `memory/domain/accounts-receivable.md` submodule "Retur Barang"). Yang belum ada itu **keputusan kebijakan bisnisnya sendiri** — apakah Bu Nur mau kios-nya punya kebijakan "barang yang sudah dibeli tidak dapat dikembalikan" (umum di retail kecil, transaksi tatap muka) atau mau kasih fleksibilitas retur. Ini keputusan yang cuma bisa diambil owner, bukan sesuatu yang bisa diasumsikan/dibangun duluan.
+Beda dari item scope-debt biasa (yang nunggu tekanan/bukti kebutuhan teknis buat mulai dikerjakan), ini bukan soal kesiapan teknis — bikin retur POS secara teknis gak sulit (tinggal reuse pola `ar_credit_note`, klasifikasi kondisi RESALABLE/DAMAGED yang udah ada di AR, lihat `memory/domain/accounts-receivable.md` submodule "Retur Barang"). Yang belum ada itu **keputusan kebijakan bisnisnya sendiri** — apakah Pak Herman mau kios-nya punya kebijakan "barang yang sudah dibeli tidak dapat dikembalikan" (umum di retail kecil, transaksi tatap muka) atau mau kasih fleksibilitas retur. Ini keputusan yang cuma bisa diambil owner, bukan sesuatu yang bisa diasumsikan/dibangun duluan.
 
 ## Opsi yang dipertimbangkan
 
@@ -21,7 +21,7 @@ POS v1 dibangun **tanpa** mekanisme retur — bukan berarti "tidak boleh retur" 
 
 ## Kapan perlu diputuskan
 
-Sebelum atau saat POS mulai dipakai beneran di kios — Bu Nur perlu eksplisit menentukan kebijakan retur kiosnya. Begitu diputuskan (arah manapun), keputusan itu masuk jadi Aturan Bisnis permanen di `docs/domain/pos.md` + `memory/domain/pos.md`, dan file ini dihapus (siklus hidup sama seperti scope-debt, lihat `memory/brief.md` > "Aturan siklus hidup dokumen").
+Sebelum atau saat POS mulai dipakai beneran di kios — Pak Herman perlu eksplisit menentukan kebijakan retur kiosnya. Begitu diputuskan (arah manapun), keputusan itu masuk jadi Aturan Bisnis permanen di `docs/domain/pos.md` + `memory/domain/pos.md`, dan file ini dihapus (siklus hidup sama seperti scope-debt, lihat `memory/brief.md` > "Aturan siklus hidup dokumen").
 
 ## Referensi
 

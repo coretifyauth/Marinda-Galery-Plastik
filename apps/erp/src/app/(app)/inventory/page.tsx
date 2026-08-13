@@ -57,9 +57,9 @@ export default function InventoryPage() {
   }, 0);
 
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Posisi Persediaan — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Posisi Persediaan</h1>
         <p className="text-sm text-slate-500">
           Kartu stok tiap item — Weighted Average rata-rata berjalan. Read-only, derived dari
           transaksi (PO/GRN/Production/Goods Issue).

@@ -1,6 +1,6 @@
 # Fixed Assets — AI Context
 
-Fixed Assets menyebar biaya perolehan aset yang dipakai berulang bertahun-tahun (oven, motor — beda dari bahan baku Inventory yang habis sekali pakai) ke sepanjang masa manfaatnya, lewat penyusutan periodik. **Prinsip inti: matching by time** — beda dari Inventory yang matching-nya dipicu kejadian (barang terjual), Fixed Assets matching-nya berjalan tiap periode waktu (tiap bulan) tanpa perlu kejadian pemicu.
+Fixed Assets menyebar biaya perolehan aset yang dipakai berulang bertahun-tahun (kendaraan, mesin — beda dari bahan baku Inventory yang habis sekali pakai) ke sepanjang masa manfaatnya, lewat penyusutan periodik. **Prinsip inti: matching by time** — beda dari Inventory yang matching-nya dipicu kejadian (barang terjual), Fixed Assets matching-nya berjalan tiap periode waktu (tiap bulan) tanpa perlu kejadian pemicu.
 
 Naratif lengkap + reasoning penuh: `docs/domain/fixed-assets.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu dan dengan `memory/architecture/data/fixed-assets-schema.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
 

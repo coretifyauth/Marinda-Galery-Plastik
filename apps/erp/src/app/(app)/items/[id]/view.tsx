@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { Modal } from "@/components/ui/modal";
+import { DetailRows } from "@/components/ui/detail-rows";
 
 export function ItemDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -30,6 +32,9 @@ export function ItemDetailView({ id }: { id: string }) {
   const [unitPrice, setUnitPrice] = useState("");
   const [unitError, setUnitError] = useState<string | null>(null);
   const [unitSubmitting, setUnitSubmitting] = useState(false);
+
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     const [{ data: it, error: itErr }, { data: acc }, { data: bal }, { data: us }] = await Promise.all([
@@ -94,6 +99,33 @@ export function ItemDetailView({ id }: { id: string }) {
   const totalValue = (balance?.qty_on_hand ?? 0) * (balance?.avg_cost ?? 0);
   const hasBaseUnit = units.some((u) => u.is_base);
 
+  const detailGroups = [
+    {
+      title: "Informasi Item",
+      rows: [
+        { label: "Nama", value: item.name },
+        {
+          label: "Tipe",
+          value: <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.item_type}</span>,
+        },
+        { label: "Satuan Dasar", value: item.uom },
+        {
+          label: "Akun Persediaan",
+          value: inventoryAccount ? `${inventoryAccount.code} — ${inventoryAccount.name}` : "-",
+        },
+        { label: "Status", value: item.archived_at ? "Diarsipkan" : "Aktif" },
+      ],
+    },
+    {
+      title: "Ringkasan Stok",
+      rows: [
+        { label: "Qty On Hand", value: `${totalQty} ${item.uom}` },
+        { label: "Avg Cost / " + item.uom, value: (balance?.avg_cost ?? 0).toLocaleString("id-ID") },
+        { label: "Nilai Persediaan", value: totalValue.toLocaleString("id-ID") },
+      ],
+    },
+  ];
+
   function openUnitForm() {
     setUnitError(null);
     if (!item) return;
@@ -147,6 +179,38 @@ export function ItemDetailView({ id }: { id: string }) {
     await load();
   }
 
+  async function handleDelete() {
+    if (!item) return;
+    if (!window.confirm(`Hapus item "${item.name}"?`)) return;
+    setDeleteError(null);
+    setDeleting(true);
+    const { data, error } = await supabase.rpc("delete_item", { p_item_id: item.id });
+    setDeleting(false);
+    if (error) {
+      setDeleteError(error.message);
+      return;
+    }
+    if (data === "deleted") {
+      router.push("/items");
+      return;
+    }
+    window.alert('Item ini sudah pernah dipakai di transaksi, jadi diarsipkan (bukan dihapus permanen).');
+    await load();
+  }
+
+  async function handleReactivate() {
+    if (!item) return;
+    setDeleteError(null);
+    setDeleting(true);
+    const { error } = await supabase.from("items").update({ archived_at: null }).eq("id", item.id);
+    setDeleting(false);
+    if (error) {
+      setDeleteError(error.message);
+      return;
+    }
+    await load();
+  }
+
   async function handleDeleteUnit(unitId: string) {
     if (!window.confirm("Hapus satuan jual ini?")) return;
     const { error } = await supabase.from("item_units").delete().eq("id", unitId);
@@ -158,51 +222,34 @@ export function ItemDetailView({ id }: { id: string }) {
   }
 
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/items" label="Kembali ke Items" />
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-black">{item.name}</h1>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-              {item.item_type}
-            </span>
-            <span className="text-sm text-slate-500">
-              {inventoryAccount ? `${inventoryAccount.code} — ${inventoryAccount.name}` : "-"}
-            </span>
+        <h1 className="text-xl font-semibold text-black">Item Details</h1>
+        {canWrite && (
+          <div className="flex gap-2">
+            {item.archived_at ? (
+              <Button variant="toolbar" onClick={handleReactivate} disabled={deleting}>
+                {deleting ? "Memproses..." : "Aktifkan"}
+              </Button>
+            ) : (
+              <Button variant="toolbar" onClick={handleDelete} disabled={deleting}>
+                {deleting ? "Memproses..." : "Hapus"}
+              </Button>
+            )}
           </div>
-        </div>
-        <div className="text-right">
-          <div className="text-xs uppercase text-slate-400">Nilai Persediaan</div>
-          <div className="font-mono text-lg font-medium text-black">
-            {totalValue.toLocaleString("id-ID")}
-          </div>
-          <div className="text-sm text-slate-500">
-            {totalQty} {item.uom} tersisa
-          </div>
-        </div>
+        )}
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
+      {deleteError && <FormError>{deleteError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="mb-4 text-sm text-slate-500">
-          Weighted Average gak nyimpen riwayat per-batch — cuma 1 angka rata-rata berjalan,
-          dihitung ulang tiap ada penerimaan baru (ref <code>docs/domain/inventory.md</code>).
-        </p>
-        <dl className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Qty On Hand</dt>
-            <dd className="font-mono text-black">
-              {balance?.qty_on_hand ?? 0} {item.uom}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Avg Cost / {item.uom}</dt>
-            <dd className="font-mono text-black">{(balance?.avg_cost ?? 0).toLocaleString("id-ID")}</dd>
-          </div>
-        </dl>
-      </div>
+      <p className="text-sm text-slate-500">
+        Weighted Average gak nyimpen riwayat per-batch — cuma 1 angka rata-rata berjalan,
+        dihitung ulang tiap ada penerimaan baru (ref <code>docs/domain/inventory.md</code>).
+      </p>
+
+      <DetailRows groups={detailGroups} />
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
@@ -213,8 +260,8 @@ export function ItemDetailView({ id }: { id: string }) {
             </span>
           </div>
           {canWrite && (
-            <Button variant="toolbar" onClick={() => (showUnitForm ? setShowUnitForm(false) : openUnitForm())}>
-              {showUnitForm ? "Batal" : "+ Tambah Satuan"}
+            <Button variant="toolbar" onClick={openUnitForm}>
+              + Tambah Satuan
             </Button>
           )}
         </div>
@@ -266,57 +313,63 @@ export function ItemDetailView({ id }: { id: string }) {
           </tbody>
         </table>
 
-        {showUnitForm && (
-          <form onSubmit={handleAddUnit} className="flex flex-col gap-4 border-t border-slate-100 p-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="unit_label">Nama Satuan</Label>
-                <Input
-                  id="unit_label"
-                  placeholder="mis. lusin"
-                  value={unitLabel}
-                  onChange={(e) => setUnitLabel(e.target.value)}
-                  disabled={unitIsBase}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="conversion_factor">
-                  Faktor Konversi (ke {item.uom})
-                </Label>
-                <Input
-                  id="conversion_factor"
-                  type="number"
-                  min="0"
-                  placeholder="mis. 12"
-                  value={conversionFactor}
-                  onChange={(e) => setConversionFactor(e.target.value)}
-                  disabled={unitIsBase}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="unit_price">Harga (opsional)</Label>
-                <Input
-                  id="unit_price"
-                  type="number"
-                  min="0"
-                  placeholder="mis. 22000"
-                  value={unitPrice}
-                  onChange={(e) => setUnitPrice(e.target.value)}
-                />
-              </div>
+      </div>
+
+      <Modal open={showUnitForm} onClose={() => setShowUnitForm(false)} title="Tambah Satuan Jual">
+        <form onSubmit={handleAddUnit} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="unit_label">Nama Satuan</Label>
+            <Input
+              id="unit_label"
+              placeholder="mis. lusin"
+              value={unitLabel}
+              onChange={(e) => setUnitLabel(e.target.value)}
+              disabled={unitIsBase}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="conversion_factor">
+                Faktor Konversi (ke {item.uom})
+              </Label>
+              <Input
+                id="conversion_factor"
+                type="number"
+                min="0"
+                placeholder="mis. 12"
+                value={conversionFactor}
+                onChange={(e) => setConversionFactor(e.target.value)}
+                disabled={unitIsBase}
+              />
             </div>
-            <p className="text-xs text-slate-500">
-              {unitIsBase
-                ? "Ini jadi satuan dasar item — nama & faktor konversi dikunci (harus sama dengan satuan dasar di master data, faktor 1)."
-                : "Faktor konversi = berapa satuan dasar sama dengan 1 satuan ini (mis. 1 lusin = 12 buah)."}
-            </p>
-            {unitError && <FormError>{unitError}</FormError>}
-            <Button type="submit" disabled={unitSubmitting} className="w-fit">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="unit_price">Harga (opsional)</Label>
+              <Input
+                id="unit_price"
+                type="number"
+                min="0"
+                placeholder="mis. 22000"
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-slate-500">
+            {unitIsBase
+              ? "Ini jadi satuan dasar item — nama & faktor konversi dikunci (harus sama dengan satuan dasar di master data, faktor 1)."
+              : "Faktor konversi = berapa satuan dasar sama dengan 1 satuan ini (mis. 1 lusin = 12 buah)."}
+          </p>
+          {unitError && <FormError>{unitError}</FormError>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowUnitForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={unitSubmitting}>
               {unitSubmitting ? "Menyimpan..." : "Simpan Satuan"}
             </Button>
-          </form>
-        )}
-      </div>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

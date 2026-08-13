@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
 
 type CatalogTable = "pos_charge_types" | "ar_invoice_charge_types" | "ap_bill_expense_categories";
 
@@ -39,6 +41,7 @@ function CatalogManager({
   const [accountId, setAccountId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
   const leafAccounts = getLeafAccounts(accounts);
 
@@ -76,6 +79,7 @@ function CatalogManager({
     }
     setName("");
     setAccountId("");
+    setShowForm(false);
     await load();
   }
 
@@ -89,7 +93,14 @@ function CatalogManager({
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 font-semibold text-black">{title}</h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-semibold text-black">{title}</h2>
+        {canWrite && (
+          <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
+            + Tambah
+          </Button>
+        )}
+      </div>
       <table className="mb-3 w-full text-left text-sm">
         <thead>
           <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
@@ -135,33 +146,378 @@ function CatalogManager({
       </table>
 
       {canWrite && (
-        <form onSubmit={handleCreate} className="flex items-end gap-2">
-          <div className="flex flex-1 flex-col gap-1">
-            <Label htmlFor={`${table}-name`}>Nama Kategori</Label>
-            <Input
-              id={`${table}-name`}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="mis. Biaya Packing"
-            />
-          </div>
-          <div className="flex flex-1 flex-col gap-1">
-            <Label htmlFor={`${table}-account`}>Akun</Label>
-            <Select id={`${table}-account`} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              <option value="">Pilih akun...</option>
-              {leafAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.code} — {a.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <Button type="submit" disabled={submitting}>
-            {submitting ? "..." : "+ Tambah"}
-          </Button>
-        </form>
+        <Modal open={showForm} onClose={() => setShowForm(false)} title={title}>
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${table}-name`}>Nama Kategori</Label>
+              <Input
+                id={`${table}-name`}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="mis. Biaya Packing"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${table}-account`}>Akun</Label>
+              <Select id={`${table}-account`} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                <option value="">Pilih akun...</option>
+                {leafAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {error && <FormError>{error}</FormError>}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "..." : "+ Tambah"}
+              </Button>
+            </div>
+          </form>
+        </Modal>
       )}
+    </div>
+  );
+}
+
+type DefaultAccountRow = {
+  id: string;
+  role_key: string;
+  label: string;
+  account_id: string;
+  accounts: { code: string; name: string };
+};
+
+/** Kelola default_account_settings — role_key -> akun, dipakai <LockedAccountField>
+ * di seluruh form transaksi biar user gak lagi pilih akun bebas (memory/preferences/ui/
+ * form-components.md). Baris fixed/diseed migration, admin cuma reassign account_id
+ * per baris (gak ada tambah/hapus baris dari sini -- role_key ditentukan kode FE). */
+function DefaultAccountsManager({ accounts, canWrite }: { accounts: Account[]; canWrite: boolean }) {
+  const [rows, setRows] = useState<DefaultAccountRow[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editAccountId, setEditAccountId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const leafAccounts = getLeafAccounts(accounts);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from("default_account_settings")
+      .select("id, role_key, label, account_id, accounts(code, name)")
+      .order("role_key");
+    setRows((data ?? []) as unknown as DefaultAccountRow[]);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (active) await load();
+    })();
+    return () => {
+      active = false;
+    };
+  }, [load]);
+
+  function startEdit(row: DefaultAccountRow) {
+    setEditingId(row.id);
+    setEditAccountId(row.account_id);
+    setError(null);
+  }
+
+  async function handleSave(row: DefaultAccountRow) {
+    if (!editAccountId) {
+      setError("Akun wajib dipilih");
+      return;
+    }
+    setSubmitting(true);
+    const { error: err } = await supabase
+      .from("default_account_settings")
+      .update({ account_id: editAccountId })
+      .eq("id", row.id);
+    setSubmitting(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setEditingId(null);
+    await load();
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h2 className="mb-1 font-semibold text-black">Default Akun</h2>
+      <p className="mb-3 text-sm text-slate-500">
+        Akun yang otomatis dipakai form transaksi (Piutang, Utang, Kas, dst) — user gak lagi pilih
+        akun bebas, cukup lihat. Ubah di sini kalau akunnya perlu diganti, gak perlu deploy kode baru.
+      </p>
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
+            <th className="py-1.5">Slot</th>
+            <th className="py-1.5">Akun</th>
+            {canWrite && <th className="py-1.5" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id} className="border-b border-slate-100">
+              <td className="py-1.5">{row.label}</td>
+              <td className="py-1.5">
+                {editingId === row.id ? (
+                  <Select value={editAccountId} onChange={(e) => setEditAccountId(e.target.value)}>
+                    <option value="">Pilih akun...</option>
+                    {leafAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} — {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                ) : (
+                  <>
+                    {row.accounts.code} — {row.accounts.name}
+                  </>
+                )}
+              </td>
+              {canWrite && (
+                <td className="py-1.5 text-right">
+                  {editingId === row.id ? (
+                    <div className="flex justify-end gap-1.5">
+                      <Button type="button" variant="toolbar" onClick={() => setEditingId(null)}>
+                        Batal
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="toolbar-primary"
+                        disabled={submitting}
+                        onClick={() => handleSave(row)}
+                      >
+                        {submitting ? "..." : "Simpan"}
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="toolbar" onClick={() => startEdit(row)}>
+                      Ubah
+                    </Button>
+                  )}
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
       {error && <FormError>{error}</FormError>}
+    </div>
+  );
+}
+
+type PresetRow = {
+  id: string;
+  label: string;
+  archived_at: string | null;
+  asset_account: { code: string; name: string };
+  accumulated_depreciation_account: { code: string; name: string };
+  depreciation_expense_account: { code: string; name: string };
+};
+
+/** Kelola fixed_asset_account_presets — beda pola dari DefaultAccountsManager karena
+ * Fixed Assets butuh 3 akun sekaligus dan jenis aset baru tetap mungkin muncul (bukan
+ * singleton fixed-role). 1 preset = 1 paket 3 akun, mencegah kombinasi ketuker (mis.
+ * akun Aset "Rak" dipasangkan akun Akumulasi "Mobil Pickup"). */
+function FixedAssetPresetsManager({ accounts, canWrite }: { accounts: Account[]; canWrite: boolean }) {
+  const [rows, setRows] = useState<PresetRow[]>([]);
+  const [label, setLabel] = useState("");
+  const [assetId, setAssetId] = useState("");
+  const [accumId, setAccumId] = useState("");
+  const [expenseId, setExpenseId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+
+  const leafAccounts = getLeafAccounts(accounts);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from("fixed_asset_account_presets")
+      .select(
+        "id, label, archived_at, asset_account:asset_account_id(code, name), accumulated_depreciation_account:accumulated_depreciation_account_id(code, name), depreciation_expense_account:depreciation_expense_account_id(code, name)"
+      )
+      .order("label");
+    setRows((data ?? []) as unknown as PresetRow[]);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (active) await load();
+    })();
+    return () => {
+      active = false;
+    };
+  }, [load]);
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!label.trim() || !assetId || !accumId || !expenseId) {
+      setError("Semua field wajib diisi");
+      return;
+    }
+    setSubmitting(true);
+    const { error: err } = await supabase.from("fixed_asset_account_presets").insert({
+      label,
+      asset_account_id: assetId,
+      accumulated_depreciation_account_id: accumId,
+      depreciation_expense_account_id: expenseId,
+    });
+    setSubmitting(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setLabel("");
+    setAssetId("");
+    setAccumId("");
+    setExpenseId("");
+    setShowForm(false);
+    await load();
+  }
+
+  async function toggleArchive(row: PresetRow) {
+    await supabase
+      .from("fixed_asset_account_presets")
+      .update({ archived_at: row.archived_at ? null : new Date().toISOString() })
+      .eq("id", row.id);
+    await load();
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold text-black">Preset Akun Aset Tetap</h2>
+        {canWrite && (
+          <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
+            + Tambah
+          </Button>
+        )}
+      </div>
+      <p className="mb-3 text-sm text-slate-500">
+        Tiap jenis aset (kendaraan, perlengkapan, dst) punya 3 akun sekaligus (Aset/Akumulasi
+        Penyusutan/Beban Penyusutan) — dipilih sebagai 1 paket preset, form Fixed Assets tinggal
+        pilih presetnya, gak pilih 3 akun terpisah (mencegah kombinasi ketuker).
+      </p>
+      <table className="mb-3 w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
+            <th className="py-1.5">Jenis Aset</th>
+            <th className="py-1.5">Akun Aset</th>
+            <th className="py-1.5">Akun Akumulasi</th>
+            <th className="py-1.5">Akun Beban</th>
+            <th className="py-1.5">Status</th>
+            {canWrite && <th className="py-1.5" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id} className="border-b border-slate-100">
+              <td className="py-1.5">{row.label}</td>
+              <td className="py-1.5">
+                {row.asset_account.code} — {row.asset_account.name}
+              </td>
+              <td className="py-1.5">
+                {row.accumulated_depreciation_account.code} — {row.accumulated_depreciation_account.name}
+              </td>
+              <td className="py-1.5">
+                {row.depreciation_expense_account.code} — {row.depreciation_expense_account.name}
+              </td>
+              <td className="py-1.5">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs ${
+                    row.archived_at ? "bg-slate-100 text-slate-400" : "bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  {row.archived_at ? "Nonaktif" : "Aktif"}
+                </span>
+              </td>
+              {canWrite && (
+                <td className="py-1.5 text-right">
+                  <Button type="button" variant="toolbar" onClick={() => toggleArchive(row)}>
+                    {row.archived_at ? "Aktifkan" : "Nonaktifkan"}
+                  </Button>
+                </td>
+              )}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={6} className="py-3 text-center text-slate-400">
+                Belum ada preset.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {canWrite && (
+        <Modal open={showForm} onClose={() => setShowForm(false)} title="Preset Akun Aset Tetap">
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="preset-label">Nama Jenis Aset</Label>
+              <Input
+                id="preset-label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="mis. Kendaraan Operasional"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="preset-asset">Akun Aset</Label>
+              <Select id="preset-asset" value={assetId} onChange={(e) => setAssetId(e.target.value)}>
+                <option value="">Pilih akun...</option>
+                {leafAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="preset-accum">Akun Akumulasi Penyusutan</Label>
+              <Select id="preset-accum" value={accumId} onChange={(e) => setAccumId(e.target.value)}>
+                <option value="">Pilih akun...</option>
+                {leafAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="preset-expense">Akun Beban Penyusutan</Label>
+              <Select id="preset-expense" value={expenseId} onChange={(e) => setExpenseId(e.target.value)}>
+                <option value="">Pilih akun...</option>
+                {leafAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {error && <FormError>{error}</FormError>}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "..." : "+ Tambah"}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -304,11 +660,19 @@ function TaxSettingsCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+const settingsTabs: TabDef[] = [
+  { key: "default_accounts", label: "Default Akun" },
+  { key: "fixed_assets", label: "Aset Tetap" },
+  { key: "charge_categories", label: "Kategori Tambahan" },
+  { key: "tax", label: "Pajak" },
+];
+
 export default function ChargesSettingsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<string>(settingsTabs[0].key);
 
   const loadAccounts = useCallback(async () => {
     const { data } = await supabase
@@ -346,33 +710,40 @@ export default function ChargesSettingsPage() {
   const canWrite = roles.includes("admin");
 
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Kategori & Pajak</h1>
+        <h1 className="text-xl font-semibold text-black">Settings</h1>
         <p className="text-sm text-slate-500">
-          Setup katalog kategori biaya tambahan (POS/AR/AP) dan pengaturan PPN.{" "}
+          Setup Default Akun, katalog kategori biaya tambahan (POS/AR/AP), dan pengaturan PPN.{" "}
           {!canWrite && "Cuma role admin yang bisa ubah — kamu cuma bisa lihat."}
         </p>
       </div>
-      <CatalogManager
-        table="pos_charge_types"
-        title="Kategori Biaya Tambahan — POS"
-        accounts={accounts}
-        canWrite={canWrite}
-      />
-      <CatalogManager
-        table="ar_invoice_charge_types"
-        title="Kategori Pendapatan Tambahan — AR Invoice"
-        accounts={accounts}
-        canWrite={canWrite}
-      />
-      <CatalogManager
-        table="ap_bill_expense_categories"
-        title="Kategori Beban/Persediaan Tambahan — AP Bill"
-        accounts={accounts}
-        canWrite={canWrite}
-      />
-      <TaxSettingsCard canWrite={canWrite} />
+      <Tabs tabs={settingsTabs} active={activeTab} onChange={setActiveTab} />
+      {activeTab === "default_accounts" && <DefaultAccountsManager accounts={accounts} canWrite={canWrite} />}
+      {activeTab === "fixed_assets" && <FixedAssetPresetsManager accounts={accounts} canWrite={canWrite} />}
+      {activeTab === "charge_categories" && (
+        <div className="flex flex-col gap-6">
+          <CatalogManager
+            table="pos_charge_types"
+            title="Kategori Biaya Tambahan — POS"
+            accounts={accounts}
+            canWrite={canWrite}
+          />
+          <CatalogManager
+            table="ar_invoice_charge_types"
+            title="Kategori Pendapatan Tambahan — AR Invoice"
+            accounts={accounts}
+            canWrite={canWrite}
+          />
+          <CatalogManager
+            table="ap_bill_expense_categories"
+            title="Kategori Beban/Persediaan Tambahan — AP Bill"
+            accounts={accounts}
+            canWrite={canWrite}
+          />
+        </div>
+      )}
+      {activeTab === "tax" && <TaxSettingsCard canWrite={canWrite} />}
     </div>
   );
 }

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
 import {
   createArCreditNoteSchema,
@@ -15,13 +14,21 @@ import {
   type WarrantyReplacement,
 } from "@/lib/ar-warranty-replacements/schema";
 import { writeOffArInvoiceSchema } from "@/lib/ar-bad-debt-writeoffs/schema";
-import { returnCreditRemaining, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
+import { returnCreditRemaining, refundArReturnCreditSchema, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
+import { recordArPaymentSchema } from "@/lib/ar-payments/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { Modal } from "@/components/ui/modal";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { CashMethodField, resolveCashAccount } from "@/components/ui/cash-method-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 type ReturnLineInput = {
   item_id: string;
@@ -96,7 +103,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [invoice, setInvoice] = useState<ArInvoice | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [payments, setPayments] = useState<PaymentDetail[]>([]);
@@ -108,6 +115,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [goodsIssue, setGoodsIssue] = useState<GoodsIssueForInvoice | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("jurnal");
 
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
@@ -116,55 +124,48 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [applyDepositId, setApplyDepositId] = useState("");
   const [applyAmount, setApplyAmount] = useState("");
   const [applyDate, setApplyDate] = useState("");
-  const [applySourceRef, setApplySourceRef] = useState("");
-  const [applyDepositLiabilityAccountId, setApplyDepositLiabilityAccountId] = useState("");
-  const [applyReceivableAccountId, setApplyReceivableAccountId] = useState("");
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applySubmitting, setApplySubmitting] = useState(false);
 
   const [showReturForm, setShowReturForm] = useState(false);
   const [returDate, setReturDate] = useState("");
-  const [returSourceRef, setReturSourceRef] = useState("");
   const [returAmount, setReturAmount] = useState("");
-  const [returContraAccountId, setReturContraAccountId] = useState("");
-  const [returReceivableAccountId, setReturReceivableAccountId] = useState("");
-  const [returHppAccountId, setReturHppAccountId] = useState("");
-  const [returFinishedGoodAccountId, setReturFinishedGoodAccountId] = useState("");
-  const [returCreditLiabilityAccountId, setReturCreditLiabilityAccountId] = useState("");
-  const [returLossExpenseAccountId, setReturLossExpenseAccountId] = useState("");
   const [returLines, setReturLines] = useState<ReturnLineInput[]>([]);
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
   const [showWriteoffForm, setShowWriteoffForm] = useState(false);
   const [writeoffDate, setWriteoffDate] = useState("");
-  const [writeoffSourceRef, setWriteoffSourceRef] = useState("");
   const [writeoffAmount, setWriteoffAmount] = useState("");
-  const [writeoffExpenseAccountId, setWriteoffExpenseAccountId] = useState("");
-  const [writeoffReceivableAccountId, setWriteoffReceivableAccountId] = useState("");
   const [writeoffError, setWriteoffError] = useState<string | null>(null);
   const [writeoffSubmitting, setWriteoffSubmitting] = useState(false);
 
   const [replacements, setReplacements] = useState<WarrantyReplacement[]>([]);
   const [replaceCreditNoteId, setReplaceCreditNoteId] = useState<string | null>(null);
   const [replaceDate, setReplaceDate] = useState("");
-  const [replaceSourceRef, setReplaceSourceRef] = useState("");
-  const [replaceHppAccountId, setReplaceHppAccountId] = useState("");
-  const [replaceFinishedGoodAccountId, setReplaceFinishedGoodAccountId] = useState("");
-  const [replaceContraRevenueAccountId, setReplaceContraRevenueAccountId] = useState("");
-  const [replaceReceivableAccountId, setReplaceReceivableAccountId] = useState("");
-  const [replaceReturnCreditLiabilityAccountId, setReplaceReturnCreditLiabilityAccountId] = useState("");
   const [replaceLines, setReplaceLines] = useState<ReplacementLineInput[]>([]);
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [replaceSubmitting, setReplaceSubmitting] = useState(false);
 
-  const leafAccounts = getLeafAccounts(accounts);
+  const [showPayForm, setShowPayForm] = useState(false);
+  const [payDate, setPayDate] = useState("");
+  const [payAmount, setPayAmount] = useState("");
+  const [payMethod, setPayMethod] = useState<"TUNAI" | "BANK">("TUNAI");
+  const [payError, setPayError] = useState<string | null>(null);
+  const [paySubmitting, setPaySubmitting] = useState(false);
+
+  const [refundCreditId, setRefundCreditId] = useState<string | null>(null);
+  const [refundCreditAmount, setRefundCreditAmount] = useState("");
+  const [refundCreditDate, setRefundCreditDate] = useState("");
+  const [refundCreditMethod, setRefundCreditMethod] = useState<"TUNAI" | "BANK">("TUNAI");
+  const [refundCreditError, setRefundCreditError] = useState<string | null>(null);
+  const [refundCreditSubmitting, setRefundCreditSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     const { data: inv, error: invErr } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
       )
       .eq("id", id)
       .single();
@@ -176,7 +177,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setInvoice(loadedInvoice);
 
     const [
-      { data: accs },
+      defAccs,
       { data: reversedRows },
       { data: entries, error: entriesErr },
       { data: pay, error: payErr },
@@ -188,10 +189,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       { data: custDeposits, error: custDepositsErr },
       { data: custReturnCredits, error: custReturnCreditsErr },
     ] = await Promise.all([
-      supabase
-        .from("accounts")
-        .select("id, code, name, category, normal_balance, parent_id, archived_at")
-        .order("code"),
+      fetchDefaultAccounts(),
       supabase
         .from("journal_entries")
         .select("reverses_entry_id")
@@ -252,7 +250,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .order("created_at"),
     ]);
 
-    setAccounts((accs ?? []) as Account[]);
+    setDefaultAccounts(defAccs);
     const reversedSet = new Set(
       ((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id)
     );
@@ -303,14 +301,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   function openReturForm() {
     setReturError(null);
     setReturDate("");
-    setReturSourceRef("");
     setReturAmount("");
-    setReturContraAccountId("");
-    setReturReceivableAccountId("");
-    setReturHppAccountId("");
-    setReturFinishedGoodAccountId("");
-    setReturCreditLiabilityAccountId("");
-    setReturLossExpenseAccountId("");
     setReturLines(
       goodsIssue
         ? goodsIssue.goods_issue_lines.map((l) => ({
@@ -346,15 +337,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const parsed = createArCreditNoteSchema.safeParse({
       invoice_id: invoice.id,
       credit_note_date: returDate,
-      source_ref: returSourceRef,
       amount: returAmount,
-      contra_revenue_account_id: returContraAccountId,
-      receivable_account_id: returReceivableAccountId,
+      contra_revenue_account_id: defaultAccounts["ar.contra_revenue"]?.id ?? "",
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
       lines: activeLines,
-      hpp_account_id: returHppAccountId || undefined,
-      finished_good_account_id: returFinishedGoodAccountId || undefined,
-      return_credit_liability_account_id: returCreditLiabilityAccountId || undefined,
-      loss_expense_account_id: returLossExpenseAccountId || undefined,
+      hpp_account_id: defaultAccounts["inventory.hpp"]?.id || undefined,
+      finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id || undefined,
+      return_credit_liability_account_id: defaultAccounts["ar.return_credit_liability"]?.id || undefined,
+      loss_expense_account_id: defaultAccounts["inventory.damage_loss_expense"]?.id || undefined,
     });
     if (!parsed.success) {
       setReturError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -366,10 +356,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     }
 
     setReturSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_credit_notes");
+    } catch (err) {
+      setReturSubmitting(false);
+      setReturError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_ar_credit_note", {
       p_invoice_id: parsed.data.invoice_id,
       p_credit_note_date: parsed.data.credit_note_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_amount: parsed.data.amount,
       p_contra_revenue_account_id: parsed.data.contra_revenue_account_id,
       p_receivable_account_id: parsed.data.receivable_account_id,
@@ -404,12 +402,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setReplaceError(null);
     setReplaceCreditNoteId(creditNote.id);
     setReplaceDate("");
-    setReplaceSourceRef("");
-    setReplaceHppAccountId("");
-    setReplaceFinishedGoodAccountId("");
-    setReplaceContraRevenueAccountId("");
-    setReplaceReceivableAccountId("");
-    setReplaceReturnCreditLiabilityAccountId("");
     setReplaceLines(
       invReturn.inventory_return_lines
         .map((l) => ({
@@ -439,13 +431,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const parsed = createWarrantyReplacementSchema.safeParse({
       credit_note_id: replaceCreditNoteId,
       replacement_date: replaceDate,
-      source_ref: replaceSourceRef,
       lines: activeLines,
-      hpp_account_id: replaceHppAccountId,
-      finished_good_account_id: replaceFinishedGoodAccountId,
-      contra_revenue_account_id: replaceContraRevenueAccountId,
-      receivable_account_id: replaceReceivableAccountId,
-      return_credit_liability_account_id: replaceReturnCreditLiabilityAccountId || undefined,
+      hpp_account_id: defaultAccounts["inventory.hpp"]?.id ?? "",
+      finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id ?? "",
+      contra_revenue_account_id: defaultAccounts["ar.contra_revenue"]?.id ?? "",
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
+      return_credit_liability_account_id: defaultAccounts["ar.return_credit_liability"]?.id || undefined,
     });
     if (!parsed.success) {
       setReplaceError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -453,10 +444,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     }
 
     setReplaceSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("warranty_replacements");
+    } catch (err) {
+      setReplaceSubmitting(false);
+      setReplaceError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_warranty_replacement", {
       p_credit_note_id: parsed.data.credit_note_id,
       p_replacement_date: parsed.data.replacement_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
       p_hpp_account_id: parsed.data.hpp_account_id,
       p_finished_good_account_id: parsed.data.finished_good_account_id,
@@ -479,9 +478,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setApplyDepositId("");
     setApplyAmount("");
     setApplyDate("");
-    setApplySourceRef("");
-    setApplyDepositLiabilityAccountId("");
-    setApplyReceivableAccountId("");
     setShowApplyForm(true);
   }
 
@@ -495,9 +491,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       invoice_id: invoice.id,
       amount: applyAmount,
       entry_date: applyDate,
-      source_ref: applySourceRef,
-      deposit_liability_account_id: applyDepositLiabilityAccountId,
-      receivable_account_id: applyReceivableAccountId,
+      deposit_liability_account_id: defaultAccounts["ar.deposit_liability"]?.id ?? "",
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
     });
     if (!parsed.success) {
       setApplyError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -505,12 +500,20 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     }
 
     setApplySubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_deposit_applications");
+    } catch (err) {
+      setApplySubmitting(false);
+      setApplyError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("apply_ar_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_invoice_id: parsed.data.invoice_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_deposit_liability_account_id: parsed.data.deposit_liability_account_id,
       p_receivable_account_id: parsed.data.receivable_account_id,
     });
@@ -527,10 +530,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   function openWriteoffForm() {
     setWriteoffError(null);
     setWriteoffDate("");
-    setWriteoffSourceRef("");
     setWriteoffAmount("");
-    setWriteoffExpenseAccountId("");
-    setWriteoffReceivableAccountId("");
     setShowWriteoffForm(true);
   }
 
@@ -543,9 +543,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       invoice_id: invoice.id,
       writeoff_date: writeoffDate,
       amount: writeoffAmount,
-      source_ref: writeoffSourceRef,
-      expense_account_id: writeoffExpenseAccountId,
-      receivable_account_id: writeoffReceivableAccountId,
+      expense_account_id: defaultAccounts["ar.writeoff_expense"]?.id ?? "",
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
     });
     if (!parsed.success) {
       setWriteoffError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -553,11 +552,19 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     }
 
     setWriteoffSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_bad_debt_writeoffs");
+    } catch (err) {
+      setWriteoffSubmitting(false);
+      setWriteoffError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("write_off_ar_invoice", {
       p_invoice_id: parsed.data.invoice_id,
       p_writeoff_date: parsed.data.writeoff_date,
       p_amount: parsed.data.amount,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_expense_account_id: parsed.data.expense_account_id,
       p_receivable_account_id: parsed.data.receivable_account_id,
     });
@@ -573,24 +580,134 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
   async function handleCancel() {
     if (!invoice) return;
-    const ref = window.prompt(
-      `Batalkan invoice ${invoice.source_ref} (Rp${invoice.amount.toLocaleString("id-ID")})?\nMasukin rujukan dokumen buat entry pembalik:`,
-      `Pembatalan ${invoice.source_ref}`
-    );
-    if (!ref) return;
+    if (!window.confirm(`Batalkan invoice ${invoice.source_ref} (Rp${invoice.amount.toLocaleString("id-ID")})?`)) return;
 
     setCancelError(null);
     setCancelling(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("journal_entries");
+    } catch (err) {
+      setCancelling(false);
+      setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("cancel_ar_invoice", {
       p_invoice_id: invoice.id,
       p_entry_date: new Date().toISOString().slice(0, 10),
-      p_source_ref: ref,
+      p_source_ref: sourceRef,
     });
     setCancelling(false);
     if (error) {
       setCancelError(error.message);
       return;
     }
+    await load();
+  }
+
+  function openPayForm() {
+    setPayError(null);
+    setPayDate("");
+    setPayAmount("");
+    setPayMethod("TUNAI");
+    setShowPayForm(true);
+  }
+
+  async function handlePaySubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!invoice) return;
+    setPayError(null);
+
+    const parsed = recordArPaymentSchema.safeParse({
+      customer_id: invoice.customer_id,
+      payment_date: payDate,
+      amount: payAmount,
+      cash_account_id: resolveCashAccount(payMethod, defaultAccounts)?.id ?? "",
+      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
+      invoice_id: invoice.id,
+    });
+    if (!parsed.success) {
+      setPayError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setPaySubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_payments");
+    } catch (err) {
+      setPaySubmitting(false);
+      setPayError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+    const { error } = await supabase.rpc("record_ar_payment", {
+      p_customer_id: parsed.data.customer_id,
+      p_payment_date: parsed.data.payment_date,
+      p_amount: parsed.data.amount,
+      p_source_ref: sourceRef,
+      p_cash_account_id: parsed.data.cash_account_id,
+      p_receivable_account_id: parsed.data.receivable_account_id,
+      p_invoice_id: parsed.data.invoice_id,
+    });
+    setPaySubmitting(false);
+    if (error) {
+      setPayError(error.message);
+      return;
+    }
+
+    setShowPayForm(false);
+    await load();
+  }
+
+  function openRefundCreditForm(creditId: string) {
+    setRefundCreditError(null);
+    setRefundCreditAmount("");
+    setRefundCreditDate("");
+    setRefundCreditMethod("TUNAI");
+    setRefundCreditId(creditId);
+  }
+
+  async function handleRefundCreditSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!refundCreditId) return;
+    setRefundCreditError(null);
+
+    const parsed = refundArReturnCreditSchema.safeParse({
+      credit_id: refundCreditId,
+      amount: refundCreditAmount,
+      entry_date: refundCreditDate,
+      return_credit_liability_account_id: defaultAccounts["ar.return_credit_liability"]?.id ?? "",
+      cash_account_id: resolveCashAccount(refundCreditMethod, defaultAccounts)?.id ?? "",
+    });
+    if (!parsed.success) {
+      setRefundCreditError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setRefundCreditSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ar_return_credit_refunds");
+    } catch (err) {
+      setRefundCreditSubmitting(false);
+      setRefundCreditError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+    const { error } = await supabase.rpc("refund_ar_return_credit", {
+      p_credit_id: parsed.data.credit_id,
+      p_amount: parsed.data.amount,
+      p_entry_date: parsed.data.entry_date,
+      p_source_ref: sourceRef,
+      p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id,
+      p_cash_account_id: parsed.data.cash_account_id,
+    });
+    setRefundCreditSubmitting(false);
+    if (error) {
+      setRefundCreditError(error.message);
+      return;
+    }
+
+    setRefundCreditId(null);
     await load();
   }
 
@@ -603,7 +720,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   }
 
   const isCancelled = reversedEntryIds.has(invoice.journal_entry_id);
-  const { status, outstanding, allocated, returned } = invoiceStatus(invoice, isCancelled);
+  const { status, outstanding, allocated, returned, depositApplied, writtenOff } = invoiceStatus(invoice, isCancelled);
   const overdue =
     status !== "lunas" &&
     status !== "dibatalkan" &&
@@ -611,7 +728,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     invoice.due_date < new Date().toISOString().slice(0, 10);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canCancel = canWrite && !isCancelled && allocated === 0 && writeoffs.length === 0;
+  const canPay = canWrite && !isCancelled && outstanding > 0.005;
   const canRetur = canWrite && !isCancelled;
+  const invoiceReturnCredits = customerReturnCredits.filter((rc) =>
+    creditNotes.some((cn) => cn.id === rc.credit_note_id)
+  );
   const canWriteOff = canWrite && !isCancelled && outstanding > 0.005;
   const availableDeposits = customerDeposits.filter(
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
@@ -625,729 +746,651 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const replaceReturnCreditActive =
     !!replaceReturnCredit && returnCreditRemaining(replaceReturnCredit).remaining > 0.005;
 
+  const detailGroups = [
+    {
+      title: "Informasi Invoice",
+      rows: [
+        { label: "Customer", value: invoice.customers.name },
+        { label: "Rujukan Dokumen", value: invoice.source_ref },
+        { label: "Tanggal Invoice", value: invoice.invoice_date },
+        {
+          label: "Jatuh Tempo",
+          value: (
+            <>
+              {invoice.due_date}
+              {overdue && <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">Telat</span>}
+            </>
+          ),
+        },
+        { label: "Deskripsi", value: invoice.description || "-" },
+        {
+          label: "Status",
+          value: (
+            <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>{status}</span>
+          ),
+        },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [
+        { label: "Jumlah Invoice", value: invoice.amount.toLocaleString("id-ID") },
+        { label: "Terbayar (Kas/Bank)", value: allocated.toLocaleString("id-ID") },
+        { label: "DP Diterapkan", value: depositApplied.toLocaleString("id-ID") },
+        { label: "Retur", value: returned.toLocaleString("id-ID") },
+        { label: "Piutang Tak Tertagih (Write-off)", value: writtenOff.toLocaleString("id-ID") },
+        { label: "Outstanding", value: outstanding.toLocaleString("id-ID") },
+      ],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
+    { key: "pembayaran", label: "Pembayaran", badge: payments.length },
+    { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
+    { key: "retur", label: "Retur", badge: creditNotes.length },
+    { key: "writeoff", label: "Piutang Tak Tertagih", badge: writeoffs.length },
+    { key: "replacements", label: "Penggantian Barang", badge: replacements.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ar-invoices" label="Kembali ke AR Invoices" />
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">
-              {invoice.customers.name} — {invoice.source_ref}
-            </h1>
-            <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
-              {status}
-            </span>
-            {overdue && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">Telat</span>
-            )}
-          </div>
-          <p className="text-sm text-slate-500">
-            {invoice.invoice_date} · Jatuh tempo {invoice.due_date}
-            {invoice.description && ` · ${invoice.description}`}
-          </p>
-        </div>
-        <div className="flex items-start gap-4">
-          <div className="text-right">
-            <div className="text-xs uppercase text-slate-400">Outstanding</div>
-            <div className="font-mono text-lg font-medium text-black">
-              {outstanding.toLocaleString("id-ID")}
-            </div>
-          </div>
-          <div className="flex gap-1.5">
-            {canApplyDeposit && (
-              <Button variant="toolbar" onClick={() => (showApplyForm ? setShowApplyForm(false) : openApplyForm())}>
-                {showApplyForm ? "Batal Terapkan DP" : "Terapkan DP"}
-              </Button>
-            )}
-            {canRetur && (
-              <Button variant="toolbar" onClick={() => (showReturForm ? setShowReturForm(false) : openReturForm())}>
-                {showReturForm ? "Batal Retur" : "Retur"}
-              </Button>
-            )}
-            {canWriteOff && (
-              <Button
-                variant="toolbar"
-                onClick={() => (showWriteoffForm ? setShowWriteoffForm(false) : openWriteoffForm())}
-              >
-                {showWriteoffForm ? "Batal Hapusbukukan" : "Hapusbukukan"}
-              </Button>
-            )}
-            {canCancel && (
-              <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
-                {cancelling ? "Membatalkan..." : "Batalkan"}
-              </Button>
-            )}
-          </div>
-        </div>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">AR Invoice Details</h1>
+        {canCancel && (
+          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+            {cancelling ? "Membatalkan..." : "Batalkan"}
+          </Button>
+        )}
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
       {cancelError && <FormError>{cancelError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Jumlah Invoice</dt>
-            <dd className="font-mono text-black">{invoice.amount.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Terbayar</dt>
-            <dd className="font-mono text-black">{allocated.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Retur</dt>
-            <dd className="font-mono text-black">{returned.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Outstanding</dt>
-            <dd className="font-mono font-medium text-black">{outstanding.toLocaleString("id-ID")}</dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Jurnal Terkait</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {journalEntries.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Deskripsi</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Baris</th>
-            </tr>
-          </thead>
-          <tbody>
-            {journalEntries.map((entry) => (
-              <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
-                <td className="px-4 py-2">
-                  {entry.description}
-                  {entry.reverses_entry_id && (
-                    <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
-                      Reversal
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-2">{entry.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {entry.journal_lines.map((line) => (
-                      <li key={line.id}>
-                        {line.accounts.code} {line.accounts.name} —{" "}
-                        {line.debit > 0
-                          ? `D ${line.debit.toLocaleString("id-ID")}`
-                          : `K ${line.credit.toLocaleString("id-ID")}`}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
-              </tr>
-            ))}
-            {journalEntries.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada jurnal.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Pembayaran</span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Jumlah</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payments.map((p) => (
-              <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
-                <td className="px-4 py-2">{p.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
+      {activeTab === "jurnal" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Deskripsi</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Baris</th>
               </tr>
-            ))}
-            {payments.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada pembayaran.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">DP Diterapkan</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {depositApplications.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Dari Deposit</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {depositApplications.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{a.source_ref}</td>
-                <td className="px-4 py-2">{a.ar_deposits.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {depositApplications.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada DP yang diterapkan.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Retur</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {creditNotes.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Jalur</th>
-              <th className="px-4 py-2">Item Diretur</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-              <th className="px-4 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {creditNotes.map((cn) => {
-              const invReturn = cn.inventory_returns[0];
-              return (
-                <tr key={cn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                  <td className="whitespace-nowrap px-4 py-2">{cn.credit_note_date}</td>
-                  <td className="px-4 py-2">{cn.source_ref}</td>
+            </thead>
+            <tbody>
+              {journalEntries.map((entry) => (
+                <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
                   <td className="px-4 py-2">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        invReturn ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {invReturn ? "Full (stok+HPP)" : "Financial-only"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2">
-                    {invReturn ? (
-                      <ul className="space-y-0.5">
-                        {invReturn.inventory_return_lines.map((l) => (
-                          <li key={l.item_id}>
-                            {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
-                            {l.total_cost.toLocaleString("id-ID")})
-                            {l.condition === "DAMAGED" && (
-                              <span className="ml-1 rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">
-                                Rusak
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <span className="text-slate-400">—</span>
+                    {entry.description}
+                    {entry.reverses_entry_id && (
+                      <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
+                        Reversal
+                      </span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono">{cn.amount.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2">{entry.source_ref}</td>
                   <td className="px-4 py-2">
-                    {canWrite && invReturn && (
-                      <Button variant="toolbar" onClick={() => openReplaceForm(cn)}>
-                        Ganti Barang
-                      </Button>
-                    )}
+                    <ul className="space-y-0.5">
+                      {entry.journal_lines.map((line) => (
+                        <li key={line.id}>
+                          {line.accounts.code} {line.accounts.name} —{" "}
+                          {line.debit > 0
+                            ? `D ${line.debit.toLocaleString("id-ID")}`
+                            : `K ${line.credit.toLocaleString("id-ID")}`}
+                        </li>
+                      ))}
+                    </ul>
                   </td>
                 </tr>
-              );
-            })}
-            {creditNotes.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada retur.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Piutang Tak Tertagih (Write-off)</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {writeoffs.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {writeoffs.map((w) => (
-              <tr key={w.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{w.writeoff_date}</td>
-                <td className="px-4 py-2">{w.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{w.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {writeoffs.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada write-off.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Penggantian Barang</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {replacements.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Item Diganti</th>
-              <th className="px-4 py-2 text-right">Cost</th>
-              <th className="px-4 py-2 text-right">Diskon Retur Dibalik</th>
-              <th className="px-4 py-2 text-right">Saldo Kredit Retur Diselesaikan</th>
-            </tr>
-          </thead>
-          <tbody>
-            {replacements.map((r) => (
-              <tr key={r.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{r.replacement_date}</td>
-                <td className="px-4 py-2">{r.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {r.warranty_replacement_lines.map((l) => (
-                      <li key={l.item_id}>
-                        {l.items.name} — {l.qty_replaced} {l.items.uom}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {r.warranty_replacement_lines
-                    .reduce((sum, l) => sum + l.total_cost, 0)
-                    .toLocaleString("id-ID")}
-                </td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {r.discount_reversed_amount.toLocaleString("id-ID")}
-                </td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {r.return_credit_settled_amount.toLocaleString("id-ID")}
-                </td>
-              </tr>
-            ))}
-            {replacements.length === 0 && (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada penggantian barang.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {replaceCreditNoteId && (
-        <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tukar Barang (Garansi)</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Bukan gratis — barang pengganti keluar dari stok (dijurnal HPP/Persediaan Barang
-            Jadi), dan diskon retur yang sudah diberikan untuk item ini otomatis dibalik
-            proporsional (Piutang Usaha naik lagi) — supaya piutang kami ke customer gak berkurang
-            gara-gara penukaran ini. Qty dibatasi sisa yang belum ditukar dari retur ini.
-          </p>
-          <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_date">Tanggal</Label>
-                <Input
-                  id="replace_date"
-                  type="date"
-                  value={replaceDate}
-                  onChange={(e) => setReplaceDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="replace_source_ref"
-                  placeholder="mis. Nota ganti #001"
-                  value={replaceSourceRef}
-                  onChange={(e) => setReplaceSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_hpp_account">Akun HPP (debit)</Label>
-                <Select
-                  id="replace_hpp_account"
-                  value={replaceHppAccountId}
-                  onChange={(e) => setReplaceHppAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_finished_good_account">Akun Persediaan Barang Jadi (kredit)</Label>
-                <Select
-                  id="replace_finished_good_account"
-                  value={replaceFinishedGoodAccountId}
-                  onChange={(e) => setReplaceFinishedGoodAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_receivable_account">Akun Piutang Usaha (debit, pembalikan diskon)</Label>
-                <Select
-                  id="replace_receivable_account"
-                  value={replaceReceivableAccountId}
-                  onChange={(e) => setReplaceReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_contra_revenue_account">Akun Retur & Potongan Penjualan (kredit, pembalikan diskon)</Label>
-                <Select
-                  id="replace_contra_revenue_account"
-                  value={replaceContraRevenueAccountId}
-                  onChange={(e) => setReplaceContraRevenueAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              {replaceReturnCreditActive && (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="replace_return_credit_account">
-                    Akun Saldo Kredit Retur Customer (debit, retur ini punya saldo kredit aktif)
-                  </Label>
-                  <Select
-                    id="replace_return_credit_account"
-                    value={replaceReturnCreditLiabilityAccountId}
-                    onChange={(e) => setReplaceReturnCreditLiabilityAccountId(e.target.value)}
-                  >
-                    <option value="">Pilih akun...</option>
-                    {leafAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} — {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
-                <span>Item (sisa bisa diganti)</span>
-                <span>Qty Ganti</span>
-              </div>
-              {replaceLines.map((line) => (
-                <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                  <span className="flex items-center text-sm text-slate-700">
-                    {line.name} ({line.qty_remaining} {line.uom})
-                  </span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max={line.qty_remaining}
-                    placeholder="0"
-                    value={line.qty}
-                    onChange={(e) => updateReplaceLine(line.item_id, e.target.value)}
-                  />
-                </div>
               ))}
-              {replaceLines.length === 0 && (
-                <p className="text-sm text-slate-400">Semua item di retur ini udah diganti penuh.</p>
+              {journalEntries.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada jurnal.
+                  </td>
+                </tr>
               )}
-            </div>
-
-            {replaceError && <FormError>{replaceError}</FormError>}
-
-            <div className="flex gap-2">
-              <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0} className="w-fit">
-                {replaceSubmitting ? "Menyimpan..." : "Simpan Penggantian"}
-              </Button>
-              <Button
-                type="button"
-                variant="toolbar"
-                className="w-fit"
-                onClick={() => setReplaceCreditNoteId(null)}
-              >
-                Batal
-              </Button>
-            </div>
-          </form>
+            </tbody>
+          </table>
         </div>
       )}
 
-      {showApplyForm && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Terapkan DP ke Invoice Ini</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Reklasifikasi uang muka yang udah diterima jadi pengurang piutang invoice ini —
-            bukan pembayaran baru.
-          </p>
-          <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_deposit">Deposit</Label>
-                <Select
-                  id="apply_deposit"
-                  value={applyDepositId}
-                  onChange={(e) => {
-                    setApplyDepositId(e.target.value);
-                    const dep = availableDeposits.find((d) => d.id === e.target.value);
-                    if (dep) {
-                      const remaining = depositStatus(dep, reversedEntryIds).remaining;
-                      setApplyAmount(String(Math.min(remaining, outstanding)));
-                    }
-                  }}
-                >
-                  <option value="">Pilih deposit...</option>
-                  {availableDeposits.map((dep) => {
-                    const remaining = depositStatus(dep, reversedEntryIds).remaining;
+      {activeTab === "pembayaran" && (
+        <div className="flex flex-col gap-3">
+          {canPay && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openPayForm}>
+                Bayar
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2 text-right">Jumlah</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((p) => (
+                  <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
+                    <td className="px-4 py-2">{p.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
+                  </tr>
+                ))}
+                {payments.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada pembayaran.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "dp" && (
+        <div className="flex flex-col gap-3">
+          {canApplyDeposit && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openApplyForm}>
+                Terapkan DP
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Dari Deposit</th>
+                  <th className="px-4 py-2 text-right">Nominal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {depositApplications.map((a) => (
+                  <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-2">{a.source_ref}</td>
+                    <td className="px-4 py-2">{a.ar_deposits.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
+                  </tr>
+                ))}
+                {depositApplications.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada DP yang diterapkan.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "retur" && (
+        <div className="flex flex-col gap-3">
+          {canRetur && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openReturForm}>
+                Retur
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Jalur</th>
+                  <th className="px-4 py-2">Item Diretur</th>
+                  <th className="px-4 py-2 text-right">Nominal</th>
+                  <th className="px-4 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {creditNotes.map((cn) => {
+                  const invReturn = cn.inventory_returns[0];
+                  return (
+                    <tr key={cn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                      <td className="whitespace-nowrap px-4 py-2">{cn.credit_note_date}</td>
+                      <td className="px-4 py-2">{cn.source_ref}</td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${
+                            invReturn ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {invReturn ? "Full (stok+HPP)" : "Financial-only"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2">
+                        {invReturn ? (
+                          <ul className="space-y-0.5">
+                            {invReturn.inventory_return_lines.map((l) => (
+                              <li key={l.item_id}>
+                                {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
+                                {l.total_cost.toLocaleString("id-ID")})
+                                {l.condition === "DAMAGED" && (
+                                  <span className="ml-1 rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">
+                                    Rusak
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono">{cn.amount.toLocaleString("id-ID")}</td>
+                      <td className="px-4 py-2">
+                        {canWrite && invReturn && (
+                          <Button variant="toolbar" onClick={() => openReplaceForm(cn)}>
+                            Ganti Barang
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {creditNotes.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada retur.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {invoiceReturnCredits.length > 0 && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-4 py-2">
+                <span className="text-sm font-medium text-black">Saldo Kredit Retur Customer</span>
+              </div>
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                    <th className="px-4 py-2">Source Retur</th>
+                    <th className="px-4 py-2 text-right">Jumlah Awal</th>
+                    <th className="px-4 py-2 text-right">Sudah Diselesaikan</th>
+                    <th className="px-4 py-2 text-right">Sisa</th>
+                    <th className="px-4 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceReturnCredits.map((rc) => {
+                    const { used, remaining } = returnCreditRemaining(rc);
                     return (
-                      <option key={dep.id} value={dep.id}>
-                        {dep.source_ref} (sisa {remaining.toLocaleString("id-ID")})
-                      </option>
+                      <tr key={rc.id} className="border-b border-slate-100 hover:bg-slate-50">
+                        <td className="px-4 py-2">{rc.ar_credit_notes.source_ref}</td>
+                        <td className="px-4 py-2 text-right font-mono">{rc.amount.toLocaleString("id-ID")}</td>
+                        <td className="px-4 py-2 text-right font-mono">{used.toLocaleString("id-ID")}</td>
+                        <td className="px-4 py-2 text-right font-mono font-medium">
+                          {remaining.toLocaleString("id-ID")}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {canWrite && remaining > 0.005 && (
+                            <Button variant="toolbar" onClick={() => openRefundCreditForm(rc.id)}>
+                              Refund Tunai
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
                     );
                   })}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_amount">
-                  Nominal Diterapkan {selectedDeposit && `(maks ${Math.min(selectedDepositRemaining, outstanding).toLocaleString("id-ID")})`}
-                </Label>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "writeoff" && (
+        <div className="flex flex-col gap-3">
+          {canWriteOff && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openWriteoffForm}>
+                Hapusbukukan
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2 text-right">Nominal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {writeoffs.map((w) => (
+                  <tr key={w.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{w.writeoff_date}</td>
+                    <td className="px-4 py-2">{w.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{w.amount.toLocaleString("id-ID")}</td>
+                  </tr>
+                ))}
+                {writeoffs.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada write-off.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "replacements" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Item Diganti</th>
+                <th className="px-4 py-2 text-right">Cost</th>
+                <th className="px-4 py-2 text-right">Diskon Retur Dibalik</th>
+                <th className="px-4 py-2 text-right">Saldo Kredit Retur Diselesaikan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {replacements.map((r) => (
+                <tr key={r.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{r.replacement_date}</td>
+                  <td className="px-4 py-2">{r.source_ref}</td>
+                  <td className="px-4 py-2">
+                    <ul className="space-y-0.5">
+                      {r.warranty_replacement_lines.map((l) => (
+                        <li key={l.item_id}>
+                          {l.items.name} — {l.qty_replaced} {l.items.uom}
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {r.warranty_replacement_lines
+                      .reduce((sum, l) => sum + l.total_cost, 0)
+                      .toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {r.discount_reversed_amount.toLocaleString("id-ID")}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {r.return_credit_settled_amount.toLocaleString("id-ID")}
+                  </td>
+                </tr>
+              ))}
+              {replacements.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada penggantian barang.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Modal
+        open={!!replaceCreditNoteId}
+        onClose={() => setReplaceCreditNoteId(null)}
+        title="Tukar Barang (Garansi)"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Bukan gratis — barang pengganti keluar dari stok (dijurnal HPP/Persediaan Barang
+          Jadi), dan diskon retur yang sudah diberikan untuk item ini otomatis dibalik
+          proporsional (Piutang Usaha naik lagi) — supaya piutang kami ke customer gak berkurang
+          gara-gara penukaran ini. Qty dibatasi sisa yang belum ditukar dari retur ini.
+        </p>
+        <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="replace_date">Tanggal</Label>
+              <Input
+                id="replace_date"
+                type="date"
+                value={replaceDate}
+                onChange={(e) => setReplaceDate(e.target.value)}
+              />
+            </div>
+            <LockedAccountField
+              label="Akun HPP (debit)"
+              htmlFor="replace_hpp_account"
+              resolved={defaultAccounts["inventory.hpp"]}
+            />
+            <LockedAccountField
+              label="Akun Persediaan Barang Jadi (kredit)"
+              htmlFor="replace_finished_good_account"
+              resolved={defaultAccounts["inventory.finished_good"]}
+            />
+            <LockedAccountField
+              label="Akun Piutang Usaha (debit, pembalikan diskon)"
+              htmlFor="replace_receivable_account"
+              resolved={defaultAccounts["ar.receivable"]}
+            />
+            <LockedAccountField
+              label="Akun Retur & Potongan Penjualan (kredit, pembalikan diskon)"
+              htmlFor="replace_contra_revenue_account"
+              resolved={defaultAccounts["ar.contra_revenue"]}
+            />
+            {replaceReturnCreditActive && (
+              <LockedAccountField
+                label="Akun Saldo Kredit Retur Customer (debit, retur ini punya saldo kredit aktif)"
+                htmlFor="replace_return_credit_account"
+                resolved={defaultAccounts["ar.return_credit_liability"]}
+              />
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+              <span>Item (sisa bisa diganti)</span>
+              <span>Qty Ganti</span>
+            </div>
+            {replaceLines.map((line) => (
+              <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
+                <span className="flex items-center text-sm text-slate-700">
+                  {line.name} ({line.qty_remaining} {line.uom})
+                </span>
                 <Input
-                  id="apply_amount"
                   type="number"
                   min="0"
+                  max={line.qty_remaining}
                   placeholder="0"
-                  value={applyAmount}
-                  onChange={(e) => setApplyAmount(e.target.value)}
+                  value={line.qty}
+                  onChange={(e) => updateReplaceLine(line.item_id, e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_date">Tanggal</Label>
-                <Input id="apply_date" type="date" value={applyDate} onChange={(e) => setApplyDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="apply_source_ref"
-                  placeholder="mis. Nota Kue #001"
-                  value={applySourceRef}
-                  onChange={(e) => setApplySourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_deposit_liability_account">Akun Uang Muka Penjualan (debit)</Label>
-                <Select
-                  id="apply_deposit_liability_account"
-                  value={applyDepositLiabilityAccountId}
-                  onChange={(e) => setApplyDepositLiabilityAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
+            ))}
+            {replaceLines.length === 0 && (
+              <p className="text-sm text-slate-400">Semua item di retur ini udah diganti penuh.</p>
+            )}
+          </div>
+
+          {replaceError && <FormError>{replaceError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setReplaceCreditNoteId(null)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0}>
+              {replaceSubmitting ? "Menyimpan..." : "Simpan Penggantian"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showApplyForm}
+        onClose={() => setShowApplyForm(false)}
+        title="Terapkan DP ke Invoice Ini"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Reklasifikasi uang muka yang udah diterima jadi pengurang piutang invoice ini —
+          bukan pembayaran baru.
+        </p>
+        <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="apply_deposit">Deposit</Label>
+              <Select
+                id="apply_deposit"
+                value={applyDepositId}
+                onChange={(e) => {
+                  setApplyDepositId(e.target.value);
+                  const dep = availableDeposits.find((d) => d.id === e.target.value);
+                  if (dep) {
+                    const remaining = depositStatus(dep, reversedEntryIds).remaining;
+                    setApplyAmount(String(Math.min(remaining, outstanding)));
+                  }
+                }}
+              >
+                <option value="">Pilih deposit...</option>
+                {availableDeposits.map((dep) => {
+                  const remaining = depositStatus(dep, reversedEntryIds).remaining;
+                  return (
+                    <option key={dep.id} value={dep.id}>
+                      {dep.source_ref} (sisa {remaining.toLocaleString("id-ID")})
                     </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_receivable_account">Akun Piutang Usaha (kredit)</Label>
-                <Select
-                  id="apply_receivable_account"
-                  value={applyReceivableAccountId}
-                  onChange={(e) => setApplyReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+                  );
+                })}
+              </Select>
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="apply_amount">
+                Nominal Diterapkan {selectedDeposit && `(maks ${Math.min(selectedDepositRemaining, outstanding).toLocaleString("id-ID")})`}
+              </Label>
+              <Input
+                id="apply_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={applyAmount}
+                onChange={(e) => setApplyAmount(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="apply_date">Tanggal</Label>
+              <Input id="apply_date" type="date" value={applyDate} onChange={(e) => setApplyDate(e.target.value)} />
+            </div>
+            <LockedAccountField
+              label="Akun Uang Muka Penjualan (debit)"
+              htmlFor="apply_deposit_liability_account"
+              resolved={defaultAccounts["ar.deposit_liability"]}
+            />
+            <LockedAccountField
+              label="Akun Piutang Usaha (kredit)"
+              htmlFor="apply_receivable_account"
+              resolved={defaultAccounts["ar.receivable"]}
+            />
+          </div>
 
-            {applyError && <FormError>{applyError}</FormError>}
+          {applyError && <FormError>{applyError}</FormError>}
 
-            <Button type="submit" disabled={applySubmitting} className="w-fit">
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowApplyForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={applySubmitting}>
               {applySubmitting ? "Menyimpan..." : "Terapkan DP"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
 
-      {showWriteoffForm && (
-        <div className="rounded-xl border border-red-200 bg-red-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Hapusbukukan Piutang Tak Tertagih</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Piutang ini beneran gak akan tertagih (customer menghilang/tutup usaha) —
-            Pendapatan asli gak dibalik, cuma piutangnya dihapusbukukan lewat beban baru.
-            Boleh sebagian, tapi gak boleh ngelebihin sisa outstanding.
-          </p>
-          <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_date">Tanggal Write-off</Label>
-                <Input
-                  id="writeoff_date"
-                  type="date"
-                  value={writeoffDate}
-                  onChange={(e) => setWriteoffDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="writeoff_source_ref"
-                  placeholder="mis. Write-off piutang - customer tidak dapat dihubungi"
-                  value={writeoffSourceRef}
-                  onChange={(e) => setWriteoffSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_amount">Nominal Write-off (maks {outstanding.toLocaleString("id-ID")})</Label>
-                <Input
-                  id="writeoff_amount"
-                  type="number"
-                  min="0"
-                  max={outstanding}
-                  placeholder="0"
-                  value={writeoffAmount}
-                  onChange={(e) => setWriteoffAmount(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_expense_account">Akun Beban Piutang Tak Tertagih (debit)</Label>
-                <Select
-                  id="writeoff_expense_account"
-                  value={writeoffExpenseAccountId}
-                  onChange={(e) => setWriteoffExpenseAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_receivable_account">Akun Piutang Usaha (kredit)</Label>
-                <Select
-                  id="writeoff_receivable_account"
-                  value={writeoffReceivableAccountId}
-                  onChange={(e) => setWriteoffReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+      <Modal
+        open={showWriteoffForm}
+        onClose={() => setShowWriteoffForm(false)}
+        title="Hapusbukukan Piutang Tak Tertagih"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Piutang ini beneran gak akan tertagih (customer menghilang/tutup usaha) —
+          Pendapatan asli gak dibalik, cuma piutangnya dihapusbukukan lewat beban baru.
+          Boleh sebagian, tapi gak boleh ngelebihin sisa outstanding.
+        </p>
+        <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="writeoff_date">Tanggal Write-off</Label>
+              <Input
+                id="writeoff_date"
+                type="date"
+                value={writeoffDate}
+                onChange={(e) => setWriteoffDate(e.target.value)}
+              />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="writeoff_amount">Nominal Write-off (maks {outstanding.toLocaleString("id-ID")})</Label>
+              <Input
+                id="writeoff_amount"
+                type="number"
+                min="0"
+                max={outstanding}
+                placeholder="0"
+                value={writeoffAmount}
+                onChange={(e) => setWriteoffAmount(e.target.value)}
+              />
+            </div>
+            <LockedAccountField
+              label="Akun Beban Piutang Tak Tertagih (debit)"
+              htmlFor="writeoff_expense_account"
+              resolved={defaultAccounts["ar.writeoff_expense"]}
+            />
+            <LockedAccountField
+              label="Akun Piutang Usaha (kredit)"
+              htmlFor="writeoff_receivable_account"
+              resolved={defaultAccounts["ar.receivable"]}
+            />
+          </div>
 
-            {writeoffError && <FormError>{writeoffError}</FormError>}
+          {writeoffError && <FormError>{writeoffError}</FormError>}
 
-            <Button type="submit" disabled={writeoffSubmitting} className="w-fit">
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowWriteoffForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={writeoffSubmitting}>
               {writeoffSubmitting ? "Menyimpan..." : "Simpan Write-off"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
 
-      {showReturForm && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Catat Retur</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            {goodsIssue
-              ? "Invoice ini lewat Goods Issue — isi qty per item yang balik, stok & HPP otomatis ke-reverse proporsional."
-              : "Invoice ini gak lewat Goods Issue — retur cuma ngurangin piutang (kontra-revenue), gak ada stok yang disentuh."}
-          </p>
-          <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Modal open={showReturForm} onClose={() => setShowReturForm(false)} title="Catat Retur" maxWidth="max-w-2xl">
+        <p className="mb-4 text-sm text-slate-600">
+          {goodsIssue
+            ? "Invoice ini lewat Goods Issue — isi qty per item yang balik, stok & HPP otomatis ke-reverse proporsional."
+            : "Invoice ini gak lewat Goods Issue — retur cuma ngurangin piutang (kontra-revenue), gak ada stok yang disentuh."}
+        </p>
+        <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="retur_date">Tanggal Retur</Label>
                 <Input id="retur_date" type="date" value={returDate} onChange={(e) => setReturDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="retur_source_ref"
-                  placeholder="mis. Nota retur #001"
-                  value={returSourceRef}
-                  onChange={(e) => setReturSourceRef(e.target.value)}
-                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="retur_amount">Nominal Retur (kurangin piutang)</Label>
@@ -1360,102 +1403,38 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                   onChange={(e) => setReturAmount(e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_contra_account">Akun Retur & Potongan Penjualan (debit)</Label>
-                <Select
-                  id="retur_contra_account"
-                  value={returContraAccountId}
-                  onChange={(e) => setReturContraAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_receivable_account">Akun Piutang Usaha (kredit)</Label>
-                <Select
-                  id="retur_receivable_account"
-                  value={returReceivableAccountId}
-                  onChange={(e) => setReturReceivableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_credit_liability_account">
-                  Akun Saldo Kredit Retur Customer (kredit, cuma kalau retur ini bikin outstanding minus)
-                </Label>
-                <Select
-                  id="retur_credit_liability_account"
-                  value={returCreditLiabilityAccountId}
-                  onChange={(e) => setReturCreditLiabilityAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun (opsional)...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <LockedAccountField
+                label="Akun Retur & Potongan Penjualan (debit)"
+                htmlFor="retur_contra_account"
+                resolved={defaultAccounts["ar.contra_revenue"]}
+              />
+              <LockedAccountField
+                label="Akun Piutang Usaha (kredit)"
+                htmlFor="retur_receivable_account"
+                resolved={defaultAccounts["ar.receivable"]}
+              />
+              <LockedAccountField
+                label="Akun Saldo Kredit Retur Customer (kredit, cuma kalau retur ini bikin outstanding minus)"
+                htmlFor="retur_credit_liability_account"
+                resolved={defaultAccounts["ar.return_credit_liability"]}
+              />
               {goodsIssue && (
                 <>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="retur_hpp_account">Akun HPP (kredit, jurnal reversal)</Label>
-                    <Select
-                      id="retur_hpp_account"
-                      value={returHppAccountId}
-                      onChange={(e) => setReturHppAccountId(e.target.value)}
-                    >
-                      <option value="">Pilih akun...</option>
-                      {leafAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} — {a.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="retur_finished_good_account">Akun Persediaan Barang Jadi (debit, baris Layak Jual)</Label>
-                    <Select
-                      id="retur_finished_good_account"
-                      value={returFinishedGoodAccountId}
-                      onChange={(e) => setReturFinishedGoodAccountId(e.target.value)}
-                    >
-                      <option value="">Pilih akun...</option>
-                      {leafAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} — {a.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="retur_loss_expense_account">
-                      Akun Beban Kerugian Barang Rusak (debit, baris Rusak)
-                    </Label>
-                    <Select
-                      id="retur_loss_expense_account"
-                      value={returLossExpenseAccountId}
-                      onChange={(e) => setReturLossExpenseAccountId(e.target.value)}
-                    >
-                      <option value="">Pilih akun (wajib kalau ada baris Rusak)...</option>
-                      {leafAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} — {a.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
+                  <LockedAccountField
+                    label="Akun HPP (kredit, jurnal reversal)"
+                    htmlFor="retur_hpp_account"
+                    resolved={defaultAccounts["inventory.hpp"]}
+                  />
+                  <LockedAccountField
+                    label="Akun Persediaan Barang Jadi (debit, baris Layak Jual)"
+                    htmlFor="retur_finished_good_account"
+                    resolved={defaultAccounts["inventory.finished_good"]}
+                  />
+                  <LockedAccountField
+                    label="Akun Beban Kerugian Barang Rusak (debit, baris Rusak)"
+                    htmlFor="retur_loss_expense_account"
+                    resolved={defaultAccounts["inventory.damage_loss_expense"]}
+                  />
                 </>
               )}
             </div>
@@ -1495,12 +1474,125 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
             {returError && <FormError>{returError}</FormError>}
 
-            <Button type="submit" disabled={returSubmitting} className="w-fit">
-              {returSubmitting ? "Menyimpan..." : "Simpan Retur"}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowReturForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={returSubmitting}>
+                {returSubmitting ? "Menyimpan..." : "Simpan Retur"}
+              </Button>
+            </div>
+        </form>
+      </Modal>
+
+      <Modal open={showPayForm} onClose={() => setShowPayForm(false)} title="Catat Pembayaran" maxWidth="max-w-2xl">
+        <p className="mb-4 text-sm text-slate-500">
+          Payment selalu nutup invoice ini spesifik, boleh cicil (kurang dari sisa outstanding),
+          tapi gak boleh lebih (overpay ditolak).
+        </p>
+        <form onSubmit={handlePaySubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="pay_date">Tanggal</Label>
+              <Input id="pay_date" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="pay_amount">
+                Jumlah dibayar (boleh cicil, maks {outstanding.toLocaleString("id-ID")})
+              </Label>
+              <Input
+                id="pay_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+              />
+            </div>
+            <CashMethodField
+              label="Akun Kas/Bank (debit)"
+              htmlFor="pay_cash_account"
+              method={payMethod}
+              onChange={setPayMethod}
+              defaultAccounts={defaultAccounts}
+            />
+            <LockedAccountField
+              label="Akun Piutang Usaha (kredit)"
+              htmlFor="pay_receivable_account"
+              resolved={defaultAccounts["ar.receivable"]}
+            />
+          </div>
+
+          {payError && <FormError>{payError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowPayForm(false)}>
+              Batal
             </Button>
-          </form>
-        </div>
-      )}
+            <Button type="submit" disabled={paySubmitting}>
+              {paySubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={!!refundCreditId}
+        onClose={() => setRefundCreditId(null)}
+        title="Refund Tunai Saldo Kredit Retur"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Kembalikan sisa saldo kredit retur ini ke customer dalam bentuk kas/bank.
+        </p>
+        <form onSubmit={handleRefundCreditSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="refund_credit_amount">Nominal Refund</Label>
+              <Input
+                id="refund_credit_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={refundCreditAmount}
+                onChange={(e) => setRefundCreditAmount(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="refund_credit_date">Tanggal</Label>
+              <Input
+                id="refund_credit_date"
+                type="date"
+                value={refundCreditDate}
+                onChange={(e) => setRefundCreditDate(e.target.value)}
+              />
+            </div>
+            <LockedAccountField
+              label="Akun Saldo Kredit Retur Customer (debit)"
+              htmlFor="refund_credit_liability_account"
+              resolved={defaultAccounts["ar.return_credit_liability"]}
+            />
+            <CashMethodField
+              label="Akun Kas/Bank (kredit)"
+              htmlFor="refund_credit_cash_account"
+              method={refundCreditMethod}
+              onChange={setRefundCreditMethod}
+              defaultAccounts={defaultAccounts}
+            />
+          </div>
+
+          {refundCreditError && <FormError>{refundCreditError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setRefundCreditId(null)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={refundCreditSubmitting}>
+              {refundCreditSubmitting ? "Menyimpan..." : "Refund"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

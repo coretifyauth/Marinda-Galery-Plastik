@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { createItemSchema, itemTypes, type Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { Label } from "@/components/ui/label";
@@ -11,25 +10,27 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 export default function ItemsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
   const [itemType, setItemType] = useState<(typeof itemTypes)[number]>("RAW_MATERIAL");
   const [uom, setUom] = useState("");
-  const [inventoryAccountId, setInventoryAccountId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const leafAccounts = getLeafAccounts(accounts);
+  const inventoryRoleKey = itemType === "RAW_MATERIAL" ? "inventory.raw_material" : "inventory.finished_good";
 
   const loadItems = useCallback(async () => {
     const [{ data, error }, { data: units }] = await Promise.all([
@@ -48,12 +49,8 @@ export default function ItemsPage() {
     setItemUnits((units ?? []) as ItemUnit[]);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+  const loadDefaultAccounts = useCallback(async () => {
+    setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
 
   useEffect(() => {
@@ -69,13 +66,13 @@ export default function ItemsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadItems(), loadAccounts()]);
+      await Promise.all([loadItems(), loadDefaultAccounts()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems, loadAccounts]);
+  }, [router, loadItems, loadDefaultAccounts]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -84,7 +81,7 @@ export default function ItemsPage() {
       name,
       item_type: itemType,
       uom,
-      inventory_account_id: inventoryAccountId,
+      inventory_account_id: defaultAccounts[inventoryRoleKey]?.id ?? "",
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -100,7 +97,6 @@ export default function ItemsPage() {
     setName("");
     setItemType("RAW_MATERIAL");
     setUom("");
-    setInventoryAccountId("");
     setShowForm(false);
     await loadItems();
   }
@@ -112,9 +108,9 @@ export default function ItemsPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Items — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Items</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -136,7 +132,7 @@ export default function ItemsPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -154,7 +150,7 @@ export default function ItemsPage() {
           </thead>
           <tbody>
             {items.map((item) => {
-              const account = accounts.find((a) => a.id === item.inventory_account_id);
+              const account = Object.values(defaultAccounts).find((a) => a.id === item.inventory_account_id);
               const units = itemUnits.filter((u) => u.item_id === item.id);
               return (
                 <tr
@@ -191,78 +187,70 @@ export default function ItemsPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tambah Item</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <p className="mb-4 text-sm text-slate-500">
-            Satuan jual & harga (bisa lebih dari 1, misal per buah dan per lusin) dikelola di
-            halaman detail item — setelah item ini disimpan.
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Item">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
           </p>
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="name">Nama</Label>
-                <Input
-                  id="name"
-                  placeholder="mis. Tepung Terigu"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="item_type">Tipe</Label>
-                <Select
-                  id="item_type"
-                  value={itemType}
-                  onChange={(e) => setItemType(e.target.value as (typeof itemTypes)[number])}
-                >
-                  {itemTypes.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="uom">Satuan Dasar (UOM)</Label>
-                <Input
-                  id="uom"
-                  placeholder="mis. kg, buah"
-                  value={uom}
-                  onChange={(e) => setUom(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="inventory_account">Akun Persediaan</Label>
-                <Select
-                  id="inventory_account"
-                  value={inventoryAccountId}
-                  onChange={(e) => setInventoryAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+        )}
+        <p className="mb-4 text-sm text-slate-500">
+          Satuan jual & harga (bisa lebih dari 1, misal per buah dan per lusin) dikelola di
+          halaman detail item — setelah item ini disimpan.
+        </p>
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="name">Nama</Label>
+            <Input
+              id="name"
+              placeholder="mis. Tepung Terigu"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="item_type">Tipe</Label>
+              <Select
+                id="item_type"
+                value={itemType}
+                onChange={(e) => setItemType(e.target.value as (typeof itemTypes)[number])}
+              >
+                {itemTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </Select>
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="uom">Satuan Dasar (UOM)</Label>
+              <Input
+                id="uom"
+                placeholder="mis. kg, buah"
+                value={uom}
+                onChange={(e) => setUom(e.target.value)}
+              />
+            </div>
+          </div>
+          <LockedAccountField
+            label="Akun Persediaan"
+            htmlFor="inventory_account"
+            resolved={defaultAccounts[inventoryRoleKey]}
+          />
 
-            {formError && <FormError>{formError}</FormError>}
+          {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={submitting}>
               {submitting ? "Menyimpan..." : "Simpan Item"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

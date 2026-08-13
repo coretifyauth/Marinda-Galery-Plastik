@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase/client";
 import type { ProductionOrder } from "@/lib/production-orders/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
 
 type JournalEntryDetail = {
   id: string;
@@ -21,6 +23,7 @@ export function ProductionOrderDetailView({ id }: { id: string }) {
   const [order, setOrder] = useState<ProductionOrder | null>(null);
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("lines");
 
   const load = useCallback(async () => {
     const { data: po, error: poErr } = await supabase
@@ -74,117 +77,114 @@ export function ProductionOrderDetailView({ id }: { id: string }) {
 
   const totalCost = order.production_order_lines.reduce((sum, l) => sum + l.total_cost, 0);
 
+  const detailGroups = [
+    {
+      title: "Informasi Produksi",
+      rows: [
+        { label: "Barang Jadi", value: order.bom_headers.items.name },
+        { label: "Rujukan Dokumen", value: order.source_ref },
+        { label: "Tanggal Produksi", value: order.production_date },
+        { label: "Qty Produksi", value: String(order.qty_produced) },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [{ label: "Total Biaya", value: totalCost.toLocaleString("id-ID") }],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "lines", label: "Konsumsi Bahan Baku", badge: order.production_order_lines.length },
+    { key: "jurnal", label: "Jurnal Terkait", badge: journalEntries.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/production-orders" label="Kembali ke Production Orders" />
-      <div>
-        <h1 className="text-xl font-semibold text-black">
-          {order.bom_headers.items.name} — {order.source_ref}
-        </h1>
-        <p className="text-sm text-slate-500">{order.production_date}</p>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">Production Order Details</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Barang Jadi</dt>
-            <dd className="text-black">{order.bom_headers.items.name}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Qty Produksi</dt>
-            <dd className="font-mono text-black">{order.qty_produced}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Total Biaya</dt>
-            <dd className="font-mono font-medium text-black">{totalCost.toLocaleString("id-ID")}</dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Konsumsi Bahan Baku</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {order.production_order_lines.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Bahan Baku</th>
-              <th className="px-4 py-2 text-right">Qty Dikonsumsi</th>
-              <th className="px-4 py-2 text-right">Total Biaya</th>
-            </tr>
-          </thead>
-          <tbody>
-            {order.production_order_lines.map((line) => (
-              <tr key={line.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2 font-medium text-black">{line.items.name}</td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {line.qty_consumed} {line.items.uom}
-                </td>
-                <td className="px-4 py-2 text-right font-mono">{line.total_cost.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {order.production_order_lines.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada konsumsi bahan baku.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Jurnal Terkait</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {journalEntries.length}
-          </span>
+      {activeTab === "lines" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Bahan Baku</th>
+                <th className="px-4 py-2 text-right">Qty Dikonsumsi</th>
+                <th className="px-4 py-2 text-right">Total Biaya</th>
+              </tr>
+            </thead>
+            <tbody>
+              {order.production_order_lines.map((line) => (
+                <tr key={line.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="px-4 py-2 font-medium text-black">{line.items.name}</td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {line.qty_consumed} {line.items.uom}
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{line.total_cost.toLocaleString("id-ID")}</td>
+                </tr>
+              ))}
+              {order.production_order_lines.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada konsumsi bahan baku.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Deskripsi</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Baris</th>
-            </tr>
-          </thead>
-          <tbody>
-            {journalEntries.map((entry) => (
-              <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
-                <td className="px-4 py-2">{entry.description}</td>
-                <td className="px-4 py-2">{entry.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {entry.journal_lines.map((line) => (
-                      <li key={line.id}>
-                        {line.accounts.code} {line.accounts.name} —{" "}
-                        {line.debit > 0
-                          ? `D ${line.debit.toLocaleString("id-ID")}`
-                          : `K ${line.credit.toLocaleString("id-ID")}`}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
+      )}
+
+      {activeTab === "jurnal" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Deskripsi</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Baris</th>
               </tr>
-            ))}
-            {journalEntries.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada jurnal.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {journalEntries.map((entry) => (
+                <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
+                  <td className="px-4 py-2">{entry.description}</td>
+                  <td className="px-4 py-2">{entry.source_ref}</td>
+                  <td className="px-4 py-2">
+                    <ul className="space-y-0.5">
+                      {entry.journal_lines.map((line) => (
+                        <li key={line.id}>
+                          {line.accounts.code} {line.accounts.name} —{" "}
+                          {line.debit > 0
+                            ? `D ${line.debit.toLocaleString("id-ID")}`
+                            : `K ${line.credit.toLocaleString("id-ID")}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                </tr>
+              ))}
+              {journalEntries.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada jurnal.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

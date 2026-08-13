@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { billStatus, type ApBill } from "@/lib/ap-bills/schema";
 import {
   createApCreditNoteSchema,
@@ -12,12 +11,21 @@ import {
 import { createPurchaseReplacementSchema } from "@/lib/purchase-replacements/schema";
 import { createPurchaseWriteoffSchema } from "@/lib/purchase-writeoffs/schema";
 import { applyApDepositSchema, depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
+import { recordApPaymentSchema } from "@/lib/ap-payments/schema";
+import { refundApReturnCreditSchema } from "@/lib/ap-return-credits/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { Modal } from "@/components/ui/modal";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 type ReturnLineInput = {
   item_id: string;
@@ -72,6 +80,11 @@ type CreditNoteDetail = {
     total_cost: number;
     items: { name: string; uom: string };
   }[];
+  ap_return_credits: {
+    id: string;
+    amount: number;
+    ap_return_credit_refunds: { amount: number }[];
+  }[];
 };
 
 type ReplacementDetail = {
@@ -119,7 +132,9 @@ export function ApBillDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [bill, setBill] = useState<ApBill | null>(null);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
+  const [billDebitAccounts, setBillDebitAccounts] = useState<ResolvedAccount[]>([]);
+  const [inventoryAccountIds, setInventoryAccountIds] = useState<Set<string>>(new Set());
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [payments, setPayments] = useState<PaymentDetail[]>([]);
@@ -131,31 +146,24 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [supplierDeposits, setSupplierDeposits] = useState<ApDeposit[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("jurnal");
 
   const [showReturForm, setShowReturForm] = useState(false);
   const [returDate, setReturDate] = useState("");
-  const [returSourceRef, setReturSourceRef] = useState("");
   const [returAmount, setReturAmount] = useState("");
-  const [returPayableAccountId, setReturPayableAccountId] = useState("");
   const [returCreditAccountId, setReturCreditAccountId] = useState("");
-  const [returReturnCreditAssetAccountId, setReturReturnCreditAssetAccountId] = useState("");
   const [returLines, setReturLines] = useState<ReturnLineInput[]>([]);
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
   const [showReplaceForm, setShowReplaceForm] = useState(false);
   const [replaceDate, setReplaceDate] = useState("");
-  const [replaceSourceRef, setReplaceSourceRef] = useState("");
-  const [replaceInventoryAccountId, setReplaceInventoryAccountId] = useState("");
   const [replaceLines, setReplaceLines] = useState<ReplaceLineInput[]>([]);
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [replaceSubmitting, setReplaceSubmitting] = useState(false);
 
   const [showWriteoffForm, setShowWriteoffForm] = useState(false);
   const [writeoffDate, setWriteoffDate] = useState("");
-  const [writeoffSourceRef, setWriteoffSourceRef] = useState("");
-  const [writeoffLossExpenseAccountId, setWriteoffLossExpenseAccountId] = useState("");
-  const [writeoffInventoryAccountId, setWriteoffInventoryAccountId] = useState("");
   const [writeoffLines, setWriteoffLines] = useState<WriteoffLineInput[]>([]);
   const [writeoffError, setWriteoffError] = useState<string | null>(null);
   const [writeoffSubmitting, setWriteoffSubmitting] = useState(false);
@@ -167,19 +175,28 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [applyDepositId, setApplyDepositId] = useState("");
   const [applyAmount, setApplyAmount] = useState("");
   const [applyDate, setApplyDate] = useState("");
-  const [applySourceRef, setApplySourceRef] = useState("");
-  const [applyPayableAccountId, setApplyPayableAccountId] = useState("");
-  const [applyDepositAssetAccountId, setApplyDepositAssetAccountId] = useState("");
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applySubmitting, setApplySubmitting] = useState(false);
 
-  const leafAccounts = getLeafAccounts(accounts);
+  const [showPayForm, setShowPayForm] = useState(false);
+  const [payDate, setPayDate] = useState("");
+  const [payAmount, setPayAmount] = useState("");
+  const [payCashMethod, setPayCashMethod] = useState<CashMethod>("TUNAI");
+  const [payError, setPayError] = useState<string | null>(null);
+  const [paySubmitting, setPaySubmitting] = useState(false);
+
+  const [refundCreditId, setRefundCreditId] = useState<string | null>(null);
+  const [refundCreditAmount, setRefundCreditAmount] = useState("");
+  const [refundCreditDate, setRefundCreditDate] = useState("");
+  const [refundCreditCashMethod, setRefundCreditCashMethod] = useState<CashMethod>("TUNAI");
+  const [refundCreditError, setRefundCreditError] = useState<string | null>(null);
+  const [refundCreditSubmitting, setRefundCreditSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     const { data: b, error: billErr } = await supabase
       .from("ap_bills")
       .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount)"
+        "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
       )
       .eq("id", id)
       .single();
@@ -191,7 +208,9 @@ export function ApBillDetailView({ id }: { id: string }) {
     setBill(loadedBill);
 
     const [
-      { data: accs },
+      defaultAccountsMap,
+      { data: debitLineRows },
+      { data: itemAccountRows },
       { data: reversedRows },
       { data: entries, error: entriesErr },
       { data: pays, error: paysErr },
@@ -202,10 +221,13 @@ export function ApBillDetailView({ id }: { id: string }) {
       { data: depApps, error: depAppErr },
       { data: supDeposits, error: supDepositsErr },
     ] = await Promise.all([
+      fetchDefaultAccounts(),
       supabase
-        .from("accounts")
-        .select("id, code, name, category, normal_balance, parent_id, archived_at")
-        .order("code"),
+        .from("ap_bill_debit_lines")
+        .select("account_id, accounts(code, name)")
+        .eq("ap_bill_id", id)
+        .eq("is_tax", false),
+      supabase.from("items").select("inventory_account_id"),
       supabase
         .from("journal_entries")
         .select("reverses_entry_id")
@@ -225,7 +247,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       supabase
         .from("ap_credit_notes")
         .select(
-          "id, credit_note_date, source_ref, amount, created_at, purchase_return_lines(item_id, qty_returned, total_cost, items(name, uom))"
+          "id, credit_note_date, source_ref, amount, created_at, purchase_return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits(id, amount, ap_return_credit_refunds(amount))"
         )
         .eq("bill_id", id)
         .order("credit_note_date"),
@@ -261,7 +283,21 @@ export function ApBillDetailView({ id }: { id: string }) {
         .order("deposit_date"),
     ]);
 
-    setAccounts((accs ?? []) as Account[]);
+    setDefaultAccounts(defaultAccountsMap);
+    const debitLines = (debitLineRows ?? []) as unknown as {
+      account_id: string;
+      accounts: { code: string; name: string };
+    }[];
+    const uniqueDebitAccounts = new Map<string, ResolvedAccount>();
+    for (const l of debitLines) {
+      uniqueDebitAccounts.set(l.account_id, { id: l.account_id, code: l.accounts.code, name: l.accounts.name });
+    }
+    setBillDebitAccounts(Array.from(uniqueDebitAccounts.values()));
+    setInventoryAccountIds(
+      new Set(
+        ((itemAccountRows ?? []) as { inventory_account_id: string }[]).map((r) => r.inventory_account_id)
+      )
+    );
     setReversedEntryIds(
       new Set(((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
     );
@@ -333,14 +369,23 @@ export function ApBillDetailView({ id }: { id: string }) {
     return map;
   }
 
+  /**
+   * Jalur financial-only (gak ada goods receipt) gak boleh nawarin akun Persediaan sebagai
+   * akun kredit retur -- retur Persediaan wajib lewat qty fisik (mirror guard di
+   * create_ap_credit_note, migration 0019). Jalur fisik (ada goods receipt) sebaliknya MEMANG
+   * butuh akun Persediaan, jadi gak difilter.
+   */
+  function returCreditAccountOptions(): ResolvedAccount[] {
+    return goodsReceipt
+      ? billDebitAccounts
+      : billDebitAccounts.filter((a) => !inventoryAccountIds.has(a.id));
+  }
+
   function openReturForm() {
     setReturError(null);
     setReturDate("");
-    setReturSourceRef("");
     setReturAmount("");
-    setReturPayableAccountId("");
-    setReturCreditAccountId("");
-    setReturReturnCreditAssetAccountId("");
+    setReturCreditAccountId(returCreditAccountOptions()[0]?.id ?? "");
     const claimed = claimedQtyByItem();
     setReturLines(
       goodsReceipt
@@ -385,12 +430,11 @@ export function ApBillDetailView({ id }: { id: string }) {
     const parsed = createApCreditNoteSchema.safeParse({
       bill_id: bill.id,
       credit_note_date: returDate,
-      source_ref: returSourceRef,
       amount: goodsReceipt ? estimatedAmount : returAmount,
-      payable_account_id: returPayableAccountId,
+      payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
       credit_account_id: returCreditAccountId,
       lines: activeLines,
-      return_credit_asset_account_id: returReturnCreditAssetAccountId || undefined,
+      return_credit_asset_account_id: defaultAccounts["ap.return_credit_asset"]?.id || undefined,
     });
     if (!parsed.success) {
       setReturError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -398,10 +442,18 @@ export function ApBillDetailView({ id }: { id: string }) {
     }
 
     setReturSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ap_credit_notes");
+    } catch (err) {
+      setReturSubmitting(false);
+      setReturError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_ap_credit_note", {
       p_bill_id: parsed.data.bill_id,
       p_credit_note_date: parsed.data.credit_note_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_amount: parsed.data.amount,
       p_payable_account_id: parsed.data.payable_account_id,
       p_credit_account_id: parsed.data.credit_account_id,
@@ -421,8 +473,6 @@ export function ApBillDetailView({ id }: { id: string }) {
   function openReplaceForm() {
     setReplaceError(null);
     setReplaceDate("");
-    setReplaceSourceRef("");
-    setReplaceInventoryAccountId("");
     const claimed = claimedQtyByItem();
     setReplaceLines(
       goodsReceipt
@@ -461,9 +511,8 @@ export function ApBillDetailView({ id }: { id: string }) {
     const parsed = createPurchaseReplacementSchema.safeParse({
       bill_id: bill.id,
       replacement_date: replaceDate,
-      source_ref: replaceSourceRef,
       lines: activeLines,
-      inventory_account_id: replaceInventoryAccountId,
+      inventory_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
     });
     if (!parsed.success) {
       setReplaceError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -471,10 +520,18 @@ export function ApBillDetailView({ id }: { id: string }) {
     }
 
     setReplaceSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("purchase_replacements");
+    } catch (err) {
+      setReplaceSubmitting(false);
+      setReplaceError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_purchase_replacement", {
       p_bill_id: parsed.data.bill_id,
       p_replacement_date: parsed.data.replacement_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
       p_inventory_account_id: parsed.data.inventory_account_id,
     });
@@ -491,9 +548,6 @@ export function ApBillDetailView({ id }: { id: string }) {
   function openWriteoffForm() {
     setWriteoffError(null);
     setWriteoffDate("");
-    setWriteoffSourceRef("");
-    setWriteoffLossExpenseAccountId("");
-    setWriteoffInventoryAccountId("");
     const claimed = claimedQtyByItem();
     setWriteoffLines(
       goodsReceipt
@@ -532,10 +586,9 @@ export function ApBillDetailView({ id }: { id: string }) {
     const parsed = createPurchaseWriteoffSchema.safeParse({
       bill_id: bill.id,
       writeoff_date: writeoffDate,
-      source_ref: writeoffSourceRef,
       lines: activeLines,
-      loss_expense_account_id: writeoffLossExpenseAccountId,
-      inventory_account_id: writeoffInventoryAccountId,
+      loss_expense_account_id: defaultAccounts["inventory.damage_loss_expense"]?.id ?? "",
+      inventory_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
     });
     if (!parsed.success) {
       setWriteoffError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -543,10 +596,18 @@ export function ApBillDetailView({ id }: { id: string }) {
     }
 
     setWriteoffSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("purchase_writeoffs");
+    } catch (err) {
+      setWriteoffSubmitting(false);
+      setWriteoffError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_purchase_writeoff", {
       p_bill_id: parsed.data.bill_id,
       p_writeoff_date: parsed.data.writeoff_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
       p_loss_expense_account_id: parsed.data.loss_expense_account_id,
       p_inventory_account_id: parsed.data.inventory_account_id,
@@ -563,18 +624,22 @@ export function ApBillDetailView({ id }: { id: string }) {
 
   async function handleCancel() {
     if (!bill) return;
-    const reasonRef = window.prompt(
-      `Batalkan bill ${bill.source_ref} (Rp${bill.amount.toLocaleString("id-ID")})?\nMasukin rujukan dokumen buat entry pembalik:`,
-      `Pembatalan ${bill.source_ref}`
-    );
-    if (!reasonRef) return;
+    if (!window.confirm(`Batalkan bill ${bill.source_ref} (Rp${bill.amount.toLocaleString("id-ID")})?`)) return;
 
     setCancelError(null);
     setCancelling(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("journal_entries");
+    } catch (err) {
+      setCancelling(false);
+      setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("cancel_ap_bill", {
       p_bill_id: bill.id,
       p_entry_date: new Date().toISOString().slice(0, 10),
-      p_source_ref: reasonRef,
+      p_source_ref: sourceRef,
     });
     setCancelling(false);
     if (error) {
@@ -589,9 +654,6 @@ export function ApBillDetailView({ id }: { id: string }) {
     setApplyDepositId("");
     setApplyAmount("");
     setApplyDate("");
-    setApplySourceRef("");
-    setApplyPayableAccountId("");
-    setApplyDepositAssetAccountId("");
     setShowApplyForm(true);
   }
 
@@ -605,9 +667,8 @@ export function ApBillDetailView({ id }: { id: string }) {
       bill_id: bill.id,
       amount: applyAmount,
       entry_date: applyDate,
-      source_ref: applySourceRef,
-      payable_account_id: applyPayableAccountId,
-      deposit_asset_account_id: applyDepositAssetAccountId,
+      payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
+      deposit_asset_account_id: defaultAccounts["ap.deposit_asset"]?.id ?? "",
     });
     if (!parsed.success) {
       setApplyError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -615,12 +676,20 @@ export function ApBillDetailView({ id }: { id: string }) {
     }
 
     setApplySubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ap_deposit_applications");
+    } catch (err) {
+      setApplySubmitting(false);
+      setApplyError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("apply_ap_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_bill_id: parsed.data.bill_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_payable_account_id: parsed.data.payable_account_id,
       p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
     });
@@ -634,6 +703,112 @@ export function ApBillDetailView({ id }: { id: string }) {
     await load();
   }
 
+  function openPayForm() {
+    setPayError(null);
+    setPayDate("");
+    setPayAmount("");
+    setPayCashMethod("TUNAI");
+    setShowPayForm(true);
+  }
+
+  async function handlePaySubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!bill) return;
+    setPayError(null);
+
+    const parsed = recordApPaymentSchema.safeParse({
+      supplier_id: bill.supplier_id,
+      payment_date: payDate,
+      amount: payAmount,
+      payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
+      cash_account_id: resolveCashAccount(payCashMethod, defaultAccounts)?.id ?? "",
+      bill_id: bill.id,
+    });
+    if (!parsed.success) {
+      setPayError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setPaySubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ap_payments");
+    } catch (err) {
+      setPaySubmitting(false);
+      setPayError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+    const { error } = await supabase.rpc("record_ap_payment", {
+      p_supplier_id: parsed.data.supplier_id,
+      p_payment_date: parsed.data.payment_date,
+      p_amount: parsed.data.amount,
+      p_source_ref: sourceRef,
+      p_payable_account_id: parsed.data.payable_account_id,
+      p_cash_account_id: parsed.data.cash_account_id,
+      p_bill_id: parsed.data.bill_id,
+    });
+    setPaySubmitting(false);
+    if (error) {
+      setPayError(error.message);
+      return;
+    }
+
+    setShowPayForm(false);
+    await load();
+  }
+
+  function openRefundCreditForm(creditId: string) {
+    setRefundCreditError(null);
+    setRefundCreditAmount("");
+    setRefundCreditDate("");
+    setRefundCreditCashMethod("TUNAI");
+    setRefundCreditId(creditId);
+  }
+
+  async function handleRefundCreditSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!refundCreditId) return;
+    setRefundCreditError(null);
+
+    const parsed = refundApReturnCreditSchema.safeParse({
+      credit_id: refundCreditId,
+      amount: refundCreditAmount,
+      entry_date: refundCreditDate,
+      return_credit_asset_account_id: defaultAccounts["ap.return_credit_asset"]?.id ?? "",
+      cash_account_id: resolveCashAccount(refundCreditCashMethod, defaultAccounts)?.id ?? "",
+    });
+    if (!parsed.success) {
+      setRefundCreditError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setRefundCreditSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("ap_return_credit_refunds");
+    } catch (err) {
+      setRefundCreditSubmitting(false);
+      setRefundCreditError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+    const { error } = await supabase.rpc("refund_ap_return_credit", {
+      p_credit_id: parsed.data.credit_id,
+      p_amount: parsed.data.amount,
+      p_entry_date: parsed.data.entry_date,
+      p_source_ref: sourceRef,
+      p_return_credit_asset_account_id: parsed.data.return_credit_asset_account_id,
+      p_cash_account_id: parsed.data.cash_account_id,
+    });
+    setRefundCreditSubmitting(false);
+    if (error) {
+      setRefundCreditError(error.message);
+      return;
+    }
+
+    setRefundCreditId(null);
+    await load();
+  }
+
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -643,9 +818,10 @@ export function ApBillDetailView({ id }: { id: string }) {
   }
 
   const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
-  const { status, outstanding, allocated, returned } = billStatus(bill, isCancelled);
+  const { status, outstanding, allocated, returned, depositApplied } = billStatus(bill, isCancelled);
   const overdue = status !== "lunas" && status !== "dibatalkan" && bill.due_date < new Date().toISOString().slice(0, 10);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
+  const canPay = canWrite && !isCancelled && outstanding > 0.005;
   const canRetur = canWrite && !isCancelled;
   const canReplace = canWrite && !isCancelled && goodsReceipt !== null;
   const canWriteoff = canWrite && !isCancelled && goodsReceipt !== null;
@@ -657,381 +833,425 @@ export function ApBillDetailView({ id }: { id: string }) {
   const selectedDeposit = availableDeposits.find((dep) => dep.id === applyDepositId) ?? null;
   const selectedDepositRemaining = selectedDeposit ? depositStatus(selectedDeposit, reversedEntryIds).remaining : 0;
 
-  return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
-      <BackLink href="/ap-bills" label="Kembali ke AP Bills" />
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-black">
-              {bill.suppliers.name} — {bill.source_ref}
-            </h1>
+  const tabs: TabDef[] = [
+    { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
+    { key: "pembayaran", label: "Pembayaran", badge: payments.length },
+    { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
+    { key: "retur", label: "Retur — Kurangi Utang", badge: creditNotes.length },
+    { key: "tukar", label: "Tukar Barang", badge: replacements.length },
+    { key: "writeoff", label: "Tulis-jadi-Beban", badge: writeoffs.length },
+  ];
+
+  const detailGroups = [
+    {
+      title: "Informasi Bill",
+      rows: [
+        { label: "Supplier", value: bill.suppliers.name },
+        { label: "Rujukan Dokumen", value: bill.source_ref },
+        { label: "Nomor Nota Supplier", value: bill.supplier_document_ref || "-" },
+        { label: "Tanggal Bill", value: bill.bill_date },
+        {
+          label: "Jatuh Tempo",
+          value: (
+            <>
+              {bill.due_date}
+              {overdue && <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">Telat</span>}
+            </>
+          ),
+        },
+        { label: "Deskripsi", value: bill.description || "-" },
+        {
+          label: "Status",
+          value: (
             <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>{status}</span>
-            {overdue && <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">Telat</span>}
-          </div>
-          <p className="text-sm text-slate-500">
-            {bill.bill_date} · Jatuh tempo {bill.due_date}
-            {bill.description && ` · ${bill.description}`}
-          </p>
-        </div>
-        <div className="flex items-start gap-4">
-          <div className="text-right">
-            <div className="text-xs uppercase text-slate-400">Outstanding</div>
-            <div className="font-mono text-lg font-medium text-black">{outstanding.toLocaleString("id-ID")}</div>
-          </div>
-          <div className="flex gap-1.5">
-            {canRetur && (
-              <Button variant="toolbar" onClick={() => (showReturForm ? setShowReturForm(false) : openReturForm())}>
-                {showReturForm ? "Batal Retur" : "Retur — Kurangi Utang"}
-              </Button>
-            )}
-            {canReplace && (
-              <Button
-                variant="toolbar"
-                onClick={() => (showReplaceForm ? setShowReplaceForm(false) : openReplaceForm())}
-              >
-                {showReplaceForm ? "Batal Tukar Barang" : "Tukar Barang"}
-              </Button>
-            )}
-            {canWriteoff && (
-              <Button
-                variant="toolbar"
-                onClick={() => (showWriteoffForm ? setShowWriteoffForm(false) : openWriteoffForm())}
-              >
-                {showWriteoffForm ? "Batal Tulis-jadi-Beban" : "Tulis-jadi-Beban"}
-              </Button>
-            )}
-            {canApplyDeposit && (
-              <Button variant="toolbar" onClick={() => (showApplyForm ? setShowApplyForm(false) : openApplyForm())}>
-                {showApplyForm ? "Batal Terapkan DP" : "Terapkan DP"}
-              </Button>
-            )}
-            {canCancel && (
-              <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
-                {cancelling ? "Membatalkan..." : "Batalkan Bill"}
-              </Button>
-            )}
-          </div>
-        </div>
+          ),
+        },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [
+        { label: "Jumlah Bill", value: bill.amount.toLocaleString("id-ID") },
+        { label: "Terbayar (Kas/Bank)", value: allocated.toLocaleString("id-ID") },
+        { label: "DP Diterapkan", value: depositApplied.toLocaleString("id-ID") },
+        { label: "Retur", value: returned.toLocaleString("id-ID") },
+        { label: "Outstanding", value: outstanding.toLocaleString("id-ID") },
+      ],
+    },
+  ];
+
+  return (
+    <div className="flex w-full flex-1 flex-col gap-6">
+      <BackLink href="/ap-bills" label="Kembali ke AP Bills" />
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">AP Bill Details</h1>
+        {canCancel && (
+          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+            {cancelling ? "Membatalkan..." : "Batalkan Bill"}
+          </Button>
+        )}
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
       {cancelError && <FormError>{cancelError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Jumlah Bill</dt>
-            <dd className="font-mono text-black">{bill.amount.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Terbayar</dt>
-            <dd className="font-mono text-black">{allocated.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Retur</dt>
-            <dd className="font-mono text-black">{returned.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Outstanding</dt>
-            <dd className="font-mono font-medium text-black">{outstanding.toLocaleString("id-ID")}</dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Jurnal Terkait</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {journalEntries.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Deskripsi</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Baris</th>
-            </tr>
-          </thead>
-          <tbody>
-            {journalEntries.map((entry) => (
-              <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
-                <td className="px-4 py-2">
-                  {entry.description}
-                  {entry.reverses_entry_id && (
-                    <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Reversal</span>
-                  )}
-                </td>
-                <td className="px-4 py-2">{entry.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {entry.journal_lines.map((line) => (
-                      <li key={line.id}>
-                        {line.accounts.code} {line.accounts.name} —{" "}
-                        {line.debit > 0 ? `D ${line.debit.toLocaleString("id-ID")}` : `K ${line.credit.toLocaleString("id-ID")}`}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
-              </tr>
-            ))}
-            {journalEntries.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada jurnal.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Pembayaran</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {payments.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2 text-right">Jumlah</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payments.map((p) => (
-              <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
-                <td className="px-4 py-2">{p.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
+      {activeTab === "jurnal" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">Deskripsi</th>
+                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Baris</th>
               </tr>
-            ))}
-            {payments.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada pembayaran.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">DP Diterapkan</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {depositApplications.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Dari Deposit</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {depositApplications.map((a) => (
-              <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="px-4 py-2">{a.source_ref}</td>
-                <td className="px-4 py-2">{a.ap_deposits.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
-              </tr>
-            ))}
-            {depositApplications.length === 0 && (
-              <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada DP yang diterapkan.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Retur (Kurangi Utang)</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {creditNotes.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Jalur</th>
-              <th className="px-4 py-2">Item Diretur</th>
-              <th className="px-4 py-2 text-right">Nominal</th>
-            </tr>
-          </thead>
-          <tbody>
-            {creditNotes.map((cn) => {
-              const isFull = cn.purchase_return_lines.length > 0;
-              return (
-                <tr key={cn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                  <td className="whitespace-nowrap px-4 py-2">{cn.credit_note_date}</td>
-                  <td className="px-4 py-2">{cn.source_ref}</td>
+            </thead>
+            <tbody>
+              {journalEntries.map((entry) => (
+                <tr key={entry.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                  <td className="whitespace-nowrap px-4 py-2">{entry.entry_date}</td>
                   <td className="px-4 py-2">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        isFull ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {isFull ? "Full (stok)" : "Financial-only"}
-                    </span>
+                    {entry.description}
+                    {entry.reverses_entry_id && (
+                      <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Reversal</span>
+                    )}
                   </td>
+                  <td className="px-4 py-2">{entry.source_ref}</td>
                   <td className="px-4 py-2">
-                    {isFull ? (
+                    <ul className="space-y-0.5">
+                      {entry.journal_lines.map((line) => (
+                        <li key={line.id}>
+                          {line.accounts.code} {line.accounts.name} —{" "}
+                          {line.debit > 0 ? `D ${line.debit.toLocaleString("id-ID")}` : `K ${line.credit.toLocaleString("id-ID")}`}
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                </tr>
+              ))}
+              {journalEntries.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                    Belum ada jurnal.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeTab === "pembayaran" && (
+        <div className="flex flex-col gap-3">
+          {canPay && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openPayForm}>
+                Bayar
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2 text-right">Jumlah</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map((p) => (
+                  <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
+                    <td className="px-4 py-2">{p.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
+                  </tr>
+                ))}
+                {payments.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada pembayaran.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "dp" && (
+        <div className="flex flex-col gap-3">
+          {canApplyDeposit && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openApplyForm}>
+                Terapkan DP
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Dari Deposit</th>
+                  <th className="px-4 py-2 text-right">Nominal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {depositApplications.map((a) => (
+                  <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-2">{a.source_ref}</td>
+                    <td className="px-4 py-2">{a.ap_deposits.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{a.amount.toLocaleString("id-ID")}</td>
+                  </tr>
+                ))}
+                {depositApplications.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada DP yang diterapkan.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "retur" && (
+        <div className="flex flex-col gap-3">
+          {canRetur && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openReturForm}>
+                Retur — Kurangi Utang
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Jalur</th>
+                  <th className="px-4 py-2">Item Diretur</th>
+                  <th className="px-4 py-2 text-right">Nominal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {creditNotes.map((cn) => {
+                  const isFull = cn.purchase_return_lines.length > 0;
+                  return (
+                    <tr key={cn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                      <td className="whitespace-nowrap px-4 py-2">{cn.credit_note_date}</td>
+                      <td className="px-4 py-2">{cn.source_ref}</td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs ${
+                            isFull ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
+                          }`}
+                        >
+                          {isFull ? "Full (stok)" : "Financial-only"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2">
+                        {isFull ? (
+                          <ul className="space-y-0.5">
+                            {cn.purchase_return_lines.map((l) => (
+                              <li key={l.item_id}>
+                                {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
+                                {l.total_cost.toLocaleString("id-ID")})
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono">{cn.amount.toLocaleString("id-ID")}</td>
+                    </tr>
+                  );
+                })}
+                {creditNotes.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada retur.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {creditNotes.some((cn) => cn.ap_return_credits.length > 0) && (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-4 py-2">
+                <span className="text-sm font-medium text-black">Piutang Retur Supplier</span>
+              </div>
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                    <th className="px-4 py-2">Source Retur</th>
+                    <th className="px-4 py-2 text-right">Jumlah Awal</th>
+                    <th className="px-4 py-2 text-right">Sudah Direfund</th>
+                    <th className="px-4 py-2 text-right">Sisa</th>
+                    <th className="px-4 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {creditNotes.flatMap((cn) =>
+                    cn.ap_return_credits.map((rc) => {
+                      const used = rc.ap_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
+                      const remaining = rc.amount - used;
+                      return (
+                        <tr key={rc.id} className="border-b border-slate-100 hover:bg-slate-50">
+                          <td className="px-4 py-2">{cn.source_ref}</td>
+                          <td className="px-4 py-2 text-right font-mono">{rc.amount.toLocaleString("id-ID")}</td>
+                          <td className="px-4 py-2 text-right font-mono">{used.toLocaleString("id-ID")}</td>
+                          <td className="px-4 py-2 text-right font-mono font-medium">
+                            {remaining.toLocaleString("id-ID")}
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            {canWrite && remaining > 0.005 && (
+                              <Button variant="toolbar" onClick={() => openRefundCreditForm(rc.id)}>
+                                Refund Tunai
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "tukar" && (
+        <div className="flex flex-col gap-3">
+          {canReplace && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openReplaceForm}>
+                Tukar Barang
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Item Ditukar</th>
+                  <th className="px-4 py-2 text-right">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {replacements.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{r.replacement_date}</td>
+                    <td className="px-4 py-2">{r.source_ref}</td>
+                    <td className="px-4 py-2">
                       <ul className="space-y-0.5">
-                        {cn.purchase_return_lines.map((l) => (
+                        {r.purchase_replacement_lines.map((l) => (
                           <li key={l.item_id}>
-                            {l.items.name} — {l.qty_returned} {l.items.uom} (cost {l.total_cost.toLocaleString("id-ID")})
+                            {l.items.name} — {l.qty_replaced} {l.items.uom}
                           </li>
                         ))}
                       </ul>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono">{cn.amount.toLocaleString("id-ID")}</td>
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      {r.purchase_replacement_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
+                    </td>
+                  </tr>
+                ))}
+                {replacements.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada tukar barang.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "writeoff" && (
+        <div className="flex flex-col gap-3">
+          {canWriteoff && (
+            <div className="flex justify-end">
+              <Button variant="toolbar" onClick={openWriteoffForm}>
+                Tulis-jadi-Beban
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Item Ditulis-jadi-Beban</th>
+                  <th className="px-4 py-2 text-right">Cost</th>
                 </tr>
-              );
-            })}
-            {creditNotes.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada retur.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Tukar Barang</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {replacements.length}
-          </span>
+              </thead>
+              <tbody>
+                {writeoffs.map((w) => (
+                  <tr key={w.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-2">{w.writeoff_date}</td>
+                    <td className="px-4 py-2">{w.source_ref}</td>
+                    <td className="px-4 py-2">
+                      <ul className="space-y-0.5">
+                        {w.purchase_writeoff_lines.map((l) => (
+                          <li key={l.item_id}>
+                            {l.items.name} — {l.qty_written_off} {l.items.uom}
+                          </li>
+                        ))}
+                      </ul>
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      {w.purchase_writeoff_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
+                    </td>
+                  </tr>
+                ))}
+                {writeoffs.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada write-off.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Item Ditukar</th>
-              <th className="px-4 py-2 text-right">Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {replacements.map((r) => (
-              <tr key={r.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{r.replacement_date}</td>
-                <td className="px-4 py-2">{r.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {r.purchase_replacement_lines.map((l) => (
-                      <li key={l.item_id}>
-                        {l.items.name} — {l.qty_replaced} {l.items.uom}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {r.purchase_replacement_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
-                </td>
-              </tr>
-            ))}
-            {replacements.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada tukar barang.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      )}
 
-      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Tulis-jadi-Beban (Kerugian Barang Rusak)</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {writeoffs.length}
-          </span>
-        </div>
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
-              <th className="px-4 py-2">Item Ditulis-jadi-Beban</th>
-              <th className="px-4 py-2 text-right">Cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            {writeoffs.map((w) => (
-              <tr key={w.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                <td className="whitespace-nowrap px-4 py-2">{w.writeoff_date}</td>
-                <td className="px-4 py-2">{w.source_ref}</td>
-                <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {w.purchase_writeoff_lines.map((l) => (
-                      <li key={l.item_id}>
-                        {l.items.name} — {l.qty_written_off} {l.items.uom}
-                      </li>
-                    ))}
-                  </ul>
-                </td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {w.purchase_writeoff_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
-                </td>
-              </tr>
-            ))}
-            {writeoffs.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada write-off.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {showReturForm && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Retur — Kurangi Utang</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            {goodsReceipt
-              ? "Bill ini lewat Goods Receipt — isi qty per item yang diretur, stok otomatis berkurang dan Utang Usaha dikurangi sebesar cost fisik barang (bukan angka yang kamu ketik). Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."
-              : "Bill ini gak lewat Goods Receipt — retur cuma ngurangin Utang Usaha lewat nominal yang kamu isi, gak ada stok yang disentuh. Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."}
-          </p>
-          <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <Modal
+        open={showReturForm}
+        onClose={() => setShowReturForm(false)}
+        title="Retur — Kurangi Utang"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          {goodsReceipt
+            ? "Bill ini lewat Goods Receipt — isi qty per item yang diretur, stok otomatis berkurang dan Utang Usaha dikurangi sebesar cost fisik barang (bukan angka yang kamu ketik). Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."
+            : "Bill ini gak lewat Goods Receipt — retur cuma ngurangin Utang Usaha lewat nominal yang kamu isi, gak ada stok yang disentuh. Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."}
+        </p>
+        <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="retur_date">Tanggal Retur</Label>
                 <Input id="retur_date" type="date" value={returDate} onChange={(e) => setReturDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="retur_source_ref"
-                  placeholder="mis. Retur-001"
-                  value={returSourceRef}
-                  onChange={(e) => setReturSourceRef(e.target.value)}
-                />
               </div>
               {!goodsReceipt && (
                 <div className="flex flex-col gap-1.5">
@@ -1046,21 +1266,11 @@ export function ApBillDetailView({ id }: { id: string }) {
                   />
                 </div>
               )}
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_payable_account">Akun Utang Usaha (debit)</Label>
-                <Select
-                  id="retur_payable_account"
-                  value={returPayableAccountId}
-                  onChange={(e) => setReturPayableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <LockedAccountField
+                label="Akun Utang Usaha (debit)"
+                htmlFor="retur_payable_account"
+                resolved={defaultAccounts["ap.payable"]}
+              />
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="retur_credit_account">Akun Persediaan/Beban (kredit)</Label>
                 <Select
@@ -1069,30 +1279,31 @@ export function ApBillDetailView({ id }: { id: string }) {
                   onChange={(e) => setReturCreditAccountId(e.target.value)}
                 >
                   <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
+                  {returCreditAccountOptions().map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.code} — {a.name}
                     </option>
                   ))}
                 </Select>
+                {returCreditAccountOptions().length === 0 && (
+                  <p className="text-xs text-amber-600">
+                    {goodsReceipt
+                      ? "Gak ketemu baris debit di bill ini — hubungi admin."
+                      : "Bill ini cuma didebit ke akun Persediaan, tanpa Goods Receipt — retur Persediaan wajib lewat Goods Receipt (bukti fisik). Hubungi admin kalau perlu retur bill ini."}
+                  </p>
+                )}
+                {returCreditAccountOptions().length > 1 && (
+                  <p className="text-xs text-slate-500">
+                    Bill ini punya {returCreditAccountOptions().length} kategori debit berbeda — pilih yang mana yang
+                    diretur.
+                  </p>
+                )}
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_return_credit_asset_account">
-                  Akun Piutang Retur Supplier (debit, cuma kalau retur ini bikin Utang Usaha jadi minus)
-                </Label>
-                <Select
-                  id="retur_return_credit_asset_account"
-                  value={returReturnCreditAssetAccountId}
-                  onChange={(e) => setReturReturnCreditAssetAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun (opsional)...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <LockedAccountField
+                label="Akun Piutang Retur Supplier (debit, cuma kalau retur ini bikin Utang Usaha jadi minus)"
+                htmlFor="retur_return_credit_asset_account"
+                resolved={defaultAccounts["ap.return_credit_asset"]}
+              />
             </div>
 
             {goodsReceipt && (
@@ -1124,281 +1335,338 @@ export function ApBillDetailView({ id }: { id: string }) {
 
             {returError && <FormError>{returError}</FormError>}
 
-            <Button type="submit" disabled={returSubmitting} className="w-fit">
-              {returSubmitting ? "Menyimpan..." : "Simpan Retur"}
-            </Button>
-          </form>
-        </div>
-      )}
-
-      {showReplaceForm && (
-        <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tukar Barang</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Barang rusak keluar, barang baik masuk — murni reklasifikasi stok, gak nyentuh Utang
-            Usaha sama sekali (berdiri sendiri, gak lewat retur Opsi A). Utang Usaha bill ini
-            tetap penuh.
-          </p>
-          <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_date">Tanggal</Label>
-                <Input id="replace_date" type="date" value={replaceDate} onChange={(e) => setReplaceDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="replace_source_ref"
-                  placeholder="mis. Tukar-001"
-                  value={replaceSourceRef}
-                  onChange={(e) => setReplaceSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="replace_inventory_account">Akun Persediaan (debit barang masuk & kredit barang keluar)</Label>
-                <Select
-                  id="replace_inventory_account"
-                  value={replaceInventoryAccountId}
-                  onChange={(e) => setReplaceInventoryAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowReturForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={returSubmitting}>
+                {returSubmitting ? "Menyimpan..." : "Simpan Retur"}
+              </Button>
             </div>
+        </form>
+      </Modal>
 
-            <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
-                <span>Item Diterima (sisa bisa diklaim)</span>
-                <span>Qty Tukar</span>
-              </div>
-              {replaceLines.map((line) => (
-                <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                  <span className="flex items-center text-sm text-slate-700">
-                    {line.name} ({line.qty_available} {line.uom})
-                  </span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max={line.qty_available}
-                    placeholder="0"
-                    value={line.qty}
-                    onChange={(e) => updateReplaceLine(line.item_id, e.target.value)}
-                  />
-                </div>
-              ))}
-              {replaceLines.length === 0 && (
-                <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur, tukar barang, atau write-off).</p>
-              )}
+      <Modal
+        open={showReplaceForm}
+        onClose={() => setShowReplaceForm(false)}
+        title="Tukar Barang"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Barang rusak keluar, barang baik masuk — murni reklasifikasi stok, gak nyentuh Utang
+          Usaha sama sekali (berdiri sendiri, gak lewat retur Opsi A). Utang Usaha bill ini
+          tetap penuh.
+        </p>
+        <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="replace_date">Tanggal</Label>
+              <Input id="replace_date" type="date" value={replaceDate} onChange={(e) => setReplaceDate(e.target.value)} />
             </div>
+            <LockedAccountField
+              label="Akun Persediaan (debit barang masuk & kredit barang keluar)"
+              htmlFor="replace_inventory_account"
+              resolved={defaultAccounts["inventory.raw_material"]}
+            />
+          </div>
 
-            {replaceError && <FormError>{replaceError}</FormError>}
-
-            <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0} className="w-fit">
-              {replaceSubmitting ? "Menyimpan..." : "Simpan Tukar Barang"}
-            </Button>
-          </form>
-        </div>
-      )}
-
-      {showWriteoffForm && (
-        <div className="rounded-xl border border-red-200 bg-red-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tulis-jadi-Beban (Kerugian Barang Rusak)</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Supplier nolak kompensasi sama sekali — gak kurangin Utang Usaha, gak kirim
-            pengganti. Barang rusak ini murni kerugian yang ditanggung sendiri, diakui sebagai
-            Beban Kerugian Barang Rusak. Utang Usaha bill ini tetap penuh.
-          </p>
-          <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_date">Tanggal</Label>
-                <Input
-                  id="writeoff_date"
-                  type="date"
-                  value={writeoffDate}
-                  onChange={(e) => setWriteoffDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="writeoff_source_ref"
-                  placeholder="mis. WriteOff-001"
-                  value={writeoffSourceRef}
-                  onChange={(e) => setWriteoffSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_loss_expense_account">Akun Beban Kerugian Barang Rusak (debit)</Label>
-                <Select
-                  id="writeoff_loss_expense_account"
-                  value={writeoffLossExpenseAccountId}
-                  onChange={(e) => setWriteoffLossExpenseAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="writeoff_inventory_account">Akun Persediaan (kredit)</Label>
-                <Select
-                  id="writeoff_inventory_account"
-                  value={writeoffInventoryAccountId}
-                  onChange={(e) => setWriteoffInventoryAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+              <span>Item Diterima (sisa bisa diklaim)</span>
+              <span>Qty Tukar</span>
             </div>
-
-            <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
-                <span>Item Diterima (sisa bisa diklaim)</span>
-                <span>Qty Write-off</span>
-              </div>
-              {writeoffLines.map((line) => (
-                <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                  <span className="flex items-center text-sm text-slate-700">
-                    {line.name} ({line.qty_available} {line.uom})
-                  </span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max={line.qty_available}
-                    placeholder="0"
-                    value={line.qty}
-                    onChange={(e) => updateWriteoffLine(line.item_id, e.target.value)}
-                  />
-                </div>
-              ))}
-              {writeoffLines.length === 0 && (
-                <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur, tukar barang, atau write-off).</p>
-              )}
-            </div>
-
-            {writeoffError && <FormError>{writeoffError}</FormError>}
-
-            <Button type="submit" disabled={writeoffSubmitting || writeoffLines.length === 0} className="w-fit">
-              {writeoffSubmitting ? "Menyimpan..." : "Simpan Write-off"}
-            </Button>
-          </form>
-        </div>
-      )}
-
-      {showApplyForm && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Terapkan DP ke Bill Ini</h2>
-          <p className="mb-4 text-sm text-slate-600">
-            Reklasifikasi uang muka yang udah dibayar ke supplier ini jadi pengurang utang bill
-            ini — bukan pembayaran baru.
-          </p>
-          <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_deposit">Deposit</Label>
-                <Select
-                  id="apply_deposit"
-                  value={applyDepositId}
-                  onChange={(e) => {
-                    setApplyDepositId(e.target.value);
-                    const dep = availableDeposits.find((d) => d.id === e.target.value);
-                    if (dep) {
-                      const remaining = depositStatus(dep, reversedEntryIds).remaining;
-                      setApplyAmount(String(Math.min(remaining, outstanding)));
-                    }
-                  }}
-                >
-                  <option value="">Pilih deposit...</option>
-                  {availableDeposits.map((dep) => {
-                    const remaining = depositStatus(dep, reversedEntryIds).remaining;
-                    return (
-                      <option key={dep.id} value={dep.id}>
-                        {dep.source_ref} (sisa {remaining.toLocaleString("id-ID")})
-                      </option>
-                    );
-                  })}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_amount">
-                  Nominal Diterapkan {selectedDeposit && `(maks ${Math.min(selectedDepositRemaining, outstanding).toLocaleString("id-ID")})`}
-                </Label>
+            {replaceLines.map((line) => (
+              <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
+                <span className="flex items-center text-sm text-slate-700">
+                  {line.name} ({line.qty_available} {line.uom})
+                </span>
                 <Input
-                  id="apply_amount"
                   type="number"
                   min="0"
+                  max={line.qty_available}
                   placeholder="0"
-                  value={applyAmount}
-                  onChange={(e) => setApplyAmount(e.target.value)}
+                  value={line.qty}
+                  onChange={(e) => updateReplaceLine(line.item_id, e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_date">Tanggal</Label>
-                <Input id="apply_date" type="date" value={applyDate} onChange={(e) => setApplyDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_source_ref">Rujukan dokumen</Label>
-                <Input
-                  id="apply_source_ref"
-                  placeholder="mis. Nota Bahan Baku #001"
-                  value={applySourceRef}
-                  onChange={(e) => setApplySourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_payable_account">Akun Utang Usaha (debit)</Label>
-                <Select
-                  id="apply_payable_account"
-                  value={applyPayableAccountId}
-                  onChange={(e) => setApplyPayableAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="apply_deposit_asset_account">Akun Uang Muka Pembelian (kredit)</Label>
-                <Select
-                  id="apply_deposit_asset_account"
-                  value={applyDepositAssetAccountId}
-                  onChange={(e) => setApplyDepositAssetAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+            ))}
+            {replaceLines.length === 0 && (
+              <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur, tukar barang, atau write-off).</p>
+            )}
+          </div>
+
+          {replaceError && <FormError>{replaceError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowReplaceForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0}>
+              {replaceSubmitting ? "Menyimpan..." : "Simpan Tukar Barang"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showWriteoffForm}
+        onClose={() => setShowWriteoffForm(false)}
+        title="Tulis-jadi-Beban (Kerugian Barang Rusak)"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Supplier nolak kompensasi sama sekali — gak kurangin Utang Usaha, gak kirim
+          pengganti. Barang rusak ini murni kerugian yang ditanggung sendiri, diakui sebagai
+          Beban Kerugian Barang Rusak. Utang Usaha bill ini tetap penuh.
+        </p>
+        <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="writeoff_date">Tanggal</Label>
+              <Input
+                id="writeoff_date"
+                type="date"
+                value={writeoffDate}
+                onChange={(e) => setWriteoffDate(e.target.value)}
+              />
             </div>
+            <LockedAccountField
+              label="Akun Beban Kerugian Barang Rusak (debit)"
+              htmlFor="writeoff_loss_expense_account"
+              resolved={defaultAccounts["inventory.damage_loss_expense"]}
+            />
+            <LockedAccountField
+              label="Akun Persediaan (kredit)"
+              htmlFor="writeoff_inventory_account"
+              resolved={defaultAccounts["inventory.raw_material"]}
+            />
+          </div>
 
-            {applyError && <FormError>{applyError}</FormError>}
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+              <span>Item Diterima (sisa bisa diklaim)</span>
+              <span>Qty Write-off</span>
+            </div>
+            {writeoffLines.map((line) => (
+              <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
+                <span className="flex items-center text-sm text-slate-700">
+                  {line.name} ({line.qty_available} {line.uom})
+                </span>
+                <Input
+                  type="number"
+                  min="0"
+                  max={line.qty_available}
+                  placeholder="0"
+                  value={line.qty}
+                  onChange={(e) => updateWriteoffLine(line.item_id, e.target.value)}
+                />
+              </div>
+            ))}
+            {writeoffLines.length === 0 && (
+              <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur, tukar barang, atau write-off).</p>
+            )}
+          </div>
 
-            <Button type="submit" disabled={applySubmitting} className="w-fit">
+          {writeoffError && <FormError>{writeoffError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowWriteoffForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={writeoffSubmitting || writeoffLines.length === 0}>
+              {writeoffSubmitting ? "Menyimpan..." : "Simpan Write-off"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={showApplyForm}
+        onClose={() => setShowApplyForm(false)}
+        title="Terapkan DP ke Bill Ini"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Reklasifikasi uang muka yang udah dibayar ke supplier ini jadi pengurang utang bill
+          ini — bukan pembayaran baru.
+        </p>
+        <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="apply_deposit">Deposit</Label>
+              <Select
+                id="apply_deposit"
+                value={applyDepositId}
+                onChange={(e) => {
+                  setApplyDepositId(e.target.value);
+                  const dep = availableDeposits.find((d) => d.id === e.target.value);
+                  if (dep) {
+                    const remaining = depositStatus(dep, reversedEntryIds).remaining;
+                    setApplyAmount(String(Math.min(remaining, outstanding)));
+                  }
+                }}
+              >
+                <option value="">Pilih deposit...</option>
+                {availableDeposits.map((dep) => {
+                  const remaining = depositStatus(dep, reversedEntryIds).remaining;
+                  return (
+                    <option key={dep.id} value={dep.id}>
+                      {dep.source_ref} (sisa {remaining.toLocaleString("id-ID")})
+                    </option>
+                  );
+                })}
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="apply_amount">
+                Nominal Diterapkan {selectedDeposit && `(maks ${Math.min(selectedDepositRemaining, outstanding).toLocaleString("id-ID")})`}
+              </Label>
+              <Input
+                id="apply_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={applyAmount}
+                onChange={(e) => setApplyAmount(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="apply_date">Tanggal</Label>
+              <Input id="apply_date" type="date" value={applyDate} onChange={(e) => setApplyDate(e.target.value)} />
+            </div>
+            <LockedAccountField
+              label="Akun Utang Usaha (debit)"
+              htmlFor="apply_payable_account"
+              resolved={defaultAccounts["ap.payable"]}
+            />
+            <LockedAccountField
+              label="Akun Uang Muka Pembelian (kredit)"
+              htmlFor="apply_deposit_asset_account"
+              resolved={defaultAccounts["ap.deposit_asset"]}
+            />
+          </div>
+
+          {applyError && <FormError>{applyError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowApplyForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={applySubmitting}>
               {applySubmitting ? "Menyimpan..." : "Terapkan DP"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={showPayForm} onClose={() => setShowPayForm(false)} title="Catat Pembayaran" maxWidth="max-w-2xl">
+        <p className="mb-4 text-sm text-slate-500">
+          Payment selalu nutup bill ini spesifik, boleh cicil (kurang dari sisa outstanding), tapi
+          gak boleh lebih (overpay ditolak).
+        </p>
+        <form onSubmit={handlePaySubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="pay_date">Tanggal</Label>
+              <Input id="pay_date" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="pay_amount">
+                Jumlah dibayar (boleh cicil, maks {outstanding.toLocaleString("id-ID")})
+              </Label>
+              <Input
+                id="pay_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={payAmount}
+                onChange={(e) => setPayAmount(e.target.value)}
+              />
+            </div>
+            <LockedAccountField
+              label="Akun Utang Usaha (debit)"
+              htmlFor="pay_payable_account"
+              resolved={defaultAccounts["ap.payable"]}
+            />
+            <CashMethodField
+              label="Akun Kas/Bank (kredit)"
+              htmlFor="pay_cash_account"
+              method={payCashMethod}
+              onChange={setPayCashMethod}
+              defaultAccounts={defaultAccounts}
+            />
+          </div>
+
+          {payError && <FormError>{payError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowPayForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={paySubmitting}>
+              {paySubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={!!refundCreditId}
+        onClose={() => setRefundCreditId(null)}
+        title="Refund Tunai Piutang Retur Supplier"
+        maxWidth="max-w-2xl"
+      >
+        <p className="mb-4 text-sm text-slate-600">
+          Terima kembali sisa piutang retur ini dari supplier dalam bentuk kas/bank.
+        </p>
+        <form onSubmit={handleRefundCreditSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="refund_credit_amount">Nominal Refund</Label>
+              <Input
+                id="refund_credit_amount"
+                type="number"
+                min="0"
+                placeholder="0"
+                value={refundCreditAmount}
+                onChange={(e) => setRefundCreditAmount(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="refund_credit_date">Tanggal</Label>
+              <Input
+                id="refund_credit_date"
+                type="date"
+                value={refundCreditDate}
+                onChange={(e) => setRefundCreditDate(e.target.value)}
+              />
+            </div>
+            <CashMethodField
+              label="Akun Kas/Bank (debit)"
+              htmlFor="refund_credit_cash_account"
+              method={refundCreditCashMethod}
+              onChange={setRefundCreditCashMethod}
+              defaultAccounts={defaultAccounts}
+            />
+            <LockedAccountField
+              label="Akun Piutang Retur Supplier (kredit)"
+              htmlFor="refund_credit_asset_account"
+              resolved={defaultAccounts["ap.return_credit_asset"]}
+            />
+          </div>
+
+          {refundCreditError && <FormError>{refundCreditError}</FormError>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setRefundCreditId(null)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={refundCreditSubmitting}>
+              {refundCreditSubmitting ? "Menyimpan..." : "Refund"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

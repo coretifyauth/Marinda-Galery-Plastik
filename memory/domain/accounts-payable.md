@@ -105,7 +105,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`. Struktur m
 
 **Aturan Bisnis**
 - Kategori campur TIDAK mengubah cara Utang Usaha dihitung — tetap 1 angka total (subtotal kategori + PPN kalau ada).
-- `create_goods_receipt` (PO → GRN → Bill) TIDAK ikut dapat kategori campur — 1 GRN = barang dari 1 PO = selalu 1 kategori Persediaan, gak ada kebutuhan bisnis buat dipecah.
+- `create_goods_receipt` (PO → GRN → Bill) sekarang IKUT dapat kategori campur & PPN, mirror `create_ap_bill` (migration `0012_grn_compound_ppn.sql`) — 2 param baru di akhir signature (`p_extra_debit_lines`, `p_apply_tax`), internal-nya gabungin baris Persediaan dasar + baris tambahan sebelum manggil `create_ap_bill`. Ditutup (2026-08-12) setelah kebukti kasus nyata: pembelian formal lewat PO tetap bisa punya nota campuran ongkir+PPN, jadi asumsi lama "1 GRN = selalu 1 kategori" gak selalu benar.
 
 **Referensi:** `memory/architecture/data/ap-schema.md` submodule "Compounding & PPN".
 

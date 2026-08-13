@@ -14,7 +14,6 @@ export const purchaseWriteoffLineSchema = z.object({
 export const createPurchaseWriteoffSchema = z.object({
   bill_id: z.string().uuid("Pilih bill"),
   writeoff_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   lines: z.array(purchaseWriteoffLineSchema).min(1, "Isi minimal 1 baris item"),
   loss_expense_account_id: z.string().uuid("Pilih akun Beban Kerugian Barang Rusak"),
   inventory_account_id: z.string().uuid("Pilih akun Persediaan"),

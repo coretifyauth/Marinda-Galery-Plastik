@@ -5,12 +5,14 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import { closePeriodSchema, listPeriodClosings, nextPeriodStartDate, type PeriodClosing } from "@/lib/reports/period-closing";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError, FormHint } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
 
 export default function PeriodClosingPage() {
   const router = useRouter();
@@ -23,9 +25,9 @@ export default function PeriodClosingPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [retainedEarningsAccountId, setRetainedEarningsAccountId] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
 
   const leafAccounts = getLeafAccounts(accounts);
   const equityAccounts = leafAccounts.filter((a) => a.category === "equity");
@@ -88,7 +90,6 @@ export default function PeriodClosingPage() {
       start_date: startDate,
       end_date: endDate,
       retained_earnings_account_id: retainedEarningsAccountId,
-      source_ref: sourceRef,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -96,11 +97,19 @@ export default function PeriodClosingPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("period_closings");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("close_period", {
       p_start_date: parsed.data.start_date,
       p_end_date: parsed.data.end_date,
       p_retained_earnings_account_id: parsed.data.retained_earnings_account_id,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
     });
     setSubmitting(false);
     if (error) {
@@ -109,12 +118,12 @@ export default function PeriodClosingPage() {
     }
 
     setEndDate("");
-    setSourceRef("");
+    setShowForm(false);
     await load();
   }
 
   return (
-    <div className="flex w-full max-w-3xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/reports" label="Kembali ke Financial Reports" />
       <div>
         <h1 className="text-xl font-semibold text-black">Tutup Buku (Period Closing)</h1>
@@ -126,69 +135,63 @@ export default function PeriodClosingPage() {
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      {canWrite && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-1 font-semibold text-black">Tutup Periode Baru</h2>
-          {suggestedStart && (
-            <FormHint>
-              Periode terakhir ditutup sampai {closings[closings.length - 1]?.end_date} — periode
-              berikutnya wajib mulai {suggestedStart}.
-            </FormHint>
-          )}
-          <form onSubmit={handleClose} className="mt-4 flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="start_date">Dari Tanggal</Label>
-                <Input
-                  id="start_date"
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="end_date">Sampai Tanggal</Label>
-                <Input id="end_date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="re_account">Akun Laba Ditahan</Label>
-                <Select
-                  id="re_account"
-                  value={retainedEarningsAccountId}
-                  onChange={(e) => setRetainedEarningsAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {equityAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan Dokumen</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. TUTUP-BUKU-2026-08"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tutup Periode Baru" maxWidth="max-w-xl">
+        {suggestedStart && (
+          <FormHint>
+            Periode terakhir ditutup sampai {closings[closings.length - 1]?.end_date} — periode
+            berikutnya wajib mulai {suggestedStart}.
+          </FormHint>
+        )}
+        <form onSubmit={handleClose} className="mt-4 flex flex-col gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="start_date">Dari Tanggal</Label>
+              <Input
+                id="start_date"
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="end_date">Sampai Tanggal</Label>
+              <Input id="end_date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="re_account">Akun Laba Ditahan</Label>
+              <Select
+                id="re_account"
+                value={retainedEarningsAccountId}
+                onChange={(e) => setRetainedEarningsAccountId(e.target.value)}
+              >
+                <option value="">Pilih akun...</option>
+                {equityAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
 
-            {formError && <FormError>{formError}</FormError>}
+          {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={submitting}>
               {submitting ? "Menutup..." : "Tutup Periode"}
             </Button>
-          </form>
-          <FormHint>
-            Saldo Pendapatan/Beban dihitung ulang langsung dari data jurnal saat ini — bukan dari
-            laporan Income Statement yang mungkin sudah kamu lihat sebelumnya (bisa saja berubah
-            kalau ada transaksi baru masuk sejak kamu terakhir lihat laporan). Setelah ditutup,
-            rentang ini gak bisa dibuka lagi — koreksi cuma bisa lewat entry baru di periode
-            berjalan.
-          </FormHint>
+          </div>
+        </form>
+      </Modal>
+
+      {canWrite && (
+        <div className="flex justify-end">
+          <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
+            + Tutup Periode Baru
+          </Button>
         </div>
       )}
 
@@ -233,6 +236,14 @@ export default function PeriodClosingPage() {
           </tbody>
         </table>
       </div>
+
+      <FormHint>
+        Saldo Pendapatan/Beban dihitung ulang langsung dari data jurnal saat ini — bukan dari
+        laporan Income Statement yang mungkin sudah kamu lihat sebelumnya (bisa saja berubah
+        kalau ada transaksi baru masuk sejak kamu terakhir lihat laporan). Setelah ditutup,
+        rentang ini gak bisa dibuka lagi — koreksi cuma bisa lewat entry baru di periode
+        berjalan.
+      </FormHint>
     </div>
   );
 }

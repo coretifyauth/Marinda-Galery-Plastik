@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DetailRows } from "@/components/ui/detail-rows";
+import { Tabs, type TabDef } from "@/components/ui/tabs";
 
 type GoodsIssueDetail = {
   id: string;
@@ -36,6 +38,7 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
   const [issue, setIssue] = useState<GoodsIssueDetail | null>(null);
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("jurnal");
 
   const load = useCallback(async () => {
     const { data: gi, error: giErr } = await supabase
@@ -88,50 +91,54 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
 
   const totalHpp = issue.goods_issue_lines.reduce((sum, l) => sum + l.total_cost, 0);
 
+  const detailGroups = [
+    {
+      title: "Informasi Goods Issue",
+      rows: [
+        { label: "Customer", value: issue.ar_invoices.customers.name },
+        { label: "Rujukan Dokumen", value: issue.source_ref },
+        { label: "Tanggal", value: issue.issue_date },
+        {
+          label: "Invoice Terkait",
+          value: (
+            <button
+              type="button"
+              className="text-blue-600 hover:underline"
+              onClick={() => router.push(`/ar-invoices/${issue.invoice_id}`)}
+            >
+              {issue.ar_invoices.source_ref}
+            </button>
+          ),
+        },
+        { label: "Pendapatan Invoice", value: issue.ar_invoices.amount.toLocaleString("id-ID") },
+      ],
+    },
+    {
+      title: "Ringkasan",
+      rows: [{ label: "Total HPP", value: totalHpp.toLocaleString("id-ID") }],
+    },
+  ];
+
+  const tabs: TabDef[] = [
+    { key: "jurnal", label: "Jurnal HPP Terkait", badge: journalEntries.length },
+    { key: "lines", label: "Barang Keluar", badge: issue.goods_issue_lines.length },
+  ];
+
   return (
-    <div className="flex w-full max-w-4xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/goods-issues" label="Kembali ke Goods Issues" />
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-black">
-            {issue.ar_invoices.customers.name} — {issue.source_ref}
-          </h1>
-          <p className="text-sm text-slate-500">{issue.issue_date}</p>
-        </div>
-        <div className="text-right">
-          <div className="text-xs uppercase text-slate-400">Total HPP</div>
-          <div className="font-mono text-lg font-medium text-black">
-            {totalHpp.toLocaleString("id-ID")}
-          </div>
-        </div>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-black">Goods Issue Details</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Invoice Terkait</dt>
-            <dd className="text-black">{issue.ar_invoices.source_ref}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Pendapatan Invoice</dt>
-            <dd className="font-mono text-black">{issue.ar_invoices.amount.toLocaleString("id-ID")}</dd>
-          </div>
-          <div>
-            <dt className="text-xs uppercase text-slate-400">Total HPP</dt>
-            <dd className="font-mono font-medium text-black">{totalHpp.toLocaleString("id-ID")}</dd>
-          </div>
-        </dl>
-      </div>
+      <DetailRows groups={detailGroups} />
 
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
+      {activeTab === "jurnal" && (
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Jurnal HPP Terkait</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {journalEntries.length}
-          </span>
-        </div>
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
@@ -171,14 +178,10 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+      )}
 
+      {activeTab === "lines" && (
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Barang Keluar</span>
-          <span className="ml-2 rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-            {issue.goods_issue_lines.length}
-          </span>
-        </div>
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
@@ -207,6 +210,7 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

@@ -4,7 +4,6 @@ export const refundApReturnCreditSchema = z.object({
   credit_id: z.string().uuid("Pilih saldo kredit retur"),
   amount: z.coerce.number().positive("Jumlah harus lebih dari 0"),
   entry_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   return_credit_asset_account_id: z.string().uuid("Pilih akun Piutang Retur Supplier"),
   cash_account_id: z.string().uuid("Pilih akun Kas/Bank"),
 });

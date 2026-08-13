@@ -10,7 +10,6 @@ export const createSalesOrderSchema = z.object({
   customer_id: z.string().uuid("Pilih customer"),
   so_date: z.string().min(1, "Tanggal wajib diisi"),
   expected_date: z.string().optional(),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   lines: z.array(soLineSchema).min(1, "Minimal 1 baris item"),
 });
 

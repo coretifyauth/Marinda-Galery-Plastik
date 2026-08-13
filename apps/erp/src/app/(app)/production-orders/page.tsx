@@ -3,19 +3,21 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { BomHeader } from "@/lib/bom/schema";
 import { createProductionOrderSchema, type ProductionOrder } from "@/lib/production-orders/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 export default function ProductionOrdersPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [accounts, setAccounts] = useState<Account[]>([]);
   const [boms, setBoms] = useState<BomHeader[]>([]);
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -24,14 +26,11 @@ export default function ProductionOrdersPage() {
   const [bomHeaderId, setBomHeaderId] = useState("");
   const [qtyProduced, setQtyProduced] = useState("");
   const [productionDate, setProductionDate] = useState("");
-  const [sourceRef, setSourceRef] = useState("");
-  const [finishedGoodDebitAccountId, setFinishedGoodDebitAccountId] = useState("");
-  const [rawMaterialCreditAccountId, setRawMaterialCreditAccountId] = useState("");
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const leafAccounts = getLeafAccounts(accounts);
   const activeBoms = boms.filter((b) => b.is_active);
 
   const loadOrders = useCallback(async () => {
@@ -59,12 +58,8 @@ export default function ProductionOrdersPage() {
     setBoms((data ?? []) as unknown as BomHeader[]);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+  const loadDefaultAccounts = useCallback(async () => {
+    setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
 
   useEffect(() => {
@@ -80,13 +75,13 @@ export default function ProductionOrdersPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadBoms(), loadAccounts(), loadOrders()]);
+      await Promise.all([loadBoms(), loadDefaultAccounts(), loadOrders()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadBoms, loadAccounts, loadOrders]);
+  }, [router, loadBoms, loadDefaultAccounts, loadOrders]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -96,9 +91,8 @@ export default function ProductionOrdersPage() {
       bom_header_id: bomHeaderId,
       qty_produced: qtyProduced,
       production_date: productionDate,
-      source_ref: sourceRef,
-      finished_good_debit_account_id: finishedGoodDebitAccountId,
-      raw_material_credit_account_id: rawMaterialCreditAccountId,
+      finished_good_debit_account_id: defaultAccounts["inventory.finished_good"]?.id ?? "",
+      raw_material_credit_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -106,11 +100,19 @@ export default function ProductionOrdersPage() {
     }
 
     setSubmitting(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("production_orders");
+    } catch (err) {
+      setSubmitting(false);
+      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
     const { error } = await supabase.rpc("create_production_order", {
       p_bom_header_id: parsed.data.bom_header_id,
       p_qty_produced: parsed.data.qty_produced,
       p_production_date: parsed.data.production_date,
-      p_source_ref: parsed.data.source_ref,
+      p_source_ref: sourceRef,
       p_finished_good_debit_account_id: parsed.data.finished_good_debit_account_id,
       p_raw_material_credit_account_id: parsed.data.raw_material_credit_account_id,
     });
@@ -123,9 +125,6 @@ export default function ProductionOrdersPage() {
     setBomHeaderId("");
     setQtyProduced("");
     setProductionDate("");
-    setSourceRef("");
-    setFinishedGoodDebitAccountId("");
-    setRawMaterialCreditAccountId("");
     setShowForm(false);
     await loadOrders();
   }
@@ -137,9 +136,9 @@ export default function ProductionOrdersPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Production Orders — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Production Orders</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -161,7 +160,7 @@ export default function ProductionOrdersPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -213,20 +212,18 @@ export default function ProductionOrdersPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Jalankan Produksi</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <p className="mb-4 text-sm text-slate-500">
-            Bahan baku dikonsumsi otomatis sesuai resep (BOM), Weighted Average — gak perlu
-            diinput manual di sini.
+      <Modal open={showForm} onClose={() => setShowForm(false)} title="Jalankan Produksi" maxWidth="max-w-2xl">
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
           </p>
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+        )}
+        <p className="mb-4 text-sm text-slate-500">
+          Bahan baku dikonsumsi otomatis sesuai resep (BOM), Weighted Average — gak perlu
+          diinput manual di sini.
+        </p>
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bom">Resep (BOM)</Label>
@@ -259,55 +256,30 @@ export default function ProductionOrdersPage() {
                   onChange={(e) => setProductionDate(e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="source_ref">Rujukan dokumen (source_ref)</Label>
-                <Input
-                  id="source_ref"
-                  placeholder="mis. PROD-002"
-                  value={sourceRef}
-                  onChange={(e) => setSourceRef(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="finished_good_account">Akun Persediaan Barang Jadi (debit)</Label>
-                <Select
-                  id="finished_good_account"
-                  value={finishedGoodDebitAccountId}
-                  onChange={(e) => setFinishedGoodDebitAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="raw_material_account">Akun Persediaan Bahan Baku (kredit)</Label>
-                <Select
-                  id="raw_material_account"
-                  value={rawMaterialCreditAccountId}
-                  onChange={(e) => setRawMaterialCreditAccountId(e.target.value)}
-                >
-                  <option value="">Pilih akun...</option>
-                  {leafAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              <LockedAccountField
+                label="Akun Persediaan Barang Jadi (debit)"
+                htmlFor="finished_good_account"
+                resolved={defaultAccounts["inventory.finished_good"]}
+              />
+              <LockedAccountField
+                label="Akun Persediaan Bahan Baku (kredit)"
+                htmlFor="raw_material_account"
+                resolved={defaultAccounts["inventory.raw_material"]}
+              />
             </div>
 
             {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
-              {submitting ? "Memproses..." : "Jalankan Produksi"}
-            </Button>
-          </form>
-        </div>
-      )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "Memproses..." : "Jalankan Produksi"}
+              </Button>
+            </div>
+        </form>
+      </Modal>
     </div>
   );
 }

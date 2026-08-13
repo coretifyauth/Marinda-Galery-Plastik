@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import {
   createFixedAssetSchema,
   depreciationMethods,
@@ -17,20 +16,20 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { Modal } from "@/components/ui/modal";
+import { fetchFixedAssetAccountPresets, type FixedAssetAccountPreset } from "@/lib/default-accounts/schema";
 
 export default function FixedAssetsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [presets, setPresets] = useState<FixedAssetAccountPreset[]>([]);
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [entries, setEntries] = useState<DepreciationEntry[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
-  const [assetAccountId, setAssetAccountId] = useState("");
-  const [accumAccountId, setAccumAccountId] = useState("");
-  const [expenseAccountId, setExpenseAccountId] = useState("");
+  const [presetId, setPresetId] = useState("");
   const [acquisitionCost, setAcquisitionCost] = useState("");
   const [salvageValue, setSalvageValue] = useState("0");
   const [usefulLifeMonths, setUsefulLifeMonths] = useState("");
@@ -41,10 +40,7 @@ export default function FixedAssetsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const leafAccounts = getLeafAccounts(accounts);
-  const assetAccounts = leafAccounts.filter((a) => a.category === "asset" && !a.is_contra);
-  const contraAccounts = leafAccounts.filter((a) => a.category === "asset" && a.is_contra);
-  const expenseAccounts = leafAccounts.filter((a) => a.category === "expense");
+  const activePresets = presets.filter((p) => !p.archived_at);
 
   const loadAssets = useCallback(async () => {
     const { data, error } = await supabase
@@ -69,12 +65,8 @@ export default function FixedAssetsPage() {
     setEntries((data ?? []) as DepreciationEntry[]);
   }, []);
 
-  const loadAccounts = useCallback(async () => {
-    const { data } = await supabase
-      .from("accounts")
-      .select("id, code, name, category, normal_balance, is_contra, parent_id, archived_at")
-      .order("code");
-    setAccounts((data ?? []) as Account[]);
+  const loadPresets = useCallback(async () => {
+    setPresets(await fetchFixedAssetAccountPresets());
   }, []);
 
   useEffect(() => {
@@ -90,23 +82,24 @@ export default function FixedAssetsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadAccounts(), loadAssets(), loadEntries()]);
+      await Promise.all([loadPresets(), loadAssets(), loadEntries()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadAccounts, loadAssets, loadEntries]);
+  }, [router, loadPresets, loadAssets, loadEntries]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
+    const preset = presets.find((p) => p.id === presetId);
     const parsed = createFixedAssetSchema.safeParse({
       name,
-      asset_account_id: assetAccountId,
-      accumulated_depreciation_account_id: accumAccountId,
-      depreciation_expense_account_id: expenseAccountId,
+      asset_account_id: preset?.asset_account_id ?? "",
+      accumulated_depreciation_account_id: preset?.accumulated_depreciation_account_id ?? "",
+      depreciation_expense_account_id: preset?.depreciation_expense_account_id ?? "",
       acquisition_cost: acquisitionCost,
       salvage_value: salvageValue,
       useful_life_months: usefulLifeMonths,
@@ -139,9 +132,7 @@ export default function FixedAssetsPage() {
     }
 
     setName("");
-    setAssetAccountId("");
-    setAccumAccountId("");
-    setExpenseAccountId("");
+    setPresetId("");
     setAcquisitionCost("");
     setSalvageValue("0");
     setUsefulLifeMonths("");
@@ -159,9 +150,9 @@ export default function FixedAssetsPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
-    <div className="flex w-full max-w-5xl flex-1 flex-col gap-6">
+    <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Fixed Assets — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Fixed Assets</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -183,7 +174,7 @@ export default function FixedAssetsPage() {
               Refresh
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm((v) => !v)}>
+              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
                 + New
               </Button>
             )}
@@ -240,143 +231,145 @@ export default function FixedAssetsPage() {
         </table>
       </div>
 
-      {showForm && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 font-semibold text-black">Tambah Aset Tetap</h2>
-          {!canWrite && (
-            <p className="mb-4 text-sm text-amber-600">
-              Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-              ketolak RLS.
-            </p>
-          )}
-          <p className="mb-4 text-sm text-slate-500">
-            Cuma nyimpen master data aset. Jurnal akuisisi (Debit Aset Tetap, Kredit Kas/Utang)
-            dicatat terpisah lewat halaman Journal Entries.
+      <Modal
+        open={showForm}
+        onClose={() => setShowForm(false)}
+        title="Tambah Aset Tetap"
+        maxWidth="max-w-2xl"
+      >
+        {!canWrite && (
+          <p className="mb-4 text-sm text-amber-600">
+            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
+            ketolak RLS.
           </p>
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="name">Nama Aset</Label>
-                <Input
-                  id="name"
-                  placeholder="mis. Oven Tambahan"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="asset_account">Akun Aset Tetap</Label>
-                <Select id="asset_account" value={assetAccountId} onChange={(e) => setAssetAccountId(e.target.value)}>
-                  <option value="">Pilih akun...</option>
-                  {assetAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="accum_account">Akun Akumulasi Penyusutan</Label>
-                <Select id="accum_account" value={accumAccountId} onChange={(e) => setAccumAccountId(e.target.value)}>
-                  <option value="">Pilih akun...</option>
-                  {contraAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="expense_account">Akun Beban Penyusutan</Label>
-                <Select id="expense_account" value={expenseAccountId} onChange={(e) => setExpenseAccountId(e.target.value)}>
-                  <option value="">Pilih akun...</option>
-                  {expenseAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="acquisition_cost">Nilai Perolehan</Label>
-                <Input
-                  id="acquisition_cost"
-                  type="number"
-                  min="0"
-                  placeholder="mis. 15000000"
-                  value={acquisitionCost}
-                  onChange={(e) => setAcquisitionCost(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="salvage_value">Nilai Residu</Label>
-                <Input
-                  id="salvage_value"
-                  type="number"
-                  min="0"
-                  value={salvageValue}
-                  onChange={(e) => setSalvageValue(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="useful_life_months">Umur Manfaat (bulan)</Label>
-                <Input
-                  id="useful_life_months"
-                  type="number"
-                  min="1"
-                  placeholder="mis. 60"
-                  value={usefulLifeMonths}
-                  onChange={(e) => setUsefulLifeMonths(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="acquisition_date">Tanggal Akuisisi</Label>
-                <Input
-                  id="acquisition_date"
-                  type="date"
-                  value={acquisitionDate}
-                  onChange={(e) => setAcquisitionDate(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="method">Metode Penyusutan</Label>
-                <Select
-                  id="method"
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as (typeof depreciationMethods)[number])}
-                >
-                  {depreciationMethods.map((m) => (
-                    <option key={m} value={m}>
-                      {m === "straight_line" ? "Straight-Line" : "Declining Balance"}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              {method === "declining_balance" && (
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="rate">Tarif per Periode Posting (0-1)</Label>
-                  <Input
-                    id="rate"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="1"
-                    placeholder="mis. 0.40"
-                    value={rate}
-                    onChange={(e) => setRate(e.target.value)}
-                  />
-                </div>
-              )}
+        )}
+        <p className="mb-4 text-sm text-slate-500">
+          Cuma nyimpen master data aset. Jurnal akuisisi (Debit Aset Tetap, Kredit Kas/Utang)
+          dicatat terpisah lewat halaman Journal Entries.
+        </p>
+        <form onSubmit={handleCreate} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="name">Nama Aset</Label>
+            <Input
+              id="name"
+              placeholder="mis. Rak Display Toko"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="preset">Jenis Aset (Akun Aset/Akumulasi/Beban)</Label>
+            <Select id="preset" value={presetId} onChange={(e) => setPresetId(e.target.value)}>
+              <option value="">Pilih jenis aset...</option>
+              {activePresets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
+            {activePresets.length === 0 && (
+              <p className="text-xs text-amber-600">
+                Belum ada preset aktif — admin bisa setup di halaman Pengaturan &gt; Kategori & Pajak.
+              </p>
+            )}
+            {presetId &&
+              (() => {
+                const preset = presets.find((p) => p.id === presetId);
+                if (!preset) return null;
+                return (
+                  <p className="text-xs text-slate-500">
+                    {preset.asset_account.code} — {preset.asset_account.name} /{" "}
+                    {preset.accumulated_depreciation_account.code} — {preset.accumulated_depreciation_account.name} /{" "}
+                    {preset.depreciation_expense_account.code} — {preset.depreciation_expense_account.name}
+                  </p>
+                );
+              })()}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="acquisition_cost">Nilai Perolehan</Label>
+              <Input
+                id="acquisition_cost"
+                type="number"
+                min="0"
+                placeholder="mis. 15000000"
+                value={acquisitionCost}
+                onChange={(e) => setAcquisitionCost(e.target.value)}
+              />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="salvage_value">Nilai Residu</Label>
+              <Input
+                id="salvage_value"
+                type="number"
+                min="0"
+                value={salvageValue}
+                onChange={(e) => setSalvageValue(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="useful_life_months">Umur Manfaat (bulan)</Label>
+              <Input
+                id="useful_life_months"
+                type="number"
+                min="1"
+                placeholder="mis. 60"
+                value={usefulLifeMonths}
+                onChange={(e) => setUsefulLifeMonths(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="acquisition_date">Tanggal Akuisisi</Label>
+              <Input
+                id="acquisition_date"
+                type="date"
+                value={acquisitionDate}
+                onChange={(e) => setAcquisitionDate(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="method">Metode Penyusutan</Label>
+              <Select
+                id="method"
+                value={method}
+                onChange={(e) => setMethod(e.target.value as (typeof depreciationMethods)[number])}
+              >
+                {depreciationMethods.map((m) => (
+                  <option key={m} value={m}>
+                    {m === "straight_line" ? "Straight-Line" : "Declining Balance"}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {method === "declining_balance" && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="rate">Tarif per Periode Posting (0-1)</Label>
+                <Input
+                  id="rate"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  placeholder="mis. 0.40"
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
 
-            {formError && <FormError>{formError}</FormError>}
+          {formError && <FormError>{formError}</FormError>}
 
-            <Button type="submit" disabled={submitting} className="w-fit">
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={submitting}>
               {submitting ? "Menyimpan..." : "Simpan Aset"}
             </Button>
-          </form>
-        </div>
-      )}
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

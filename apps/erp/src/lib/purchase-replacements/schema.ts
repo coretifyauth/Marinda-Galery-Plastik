@@ -15,7 +15,6 @@ export const purchaseReplacementLineSchema = z.object({
 export const createPurchaseReplacementSchema = z.object({
   bill_id: z.string().uuid("Pilih bill"),
   replacement_date: z.string().min(1, "Tanggal wajib diisi"),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   lines: z.array(purchaseReplacementLineSchema).min(1, "Isi minimal 1 baris item"),
   inventory_account_id: z.string().uuid("Pilih akun Persediaan"),
 });

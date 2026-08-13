@@ -30,7 +30,7 @@ export default function LoginPage() {
         onSubmit={handleSubmit}
         className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-slate-200 bg-white p-8 shadow-sm"
       >
-        <h1 className="text-xl font-semibold text-black">Masuk Kasir — CV Roti Barokah</h1>
+        <h1 className="text-xl font-semibold text-black">Masuk Kasir</h1>
         <p className="text-sm text-slate-500">
           Akun kasir dibuat admin lewat aplikasi ERP, bukan daftar sendiri di sini.
         </p>

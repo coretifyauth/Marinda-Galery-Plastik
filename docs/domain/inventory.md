@@ -135,7 +135,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 ### Satuan Jual & Harga (Multi Unit of Measure)
 
 **Cara Kerja**
-- Barang bisa dijual ke customer dalam **satuan yang beda dari satuan dasarnya**. Contoh: Roti Tawar satuan dasarnya "buah" (dipakai buat pelacakan stok), tapi bisa dijual per buah ATAU per lusin (isi 12) — dua pilihan satuan jual, masing-masing punya harga sendiri.
+- Barang bisa dijual ke customer dalam **satuan yang beda dari satuan dasarnya**. Contoh: sebuah barang satuan dasarnya "pcs" (dipakai buat pelacakan stok), tapi bisa dijual per pcs ATAU per lusin (isi 12) — dua pilihan satuan jual, masing-masing punya harga sendiri.
 - Tiap barang boleh (opsional) dikasih 1 atau lebih "satuan jual" — masing-masing punya **faktor konversi** ke satuan dasar (berapa satuan dasar = 1 satuan jual ini) dan **harga jual per satuan jual itu**. Satuan dasar sendiri juga terhitung sebagai "satuan jual" (faktor konversi 1) — jadi kalau barang cuma dijual dalam 1 satuan aja (kasus paling umum), cukup 1 baris data: satuan dasar + harganya.
 - **Sisi stok/HPP SELALU dihitung di satuan dasar** — begitu customer pilih "beli 2 lusin", sistem otomatis konversi jadi qty satuan dasar (2 × 12 = 24 buah) SEBELUM ngurangin stok/ngitung HPP. Barang besar/kecil kemasannya, `avg_cost` dan posisi stok gak pernah "ngerti" satuan jual — cuma ngerti satuan dasar.
 - **Harga per satuan jual itu independen, BUKAN hasil kali otomatis dari harga satuan dasar.** Harga per lusin biasanya dikasih diskon grosir (misal Rp22.000/lusin, bukan 12 × Rp2.000 = Rp24.000) — itu keputusan bisnis yang diisi manual per satuan jual, bukan dihitung sistem.

@@ -6,7 +6,7 @@ Fase 6. Konsep bisnisnya ada di `docs/domain/fixed-assets.md`. Skenario nyata: `
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `fixed_assets` | Master data tiap unit aset tetap (1 baris = 1 oven, 1 motor, dst — bukan kategori) | Menunjuk ke 3 akun di Chart of Accounts sekaligus |
+| `fixed_assets` | Master data tiap unit aset tetap (1 baris = 1 kendaraan, 1 mesin, dst — bukan kategori) | Menunjuk ke 3 akun di Chart of Accounts sekaligus |
 | `depreciation_entries` | Histori posting penyusutan, satu baris per periode per aset | `fixed_assets`, dan ke transaksi jurnal yang otomatis dibuat |
 
 ## Konsep Inti
@@ -22,9 +22,9 @@ Fase 6. Konsep bisnisnya ada di `docs/domain/fixed-assets.md`. Skenario nyata: `
 
 | Peran akun | Contoh | Kenapa terpisah |
 |---|---|---|
-| Akun Aset | "Aset Tetap - Oven" | Menyimpan nilai perolehan asli, tidak pernah berubah sampai aset dijual/dibuang — supaya histori "beli berapa dulu" tetap bisa ditelusuri |
-| Akun Akumulasi Penyusutan (kontra-asset) | "Akumulasi Penyusutan - Oven" | Menampung total penyusutan yang sudah berjalan, ditampilkan sebagai pengurang di Neraca — bukan langsung mengurangi akun Aset |
-| Akun Beban Penyusutan | "Beban Penyusutan - Oven" | Muncul di Laporan Laba Rugi sebagai biaya operasional periode berjalan |
+| Akun Aset | "Aset Tetap - Kendaraan" | Menyimpan nilai perolehan asli, tidak pernah berubah sampai aset dijual/dibuang — supaya histori "beli berapa dulu" tetap bisa ditelusuri |
+| Akun Akumulasi Penyusutan (kontra-asset) | "Akumulasi Penyusutan - Kendaraan" | Menampung total penyusutan yang sudah berjalan, ditampilkan sebagai pengurang di Neraca — bukan langsung mengurangi akun Aset |
+| Akun Beban Penyusutan | "Beban Penyusutan - Kendaraan" | Muncul di Laporan Laba Rugi sebagai biaya operasional periode berjalan |
 
 Sistem memvalidasi otomatis bahwa ketiga akun ini dipetakan sesuai perannya masing-masing (misalnya akun Akumulasi Penyusutan harus benar-benar berstatus akun kontra) — mencegah kesalahan pasang akun dari sisi tampilan.
 

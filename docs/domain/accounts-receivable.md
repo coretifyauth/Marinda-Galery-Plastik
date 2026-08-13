@@ -43,6 +43,8 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 
 ### Retur Barang (Credit Note)
 
+Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikutsertakan saldo excess retur yang direklasifikasi keluar dari Piutang Usaha — padanan fix yang sudah lebih dulu diterapkan di sisi AP.
+
 **Cara Kerja**
 - Customer ngembaliin barang yang udah diinvoice — kejadian bisnis nyata (barang beneran balik), bukan koreksi "invoice salah dari awal". Invoice asli gak diubah/dibatalkan sama sekali — retur dicatat sebagai catatan tambahan yang mengurangi sisa tagihan.
 - Dua jalur, otomatis terdeteksi dari jenis invoicenya (user gak perlu milih manual):
@@ -220,7 +222,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 ### Kategori Campur & PPN
 
 **Cara Kerja**
-- 1 invoice ke customer kadang isinya campuran kategori pendapatan — misal Rp500.000 Pendapatan Penjualan Roti + Rp20.000 Pendapatan Jasa Pengiriman, kalau Bu Nur mau memisahkan kedua kategori itu di laporan. Dulu sistem cuma bisa mencatat 1 kategori pendapatan per invoice.
+- 1 invoice ke customer kadang isinya campuran kategori pendapatan — misal Rp500.000 Pendapatan Penjualan Barang + Rp20.000 Pendapatan Jasa Pengiriman, kalau perusahaan mau memisahkan kedua kategori itu di laporan. Dulu sistem cuma bisa mencatat 1 kategori pendapatan per invoice.
 - Sekarang admin bisa menyiapkan daftar kategori pendapatan tambahan (misal "Jasa Pengiriman"), dan staf AR bisa menambahkan baris kategori itu saat membuat invoice — nominalnya tetap diinput manual per invoice, gak ada nilai default.
 - PPN Keluaran (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Piutang Usaha (customer ikut berutang pajaknya) — bukan diketik manual.
 - Berlaku juga untuk invoice yang lahir dari penjualan barang jadi (Goods Issue) — mekanismenya sama, cuma dipicu dari alur yang berbeda.
@@ -230,7 +232,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - Staf AR tidak memilih akun pembukuan bebas untuk kategori tambahan — hanya dari daftar yang sudah disiapkan admin.
 
 **Skenario**
-- Invoice ke Warung Bu Imas berisi Rp500.000 roti + Rp20.000 jasa antar — dicatat sebagai 1 invoice dengan 2 baris kategori pendapatan, Piutang Usaha tetap 1 angka Rp520.000.
+- Invoice ke sebuah customer berisi Rp500.000 barang + Rp20.000 jasa antar — dicatat sebagai 1 invoice dengan 2 baris kategori pendapatan, Piutang Usaha tetap 1 angka Rp520.000.
 
 **Common Mistakes**
 - Memaksa invoice campuran jadi 1 kategori saja — bikin laporan pendapatan per channel jadi gak akurat.

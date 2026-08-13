@@ -43,14 +43,28 @@ export type BalanceSheet = {
   totalEquity: number;
 };
 
+/** 1 baris delta akun neraca operasional (non-kas, non-Investing, non-Financing) di Cash Flow. */
+export type OperatingWorkingCapitalLine = {
+  accountId: string;
+  code: string;
+  name: string;
+  /** Perubahan saldo akun itu sendiri (arah `normal_balance`-nya), end - start. */
+  delta: number;
+  /** Kontribusi ke Kas Bersih Operating — asset: -delta, liability: +delta. */
+  contribution: number;
+};
+
 export type CashFlow = {
   startDate: string;
   endDate: string;
   netIncome: number;
   depreciationAddBack: number;
-  deltaAccountsReceivable: number;
-  deltaInventory: number;
-  deltaAccountsPayable: number;
+  /**
+   * Delta tiap akun neraca operasional (asset/liability selain Kas, Aset Tetap,
+   * dan akun Financing hardcode) yang bergerak di periode ini — auto-discover
+   * dari `accounts`, BUKAN daftar kode akun hardcode. Ref: `memory/architecture/data/financial-reports-schema.md`.
+   */
+  operatingWorkingCapital: OperatingWorkingCapitalLine[];
   operating: number;
   investing: number;
   financing: number;

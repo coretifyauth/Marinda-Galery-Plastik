@@ -10,7 +10,6 @@ export const createPurchaseOrderSchema = z.object({
   supplier_id: z.string().uuid("Pilih supplier"),
   po_date: z.string().min(1, "Tanggal wajib diisi"),
   expected_date: z.string().optional(),
-  source_ref: z.string().min(1, "Rujukan dokumen wajib diisi"),
   lines: z.array(poLineSchema).min(1, "Minimal 1 baris item"),
 });
 

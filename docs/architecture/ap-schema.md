@@ -184,7 +184,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 |---|---|
 | Kategori tambahan dipilih dari katalog, bukan akun bebas | Diselesaikan di UI (dropdown `ap_bill_expense_categories`) |
 | PPN gak boleh diketik manual | `create_ap_bill` menghitung sendiri dari `tax_settings` |
-| Penerimaan barang dari PO (3-Way Matching) TIDAK dapat kategori campur | `create_goods_receipt` tetap 1 kategori Persediaan tetap, signature-nya gak berubah — lihat `docs/architecture/inventory-schema.md` |
+| Penerimaan barang dari PO (3-Way Matching) JUGA dapat kategori campur & PPN | `create_goods_receipt` diperluas terima kategori tambahan & PPN, mirror `create_ap_bill` — lihat `docs/architecture/inventory-schema.md` |
 
 **Interaksi Antar Tabel**
 
