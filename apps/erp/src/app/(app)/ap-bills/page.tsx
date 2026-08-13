@@ -6,8 +6,13 @@ import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
 import { createApBillSchema, billStatus, billOrigin, type ApBill } from "@/lib/ap-bills/schema";
 import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
-import type { TaxSettings } from "@/lib/tax-settings/schema";
-import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
+import {
+  resolveChargeLines,
+  resolveCategoryLeg,
+  resolveChargeLineLegs,
+  type ChargeLineInput,
+} from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -17,6 +22,7 @@ import { FormError } from "@/components/ui/form-message";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 const statusStyle: Record<string, string> = {
@@ -98,8 +104,7 @@ export default function ApBillsPage() {
   }, []);
 
   const loadTaxSettings = useCallback(async () => {
-    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
-    setTaxSettings((data ?? null) as TaxSettings | null);
+    setTaxSettings(await fetchTaxSettings());
   }, []);
 
   useEffect(() => {
@@ -312,6 +317,20 @@ export default function ApBillsPage() {
             ketolak RLS.
           </p>
         )}
+        <JournalPreviewPanel
+          groups={[
+            [
+              resolveCategoryLeg(debitCategoryId, activeExpenseCategories, "debit"),
+              ...resolveChargeLineLegs(extraLines, activeExpenseCategories, "debit"),
+              { label: "Akun Utang Usaha (kredit)", resolved: defaultAccounts["ap.payable"], side: "credit" },
+              applyTax && {
+                label: "Akun PPN Masukan (debit)",
+                resolved: resolvedPpnMasukan(taxSettings),
+                side: "debit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">

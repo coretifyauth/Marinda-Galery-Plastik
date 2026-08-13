@@ -17,6 +17,8 @@ erDiagram
   ITEMS ||--o{ GOODS_ISSUE_LINES : keluar
   ITEMS ||--o{ ITEM_UNITS : "satuan jual"
   ITEMS ||--o{ STOCK_OPNAME_LINES : dihitung
+  ITEM_CATEGORIES ||--o{ ITEMS : mengelompokkan
+  ITEM_BRANDS ||--o{ ITEMS : mengelompokkan
 
   STOCK_OPNAMES ||--|{ STOCK_OPNAME_LINES : ""
 
@@ -43,7 +45,8 @@ erDiagram
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `items` | Master data barang yang dilacak — bahan baku atau barang jadi. Semua barang pakai metode hitung biaya yang sama: Rata-Rata Bergerak | `accounts` (akun kontrol Persediaan) |
+| `items` | Master data barang yang dilacak — bahan baku atau barang jadi. Semua barang pakai metode hitung biaya yang sama: Rata-Rata Bergerak | `accounts` (akun kontrol Persediaan), `item_categories` (opsional), `item_brands` (opsional) |
+| `item_categories` / `item_brands` | Katalog terkontrol opsional buat pengelompokan barang (mis. "Alat Makan", "Lion Star") — murni metadata deskriptif, gak nyentuh perhitungan stok/HPP | `items` (1 kategori/brand : banyak barang) |
 | `item_units` | Satuan jual per barang (boleh lebih dari 1, misal per pieces atau per pack) — masing-masing punya faktor konversi ke satuan dasar & harga sendiri | `items` |
 | `inventory_balances` | Posisi stok tersimpan per barang — qty tersedia + harga rata-rata berjalan, satu-satunya state costing yang hidup di modul ini | `items` (1:1) |
 | `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok — belum ada transaksi jurnal | `suppliers`, `items` |
@@ -225,13 +228,41 @@ erDiagram
 | `sales_order_lines` | banyak-ke-satu | `sales_orders` |
 | `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `sales_order_lines` |
 
+## Kategori & Brand Barang
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `item_categories` | Katalog kategori barang (mis. "Alat Makan") — bisa dinonaktifkan tanpa dihapus | `items` (1:banyak) |
+| `item_brands` | Katalog brand/merek barang (mis. "Lion Star") — bisa dinonaktifkan tanpa dihapus | `items` (1:banyak) |
+
+**Alur Teknis (RPC)**
+
+Gak ada RPC — CRUD langsung lewat tabel (sama pola `items`/`item_units`), murni metadata deskriptif.
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| 1 barang maksimal 1 kategori & 1 brand | FK tunggal (`items.category_id`/`items.brand_id`), bukan tabel jembatan many-to-many |
+| Kategori/brand opsional, gak wajib diisi | Kolom FK nullable |
+| Menonaktifkan kategori/brand gak mengubah barang yang udah terlanjur dikaitkan | `archived_at` cuma nyaring pilihan buat barang BARU, gak pernah nyentuh FK yang udah ke-set |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `items` | banyak-ke-satu (opsional) | `item_categories` |
+| `items` | banyak-ke-satu (opsional) | `item_brands` |
+
 ## Satuan Jual & Harga (Multi Unit of Measure)
 
 **Peta Data (ERD)**
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `item_units` | Satuan jual per barang — boleh 0 (barang gak dijual langsung, misal bahan baku) sampai berapa pun baris. Persis 1 baris jadi "satuan dasar" per barang | `items` |
+| `item_units` | Satuan tambahan per barang — boleh 0 baris sampai berapa pun. Persis 1 baris jadi "satuan dasar" per barang | `items` |
 
 **Alur Teknis (RPC)**
 
@@ -239,14 +270,14 @@ Gak ada RPC baru — `item_units` murni data master, CRUD langsung lewat tabel (
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Jual barang pakai satuan bukan-dasar (misal lusin) | `create_goods_issue` (**tidak berubah**) | UI mengonversi qty ke satuan dasar & menghitung nominal saran dari harga satuan yang dipilih SEBELUM RPC dipanggil — RPC tetap menerima qty di satuan dasar & nominal final apa adanya, persis seperti sebelum fitur ini ada | — |
+| Input qty pakai satuan bukan-dasar (misal lusin/dus), di form manapun (PO, Terima Barang, Sales Order, Jual Barang, qty produksi, hasil hitung Opname) | `create_purchase_order`, `create_goods_receipt`, `create_sales_order`, `create_goods_issue`, `create_production_order`, `record_stock_opname` (**semua tidak berubah**) | Komponen UI `MultiUomQtyInput` mengonversi qty (bisa campuran beberapa satuan sekaligus) ke satuan dasar & menghitung nominal saran dari harga satuan yang diisi SEBELUM RPC dipanggil — RPC tetap menerima qty di satuan dasar & nominal final apa adanya, persis seperti sebelum fitur ini ada | — |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Satuan dasar (dipakai stok/HPP) tetap 1 per barang, gak berubah oleh satuan jual tambahan | `items.uom` tidak disentuh sama sekali — satuan jual cuma lapisan tambahan di `item_units` |
-| Qty yang dikonsumsi dari stok selalu di satuan dasar, gak peduli satuan jual yang dipilih | Konversi terjadi di UI sebelum RPC dipanggil — `goods_issue_lines` cuma pernah menyimpan qty satuan dasar |
+| Qty yang dikonsumsi/ditambah ke stok selalu di satuan dasar, gak peduli kombinasi satuan yang dipakai user pas input | Konversi terjadi di UI sebelum RPC dipanggil — tabel transaksional manapun (`purchase_order_lines`, `goods_receipt_lines`, `sales_order_lines`, `goods_issue_lines`, `production_order_lines`, `stock_opname_lines`) cuma pernah menyimpan qty satuan dasar |
 | Harga per satuan jual independen, tidak wajib proporsional ke harga satuan dasar | `item_units.price` diisi manual per baris, gak ada perhitungan otomatis dari harga satuan lain |
 | Harga cuma saran, gak retroaktif ngubah invoice yang udah terbit | Sama prinsip snapshot seperti sebelumnya — `item_units` cuma dibaca UI pas invoice BARU dibuat |
 
@@ -255,6 +286,31 @@ Gak ada RPC baru — `item_units` murni data master, CRUD langsung lewat tabel (
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `item_units` | banyak-ke-satu | `items` |
+
+## Kode Scan Barang (Barcode/QR per Satuan Jual)
+
+**Peta Data (ERD)**
+
+Gak ada tabel baru — `item_units` (submodule sebelumnya) nambah 1 kolom `barcode` (opsional, unik lintas seluruh baris).
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Generate kode internal (barang tanpa barcode pabrik) | Fungsi nomor dokumen yang sudah ada (reuse, bukan mekanisme baru) | Kembalikan 1 teks kode baru (`SKU-2026-00001`, format sama kayak nomor dokumen lain di sistem ini) — TIDAK langsung menyimpan, UI yang update `item_units.barcode` lewat CRUD tabel biasa (sama pola `price`/`conversion_factor`) | — |
+| Scan/input kode di kasir | — (query langsung, bukan RPC) | Cocokkan teks yang discan/diketik ke `item_units.barcode`, resolve ke barang+satuan+harga, isi keranjang persis kayak pilih dari katalog | Kode gak ketemu → gagal senyap, kasir tetap bisa cari manual dari katalog |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Kode scan unik lintas seluruh satuan jual | Constraint unik di kolom `barcode`, lintas seluruh tabel (bukan per-barang) |
+| Kode scan gak wajib diisi, independen per satuan jual | Kolom nullable, gak ada aturan silang antar-baris dalam 1 barang |
+| Kode scan gak menyentuh perhitungan stok/HPP/jurnal | Murni kolom lookup di tabel master data yang sudah ada — 0 perubahan ke RPC transaksi (`create_goods_issue`, dst) |
+
+**Interaksi Antar Tabel**
+
+Sama seperti submodule "Satuan Jual & Harga" — gak ada relasi baru.
 
 ## Stock Opname (Penyesuaian Stok Fisik)
 

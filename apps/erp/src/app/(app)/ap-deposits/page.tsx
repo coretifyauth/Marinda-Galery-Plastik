@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
@@ -248,6 +249,22 @@ export default function ApDepositsPage() {
             ketolak RLS.
           </p>
         )}
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Uang Muka Pembelian (debit)",
+                resolved: defaultAccounts["ap.deposit_asset"],
+                side: "debit",
+              },
+              {
+                label: "Akun Kas/Bank (kredit)",
+                resolved: resolveCashAccount(cashMethod, defaultAccounts),
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="supplier">Supplier</Label>

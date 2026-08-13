@@ -102,7 +102,12 @@ export function ProductionOrderDetailView({ id }: { id: string }) {
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/production-orders" label="Kembali ke Production Orders" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">Production Order Details</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold text-black">Production Order Details</h1>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
+            {order.source_ref}
+          </span>
+        </div>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}

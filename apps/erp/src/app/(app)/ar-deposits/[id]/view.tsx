@@ -14,6 +14,7 @@ import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
@@ -278,7 +279,12 @@ export function ArDepositDetailView({ id }: { id: string }) {
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ar-deposits" label="Kembali ke AR Deposits" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">AR Deposit Details</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold text-black">AR Deposit Details</h1>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
+            {deposit.source_ref}
+          </span>
+        </div>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
@@ -474,6 +480,22 @@ export function ArDepositDetailView({ id }: { id: string }) {
           Rugi, murni reklasifikasi aset. Boleh sebagian (sisanya bisa diterapkan/direfund
           lagi/hangus belakangan).
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Uang Muka Penjualan (debit)",
+                resolved: defaultAccounts["ar.deposit_liability"],
+                side: "debit",
+              },
+              {
+                label: "Akun Kas/Bank (kredit)",
+                resolved: resolveCashAccount(refundCashMethod, defaultAccounts),
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleRefundSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
@@ -528,6 +550,22 @@ export function ArDepositDetailView({ id }: { id: string }) {
           Sisa deposit dihanguskan — jadi Pendapatan Lain-lain, bukan Pendapatan Penjualan.
           Boleh sebagian.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Uang Muka Penjualan (debit)",
+                resolved: defaultAccounts["ar.deposit_liability"],
+                side: "debit",
+              },
+              {
+                label: "Akun Pendapatan Lain-lain (kredit)",
+                resolved: defaultAccounts["ar.other_revenue"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleForfeitSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">

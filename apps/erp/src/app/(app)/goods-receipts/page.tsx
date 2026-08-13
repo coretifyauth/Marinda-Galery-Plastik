@@ -7,8 +7,9 @@ import { poStatus, lineRemaining, type PurchaseOrder } from "@/lib/purchase-orde
 import { createGoodsReceiptSchema, type GoodsReceiptNote } from "@/lib/goods-receipts/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
-import type { TaxSettings } from "@/lib/tax-settings/schema";
-import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
+import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
+import { resolveChargeLines, resolveChargeLineLegs, type ChargeLineInput } from "@/lib/charge-lines/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -17,12 +18,15 @@ import { FormError } from "@/components/ui/form-message";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
 
 type LineInput = {
   po_line_id: string;
   item_id: string;
   item_label: string;
+  uom: string;
   qty_received: string;
   unit_cost: string;
 };
@@ -31,6 +35,7 @@ export default function GoodsReceiptsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [receipts, setReceipts] = useState<GoodsReceiptNote[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -76,6 +81,13 @@ export default function GoodsReceiptsPage() {
     setPurchaseOrders((data ?? []) as unknown as PurchaseOrder[]);
   }, []);
 
+  const loadItemUnits = useCallback(async () => {
+    const { data } = await supabase
+      .from("item_units")
+      .select("id, item_id, unit_label, conversion_factor, price, is_base");
+    setItemUnits((data ?? []) as ItemUnit[]);
+  }, []);
+
   const loadDefaultAccounts = useCallback(async () => {
     setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
@@ -89,8 +101,7 @@ export default function GoodsReceiptsPage() {
   }, []);
 
   const loadTaxSettings = useCallback(async () => {
-    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
-    setTaxSettings((data ?? null) as TaxSettings | null);
+    setTaxSettings(await fetchTaxSettings());
   }, []);
 
   useEffect(() => {
@@ -108,6 +119,7 @@ export default function GoodsReceiptsPage() {
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await Promise.all([
         loadPurchaseOrders(),
+        loadItemUnits(),
         loadDefaultAccounts(),
         loadReceipts(),
         loadExpenseCategories(),
@@ -118,7 +130,15 @@ export default function GoodsReceiptsPage() {
     return () => {
       active = false;
     };
-  }, [router, loadPurchaseOrders, loadDefaultAccounts, loadReceipts, loadExpenseCategories, loadTaxSettings]);
+  }, [
+    router,
+    loadPurchaseOrders,
+    loadItemUnits,
+    loadDefaultAccounts,
+    loadReceipts,
+    loadExpenseCategories,
+    loadTaxSettings,
+  ]);
 
   function selectPurchaseOrder(poId: string) {
     setPurchaseOrderId(poId);
@@ -134,6 +154,7 @@ export default function GoodsReceiptsPage() {
           po_line_id: l.id,
           item_id: l.item_id,
           item_label: `${l.items.name} (sisa ${lineRemaining(l)} ${l.items.uom})`,
+          uom: l.items.uom,
           qty_received: String(lineRemaining(l)),
           unit_cost: String(l.unit_cost_expected),
         }))
@@ -305,6 +326,24 @@ export default function GoodsReceiptsPage() {
             ketolak RLS.
           </p>
         )}
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Persediaan (debit)",
+                resolved: defaultAccounts["inventory.raw_material"],
+                side: "debit",
+              },
+              ...resolveChargeLineLegs(extraLines, expenseCategories, "debit"),
+              { label: "Akun Utang Usaha (kredit)", resolved: defaultAccounts["ap.payable"], side: "credit" },
+              applyTax && {
+                label: "Akun PPN Masukan (debit)",
+                resolved: resolvedPpnMasukan(taxSettings),
+                side: "debit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
@@ -359,22 +398,22 @@ export default function GoodsReceiptsPage() {
 
             {purchaseOrderId && (
               <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-[1fr_6rem_8rem] gap-2 text-sm font-medium text-slate-500">
+                <div className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem] gap-2 text-sm font-medium text-slate-500">
                   <span>Item (sisa PO)</span>
-                  <span>Qty Terima</span>
-                  <span>Harga Riil/Unit</span>
+                  <span>Qty Terima per Satuan</span>
+                  <span>Harga Riil/Satuan Dasar</span>
                 </div>
                 {lines.length === 0 && (
                   <p className="text-sm text-slate-400">PO ini sudah diterima penuh.</p>
                 )}
                 {lines.map((line, i) => (
-                  <div key={line.po_line_id} className="grid grid-cols-[1fr_6rem_8rem] gap-2">
+                  <div key={line.po_line_id} className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem] gap-2">
                     <span className="flex items-center text-sm text-slate-700">{line.item_label}</span>
-                    <Input
-                      type="number"
-                      min="0"
-                      value={line.qty_received}
-                      onChange={(e) => updateLine(i, { qty_received: e.target.value })}
+                    <MultiUomQtyInput
+                      units={itemUnits.filter((u) => u.item_id === line.item_id)}
+                      baseUom={line.uom}
+                      initialBaseQty={line.qty_received}
+                      onChange={(change) => updateLine(i, { qty_received: change.baseQty })}
                     />
                     <Input
                       type="number"

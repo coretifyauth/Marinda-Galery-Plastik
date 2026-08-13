@@ -24,6 +24,7 @@ import { Modal } from "@/components/ui/modal";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
@@ -833,13 +834,33 @@ export function ApBillDetailView({ id }: { id: string }) {
   const selectedDeposit = availableDeposits.find((dep) => dep.id === applyDepositId) ?? null;
   const selectedDepositRemaining = selectedDeposit ? depositStatus(selectedDeposit, reversedEntryIds).remaining : 0;
 
+  // Sama persis kayak estimatedAmount di handleReturSubmit -- dihitung ulang di render scope
+  // biar JournalPreviewPanel bisa nunjukin jurnal "Piutang Retur Supplier" cuma pas beneran
+  // bakal kejadian (retur ngelebihin outstanding), bukan asumsi selalu ada.
+  const returEffectiveAmount = goodsReceipt
+    ? returLines.reduce((sum, l) => {
+        const qty = Number(l.qty_returned);
+        return l.qty_returned.trim() !== "" && !Number.isNaN(qty) ? sum + qty * l.unit_cost : sum;
+      }, 0)
+    : Number(returAmount) || 0;
+  const returExcess = Math.max(0, returEffectiveAmount - Math.max(0, outstanding));
+
+  const isFinancialOnly = !goodsReceipt;
+
   const tabs: TabDef[] = [
     { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur — Kurangi Utang", badge: creditNotes.length },
-    { key: "tukar", label: "Tukar Barang", badge: replacements.length },
-    { key: "writeoff", label: "Tulis-jadi-Beban", badge: writeoffs.length },
+    // Tukar Barang & Tulis-jadi-Beban wajib qty fisik + goods_receipt_notes (create_purchase_replacement/
+    // create_purchase_writeoff nolak kalau gak ada) -- gak ada gunanya ditampilin buat bill financial-only,
+    // submit-nya bakal ketolak RPC. Lihat memory/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
+    ...(!isFinancialOnly
+      ? [
+          { key: "tukar", label: "Tukar Barang", badge: replacements.length },
+          { key: "writeoff", label: "Tulis-jadi-Beban", badge: writeoffs.length },
+        ]
+      : []),
   ];
 
   const detailGroups = [
@@ -884,7 +905,24 @@ export function ApBillDetailView({ id }: { id: string }) {
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ap-bills" label="Kembali ke AP Bills" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">AP Bill Details</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold text-black">AP Bill Details</h1>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
+            {bill.source_ref}
+          </span>
+          <span
+            className={`rounded-full px-2.5 py-1 text-sm font-medium ${
+              isFinancialOnly ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
+            }`}
+            title={
+              isFinancialOnly
+                ? "Gak ada goods_receipt_notes -- bill ini gak punya barang fisik tercatat"
+                : "Ada goods_receipt_notes -- bill ini punya barang fisik tercatat"
+            }
+          >
+            {isFinancialOnly ? "Financial-Only" : "Full — Barang Fisik"}
+          </span>
+        </div>
         {canCancel && (
           <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
             {cancelling ? "Membatalkan..." : "Batalkan Bill"}
@@ -1247,6 +1285,26 @@ export function ApBillDetailView({ id }: { id: string }) {
             ? "Bill ini lewat Goods Receipt — isi qty per item yang diretur, stok otomatis berkurang dan Utang Usaha dikurangi sebesar cost fisik barang (bukan angka yang kamu ketik). Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."
             : "Bill ini gak lewat Goods Receipt — retur cuma ngurangin Utang Usaha lewat nominal yang kamu isi, gak ada stok yang disentuh. Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."}
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              { label: "Akun Utang Usaha (debit)", resolved: defaultAccounts["ap.payable"], side: "debit" },
+              !!returCreditAccountId && {
+                label: "Akun Persediaan/Beban (kredit)",
+                resolved: returCreditAccountOptions().find((a) => a.id === returCreditAccountId),
+                side: "credit",
+              },
+            ],
+            returExcess > 0 && [
+              {
+                label: "Akun Piutang Retur Supplier (debit) — retur ini ngelebihin outstanding",
+                resolved: defaultAccounts["ap.return_credit_asset"],
+                side: "debit",
+              },
+              { label: "Akun Utang Usaha (kredit)", resolved: defaultAccounts["ap.payable"], side: "credit" },
+            ],
+          ]}
+        />
         <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
@@ -1357,6 +1415,16 @@ export function ApBillDetailView({ id }: { id: string }) {
           Usaha sama sekali (berdiri sendiri, gak lewat retur Opsi A). Utang Usaha bill ini
           tetap penuh.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Persediaan (debit barang masuk & kredit barang keluar)",
+                resolved: defaultAccounts["inventory.raw_material"],
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -1419,6 +1487,22 @@ export function ApBillDetailView({ id }: { id: string }) {
           pengganti. Barang rusak ini murni kerugian yang ditanggung sendiri, diakui sebagai
           Beban Kerugian Barang Rusak. Utang Usaha bill ini tetap penuh.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Beban Kerugian Barang Rusak (debit)",
+                resolved: defaultAccounts["inventory.damage_loss_expense"],
+                side: "debit",
+              },
+              {
+                label: "Akun Persediaan (kredit)",
+                resolved: defaultAccounts["inventory.raw_material"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -1490,6 +1574,18 @@ export function ApBillDetailView({ id }: { id: string }) {
           Reklasifikasi uang muka yang udah dibayar ke supplier ini jadi pengurang utang bill
           ini — bukan pembayaran baru.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              { label: "Akun Utang Usaha (debit)", resolved: defaultAccounts["ap.payable"], side: "debit" },
+              {
+                label: "Akun Uang Muka Pembelian (kredit)",
+                resolved: defaultAccounts["ap.deposit_asset"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -1564,6 +1660,18 @@ export function ApBillDetailView({ id }: { id: string }) {
           Payment selalu nutup bill ini spesifik, boleh cicil (kurang dari sisa outstanding), tapi
           gak boleh lebih (overpay ditolak).
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              { label: "Akun Utang Usaha (debit)", resolved: defaultAccounts["ap.payable"], side: "debit" },
+              {
+                label: "Akun Kas/Bank (kredit)",
+                resolved: resolveCashAccount(payCashMethod, defaultAccounts),
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handlePaySubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="flex flex-col gap-1.5">
@@ -1619,6 +1727,22 @@ export function ApBillDetailView({ id }: { id: string }) {
         <p className="mb-4 text-sm text-slate-600">
           Terima kembali sisa piutang retur ini dari supplier dalam bentuk kas/bank.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Kas/Bank (debit)",
+                resolved: resolveCashAccount(refundCreditCashMethod, defaultAccounts),
+                side: "debit",
+              },
+              {
+                label: "Akun Piutang Retur Supplier (kredit)",
+                resolved: defaultAccounts["ap.return_credit_asset"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleRefundCreditSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="flex flex-col gap-1.5">

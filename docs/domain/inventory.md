@@ -132,6 +132,27 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 - Menunda invoice sampai seluruh Sales Order terpenuhi — seharusnya tiap pengiriman langsung memunculkan invoice sendiri, sesuai barang yang benar-benar sudah berpindah saat itu.
 - Memaksa semua penjualan melalui Sales Order dulu (meniru pola wajib PO di pembelian) — Sales Order hanya relevan untuk pesanan yang direncanakan, bukan transaksi spontan.
 
+### Kategori & Brand Barang
+
+**Cara Kerja**
+- Seiring katalog barang bertambah banyak, staff butuh cara ngelompokin & nyari barang cepat — bukan cuma scroll manual di 1 tabel panjang. 2 atribut deskriptif ditambahkan ke barang: **Kategori** (pengelompokan jenis barang, mis. "Alat Makan"/"Perlengkapan Dapur") dan **Brand** (merek/pemasok lini produk, mis. "Lion Star"/"Maspion").
+- Keduanya **katalog terkontrol** (dipilih dari daftar tetap, bukan teks bebas) — pola yang sama persis kayak katalog kategori biaya tambahan yang udah ada di AR/AP/POS (`ar_invoice_charge_types`, dst): daftar dikelola sendiri (nambah/nonaktifkan), barang tinggal pilih dari situ. Ini nyegah variasi tulisan yang beda-beda buat 1 hal yang sama ("Lion Star" vs "lion star" vs "LionStar") — kalau teks bebas, filter/pengelompokan jadi gak akurat karena string-nya gak persis sama.
+- **Opsional, independen satu sama lain** — barang boleh gak punya kategori, gak punya brand, salah satu, atau keduanya. Barang lama (sebelum fitur ini) otomatis gak punya keduanya, gak perlu di-backfill paksa.
+- **1 barang → maksimal 1 kategori, 1 brand** (bukan multi-kategori/tag) — cukup buat kebutuhan pengelompokan simpel, bukan sistem tagging.
+- Murni metadata deskriptif — sama sekali gak menyentuh perhitungan stok/HPP/jurnal, gak ada RPC baru.
+
+**Aturan Bisnis**
+- Kategori dan brand masing-masing dikelola sebagai katalog independen (bisa dinonaktifkan tanpa dihapus, pola sama katalog lain) — barang yang udah kepilih ke kategori/brand yang dinonaktifkan tetap nunjukin nilainya (snapshot, gak ilang), cuma gak muncul lagi di pilihan buat barang baru.
+- Menonaktifkan kategori atau brand gak mempengaruhi barang yang udah pernah dikaitkan ke situ.
+
+**Skenario**
+- Piring Plastik & Gelas Plastik dikategorikan "Alat Makan", brand "Maspion" (dari CV Sumber Plastik) — gampang difilter bareng pas nyari.
+- Ember Plastik 10L dikategorikan "Perlengkapan Rumah Tangga", brand "Lion Star" (dari PT Plastindo Jaya).
+
+**Common Mistakes**
+- Bikin kategori/brand jadi teks bebas per barang (bukan katalog terkontrol) — variasi penulisan bikin filter/pengelompokan gak akurat.
+- Mewajibkan tiap barang harus punya kategori/brand — barang lama & barang yang emang gak jelas mereknya (curah/racikan sendiri) harus tetap bisa disimpan tanpa keduanya.
+
 ### Satuan Jual & Harga (Multi Unit of Measure)
 
 **Cara Kerja**
@@ -140,19 +161,44 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 - **Sisi stok/HPP SELALU dihitung di satuan dasar** — begitu customer pilih "beli 2 lusin", sistem otomatis konversi jadi qty satuan dasar (2 × 12 = 24 buah) SEBELUM ngurangin stok/ngitung HPP. Barang besar/kecil kemasannya, `avg_cost` dan posisi stok gak pernah "ngerti" satuan jual — cuma ngerti satuan dasar.
 - **Harga per satuan jual itu independen, BUKAN hasil kali otomatis dari harga satuan dasar.** Harga per lusin biasanya dikasih diskon grosir (misal Rp22.000/lusin, bukan 12 × Rp2.000 = Rp24.000) — itu keputusan bisnis yang diisi manual per satuan jual, bukan dihitung sistem.
 - Ini murni **data referensi** buat menyarankan nominal invoice, sama persis prinsipnya kayak harga jual satuan dasar sebelumnya — nominal akhir yang beneran tercatat di invoice tetap bisa diubah, dan perubahan harga di data master gak pernah retroaktif ngubah invoice yang udah terbit.
-- Cuma relevan buat transaksi yang melibatkan barang fisik (jalur "full" Goods Issue) — invoice financial-only (jasa, atau barang yang gak dilacak stok) gak pernah nyentuh satuan jual sama sekali, karena emang gak ada referensi ke barang di situ.
+- Cuma relevan buat transaksi yang melibatkan barang fisik — invoice financial-only (jasa, atau barang yang gak dilacak stok) gak pernah nyentuh satuan tambahan sama sekali, karena emang gak ada referensi ke barang di situ.
+- **Input qty di layar transaksi bisa campuran beberapa satuan sekaligus, bukan cuma pilih 1.** Kalau barang fisiknya dihitung/diterima/dikirim dalam campuran kemasan (misal sebagian dus penuh, sebagian pack lepas, sebagian pcs satuan), user gak perlu hitung manual dulu — tiap satuan yang berlaku buat barang itu muncul sebagai kolom isian sendiri di 1 baris, dan sistem yang jumlahkan ke qty satuan dasar. Ini berlaku di semua layar yang minta qty per barang: Purchase Order, Terima Barang, Sales Order, Jual Barang (Goods Issue), qty produksi, dan hasil hitung fisik (Stock Opname) — bukan cuma pas jual ke customer.
 
 **Aturan Bisnis**
-- Tiap barang maksimal punya 1 "satuan dasar" (faktor konversi wajib 1) — sisanya boleh berapa pun satuan jual tambahan.
-- Qty yang beneran dikonsumsi dari stok SELALU di satuan dasar, gak peduli satuan jual apa yang dipilih customer.
-- Harga tiap satuan jual independen — gak wajib proporsional ke harga satuan dasar.
+- Tiap barang maksimal punya 1 "satuan dasar" (faktor konversi wajib 1) — sisanya boleh berapa pun satuan tambahan.
+- Qty yang beneran dikonsumsi/ditambah ke stok SELALU di satuan dasar, gak peduli kombinasi satuan apa yang dipakai user pas input.
+- Harga tiap satuan independen — gak wajib proporsional ke harga satuan dasar.
 
 **Skenario**
 - Barang dijual pakai satuan jual bukan satuan dasar (misal 1 lusin) — qty dikonversi ke satuan dasar dulu buat ngitung HPP, harga jual pakai harga satuan jual itu sendiri (bisa beda dari harga satuan dasar × faktor konversi).
+- Barang punya 3 satuan: pcs (dasar), pack (isi 12), box (isi 144). User terima/hitung/jual barang ini dengan campuran 2 pcs + 2 pack + 0 box dalam 1 baris — sistem jumlahkan otomatis jadi 26 pcs (2×1 + 2×12 + 0×144) sebelum dicatat ke stok, user gak perlu hitung sendiri atau pura-pura semuanya 1 satuan.
 
 **Common Mistakes**
 - Nyimpen qty transaksi di satuan JUAL (misal "2", maksudnya 2 lusin) tanpa dikonversi ke satuan dasar — stok kelihatan cuma berkurang dikit padahal fisiknya udah berkurang jauh lebih banyak, HPP juga keitung jauh lebih kecil dari seharusnya.
 - Menghitung harga per satuan jual sebagai hasil kali otomatis dari harga satuan dasar (misal harga lusin dipaksa = 12 × harga per buah) — mengabaikan diskon grosir yang biasanya memang beda dari harga eceran.
+
+### Kode Scan Barang (Barcode/QR per Satuan Jual)
+
+**Cara Kerja**
+- Kasir toko fisik butuh cara cepat identifikasi barang pas checkout — scan kode di kemasan, bukan cari manual satu-satu dari katalog. Tiap **satuan jual** (bukan barang secara umum) boleh, opsional, dikasih 1 kode scan unik — konsisten sama alasan kenapa harga & faktor konversi juga per satuan jual di submodule sebelumnya: kemasan fisik beda (dus vs pcs) biasanya punya label/barcode beda juga di dunia nyata. Kalau kode ditaruh di level barang (bukan per satuan), scan gak bisa langsung tau satuan mana yang lagi dipegang kasir.
+- Kode bisa dari 2 sumber, dan sistem memperlakukan keduanya **sama persis** — cuma teks yang dicocokkan pas scan, gak peduli asal-usulnya:
+  - **Barcode pabrik** — barang bermerek yang udah ada label EAN-13/UPC dari produsen, tinggal discan & disimpan apa adanya pas input satuan jual itu.
+  - **Kode internal** — buat barang yang gak punya label pabrik (barang curah, racikan sendiri, atau produk lokal kecil yang emang gak pernah didaftarin ke standar barcode resmi). Sistem sediakan tombol generate kode urutan internal (format `SKU-2026-00001`, sama polanya kayak nomor dokumen lain di sistem ini) + render QR siap-print langsung dari halaman barang, tanpa perlu aplikasi/alat cetak label terpisah.
+- Gak ada validasi format ketat (EAN-13/UPC checksum dst) — kolomnya nerima teks apa aja, karena kode QR yang digenerate sendiri emang gak wajib ikutin standar retail resmi.
+- Gak wajib diisi — barang/satuan yang gak pernah discan (dijual manual, ditimbang, atau dipilih dari katalog POS seperti sebelumnya) boleh dibiarkan kosong selamanya, gak ada dampak ke bagian modul lain.
+
+**Aturan Bisnis**
+- Kode scan harus unik lintas SELURUH satuan jual (gak boleh 2 barang/satuan beda punya kode yang sama) — kalau bentrok, scan jadi ambigu dan bisa keliru nge-charge harga barang lain.
+- Kode scan gak wajib diisi buat tiap satuan jual, dan gak ada aturan "kalau 1 satuan barang X punya kode, semua satuan barang X juga harus punya" — independen per baris.
+- Kode scan murni identitas lookup, sama sekali gak menyentuh perhitungan stok/HPP/jurnal — mengubah atau menghapus kode gak berdampak retroaktif ke transaksi yang udah pernah pakai satuan itu (transaksi udah menyimpan qty & harga hasil resolusinya sendiri, gak balik nunjuk ke kode).
+
+**Skenario**
+- Piring Plastik dijual 3 satuan: pcs, lusin, pack isi 6. Toko Makmur Jaya cuma bikinin kode buat "pack isi 6" (paling sering dijual retail & discan) — pcs dan lusin dibiarkan tanpa kode, tetap dijual manual lewat katalog seperti biasa.
+- Ember Plastik 10L gak ada barcode dari PT Plastindo Jaya (pabrik plastik lokal kecil). Pak Herman generate kode internal dari sistem, cetak label QR-nya, tempel ke rak/kemasan ember — Mbak Rina discan kode itu di kasir buat checkout cepat.
+
+**Common Mistakes**
+- Nyimpen kode scan di level barang (bukan per satuan jual) — begitu barang itu ternyata dijual >1 satuan (kemasan fisiknya beda-beda), sistem cuma bisa nyimpen 1 kode padahal tiap kemasan biasanya punya kode/label sendiri-sendiri, scan jadi gak bisa bedain satuan mana yang lagi discan.
+- Mewajibkan format ketat (EAN-13/UPC numerik + checksum) buat semua kode — menolak kode generate-sendiri (apalagi QR yang bisa encode teks bebas) yang emang gak dirancang ikutin standar itu.
 
 ### Stock Opname (Penyesuaian Stok Fisik)
 

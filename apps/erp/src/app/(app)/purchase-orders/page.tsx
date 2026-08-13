@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
 import type { Item } from "@/lib/items/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
 import { createPurchaseOrderSchema, poStatus, type PurchaseOrder } from "@/lib/purchase-orders/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
@@ -13,6 +14,7 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
+import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
 
 type LineInput = { item_id: string; qty_ordered: string; unit_cost_expected: string };
 
@@ -31,6 +33,7 @@ export default function PurchaseOrdersPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [items, setItems] = useState<Item[]>([]);
+  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -69,11 +72,15 @@ export default function PurchaseOrdersPage() {
   }, []);
 
   const loadItems = useCallback(async () => {
-    const { data } = await supabase
-      .from("items")
-      .select("id, name, item_type, uom, inventory_account_id, archived_at")
-      .order("name");
+    const [{ data }, { data: units }] = await Promise.all([
+      supabase
+        .from("items")
+        .select("id, name, item_type, uom, inventory_account_id, archived_at")
+        .order("name"),
+      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
+    ]);
     setItems((data ?? []) as Item[]);
+    setItemUnits((units ?? []) as ItemUnit[]);
   }, []);
 
   useEffect(() => {
@@ -278,47 +285,54 @@ export default function PurchaseOrdersPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_6rem_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Item</span>
-                <span>Qty Pesan</span>
-                <span>Harga/Unit</span>
+                <span>Qty Pesan per Satuan</span>
+                <span>Harga/Satuan Dasar</span>
                 <span />
               </div>
-              {lines.map((line, i) => (
-                <div key={i} className="grid grid-cols-[1fr_6rem_8rem_2.5rem] gap-2">
-                  <Select value={line.item_id} onChange={(e) => updateLine(i, { item_id: e.target.value })}>
-                    <option value="">Pilih item...</option>
-                    {rawMaterials.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({item.uom})
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={line.qty_ordered}
-                    onChange={(e) => updateLine(i, { qty_ordered: e.target.value })}
-                  />
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={line.unit_cost_expected}
-                    onChange={(e) => updateLine(i, { unit_cost_expected: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeLine(i)}
-                    disabled={lines.length <= 1}
-                    className="text-slate-400 hover:text-red-600 disabled:opacity-30"
-                    aria-label="Hapus baris"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+              {lines.map((line, i) => {
+                const selectedItem = items.find((it) => it.id === line.item_id);
+                const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
+                return (
+                  <div key={i} className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem_2.5rem] gap-2">
+                    <Select value={line.item_id} onChange={(e) => updateLine(i, { item_id: e.target.value, qty_ordered: "" })}>
+                      <option value="">Pilih item...</option>
+                      {rawMaterials.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({item.uom})
+                        </option>
+                      ))}
+                    </Select>
+                    {line.item_id ? (
+                      <MultiUomQtyInput
+                        key={line.item_id}
+                        units={unitsForItem}
+                        baseUom={selectedItem?.uom ?? ""}
+                        onChange={(change) => updateLine(i, { qty_ordered: change.baseQty })}
+                      />
+                    ) : (
+                      <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
+                    )}
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={line.unit_cost_expected}
+                      onChange={(e) => updateLine(i, { unit_cost_expected: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeLine(i)}
+                      disabled={lines.length <= 1}
+                      className="text-slate-400 hover:text-red-600 disabled:opacity-30"
+                      aria-label="Hapus baris"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
               <Button type="button" variant="secondary" onClick={addLine} className="w-fit">
                 + Tambah item
               </Button>

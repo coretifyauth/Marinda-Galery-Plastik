@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { generateDocumentNumber } from "@/lib/document-numbers";
@@ -13,14 +13,32 @@ type CatalogItem = {
   qtyOnHand: number;
 };
 
+// 1 baris per satuan jual (item_units) yang punya barcode -- dipakai buat lookup
+// scan, BUKAN cuma satuan dasar seperti CatalogItem. Ref: docs/domain/inventory.md
+// submodule "Kode Scan Barang (Barcode/QR per Satuan Jual)".
+type ScannableUnit = {
+  itemId: string;
+  itemName: string;
+  unitLabel: string;
+  conversionFactor: number;
+  price: number;
+  qtyOnHand: number;
+  barcode: string;
+};
+
 type Customer = {
   id: string;
   name: string;
 };
 
+// unit_price & qty_sold di sini SELALU dalam satuan jual baris ini (bisa base
+// unit ATAU satuan lain kayak lusin/pack kalau ditambah lewat scan) -- konversi
+// ke satuan dasar (dipakai RPC create_pos_sale) baru terjadi pas checkout().
 type CartLine = {
   item_id: string;
   name: string;
+  unit_label: string;
+  conversion_factor: number;
   unit_price: number;
   qty_sold: number;
   available: number;
@@ -51,6 +69,7 @@ export default function CheckoutPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [scannableUnits, setScannableUnits] = useState<ScannableUnit[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [accountIds, setAccountIds] = useState<Record<string, string>>({});
   const [chargeTypes, setChargeTypes] = useState<ChargeType[]>([]);
@@ -59,6 +78,9 @@ export default function CheckoutPage() {
   const [loading, setLoading] = useState(true);
 
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [scanInput, setScanInput] = useState("");
+  const [scanError, setScanError] = useState<string | null>(null);
+  const scanInputRef = useRef<HTMLInputElement>(null);
   const [extraLines, setExtraLines] = useState<ExtraLine[]>([]);
   const [applyTax, setApplyTax] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "QRIS">("CASH");
@@ -75,7 +97,7 @@ export default function CheckoutPage() {
       supabase
         .from("items")
         .select(
-          "id, name, uom, item_units(price, is_base), inventory_balances(qty_on_hand)"
+          "id, name, uom, item_units(unit_label, conversion_factor, price, is_base, barcode), inventory_balances(qty_on_hand)"
         )
         .eq("item_type", "FINISHED_GOOD")
         .is("archived_at", null)
@@ -112,7 +134,9 @@ export default function CheckoutPage() {
       id: string;
       name: string;
       uom: string;
-      item_units: { price: number | null; is_base: boolean }[] | null;
+      item_units:
+        | { unit_label: string; conversion_factor: number; price: number | null; is_base: boolean; barcode: string | null }[]
+        | null;
       inventory_balances: { qty_on_hand: number } | null;
     };
 
@@ -130,6 +154,23 @@ export default function CheckoutPage() {
       })
       .filter((item) => item.price > 0);
     setCatalog(mapped);
+
+    // Semua satuan jual (base ATAU bukan) yang punya barcode + harga -- dipakai
+    // lookup scan, beda dari `catalog` yang cuma nampilin satuan dasar di grid.
+    const units: ScannableUnit[] = rows.flatMap((row) =>
+      (row.item_units ?? [])
+        .filter((u) => u.barcode && u.price != null)
+        .map((u) => ({
+          itemId: row.id,
+          itemName: row.name,
+          unitLabel: u.unit_label,
+          conversionFactor: u.conversion_factor,
+          price: u.price as number,
+          qtyOnHand: row.inventory_balances?.qty_on_hand ?? 0,
+          barcode: u.barcode as string,
+        }))
+    );
+    setScannableUnits(units);
 
     setCustomers((customersRes.data ?? []) as Customer[]);
     setLoading(false);
@@ -186,10 +227,10 @@ export default function CheckoutPage() {
     setCheckoutError(null);
     setSuccessMessage(null);
     setCart((prev) => {
-      const existing = prev.find((l) => l.item_id === item.id);
+      const existing = prev.find((l) => l.item_id === item.id && l.unit_label === item.uom);
       if (existing) {
         return prev.map((l) =>
-          l.item_id === item.id ? { ...l, qty_sold: l.qty_sold + 1 } : l
+          l === existing ? { ...l, qty_sold: l.qty_sold + 1 } : l
         );
       }
       return [
@@ -197,6 +238,8 @@ export default function CheckoutPage() {
         {
           item_id: item.id,
           name: item.name,
+          unit_label: item.uom,
+          conversion_factor: 1,
           unit_price: item.price,
           qty_sold: 1,
           available: item.qtyOnHand,
@@ -205,18 +248,66 @@ export default function CheckoutPage() {
     });
   }
 
-  function updateQty(itemId: string, qty: number) {
+  // Tambah ke keranjang lewat kode scan/ketik manual -- BEDA dari addToCart (klik
+  // katalog, selalu satuan dasar). Satuan bisa apa aja (base atau bukan), harga &
+  // qty_sold tetap dalam satuan itu -- konversi ke satuan dasar baru terjadi pas
+  // checkout() manggil create_pos_sale. Ref: docs/domain/inventory.md submodule
+  // "Kode Scan Barang (Barcode/QR per Satuan Jual)".
+  function addScannedUnit(unit: ScannableUnit) {
+    setCheckoutError(null);
+    setSuccessMessage(null);
+    const available = Math.floor(unit.qtyOnHand / unit.conversionFactor);
+    if (available <= 0) {
+      setScanError(`Stok ${unit.itemName} (${unit.unitLabel}) habis`);
+      return;
+    }
+    setScanError(null);
+    setCart((prev) => {
+      const existing = prev.find((l) => l.item_id === unit.itemId && l.unit_label === unit.unitLabel);
+      if (existing) {
+        if (existing.qty_sold >= available) return prev;
+        return prev.map((l) => (l === existing ? { ...l, qty_sold: l.qty_sold + 1 } : l));
+      }
+      return [
+        ...prev,
+        {
+          item_id: unit.itemId,
+          name: unit.itemName,
+          unit_label: unit.unitLabel,
+          conversion_factor: unit.conversionFactor,
+          unit_price: unit.price,
+          qty_sold: 1,
+          available,
+        },
+      ];
+    });
+  }
+
+  function handleScanSubmit(e: FormEvent) {
+    e.preventDefault();
+    const code = scanInput.trim();
+    setScanInput("");
+    if (!code) return;
+    const unit = scannableUnits.find((u) => u.barcode === code);
+    if (!unit) {
+      setScanError("Kode gak ketemu — cari manual dari katalog di bawah");
+      return;
+    }
+    addScannedUnit(unit);
+  }
+
+  function updateQty(itemId: string, unitLabel: string, qty: number) {
     if (qty <= 0) {
-      setCart((prev) => prev.filter((l) => l.item_id !== itemId));
+      setCart((prev) => prev.filter((l) => !(l.item_id === itemId && l.unit_label === unitLabel)));
       return;
     }
     setCart((prev) =>
-      prev.map((l) => (l.item_id === itemId ? { ...l, qty_sold: qty } : l))
+      prev.map((l) => (l.item_id === itemId && l.unit_label === unitLabel ? { ...l, qty_sold: qty } : l))
     );
   }
 
-  function removeLine(itemId: string) {
-    setCart((prev) => prev.filter((l) => l.item_id !== itemId));
+  function removeLine(itemId: string, unitLabel: string) {
+    setCart((prev) => prev.filter((l) => !(l.item_id === itemId && l.unit_label === unitLabel)));
   }
 
   async function checkout() {
@@ -254,10 +345,15 @@ export default function CheckoutPage() {
       p_finished_good_account_id: accountIds[ACCOUNT_CODES.PERSEDIAAN_BARANG_JADI],
       p_extra_credit_lines: resolvedExtraLines,
       p_apply_tax: applyTax && !!taxSettings?.is_active,
+      // create_pos_sale SELALU nerima qty di satuan dasar (0 perubahan RPC, pola
+      // sama item_units di modul lain) -- baris keranjang yang qty_sold/unit_price-
+      // nya dalam satuan bukan-dasar (dari scan) dikonversi di sini, tepat sebelum
+      // manggil RPC. unit_price base = harga satuan jual dibagi faktor konversi,
+      // biar qty_base x unit_price_base tetap = total harga satuan jual asli.
       p_lines: cart.map((l) => ({
         item_id: l.item_id,
-        qty_sold: l.qty_sold,
-        unit_price: l.unit_price,
+        qty_sold: l.qty_sold * l.conversion_factor,
+        unit_price: l.unit_price / l.conversion_factor,
       })),
     });
 
@@ -268,11 +364,12 @@ export default function CheckoutPage() {
       return;
     }
 
-    setSuccessMessage(`Transaksi berhasil — total Rp${total.toLocaleString("id-ID")}`);
+    setSuccessMessage(`Transaksi berhasil (${sourceRef}) — total Rp${total.toLocaleString("id-ID")}`);
     setCart([]);
     setCustomerId("");
     setExtraLines([]);
     setApplyTax(false);
+    setScanError(null);
     loadCatalog();
   }
 
@@ -288,6 +385,18 @@ export default function CheckoutPage() {
     <div className="flex h-screen">
       <div className="flex-1 overflow-y-auto p-6">
         <h1 className="mb-4 text-xl font-semibold">Kasir</h1>
+        <form onSubmit={handleScanSubmit} className="mb-4">
+          <input
+            ref={scanInputRef}
+            type="text"
+            autoFocus
+            placeholder="Scan / ketik kode..."
+            value={scanInput}
+            onChange={(e) => setScanInput(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
+          />
+          {scanError && <p className="mt-1 text-xs text-amber-600">{scanError}</p>}
+        </form>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {catalog.map((item) => (
             <button
@@ -316,9 +425,14 @@ export default function CheckoutPage() {
         <div className="flex-1 space-y-2 overflow-y-auto">
           {cart.length === 0 && <div className="text-sm text-slate-400">Belum ada item.</div>}
           {cart.map((line) => (
-            <div key={line.item_id} className="flex items-center justify-between gap-2 text-sm">
+            <div key={`${line.item_id}-${line.unit_label}`} className="flex items-center justify-between gap-2 text-sm">
               <div className="flex-1">
-                <div>{line.name}</div>
+                <div>
+                  {line.name}
+                  {line.conversion_factor !== 1 && (
+                    <span className="ml-1 text-xs text-slate-400">({line.unit_label})</span>
+                  )}
+                </div>
                 <div className="text-slate-400">
                   Rp{line.unit_price.toLocaleString("id-ID")} × {line.qty_sold} = Rp
                   {(line.unit_price * line.qty_sold).toLocaleString("id-ID")}
@@ -327,21 +441,21 @@ export default function CheckoutPage() {
               <div className="flex items-center gap-1">
                 <button
                   className="h-6 w-6 rounded border border-slate-300"
-                  onClick={() => updateQty(line.item_id, line.qty_sold - 1)}
+                  onClick={() => updateQty(line.item_id, line.unit_label, line.qty_sold - 1)}
                 >
                   −
                 </button>
                 <span className="w-6 text-center">{line.qty_sold}</span>
                 <button
                   className="h-6 w-6 rounded border border-slate-300"
-                  onClick={() => updateQty(line.item_id, line.qty_sold + 1)}
+                  onClick={() => updateQty(line.item_id, line.unit_label, line.qty_sold + 1)}
                   disabled={line.qty_sold >= line.available}
                 >
                   +
                 </button>
                 <button
                   className="ml-1 text-red-500"
-                  onClick={() => removeLine(line.item_id)}
+                  onClick={() => removeLine(line.item_id, line.unit_label)}
                 >
                   ✕
                 </button>

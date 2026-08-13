@@ -27,15 +27,21 @@ Semua Weighted Average — gak ada pilihan metode lain di form.
 
 ## Tahap 1 — Bikin Item Master + Satuan Jual (Items)
 
-**Menu:** Inventory → **Items** (`/items`).
+**Menu:** Inventory → **Items** (`/items`). Halaman ini sekarang punya 3 tab: **Items**, **Kategori**, **Brand**.
 
-Untuk tiap baris di tabel di atas: klik **+ New** di pojok kanan atas toolbar tabel Items → form "Tambah Item" muncul di bawah tabel. Isi:
-- **Nama**: mis. `Ember Plastik 10L`
+**Kategori & Brand dulu (opsional, tapi lebih enak diisi sebelum bikin item).** Klik tab **Kategori** → **+ New** → isi **Nama Kategori** `Alat Makan` → **Simpan Kategori**. Ulangi buat kategori `Perlengkapan Rumah Tangga`. Pindah ke tab **Brand** → **+ New** → isi **Nama Brand** `Lion Star` → **Simpan Brand**, ulangi buat `Maspion`. Klik baris kategori/brand mana pun di tabelnya → masuk `/item-categories/[id]` atau `/item-brands/[id]`, nunjukin daftar barang yang tergolong ke situ (masih kosong sampai Tahap 1 lanjut isi item).
+
+Balik ke tab **Items**, klik **+ New** di pojok kanan atas toolbar tabel → form "Tambah Item" muncul di bawah tabel. Isi (untuk **Ember Plastik 10L**):
+- **Nama**: `Ember Plastik 10L`
 - **Tipe**: pilih `RAW_MATERIAL` (dropdown cuma `RAW_MATERIAL`/`FINISHED_GOOD`)
 - **Satuan Dasar (UOM)**: `pcs` (atau `pack` khusus Sendok-Garpu Plastik)
+- **Kategori (opsional)**: `Perlengkapan Rumah Tangga`
+- **Brand (opsional)**: `Lion Star`
 - **Akun Persediaan**: pilih `1400 — Persediaan Bahan Baku` dari dropdown akun leaf
 
-Klik **Simpan Item**. Baris baru langsung muncul di tabel list (kolom Nama/Tipe/Satuan Dasar/Satuan Jual/Akun Persediaan). Ulangi buat ketujuh item RAW_MATERIAL, lalu sekali lagi buat **Paket Alat Makan** dengan Tipe `FINISHED_GOOD`, UOM `pcs`, Akun Persediaan `1420 — Persediaan Barang Jadi`.
+Klik **Simpan Item**. Baris baru langsung muncul di tabel list (kolom Nama/Tipe/Satuan Dasar/Satuan Jual/Kategori/Brand/Akun Persediaan). Ulangi buat ketujuh item RAW_MATERIAL (Piring Plastik & Gelas Plastik dikategorikan `Alat Makan`, brand `Maspion` — sisanya boleh dibiarkan tanpa kategori/brand), lalu sekali lagi buat **Paket Alat Makan** dengan Tipe `FINISHED_GOOD`, UOM `pcs`, Akun Persediaan `1420 — Persediaan Barang Jadi`.
+
+**Lupa isi Kategori/Brand pas create, atau salah tipe/satuan dasar?** Klik baris item di tabel → masuk `/items/[id]` → tombol **Edit** di pojok kanan atas header. Form yang sama (Nama/Tipe/UOM/Kategori/Brand/Akun Persediaan) muncul, bisa diubah kapan saja — sebelumnya field-field ini cuma bisa diisi sekali pas create, sekarang bisa diedit belakangan.
 
 **Satuan jual & harga (multi-unit) — di halaman detail item, bukan di form create.** Klik baris **Ember Plastik 10L** di tabel (row-nya clickable, bukan tombol) → masuk `/items/[id]`. Di section "Satuan Jual & Harga", klik **+ Tambah Satuan**:
 - Baris pertama dipaksa jadi satuan dasar: field **Nama Satuan** & **Faktor Konversi** otomatis terkunci ke `pcs`/`1` (gak bisa diedit) — cuma **Harga (opsional)** yang bisa diisi. Kosongkan (Ember gak dijual per pcs langsung di walkthrough ini) → klik **Simpan Satuan**.
@@ -46,6 +52,11 @@ Ulangi pola yang sama (base + 1-2 satuan tambahan) buat **Piring Plastik** (base
 Untuk **Paket Alat Makan** (dipakai transaksi Goods Issue nanti, jadi satuannya penting): base `pcs` harga `6000`, tambah satuan `paket besar` faktor `5` harga `28000` ("paket besar isi 5" — buat pesanan acara/grosir, harga per unitnya didiskon dari 5×6.000=30.000 jadi 28.000).
 
 Kursi Plastik Lipat, Rak Plastik Serbaguna, Sendok-Garpu Plastik, Toples Plastik: **gak perlu** ditambah satuan jual (dijual/dipakai langsung di satuan dasarnya, atau gak pernah keluar lewat modul ini).
+
+**Kode Scan (barcode/QR) — opsional per satuan jual.** Tabel Satuan Jual & Harga sekarang punya kolom tambahan **Kode Scan** per baris. Baris yang dibiarkan kosong tetap bisa dijual manual dari katalog kios (`apps/pos`) seperti biasa — gak wajib diisi:
+- Di baris **Piring Plastik — pack (faktor 6, harga 10.000)**, klik **Buat Kode** → sistem generate `SKU-2026-00001` langsung tersimpan di baris itu (gak ada barcode dari CV Sumber Plastik buat kemasan pack ini — format sama kayak nomor dokumen lain di sistem ini, mis. `ARI-2026-00001`). Klik **Cetak Label** di sebelahnya → tab baru muncul otomatis buka dialog print browser, isinya QR + nama barang "Piring Plastik" + teks "pack — Rp10.000" di bawah QR, siap ditempel ke kemasan pack begitu selesai print.
+- Baris **pcs** dan **lusin** Piring Plastik dibiarkan kosong (gak dikasih kode) — kedua satuan itu tetap dijual manual dari katalog seperti sebelumnya, jarang discan.
+- Di baris **Ember Plastik 10L — lusin (faktor 12, harga 200.000)**, sama — PT Plastindo Jaya gak nyertain barcode pabrik di kardus ember, klik **Buat Kode** → `SKU-2026-00002`, cetak & tempel ke kardus.
 
 Di halaman detail item juga keliatan **Qty On Hand** & **Avg Cost** (dari `inventory_balances`) — masih 0 buat semua item karena belum ada penerimaan barang.
 

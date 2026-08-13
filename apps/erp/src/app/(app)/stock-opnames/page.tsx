@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { Item } from "@/lib/items/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
 import type { InventoryBalance } from "@/lib/inventory/schema";
 import { recordStockOpnameSchema, type StockOpname } from "@/lib/stock-opnames/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
@@ -14,7 +15,9 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
 
 type LineInput = { item_id: string; qty_actual: string };
 
@@ -27,6 +30,7 @@ export default function StockOpnamesPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [items, setItems] = useState<Item[]>([]);
+  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [opnames, setOpnames] = useState<StockOpname[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -54,15 +58,17 @@ export default function StockOpnamesPage() {
   }, []);
 
   const loadItems = useCallback(async () => {
-    const [{ data }, { data: bal }] = await Promise.all([
+    const [{ data }, { data: bal }, { data: units }] = await Promise.all([
       supabase
         .from("items")
         .select("id, name, item_type, uom, inventory_account_id, archived_at")
         .order("name"),
       supabase.from("inventory_balances").select("item_id, qty_on_hand, avg_cost"),
+      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
     ]);
     setItems((data ?? []) as Item[]);
     setBalances((bal ?? []) as InventoryBalance[]);
+    setItemUnits((units ?? []) as ItemUnit[]);
   }, []);
 
   const loadDefaultAccounts = useCallback(async () => {
@@ -176,6 +182,16 @@ export default function StockOpnamesPage() {
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
+  const hasShortageLine = lines.some((l) => {
+    if (!l.item_id || l.qty_actual.trim() === "") return false;
+    const qty = Number(l.qty_actual);
+    return !Number.isNaN(qty) && qty < systemQtyFor(l.item_id);
+  });
+  const hasSurplusLine = lines.some((l) => {
+    if (!l.item_id || l.qty_actual.trim() === "") return false;
+    const qty = Number(l.qty_actual);
+    return !Number.isNaN(qty) && qty > systemQtyFor(l.item_id);
+  });
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
@@ -267,6 +283,22 @@ export default function StockOpnamesPage() {
           sistem otomatis dilewati — gak perlu dihapus dari daftar, cukup biarin kosong atau
           isi sama persis.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            hasShortageLine && [
+              {
+                label: "Akun Beban Selisih Persediaan (selisih kurang)",
+                resolved: defaultAccounts["inventory.shortage_expense"],
+              },
+            ],
+            hasSurplusLine && [
+              {
+                label: "Akun Pendapatan Selisih Persediaan (selisih lebih)",
+                resolved: defaultAccounts["inventory.surplus_revenue"],
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
@@ -291,43 +323,53 @@ export default function StockOpnamesPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_6rem_minmax(12rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Item</span>
                 <span>Qty Sistem</span>
-                <span>Qty Hasil Hitung</span>
+                <span>Hasil Hitung per Satuan</span>
                 <span />
               </div>
-              {lines.map((line, i) => (
-                <div key={i} className="grid grid-cols-[1fr_8rem_8rem_2.5rem] gap-2">
-                  <Select value={line.item_id} onChange={(e) => updateLine(i, { item_id: e.target.value })}>
-                    <option value="">Pilih item...</option>
-                    {items.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({item.uom})
-                      </option>
-                    ))}
-                  </Select>
-                  <span className="flex items-center font-mono text-sm text-slate-500">
-                    {line.item_id ? systemQtyFor(line.item_id) : "-"}
-                  </span>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={line.qty_actual}
-                    onChange={(e) => updateLine(i, { qty_actual: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeLine(i)}
-                    disabled={lines.length <= 1}
-                    className="text-slate-400 hover:text-red-600 disabled:opacity-30"
-                    aria-label="Hapus baris"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+              {lines.map((line, i) => {
+                const selectedItem = items.find((it) => it.id === line.item_id);
+                const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
+                return (
+                  <div key={i} className="grid grid-cols-[1fr_6rem_minmax(12rem,auto)_2.5rem] gap-2">
+                    <Select
+                      value={line.item_id}
+                      onChange={(e) => updateLine(i, { item_id: e.target.value, qty_actual: "" })}
+                    >
+                      <option value="">Pilih item...</option>
+                      {items.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name} ({item.uom})
+                        </option>
+                      ))}
+                    </Select>
+                    <span className="flex items-center font-mono text-sm text-slate-500">
+                      {line.item_id ? systemQtyFor(line.item_id) : "-"}
+                    </span>
+                    {line.item_id ? (
+                      <MultiUomQtyInput
+                        key={line.item_id}
+                        units={unitsForItem}
+                        baseUom={selectedItem?.uom ?? ""}
+                        onChange={(change) => updateLine(i, { qty_actual: change.baseQty })}
+                      />
+                    ) : (
+                      <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeLine(i)}
+                      disabled={lines.length <= 1}
+                      className="text-slate-400 hover:text-red-600 disabled:opacity-30"
+                      aria-label="Hapus baris"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
               <Button type="button" variant="secondary" onClick={addLine} className="w-fit">
                 + Tambah item
               </Button>

@@ -47,6 +47,8 @@ Debit Harga Pokok Penjualan (5100)      <avg_cost>
 ```
 `Pendapatan Penjualan Toko` sengaja beda akun dari `Pendapatan Penjualan Grosir` yang dipakai AR Invoice ke 3 pelanggan grosir — biar dua channel jualan kelihatan terpisah di laporan.
 
+**Kalau kemasannya udah ada Kode Scan** (lihat `docs/story/inventory.md` Tahap 1 — Pak Herman udah generate & cetak label buat Piring Plastik pack isi 6): di atas grid katalog ada 1 input teks **"Scan / ketik kode..."**, selalu fokus otomatis begitu halaman checkout dibuka. Mbak Rina scan label `SKU-2026-00001` yang nempel di kemasan pack (atau ketik manual kodenya, Enter) — sistem langsung cocokkan ke `item_units.barcode`, baris **Piring Plastik — pack (isi 6) — Rp10.000** otomatis nambah ke keranjang qty 1, persis kayak klik kartunya di katalog. Kalau kode gak ketemu (salah ketik/scan, atau kemasan belum dikasih label), muncul pesan kuning kecil di bawah input "Kode gak ketemu — cari manual dari katalog di bawah" — keranjang & katalog tetap bisa dipakai seperti biasa, gak nge-block apa pun.
+
 ## 3. Checkout — Bayar QRIS (12 Agustus 2026)
 
 Pembeli lain beli **1 Kursi Plastik Lipat** (Rp75.000), bayar QRIS — duitnya masuk rekening bank toko, bukan laci kas fisik.

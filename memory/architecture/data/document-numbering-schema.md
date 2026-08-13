@@ -14,7 +14,7 @@ create table document_number_types (
 );
 ```
 
-Seed 29 baris (1 per tabel transaksional yang punya kolom `source_ref`, hasil audit lengkap seluruh migration):
+Seed 29 baris (1 per tabel transaksional yang punya kolom `source_ref`, hasil audit lengkap seluruh migration) + 1 baris ke-30 tambahan belakangan (`item_unit_barcodes`, migration `0022_item_unit_barcode_reuse_document_numbering.sql`, lihat catatan pengecualian di bawah tabel):
 
 | doc_type | prefix | label |
 |---|---|---|
@@ -47,6 +47,9 @@ Seed 29 baris (1 per tabel transaksional yang punya kolom `source_ref`, hasil au
 | journal_entries | JE | Journal Entry (manual) |
 | period_closings | CLS | Tutup Buku |
 | depreciation_entries | DEPR | Posting Penyusutan |
+| item_unit_barcodes | SKU | Kode Scan Barang (item_units.barcode) |
+
+**Baris ke-30, `item_unit_barcodes`, PENGECUALIAN dari aturan "`doc_type` = nama tabel transaksional" di atas** — gak ada tabel `item_unit_barcodes` beneran (`memory/architecture/data/inventory-schema.md` submodule "Kode Scan Barang"). Kode ini nempel ke SEBAGIAN baris `item_units` yang user pilih generate satu-satu (tombol "Buat Kode" di `/items/[id]`), bukan otomatis 1 nomor per baris kayak 29 doc_type lain di atas yang selalu digenerate barengan tiap row transaksi baru diinsert. Aman dipakai walau bukan nama tabel — `generate_document_number()` di bawah cuma butuh `doc_type` buat lookup `prefix` + upsert counter, gak ada dynamic SQL yang mengasumsikan tabel bernama itu exist (dikonfirmasi eksplisit lewat `schema-reviewer` sebelum migration `0022` diterapkan).
 
 **`document_number_counters`** — penghitung urutan per `(doc_type, year)`. Composite PK memaksa uniqueness + jadi kunci upsert atomik; `year` bukan kolom generated dari tanggal transaksi manapun — dihitung dari `extract(year from now())` (waktu server saat nomor digenerate), bukan tanggal dokumen yang mungkin di-backdate.
 
@@ -106,3 +109,18 @@ alter table ap_bills add column supplier_document_ref text;
 **RPC `create_ap_bill`** — dapat 1 parameter baru di akhir signature (additive, gak breaking): `p_supplier_document_ref text default null`. Disimpan apa adanya ke kolom baru, gak ada validasi format/uniqueness.
 
 Referensi RPC lengkap (signature sebelumnya): `memory/architecture/data/ap-schema.md` submodule "Kategori Campur & PPN".
+
+## Data Lama — Gak Dibackfill
+
+**Peta Data (ERD)**
+- Gak ada tabel baru. `source_ref` di semua tabel transaksional yang sudah punya data SEBELUM migration ini tetap berisi teks manual asli, gak pernah ditulis ulang.
+
+**Alur Teknis**
+- Backfill data lama (2026-08-13) sempat disiapkan sebagai migration data terpisah (rencana: `UPDATE ... SET source_ref = ...` per 27 tabel, urut per tanggal transaksi asli per `(doc_type, year)`, lanjut dari `document_number_counters` yang ada) — GAGAL karena setiap tabel transaksional punya trigger `<table>_block_edit_delete` (pola sama dengan `journal_entries_block_edit_delete` di `0003_journal_entry_schema.sql`) yang me-raise exception untuk SEMUA `before update or delete`, tanpa syarat periode closed — penegakan level-DB dari invariant "no editing posted entries, reversing entry only", bukan cuma level aplikasi.
+- Opsi disable trigger sementara (1 transaksi atomik: `alter table ... disable trigger ...` → backfill → `enable trigger ...`) diajukan ke owner untuk 27 tabel yang bukan `journal_entries`/`depreciation_entries` (dua itu udah duluan dikecualikan karena nomornya cuma bisa ditulis ke `journal_entries.source_ref`, yang juga kena trigger sama). **Ditolak** — keputusan: gak ada backfill sama sekali, migration data-nya gak jadi dibuat/dijalankan.
+
+**Aturan Bisnis → RPC**
+- Trigger `block_edit_delete` yang menjaga invariant "Tiap journal entry: ... No edit posted/closed period — hanya reversing entry" (`AGENTS.md` Core Invariants) ternyata diterapkan lebih luas dari sekadar `journal_entries` — melindungi SEMUA kolom di SEMUA tabel transaksional termasuk `source_ref`, gak dibatasi ke nominal/debit-kredit atau ke periode yang sudah closed.
+
+**Interaksi Antar Tabel**
+- Gak ada perubahan skema/RPC. UI (list & detail) menampilkan `source_ref` apa adanya — teks manual lama untuk dokumen pre-`0011_document_numbering.sql`, format `PREFIX-TAHUN-URUTAN` untuk dokumen post-migration. Keputusan tampilan: `memory/preferences/ui/document-number-display.md`.

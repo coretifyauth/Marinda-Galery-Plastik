@@ -27,8 +27,10 @@ import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { escapeHtml, openPrintWindow } from "@/lib/print/print-window";
 
 type ReturnLineInput = {
   item_id: string;
@@ -227,7 +229,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .order("replacement_date"),
       supabase
         .from("goods_issues")
-        .select("id, goods_issue_lines(item_id, qty_issued, items(name, uom))")
+        .select(
+          "id, goods_issue_lines(item_id, qty_issued, so_line_id, items(name, uom), sales_order_lines(unit_price))"
+        )
         .eq("invoice_id", id)
         .maybeSingle(),
       supabase
@@ -745,6 +749,106 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     : undefined;
   const replaceReturnCreditActive =
     !!replaceReturnCredit && returnCreditRemaining(replaceReturnCredit).remaining > 0.005;
+  // Reversal diskon retur (create_warranty_replacement) cuma kejadian kalau qty yang ditukar
+  // > 0 -- proporsional ke qty asli, jadi kalau semua baris masih 0 gak ada jurnal reversal
+  // sama sekali (nolnya nol).
+  const replaceAnyQty = replaceLines.some((l) => (Number(l.qty) || 0) > 0);
+
+  // Sama pola kayak returExcess di ap-bills/[id]/view.tsx -- excess cuma kejadian kalau
+  // nominal retur ngelebihin outstanding invoice saat ini.
+  const returExcess = Math.max(0, (Number(returAmount) || 0) - Math.max(0, outstanding));
+  const returHasResalable = returLines.some(
+    (l) => l.condition === "RESALABLE" && (Number(l.qty_returned) || 0) > 0
+  );
+  const returHasDamaged = returLines.some(
+    (l) => l.condition === "DAMAGED" && (Number(l.qty_returned) || 0) > 0
+  );
+
+  // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
+  // jadi cetak ulang kapan pun otomatis nunjukkan kondisi terkini (retur/write-off/pembatalan
+  // yang terjadi setelah cetakan pertama), bukan angka beku waktu pertama dicetak. Kop surat +
+  // blok tanda tangan sengaja belum ada, lihat memory/scope-debt/print-template-letterhead-signature.md.
+  function handlePrint() {
+    if (!invoice) return;
+
+    // Harga per item cuma ada kalau line-nya fulfillment Sales Order (satu-satunya tempat
+    // unit_price ketracking) -- jalur jual langsung gak punya harga per item di mana pun,
+    // invoice-nya cuma nyimpen total lump-sum per kategori. Kalau gak ada satu pun line yang
+    // punya harga, tabel item cukup qty (jangan pura-pura ada kolom harga kosong).
+    const hasItemPrice = !!goodsIssue?.goods_issue_lines.some((l) => l.sales_order_lines);
+    const itemRows = goodsIssue
+      ? goodsIssue.goods_issue_lines
+          .map((l) => {
+            const unitPrice = l.sales_order_lines?.unit_price;
+            const subtotal = unitPrice != null ? unitPrice * l.qty_issued : null;
+            return hasItemPrice
+              ? `<tr>
+                  <td>${escapeHtml(l.items.name)}</td>
+                  <td class="num">${l.qty_issued} ${escapeHtml(l.items.uom)}</td>
+                  <td class="num">${unitPrice != null ? `Rp${unitPrice.toLocaleString("id-ID")}` : "-"}</td>
+                  <td class="num">${subtotal != null ? `Rp${subtotal.toLocaleString("id-ID")}` : "-"}</td>
+                </tr>`
+              : `<tr><td>${escapeHtml(l.items.name)}</td><td class="num">${l.qty_issued} ${escapeHtml(l.items.uom)}</td></tr>`;
+          })
+          .join("")
+      : "";
+    const itemSection = goodsIssue
+      ? `<table><thead><tr>
+          <th>Barang</th><th class="num">Qty Dikirim</th>
+          ${hasItemPrice ? `<th class="num">Harga/Unit</th><th class="num">Subtotal</th>` : ""}
+        </tr></thead><tbody>${itemRows}</tbody></table>`
+      : `<p class="meta">Invoice financial-only — gak ada rincian barang fisik tercatat.</p>`;
+
+    const watermark =
+      status === "dibatalkan"
+        ? `<div class="watermark">Dibatalkan</div>`
+        : status === "dihapusbukukan"
+          ? `<div class="watermark">Dihapusbukukan — Piutang Tak Tertagih</div>`
+          : "";
+
+    // Baris ringkasan yang berasal dari relasi objek lain (pembayaran/DP/retur/write-off)
+    // cuma ditampilkan kalau nilainya beneran ada (>0) -- invoice yang belum pernah kena
+    // retur/write-off gak perlu nunjukkan baris "Retur: Rp0" di kertas.
+    const summaryRows = [
+      { label: "Jumlah Invoice", value: invoice.amount },
+      allocated > 0.005 && { label: "Terbayar (Kas/Bank)", value: allocated },
+      depositApplied > 0.005 && { label: "DP Diterapkan", value: depositApplied },
+      returned > 0.005 && { label: "Retur", value: returned },
+      writtenOff > 0.005 && { label: "Piutang Tak Tertagih", value: writtenOff },
+    ]
+      .filter((row): row is { label: string; value: number } => !!row)
+      .map((row) => `<tr><td>${row.label}</td><td class="num">Rp${row.value.toLocaleString("id-ID")}</td></tr>`)
+      .join("");
+
+    const body = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+        <div>
+          <h1>Invoice</h1>
+          <div class="meta">${escapeHtml(invoice.source_ref)}</div>
+        </div>
+      </div>
+      ${watermark}
+      <table>
+        <tbody>
+          <tr><td class="meta">Customer</td><td>${escapeHtml(invoice.customers.name)}</td></tr>
+          <tr><td class="meta">Tanggal Invoice</td><td>${escapeHtml(invoice.invoice_date)}</td></tr>
+          <tr><td class="meta">Jatuh Tempo</td><td>${escapeHtml(invoice.due_date)}</td></tr>
+          ${invoice.description ? `<tr><td class="meta">Deskripsi</td><td>${escapeHtml(invoice.description)}</td></tr>` : ""}
+        </tbody>
+      </table>
+      <div style="margin-top:20px;">${itemSection}</div>
+      <table style="margin-top:20px;">
+        <tbody>
+          ${summaryRows}
+          <tr class="total-row"><td>Outstanding</td><td class="num">Rp${outstanding.toLocaleString("id-ID")}</td></tr>
+        </tbody>
+      </table>
+    `;
+
+    if (!openPrintWindow(`Invoice ${invoice.source_ref}`, body)) {
+      setLoadError("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
+    }
+  }
 
   const detailGroups = [
     {
@@ -784,25 +888,53 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     },
   ];
 
+  const isFinancialOnly = !goodsIssue;
+
   const tabs: TabDef[] = [
     { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur", badge: creditNotes.length },
     { key: "writeoff", label: "Piutang Tak Tertagih", badge: writeoffs.length },
-    { key: "replacements", label: "Penggantian Barang", badge: replacements.length },
+    // Penggantian Barang (warranty replacement) wajib nunjuk credit note yang punya retur fisik
+    // (inventory_returns), yang cuma mungkin ada kalau invoice ini punya goods_issue -- create_warranty_replacement
+    // nolak kalau retur-nya financial-only. Gak ada gunanya ditampilin buat invoice financial-only.
+    // Piutang Tak Tertagih TETAP tampil -- itu soal collectibility piutang, gak ada hubungannya sama barang fisik.
+    ...(!isFinancialOnly ? [{ key: "replacements", label: "Penggantian Barang", badge: replacements.length }] : []),
   ];
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ar-invoices" label="Kembali ke AR Invoices" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">AR Invoice Details</h1>
-        {canCancel && (
-          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
-            {cancelling ? "Membatalkan..." : "Batalkan"}
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold text-black">AR Invoice Details</h1>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
+            {invoice.source_ref}
+          </span>
+          <span
+            className={`rounded-full px-2.5 py-1 text-sm font-medium ${
+              isFinancialOnly ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"
+            }`}
+            title={
+              isFinancialOnly
+                ? "Gak ada goods_issue -- invoice ini gak punya barang fisik tercatat"
+                : "Ada goods_issue -- invoice ini punya barang fisik tercatat"
+            }
+          >
+            {isFinancialOnly ? "Financial-Only" : "Full — Barang Fisik"}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="toolbar" onClick={handlePrint}>
+            Cetak
           </Button>
-        )}
+          {canCancel && (
+            <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? "Membatalkan..." : "Batalkan"}
+            </Button>
+          )}
+        </div>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
@@ -1164,6 +1296,38 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           proporsional (Piutang Usaha naik lagi) — supaya piutang kami ke customer gak berkurang
           gara-gara penukaran ini. Qty dibatasi sisa yang belum ditukar dari retur ini.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            replaceAnyQty && [
+              { label: "Akun HPP (debit)", resolved: defaultAccounts["inventory.hpp"], side: "debit" },
+              {
+                label: "Akun Persediaan Barang Jadi (kredit)",
+                resolved: defaultAccounts["inventory.finished_good"],
+                side: "credit",
+              },
+            ],
+            replaceAnyQty && [
+              {
+                label: "Akun Piutang Usaha (debit) — pembalikan diskon retur",
+                resolved: defaultAccounts["ar.receivable"],
+                side: "debit",
+              },
+              {
+                label: "Akun Retur & Potongan Penjualan (kredit) — pembalikan diskon retur",
+                resolved: defaultAccounts["ar.contra_revenue"],
+                side: "credit",
+              },
+            ],
+            replaceAnyQty && replaceReturnCreditActive && [
+              {
+                label: "Akun Saldo Kredit Retur Customer (debit) — retur ini punya saldo kredit aktif",
+                resolved: defaultAccounts["ar.return_credit_liability"],
+                side: "debit",
+              },
+              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
+            ],
+          ]}
+        />
         <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -1252,6 +1416,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           Reklasifikasi uang muka yang udah diterima jadi pengurang piutang invoice ini —
           bukan pembayaran baru.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Uang Muka Penjualan (debit)",
+                resolved: defaultAccounts["ar.deposit_liability"],
+                side: "debit",
+              },
+              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
+            ],
+          ]}
+        />
         <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -1332,6 +1508,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           Pendapatan asli gak dibalik, cuma piutangnya dihapusbukukan lewat beban baru.
           Boleh sebagian, tapi gak boleh ngelebihin sisa outstanding.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Beban Piutang Tak Tertagih (debit)",
+                resolved: defaultAccounts["ar.writeoff_expense"],
+                side: "debit",
+              },
+              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
+            ],
+          ]}
+        />
         <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
@@ -1386,6 +1574,47 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             ? "Invoice ini lewat Goods Issue — isi qty per item yang balik, stok & HPP otomatis ke-reverse proporsional."
             : "Invoice ini gak lewat Goods Issue — retur cuma ngurangin piutang (kontra-revenue), gak ada stok yang disentuh."}
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Retur & Potongan Penjualan (debit)",
+                resolved: defaultAccounts["ar.contra_revenue"],
+                side: "debit",
+              },
+              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
+            ],
+            returExcess > 0 && [
+              {
+                label: "Akun Piutang Usaha (debit) — retur ini ngelebihin outstanding",
+                resolved: defaultAccounts["ar.receivable"],
+                side: "debit",
+              },
+              {
+                label: "Akun Saldo Kredit Retur Customer (kredit) — retur ini ngelebihin outstanding",
+                resolved: defaultAccounts["ar.return_credit_liability"],
+                side: "credit",
+              },
+            ],
+            goodsIssue && (returHasResalable || returHasDamaged) && [
+              returHasResalable && {
+                label: "Akun Persediaan Barang Jadi (debit, baris Layak Jual)",
+                resolved: defaultAccounts["inventory.finished_good"],
+                side: "debit",
+              },
+              returHasDamaged && {
+                label: "Akun Beban Kerugian Barang Rusak (debit, baris Rusak)",
+                resolved: defaultAccounts["inventory.damage_loss_expense"],
+                side: "debit",
+              },
+              {
+                label: "Akun HPP (kredit, jurnal reversal)",
+                resolved: defaultAccounts["inventory.hpp"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
@@ -1490,6 +1719,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           Payment selalu nutup invoice ini spesifik, boleh cicil (kurang dari sisa outstanding),
           tapi gak boleh lebih (overpay ditolak).
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Kas/Bank (debit)",
+                resolved: resolveCashAccount(payMethod, defaultAccounts),
+                side: "debit",
+              },
+              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
+            ],
+          ]}
+        />
         <form onSubmit={handlePaySubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="flex flex-col gap-1.5">
@@ -1545,6 +1786,22 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         <p className="mb-4 text-sm text-slate-600">
           Kembalikan sisa saldo kredit retur ini ke customer dalam bentuk kas/bank.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Saldo Kredit Retur Customer (debit)",
+                resolved: defaultAccounts["ar.return_credit_liability"],
+                side: "debit",
+              },
+              {
+                label: "Akun Kas/Bank (kredit)",
+                resolved: resolveCashAccount(refundCreditMethod, defaultAccounts),
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleRefundCreditSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="flex flex-col gap-1.5">

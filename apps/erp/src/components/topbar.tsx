@@ -17,6 +17,8 @@ const routeLabels: Record<string, string> = {
   "/ap-bills": "AP Bills",
   "/ap-deposits": "AP Deposits",
   "/items": "Items",
+  "/item-categories": "Kategori Barang",
+  "/item-brands": "Brand Barang",
   "/inventory": "Stock Position",
   "/purchase-orders": "Purchase Orders",
   "/goods-receipts": "Goods Receipts",

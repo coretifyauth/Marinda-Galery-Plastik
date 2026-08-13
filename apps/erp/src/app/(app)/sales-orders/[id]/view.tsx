@@ -6,8 +6,8 @@ import { supabase } from "@/lib/supabase/client";
 import { soStatus, lineRemaining, type SalesOrder } from "@/lib/sales-orders/schema";
 import { createGoodsIssueSchema } from "@/lib/goods-issues/schema";
 import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
-import type { TaxSettings } from "@/lib/tax-settings/schema";
-import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import { fetchTaxSettings, resolvedPpnKeluaran, type TaxSettings } from "@/lib/tax-settings/schema";
+import { resolveChargeLines, resolveChargeLineLegs, type ChargeLineInput } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 type FulfillmentRow = {
@@ -103,8 +104,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
   }, []);
 
   const loadTaxSettings = useCallback(async () => {
-    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
-    setTaxSettings((data ?? null) as TaxSettings | null);
+    setTaxSettings(await fetchTaxSettings());
   }, []);
 
   useEffect(() => {
@@ -260,7 +260,12 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/sales-orders" label="Kembali ke Sales Orders" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">Sales Order Details</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold text-black">Sales Order Details</h1>
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
+            {so.source_ref}
+          </span>
+        </div>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
@@ -368,6 +373,32 @@ export function SalesOrderDetailView({ id }: { id: string }) {
           nunggu sales order ini terpenuhi penuh (ref: `docs/domain/inventory.md` submodule
           &quot;Sales Order &amp; Pemenuhan Bertahap&quot;).
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              { label: "Akun Piutang Usaha (debit)", resolved: defaultAccounts["ar.receivable"], side: "debit" },
+              { label: "Akun Pendapatan (kredit)", resolved: defaultAccounts["ar.revenue"], side: "credit" },
+              ...resolveChargeLineLegs(extraLines, chargeTypes, "credit"),
+              applyTax && {
+                label: "Akun PPN Keluaran (kredit)",
+                resolved: resolvedPpnKeluaran(taxSettings),
+                side: "credit",
+              },
+            ],
+            [
+              {
+                label: "Akun HPP (debit, jurnal kedua)",
+                resolved: defaultAccounts["inventory.hpp"],
+                side: "debit",
+              },
+              {
+                label: "Akun Persediaan Barang Jadi (kredit, jurnal kedua)",
+                resolved: defaultAccounts["inventory.finished_good"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleFulfill} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">

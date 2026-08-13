@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
@@ -243,6 +244,22 @@ export default function ArDepositsPage() {
             ketolak RLS.
           </p>
         )}
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Kas/Bank (debit)",
+                resolved: resolveCashAccount(cashMethod, defaultAccounts),
+                side: "debit",
+              },
+              {
+                label: "Akun Uang Muka Penjualan (kredit)",
+                resolved: defaultAccounts["ar.deposit_liability"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="customer">Customer</Label>

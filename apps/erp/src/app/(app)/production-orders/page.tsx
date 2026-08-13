@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { BomHeader } from "@/lib/bom/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
 import { createProductionOrderSchema, type ProductionOrder } from "@/lib/production-orders/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
@@ -13,12 +14,15 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
 
 export default function ProductionOrdersPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [boms, setBoms] = useState<BomHeader[]>([]);
+  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [orders, setOrders] = useState<ProductionOrder[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -32,6 +36,7 @@ export default function ProductionOrdersPage() {
   const [showForm, setShowForm] = useState(false);
 
   const activeBoms = boms.filter((b) => b.is_active);
+  const selectedBom = boms.find((b) => b.id === bomHeaderId);
 
   const loadOrders = useCallback(async () => {
     const { data, error } = await supabase
@@ -58,6 +63,13 @@ export default function ProductionOrdersPage() {
     setBoms((data ?? []) as unknown as BomHeader[]);
   }, []);
 
+  const loadItemUnits = useCallback(async () => {
+    const { data } = await supabase
+      .from("item_units")
+      .select("id, item_id, unit_label, conversion_factor, price, is_base");
+    setItemUnits((data ?? []) as ItemUnit[]);
+  }, []);
+
   const loadDefaultAccounts = useCallback(async () => {
     setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
@@ -75,13 +87,13 @@ export default function ProductionOrdersPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadBoms(), loadDefaultAccounts(), loadOrders()]);
+      await Promise.all([loadBoms(), loadItemUnits(), loadDefaultAccounts(), loadOrders()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadBoms, loadDefaultAccounts, loadOrders]);
+  }, [router, loadBoms, loadItemUnits, loadDefaultAccounts, loadOrders]);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -169,6 +181,7 @@ export default function ProductionOrdersPage() {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="px-4 py-2">Source Ref</th>
               <th className="px-4 py-2">Barang Jadi</th>
               <th className="px-4 py-2">Qty Produksi</th>
               <th className="px-4 py-2">Tanggal</th>
@@ -185,6 +198,7 @@ export default function ProductionOrdersPage() {
                   className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
                   onClick={() => router.push(`/production-orders/${po.id}`)}
                 >
+                  <td className="px-4 py-2">{po.source_ref}</td>
                   <td className="px-4 py-2 font-medium text-black">{po.bom_headers.items.name}</td>
                   <td className="px-4 py-2">{po.qty_produced}</td>
                   <td className="whitespace-nowrap px-4 py-2">{po.production_date}</td>
@@ -203,7 +217,7 @@ export default function ProductionOrdersPage() {
             })}
             {orders.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
                   Belum ada production order.
                 </td>
               </tr>
@@ -223,11 +237,34 @@ export default function ProductionOrdersPage() {
           Bahan baku dikonsumsi otomatis sesuai resep (BOM), Weighted Average — gak perlu
           diinput manual di sini.
         </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              {
+                label: "Akun Persediaan Barang Jadi (debit)",
+                resolved: defaultAccounts["inventory.finished_good"],
+                side: "debit",
+              },
+              {
+                label: "Akun Persediaan Bahan Baku (kredit)",
+                resolved: defaultAccounts["inventory.raw_material"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bom">Resep (BOM)</Label>
-                <Select id="bom" value={bomHeaderId} onChange={(e) => setBomHeaderId(e.target.value)}>
+                <Select
+                  id="bom"
+                  value={bomHeaderId}
+                  onChange={(e) => {
+                    setBomHeaderId(e.target.value);
+                    setQtyProduced("");
+                  }}
+                >
                   <option value="">Pilih resep...</option>
                   {activeBoms.map((bom) => (
                     <option key={bom.id} value={bom.id}>
@@ -237,15 +274,17 @@ export default function ProductionOrdersPage() {
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="qty_produced">Qty Diproduksi</Label>
-                <Input
-                  id="qty_produced"
-                  type="number"
-                  min="0"
-                  placeholder="mis. 50"
-                  value={qtyProduced}
-                  onChange={(e) => setQtyProduced(e.target.value)}
-                />
+                <Label htmlFor="qty_produced">Qty Diproduksi per Satuan</Label>
+                {selectedBom ? (
+                  <MultiUomQtyInput
+                    key={selectedBom.id}
+                    units={itemUnits.filter((u) => u.item_id === selectedBom.finished_item_id)}
+                    baseUom={selectedBom.items.uom}
+                    onChange={(change) => setQtyProduced(change.baseQty)}
+                  />
+                ) : (
+                  <span className="flex items-center text-xs text-slate-400">Pilih resep dulu</span>
+                )}
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="production_date">Tanggal Produksi</Label>

@@ -20,4 +20,5 @@ export type ItemUnit = {
   conversion_factor: number;
   price: number | null;
   is_base: boolean;
+  barcode: string | null;
 };

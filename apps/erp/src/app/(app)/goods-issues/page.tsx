@@ -7,9 +7,10 @@ import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { createGoodsIssueSchema, type GoodsIssue } from "@/lib/goods-issues/schema";
+import { MultiUomQtyInput, type MultiUomChange } from "@/components/ui/multi-uom-qty-input";
 import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
-import type { TaxSettings } from "@/lib/tax-settings/schema";
-import { resolveChargeLines, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import { fetchTaxSettings, resolvedPpnKeluaran, type TaxSettings } from "@/lib/tax-settings/schema";
+import { resolveChargeLines, resolveChargeLineLegs, type ChargeLineInput } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -19,12 +20,13 @@ import { FormError } from "@/components/ui/form-message";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
-type LineInput = { item_id: string; unit_id: string; qty: string };
+type LineInput = { item_id: string; qty: string; amount: number | null };
 
 function emptyLine(): LineInput {
-  return { item_id: "", unit_id: "", qty: "" };
+  return { item_id: "", qty: "", amount: null };
 }
 
 export default function GoodsIssuesPage() {
@@ -99,8 +101,7 @@ export default function GoodsIssuesPage() {
   }, []);
 
   const loadTaxSettings = useCallback(async () => {
-    const { data } = await supabase.from("tax_settings").select("*").maybeSingle();
-    setTaxSettings((data ?? null) as TaxSettings | null);
+    setTaxSettings(await fetchTaxSettings());
   }, []);
 
   useEffect(() => {
@@ -132,16 +133,14 @@ export default function GoodsIssuesPage() {
   }, [router, loadCustomers, loadItems, loadDefaultAccounts, loadIssues, loadChargeTypes, loadTaxSettings]);
 
   function updateLineItem(index: number, itemId: string) {
-    // Ganti item -> satuan jual sebelumnya gak relevan lagi, reset.
-    setLines((prev) => prev.map((l, i) => (i === index ? { item_id: itemId, unit_id: "", qty: l.qty } : l)));
+    // Ganti item -> breakdown qty per satuan sebelumnya gak relevan lagi, reset.
+    setLines((prev) => prev.map((l, i) => (i === index ? { item_id: itemId, qty: "", amount: null } : l)));
   }
 
-  function updateLineUnit(index: number, unitId: string) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, unit_id: unitId } : l)));
-  }
-
-  function updateLineQty(index: number, qty: string) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, qty } : l)));
+  function updateLineQty(index: number, change: MultiUomChange) {
+    setLines((prev) =>
+      prev.map((l, i) => (i === index ? { ...l, qty: change.baseQty, amount: change.amount } : l))
+    );
   }
 
   function addLine() {
@@ -158,14 +157,7 @@ export default function GoodsIssuesPage() {
    * `amount`, tetap bisa diedit manual sebelum submit — RPC tetap terima p_amount apa adanya.
    */
   function suggestAmountFromUnitPrices() {
-    const suggested = lines.reduce((sum, l) => {
-      const qty = Number(l.qty);
-      const unit = itemUnits.find((u) => u.id === l.unit_id);
-      if (!unit || unit.price == null || l.qty.trim() === "" || Number.isNaN(qty)) {
-        return sum;
-      }
-      return sum + qty * unit.price;
-    }, 0);
+    const suggested = lines.reduce((sum, l) => sum + (l.amount ?? 0), 0);
     setAmount(String(suggested));
   }
 
@@ -174,22 +166,14 @@ export default function GoodsIssuesPage() {
     setFormError(null);
 
     const activeLines = lines.filter((l) => l.item_id.trim() !== "" && l.qty.trim() !== "");
-    if (activeLines.some((l) => l.unit_id.trim() === "")) {
-      setFormError("Pilih satuan jual buat tiap baris item");
-      return;
-    }
 
-    // Konversi qty (satuan jual) -> qty_issued (satuan dasar) SEBELUM manggil RPC.
+    // MultiUomQtyInput udah ngejumlah breakdown per satuan -> qty satuan dasar (l.qty).
     // create_goods_issue tetap terima qty di satuan dasar, sama kayak sebelum fitur ini ada
     // (ref memory/domain/inventory.md submodule "Satuan Jual & Harga").
-    const convertedLines = activeLines.map((l) => {
-      const unit = itemUnits.find((u) => u.id === l.unit_id);
-      const qty = Number(l.qty);
-      return {
-        item_id: l.item_id,
-        qty_issued: unit ? qty * unit.conversion_factor : qty,
-      };
-    });
+    const convertedLines = activeLines.map((l) => ({
+      item_id: l.item_id,
+      qty_issued: Number(l.qty),
+    }));
 
     const creditLines = [
       { account_id: defaultAccounts["ar.revenue"]?.id ?? "", amount: Number(amount) },
@@ -351,6 +335,32 @@ export default function GoodsIssuesPage() {
             ketolak RLS.
           </p>
         )}
+        <JournalPreviewPanel
+          groups={[
+            [
+              { label: "Akun Piutang Usaha (debit)", resolved: defaultAccounts["ar.receivable"], side: "debit" },
+              { label: "Akun Pendapatan (kredit)", resolved: defaultAccounts["ar.revenue"], side: "credit" },
+              ...resolveChargeLineLegs(extraLines, chargeTypes, "credit"),
+              applyTax && {
+                label: "Akun PPN Keluaran (kredit)",
+                resolved: resolvedPpnKeluaran(taxSettings),
+                side: "credit",
+              },
+            ],
+            [
+              {
+                label: "Akun HPP (debit, jurnal kedua)",
+                resolved: defaultAccounts["inventory.hpp"],
+                side: "debit",
+              },
+              {
+                label: "Akun Persediaan Barang Jadi (kredit, jurnal kedua)",
+                resolved: defaultAccounts["inventory.finished_good"],
+                side: "credit",
+              },
+            ],
+          ]}
+        />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
@@ -421,16 +431,16 @@ export default function GoodsIssuesPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_10rem_7rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Barang Jadi Keluar</span>
-                <span>Satuan Jual</span>
-                <span>Qty</span>
+                <span>Qty per Satuan</span>
                 <span />
               </div>
               {lines.map((line, i) => {
+                const selectedItem = items.find((it) => it.id === line.item_id);
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
                 return (
-                  <div key={i} className="grid grid-cols-[1fr_10rem_7rem_2.5rem] gap-2">
+                  <div key={i} className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2">
                     <Select value={line.item_id} onChange={(e) => updateLineItem(i, e.target.value)}>
                       <option value="">Pilih item...</option>
                       {items.map((item) => (
@@ -439,28 +449,16 @@ export default function GoodsIssuesPage() {
                         </option>
                       ))}
                     </Select>
-                    <Select
-                      value={line.unit_id}
-                      onChange={(e) => updateLineUnit(i, e.target.value)}
-                      disabled={!line.item_id}
-                    >
-                      <option value="">
-                        {line.item_id && unitsForItem.length === 0 ? "Belum ada satuan" : "Pilih satuan..."}
-                      </option>
-                      {unitsForItem.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.unit_label}
-                          {u.price != null ? ` (@${u.price.toLocaleString("id-ID")})` : ""}
-                        </option>
-                      ))}
-                    </Select>
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={line.qty}
-                      onChange={(e) => updateLineQty(i, e.target.value)}
-                    />
+                    {line.item_id ? (
+                      <MultiUomQtyInput
+                        key={line.item_id}
+                        units={unitsForItem}
+                        baseUom={selectedItem?.uom ?? ""}
+                        onChange={(change) => updateLineQty(i, change)}
+                      />
+                    ) : (
+                      <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
+                    )}
                     <button
                       type="button"
                       onClick={() => removeLine(i)}

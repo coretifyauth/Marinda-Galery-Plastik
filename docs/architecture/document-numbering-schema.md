@@ -4,7 +4,7 @@
 
 | Tabel | Fungsi |
 |---|---|
-| Daftar Jenis Dokumen | Master 29 jenis dokumen transaksional di seluruh sistem, masing-masing dengan kode singkat (prefix) sendiri — contoh AP Bill = `APB`, AR Invoice = `ARI`. |
+| Daftar Jenis Dokumen | Master 29 jenis dokumen transaksional di seluruh sistem, masing-masing dengan kode singkat (prefix) sendiri — contoh AP Bill = `APB`, AR Invoice = `ARI`. Plus 1 jenis ke-30 yang bukan dokumen transaksional (Kode Scan Barang, `SKU`) — nebeng mekanisme yang sama biar formatnya konsisten, lihat submodule "Kode Scan Barang" di `docs/architecture/inventory-schema.md`. |
 | Penghitung Nomor | Menyimpan angka urutan terakhir yang sudah dipakai, per jenis dokumen per tahun. Sumber dari nomor berikutnya yang akan diberikan. |
 
 ## Generate Nomor Otomatis
@@ -36,3 +36,18 @@
 
 **Interaksi Antar Tabel**
 - Tetap di tabel AP Bill yang sudah ada — gak ada tabel baru untuk bagian ini.
+
+## Data Lama — Gak Dibackfill
+
+**Peta Data (ERD)**
+- Gak ada tabel baru. Rujukan Dokumen lama (sebelum sistem ini ada) di semua tabel transaksional tetap berisi teks manual asli, gak pernah diubah.
+
+**Alur Teknis**
+- Backfill data lama sempat dicoba lewat migration data, tapi gagal — setiap tabel transaksional punya aturan "gak bisa diedit sekali tersimpan" yang berlaku ke SEMUA kolom (termasuk Rujukan Dokumen), ditegakkan di level database, bukan cuma level aplikasi.
+- Opsi membuka kunci itu sementara buat kebutuhan backfill diajukan, tapi ditolak — keputusan akhir: dokumen lama gak pernah dibackfill.
+
+**Aturan Bisnis → Data**
+- Prinsip "dokumen yang sudah tersimpan gak boleh diedit diam-diam" berlaku ke seluruh isi baris, bukan cuma nominal uang — konsisten sama alasan aturan itu ditegakkan tanpa pengecualian.
+
+**Interaksi Antar Tabel**
+- Gak ada perubahan skema. Tampilan (list & detail) menunjukkan Rujukan Dokumen apa adanya — teks manual lama untuk dokumen sebelum sistem ini aktif, format `PREFIX-TAHUN-URUTAN` untuk dokumen baru.

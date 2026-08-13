@@ -35,6 +35,17 @@ Naratif lengkap + reasoning penuh: `docs/domain/document-numbering.md`. Struktur
 
 **Referensi:** `memory/architecture/data/document-numbering-schema.md`.
 
+## Data Lama (Sebelum Sistem Ini Ada)
+
+**Cara Kerja**
+- Baris `source_ref` yang sudah ada SEBELUM migration `0011_document_numbering.sql` masih isi manual lama (bukan format `PREFIX-TAHUN-URUTAN`) — gak pernah diubah ke format baru.
+
+**Aturan Bisnis**
+- Ditolak: opsi backfill data lama (2026-08-13) — lihat `memory/architecture/data/document-numbering-schema.md` submodule "Data Lama — Gak Dibackfill" untuk alasan teknis (trigger `block_edit_delete` ada di SEMUA tabel transaksional, bukan cuma `journal_entries`, nolak `UPDATE`/`DELETE` tanpa syarat).
+- Konsekuensi: dokumen lama (pre-0011) permanen pakai `source_ref` manual lama. Cuma dokumen baru (post-0011) yang bernomor `PREFIX-TAHUN-URUTAN`.
+
+**Referensi:** `memory/architecture/data/document-numbering-schema.md` submodule "Data Lama — Gak Dibackfill", `memory/preferences/ui/document-number-display.md`.
+
 ## Glossary
 
 - **doc_type**: kunci di `document_number_types`/`document_number_counters`, sama persis dengan nama tabel transaksionalnya (`ap_bills`, `ar_invoices`, dst) — lihat tabel lengkap 29 jenis di schema doc.

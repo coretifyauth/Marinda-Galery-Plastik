@@ -93,25 +93,60 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 - Mikir invoice harus nunggu SO terpenuhi penuh baru terbit — harusnya per pengiriman, bisa banyak invoice dari 1 SO.
 - Nganggep SO wajib buat semua penjualan (niru pola PO di AP) — SO cuma dipakai kalau emang ada tahap komitmen-duluan; penjualan spontan tetap boleh lewat Goods Issue langsung tanpa SO.
 
+## Kategori & Brand Barang (migration `0023_item_categories_brands.sql`)
+
+**Entitas & Kolom**
+- `item_categories`/`item_brands` — 2 tabel katalog independen, `{id, name, archived_at, created_at, updated_at}`. Pola SAMA PERSIS kayak `ar_invoice_charge_types`/`ap_bill_expense_categories`/`pos_charge_types` (katalog terkontrol, admin kelola sendiri) — bedanya cuma gak ada `account_id` (kategori/brand bukan konsep akuntansi, gak pernah dipetakan ke akun).
+- `items.category_id`/`items.brand_id` — FK nullable ke masing-masing katalog. Independen satu sama lain, dan independen dari kolom `items` lain (gak ada validasi silang ke `item_type`, dst).
+- Murni metadata deskriptif buat filter/pengelompokan pas katalog barang udah banyak — 0 RPC baru, 0 perubahan ke RPC transaksi manapun (PO/GRN/BOM/Production/Goods Issue/SO/Opname semua gak nyentuh kolom ini sama sekali).
+
+**Constraints**
+- `items.category_id`/`items.brand_id` nullable — barang boleh gak punya salah satu/keduanya.
+- 1 barang → maksimal 1 kategori, 1 brand (FK tunggal, bukan tabel jembatan many-to-many).
+- Menonaktifkan (`archived_at`) baris katalog gak mengubah/menghapus FK barang yang udah nunjuk ke situ — cuma gak muncul lagi di pilihan buat barang baru.
+
+**Common Mistakes**
+- Simpan kategori/brand sebagai kolom teks bebas di `items` — variasi penulisan ("Lion Star" vs "lion star") bikin filter/grouping meleset, harus lewat katalog terkontrol.
+- Bikin tabel jembatan many-to-many buat "barang bisa multi-kategori" — scope sekarang cuma 1:1 per barang, cukup FK langsung.
+
 ## Satuan Jual & Harga (Multi Unit of Measure)
 
 **Entitas & Jurnal**
-- **item_units** (migration `0019_item_units_schema.sql`) — gantiin `items.default_price` (migration `0018`, di-drop di migration ini, data dimigrasi). 1 baris = 1 satuan jual per item: `unit_label` (teks, mis. "buah"/"lusin"), `conversion_factor` (numeric, berapa satuan dasar = 1 satuan jual ini), `price` (nullable), `is_base` (boolean, persis 1 baris TRUE per item, wajib `conversion_factor=1`, labelnya harus sama dengan `items.uom` — dijaga sebagai konvensi input, bukan trigger, pola sama pemilihan akun debit manual di AP). Item boleh 0 baris (gak dijual langsung) sampai berapa pun baris (1 base + N satuan tambahan).
-- **Murni data referensi** — gak ada jurnal, gak ada RPC finansial baru. **0 perubahan ke `create_goods_issue`/`goods_issue_lines`** — RPC ini TETAP nerima qty di satuan dasar persis kayak sebelumnya. Konversi "N satuan jual → qty satuan dasar" dan hitung "N × price satuan jual" terjadi **di UI**, sebelum manggil RPC — bukan di server, biar kontrak RPC/tabel transaksional gak berubah sama sekali (invariant traceability tetap `goods_issue_lines` sumber kebenaran tunggal).
+- **item_units** (migration `0019_item_units_schema.sql`) — gantiin `items.default_price` (migration `0018`, di-drop di migration ini, data dimigrasi). 1 baris = 1 satuan (pcs/pack/box/lusin/dst) per item: `unit_label` (teks), `conversion_factor` (numeric, berapa satuan dasar = 1 satuan ini), `price` (nullable), `is_base` (boolean, persis 1 baris TRUE per item, wajib `conversion_factor=1`, labelnya harus sama dengan `items.uom` — dijaga sebagai konvensi input, bukan trigger, pola sama pemilihan akun debit manual di AP). Item boleh 0 baris (belum didefinisikan satuan tambahan) sampai berapa pun baris (1 base + N satuan tambahan).
+- **Murni data referensi** — gak ada jurnal, gak ada RPC finansial baru. **0 perubahan ke RPC transaksi manapun** (`create_purchase_order`, `create_goods_receipt`, `create_sales_order`, `create_goods_issue`, `create_production_order`, `record_stock_opname`) — semua RPC ini TETAP nerima qty di satuan dasar persis kayak sebelum fitur ini ada. Konversi terjadi **di UI**, sebelum manggil RPC — bukan di server, biar kontrak RPC/tabel transaksional gak berubah sama sekali (invariant traceability tetap tabel transaksional sumber kebenaran tunggal).
 - CRUD `item_units` langsung lewat tabel (RLS-protected), bukan RPC — pola sama `items`/`bom_lines` (master data mutable, insert/update/delete bebas, beda dari tabel transaksional immutable).
-- Cuma relevan buat jalur full (ada `goods_issue_lines`) — invoice financial-only gak pernah nyentuh `item_units` sama sekali, karena gak ada referensi item di situ.
+- **Input qty simultan multi-satuan (`MultiUomQtyInput`, komponen UI, bukan tabel baru)** — dipakai di SEMUA form yang input qty per item di `/erp` (Purchase Order, Goods Receipt, Sales Order, Goods Issue, Production Order qty produksi, Stock Opname qty hasil hitung), bukan cuma jalur jual seperti awalnya. User isi qty di beberapa satuan sekaligus dalam 1 baris (mis. 2 pcs + 2 pack + 0 box), komponen jumlahkan `Σ(qty_input × conversion_factor)` jadi 1 angka satuan dasar sebelum dikirim ke RPC — generalisasi dari pola dropdown-1-satuan yang tadinya cuma ada di Goods Issue/POS. Item yang belum punya baris `is_base` di `item_units` tetap dapat 1 kolom input (satuan dasar sintetis di sisi UI, bukan insert ke tabel) — gak ada cabang UI terpisah buat item yang belum lengkap datanya.
+- **Cakupan sekarang lintas beli & jual, bukan cuma "satuan jual"** — nama tabel & kolom tetap `item_units` (gak di-rename, breaking change ke skema gak sepadan buat perubahan UI murni), tapi secara pemakaian sekarang berfungsi sebagai satuan umum per item, dipakai baik di form pembelian (PO/GRN) maupun penjualan (SO/Goods Issue) maupun internal (Production/Opname). Implikasinya: bahan baku yang cuma pernah dibeli/diproduksi (gak pernah dijual) sekarang juga bisa punya manfaat dari `item_units` (mis. tepung dibeli per "sak" 25kg) — sebelumnya cuma gunanya buat barang jadi yang dijual customer.
 
 **Constraints**
 - Persis 1 baris `is_base=true` per item, `conversion_factor` wajib 1 buat baris itu (`check ((is_base and conversion_factor = 1) or not is_base)`).
-- `unique(item_id, unit_label)` — gak boleh 2 satuan jual sama nama dalam 1 item.
+- `unique(item_id, unit_label)` — gak boleh 2 satuan sama nama dalam 1 item.
 - Partial unique index `item_id where is_base` — jaga maksimal 1 baris base per item.
 
 **Skenario referensi**
 - Item dijual pakai satuan bukan-dasar (misal lusin, faktor 12) — UI konversi qty ke satuan dasar SEBELUM manggil `create_goods_issue`, harga pakai `item_units.price` satuan itu (independen, boleh beda dari price satuan dasar × faktor — biasanya ada diskon grosir).
+- Item dengan 3 satuan (pcs, pack faktor 12, box faktor 144) — user isi 2 pcs + 2 pack + 0 box di 1 baris Goods Issue/PO/dst, `MultiUomQtyInput` jumlahkan jadi 26 (satuan dasar) sebelum dikirim ke RPC — user gak perlu hitung manual atau pilih 1 satuan doang kalau barang fisiknya emang campuran kemasan.
 
 **Common Mistakes**
-- Ngirim qty satuan JUAL (bukan satuan dasar) langsung ke `create_goods_issue` tanpa konversi — stok/HPP keitung salah total (kurang dari yang seharusnya, sebesar faktor konversi).
+- Ngirim qty satuan JUAL (bukan satuan dasar) langsung ke RPC transaksi manapun tanpa konversi — stok/HPP/qty pesan keitung salah total (kurang dari yang seharusnya, sebesar faktor konversi).
 - Nganggep harga satuan jual = harga satuan dasar × faktor konversi secara otomatis — harusnya independen, diskon grosir itu keputusan bisnis manual per satuan.
+
+## Kode Scan Barang (Barcode/QR per Satuan Jual, migration `0021_item_unit_barcode.sql` + `0022_item_unit_barcode_reuse_document_numbering.sql`)
+
+**Entitas & Kolom**
+- `item_units.barcode` (text, nullable, unique global lintas tabel) — kode scan per **satuan jual**, BUKAN per item. Alasan level satuan (bukan `items`): kemasan fisik beda (dus/pcs/pack) biasanya punya barcode/label fisik beda-beda di dunia nyata — kalau ditaruh di `items`, cuma bisa nyimpen 1 kode padahal item boleh >1 satuan jual (`item_units`, submodule sebelumnya).
+- 2 sumber kode, diperlakukan **sama persis** dari sisi kolom (cuma string yang dicocokkan pas scan): **barcode pabrik** (scan langsung, disimpan apa adanya) atau **kode internal** (digenerate via `generate_document_number('item_unit_barcodes')` — REUSE fungsi document numbering yang sudah ada, format `SKU-2026-00001`, `doc_type` ini PENGECUALIAN gak punya tabel transaksional beneran, lihat `document-numbering-schema.md`). Format tahun-nya cuma soal gimana STRING kodenya dibentuk — kode yang udah jadi tetap permanen selamanya begitu ter-assign ke 1 baris `item_units`, gak pernah reassign/berubah, walau counter internal-nya reset tiap tahun buat kode BARU.
+- **CRUD langsung lewat tabel** (update `item_units.barcode`), bukan RPC yang langsung nulis — `generate_document_number()` cuma ngembaliin teks kodenya, UI yang nyimpen ke baris lewat update biasa (pola sama edit `price`/`conversion_factor`, RLS `item_units_update` yang udah ada otomatis berlaku, gak perlu policy baru).
+- Render QR + cetak label murni fitur UI client-side, lewat **window print terpisah** (`window.open()` + `window.print()`) — BUKAN `@media print` di halaman yang sama (native `<dialog>`/Modal gak konsisten diprint lintas browser, apalagi Firefox sering skip isi dialog pas print sama sekali). Gak ada penyimpanan gambar/asset di server, QR digenerate on-the-fly (data URI) dari teks `barcode` yang tersimpan.
+
+**Constraints**
+- `unique(barcode)` global (bukan per-item) — nullable, Postgres izinin banyak NULL (barang tanpa kode gak saling bentrok).
+- Gak ada validasi format kode di level database maupun aplikasi — terima teks apa pun, termasuk hasil encode QR bebas format.
+- Optional per baris `item_units`, independen — gak ada aturan "1 satuan punya kode maka semua satuan barang itu harus punya".
+
+**Common Mistakes**
+- Taruh kolom ini di `items` bukan `item_units` — item dengan >1 satuan jual cuma bisa nyimpen 1 kode, gak bisa bedain scan dus vs scan pcs.
+- Mewajibkan format EAN-13/UPC ketat — nolak kode internal/QR yang emang dirancang bebas format.
 
 ## Stock Opname (Penyesuaian Stok Fisik)
 
@@ -145,5 +180,7 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 - **Goods Issue**: bukti pengeluaran fisik barang jadi karena terjual, dasar pengakuan HPP.
 - **HPP / COGS**: Harga Pokok Penjualan — biaya pokok barang yang terjual, diakui bersamaan dengan pendapatannya.
 - **`consume_weighted_average()`**: fungsi generik terpusat, satu-satunya jalur konsumsi stok — dipakai baik input produksi maupun sales issue.
+- **item_categories** / **item_brands**: katalog terkontrol opsional buat pengelompokan barang (`items.category_id`/`items.brand_id`, FK tunggal masing-masing) — murni metadata deskriptif, bukan konsep akuntansi.
 - **item_units**: satuan jual per item (bisa lebih dari 1, misal buah & lusin), tiap baris punya faktor konversi ke satuan dasar + harga sendiri. Konversi qty ke satuan dasar terjadi di UI, bukan di RPC.
+- **Kode Scan (barcode/QR)**: identitas unik opsional per satuan jual (`item_units.barcode`), dipakai kasir POS buat lookup cepat pas checkout — bisa barcode asli pabrik atau kode internal yang digenerate sistem (`generate_document_number('item_unit_barcodes')`, format `SKU-2026-00001`).
 - **Stock Opname**: penyesuaian `inventory_balances.qty_on_hand` ke hasil hitung fisik gudang — gak menempel ke 1 transaksi tertentu (beda dari retur/write-off), dokumen sumbernya sesi hitung fisik itu sendiri. Selisih kurang → Beban Selisih Persediaan, selisih lebih → Pendapatan Selisih Persediaan (2 akun terpisah, gak di-netting).

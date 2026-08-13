@@ -69,6 +69,8 @@ create table items (
   item_type text not null check (item_type in ('RAW_MATERIAL','FINISHED_GOOD')),
   uom text not null,
   inventory_account_id uuid not null references accounts(id),
+  category_id uuid references item_categories(id),
+  brand_id uuid references item_brands(id),
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -79,7 +81,7 @@ create trigger items_set_updated_at
   for each row execute function set_updated_at();
 ```
 
-`set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang. `default_price` (migration `0018`) dan pencabutannya (migration `0019`) sudah tercermin di bentuk final ini — `create table` di atas ditulis dalam bentuk final, sesuai konvensi schema doc (`memory/preferences/system/schema-doc-format.md`).
+`set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang. `default_price` (migration `0018`) dan pencabutannya (migration `0019`) sudah tercermin di bentuk final ini — `create table` di atas ditulis dalam bentuk final, sesuai konvensi schema doc (`memory/preferences/system/schema-doc-format.md`). `category_id`/`brand_id` (nullable, migration `0023_item_categories_brands.sql`) ditambah belakangan — lihat submodule "Kategori & Brand Barang" di bawah buat definisi `item_categories`/`item_brands`.
 
 ### `inventory_balances`
 
@@ -524,16 +526,93 @@ grant select, insert on sales_order_lines to authenticated;
 
 Detail lengkap: `supabase/migrations/0004_inventory_schema.sql`.
 
-## Satuan Jual & Harga (Multi Unit of Measure) — migration `0019_item_units_schema.sql`
+## Kategori & Brand Barang — migration `0023_item_categories_brands.sql`
 
-Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Satuan Jual & Harga". Gantiin `items.default_price` (migration `0018`, di-drop di sini) — item bisa dijual dalam >1 satuan (misal "buah" dan "lusin"), masing-masing punya faktor konversi ke satuan dasar (`items.uom`, gak berubah — tetap dipakai semua pelacakan stok/costing) dan harga sendiri.
+Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Kategori & Brand Barang". Katalog terkontrol opsional buat pengelompokan barang pas jumlahnya udah banyak — pola identik `ar_invoice_charge_types`/`ap_bill_expense_categories`/`pos_charge_types`, bedanya gak ada `account_id` (kategori/brand bukan konsep akuntansi).
 
 ### Keputusan Desain
 
-- **`items.uom` tetap 1 satuan dasar, gak diubah** — dipakai semua submodule lain (PO/GRN/BOM/production/goods issue) persis kayak sekarang. `item_units` cuma nambah lapisan "satuan JUAL ke customer", gak menggantikan satuan dasar buat pelacakan stok.
-- **0 perubahan ke `create_goods_issue`/`goods_issue_lines`.** RPC ini tetap nerima qty di satuan dasar. Konversi "N satuan jual → qty satuan dasar" dan hitung "N × price satuan jual" murni logic UI, terjadi SEBELUM RPC dipanggil — bukan server-side. Ini jaga kontrak RPC/tabel transaksional gak berubah sama sekali, konsisten sama filosofi `items.default_price` sebelumnya (murni referensi, RPC tetap terima nominal final dari caller).
+- **Katalog terkontrol (FK), bukan teks bebas** — nyegah variasi penulisan ("Lion Star" vs "lion star") yang bikin filter/grouping meleset. Sama alasan kenapa `ChargeLinesEditor` dkk pakai katalog, bukan input bebas.
+- **2 tabel independen** (`item_categories`, `item_brands`), bukan 1 tabel serba-guna dengan kolom `type` — kategori dan brand konsepnya beda (jenis barang vs merek/pemasok lini produk), gak ada alasan buat digabung, dan misahnya bikin masing-masing bisa berkembang independen kalau nanti butuh kolom tambahan yang beda.
+- **FK tunggal (`items.category_id`/`items.brand_id`), bukan tabel jembatan many-to-many** — scope sekarang cuma "1 barang 1 kategori/brand", bukan sistem tagging multi-kategori. Kalau nanti beneran butuh multi-kategori, itu perubahan struktural terpisah (bukan sekadar nambah baris), didesain ulang pas ada bukti kebutuhan.
+- **Nullable, gak ada backfill wajib** — barang existing otomatis `NULL` di kedua kolom, tetap valid, gak collect error apa pun.
+- **CRUD langsung lewat tabel** (sama `item_units`), gak ada RPC — murni metadata deskriptif, 0 sentuhan ke jurnal/RPC transaksi manapun.
+
+### `item_categories` + `item_brands`
+
+```sql
+create table item_categories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table item_brands (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create trigger item_categories_set_updated_at
+  before update on item_categories
+  for each row execute function set_updated_at();
+
+create trigger item_brands_set_updated_at
+  before update on item_brands
+  for each row execute function set_updated_at();
+
+alter table items add column category_id uuid references item_categories(id);
+alter table items add column brand_id uuid references item_brands(id);
+```
+
+- `archived_at` — pola sama `items`/`customers`/`suppliers` (`state-naming-convention.md`), baris lama gak boleh dihapus keras kalau udah pernah dipakai barang manapun (walau gak ada FK `restrict` eksplisit — `archived_at` cukup buat nyaring pilihan, item lama yang masih nunjuk ke baris nonaktif tetap valid dibaca).
+- `items.category_id`/`items.brand_id` — nullable, `references` polos (bukan `not null`), gak ada `on delete` khusus (baris katalog gak pernah di-hard-delete, cuma diarsipkan, jadi gak ada skenario FK jadi dangling).
+
+### RLS & Grant (Kategori & Brand Barang)
+
+Pola sama persis `ar_invoice_charge_types`/`ap_bill_expense_categories`/`pos_charge_types` (katalog master data) — BUKAN pola `item_units` (yang admin+accountant, ada delete). `select` semua `authenticated`, `insert`/`update` **admin doang** (owner yang setup katalog). **Gak ada policy `delete`** — nonaktifkan pakai `archived_at`.
+
+```sql
+alter table item_categories enable row level security;
+alter table item_brands enable row level security;
+
+create policy item_categories_select on item_categories for select using (auth.role() = 'authenticated');
+create policy item_categories_insert on item_categories for insert with check (
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+);
+create policy item_categories_update on item_categories for update using (
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+);
+
+create policy item_brands_select on item_brands for select using (auth.role() = 'authenticated');
+create policy item_brands_insert on item_brands for insert with check (
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+);
+create policy item_brands_update on item_brands for update using (
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+);
+
+grant select, insert, update on item_categories to authenticated;
+grant select, insert, update on item_brands to authenticated;
+```
+
+Full body: `supabase/migrations/0023_item_categories_brands.sql`.
+
+## Satuan Jual & Harga (Multi Unit of Measure) — migration `0019_item_units_schema.sql`
+
+Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Satuan Jual & Harga". Gantiin `items.default_price` (migration `0018`, di-drop di sini) — item bisa punya >1 satuan (misal "buah" dan "lusin"), masing-masing punya faktor konversi ke satuan dasar (`items.uom`, gak berubah — tetap dipakai semua pelacakan stok/costing) dan harga sendiri. Skema di bawah gak berubah sejak `0019` — perluasan ke input multi-satuan simultan di semua form transaksi murni perubahan UI, lihat "Keputusan Desain" poin terakhir.
+
+### Keputusan Desain
+
+- **`items.uom` tetap 1 satuan dasar, gak diubah** — dipakai semua submodule lain (PO/GRN/BOM/production/goods issue) persis kayak sekarang. `item_units` cuma nambah lapisan satuan tambahan per item, gak menggantikan satuan dasar buat pelacakan stok.
+- **0 perubahan ke RPC transaksi manapun.** `create_purchase_order`, `create_goods_receipt`, `create_sales_order`, `create_goods_issue`, `create_production_order`, `record_stock_opname` semua tetap nerima qty di satuan dasar. Konversi "N satuan → qty satuan dasar" dan hitung "N × price satuan" murni logic UI, terjadi SEBELUM RPC dipanggil — bukan server-side. Ini jaga kontrak RPC/tabel transaksional gak berubah sama sekali, konsisten sama filosofi `items.default_price` sebelumnya (murni referensi, RPC tetap terima nominal final dari caller).
 - **CRUD langsung lewat tabel, bukan RPC** — `item_units` itu master data mutable, mirror pola `bom_lines` (anak dari parent yang mutable, insert/update/delete bebas — beda dari tabel transaksional immutable kayak `goods_issue_lines`).
 - **Base unit direpresentasikan sebagai baris `item_units` juga** (`is_base=true`, `conversion_factor=1`), bukan kolom terpisah di `items` — biar 1 sumber kebenaran buat semua harga per satuan, gak ada 2 tempat (`items.default_price` untuk base + tabel lain untuk satuan tambahan).
+- **Input UI di-generalisasi ke semua form qty-per-item (`components/ui/multi-uom-qty-input.tsx`, UI-only, 0 perubahan skema)** — awalnya cuma Goods Issue/POS punya dropdown 1-satuan; sekarang PO, Goods Receipt, Sales Order, Goods Issue, qty produksi Production Order, dan qty hasil hitung Stock Opname semua pakai komponen yang sama: input simultan per satuan (`Σ(qty_input × conversion_factor)` dijumlah jadi 1 qty satuan dasar). Item tanpa baris `is_base` di `item_units` dapat 1 kolom sintetis (satuan dasar `items.uom`) dari komponen ini — bukan insert baris baru, murni fallback tampilan. Detail: `memory/domain/inventory.md` submodule "Satuan Jual & Harga".
 
 ### `item_units`
 
@@ -584,6 +663,37 @@ grant select, insert, update, delete on item_units to authenticated;
 ```
 
 Full body: `supabase/migrations/0004_inventory_schema.sql`.
+
+## Kode Scan Barang (Barcode/QR per Satuan Jual) — migration `0021_item_unit_barcode.sql` + `0022_item_unit_barcode_reuse_document_numbering.sql`
+
+Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Kode Scan Barang (Barcode/QR per Satuan Jual)". Nambah kolom identitas scan buat kasir POS — ditaruh di `item_units` (satuan jual), bukan `items`, karena kemasan fisik beda (dus/pcs/pack) biasanya punya barcode/label beda-beda di dunia nyata.
+
+### Keputusan Desain
+
+- **Level `item_units`, bukan `items`** — 1 barang boleh dijual >1 satuan (submodule sebelumnya), tiap satuan kemasan fisiknya beda, jadi kodenya juga wajib bisa beda-beda per satuan. Taruh di `items` cuma bisa nampung 1 kode per barang, gak bisa bedain scan dus vs scan pcs.
+- **Nullable & opsional per baris, independen** — gak ada aturan "kalau 1 satuan barang X punya kode, semua satuan barang X harus punya". Barang yang gak pernah discan (dijual manual/timbang/katalog) boleh kosong selamanya.
+- **`unique` global lintas tabel, BUKAN scoped per item** — barcode dus produk A gak boleh sama barcode pcs produk B, itu aturan dunia nyata lookup barcode (1 kode = 1 identitas tunggal, gak peduli barang apa).
+- **Gak ada validasi format** (bukan EAN-13/UPC checksum) — kolom nerima teks apa aja. Kode bisa 2 sumber (barcode pabrik discan apa adanya, atau kode internal digenerate sistem) tapi dari sisi kolom SAMA PERSIS, cuma string yang dicocokkan pas lookup.
+- **Format kode internal `SKU-2026-00001`, REUSE `generate_document_number()`** (`memory/architecture/data/document-numbering-schema.md`) — revisi `0022`, gantiin percobaan pertama (sequence bespoke `item_unit_barcode_seq`, format `SKU-000001` polos, migration `0021`). Percobaan pertama sengaja MENGHINDARI reuse itu dengan alasan "kode ini identitas master data permanen, beda dari nomor dokumen transaksi yang reset tahunan" — alasan itu keliru mencampur 2 hal: reset-nya COUNTER (bagian dari cara STRING itu dibentuk) vs permanence-nya KODE YANG SUDAH JADI (sekali di-generate, `SKU-2026-00001` gak pernah berubah/reassign lagi selamanya, gak masalah biar pun counter tahun depan mulai dari 00001 lagi). Reuse ini juga bikin format konsisten sama SEMUA 29 dokumen lain di app (bukan format unik cuma buat fitur ini) — 1 mekanisme generate nomor buat seluruh sistem.
+- **`doc_type = 'item_unit_barcodes'` — PENGECUALIAN dari konvensi "doc_type = nama tabel transaksional"** (lihat `document-numbering-schema.md`) — gak ada tabel `item_unit_barcodes` beneran, kode ini nempel ke SEBAGIAN baris `item_units` yang user pilih generate on-demand, bukan otomatis 1 nomor per baris kayak 29 doc_type lain. Aman secara teknis (`generate_document_number()` cuma butuh `doc_type` buat lookup `prefix` + upsert counter berpasangan `(doc_type, year)`, gak ada dynamic SQL yang butuh tabel itu beneran exist) — direview eksplisit & dikonfirmasi `schema-reviewer` gak jadi bug, cuma penyimpangan konvensi yang perlu didokumentasikan biar gak dikira kelupaan.
+- **CRUD langsung lewat tabel, konsisten sama `item_units` yang sudah ada** — `generate_document_number()` cuma ngembaliin teks kode, TIDAK langsung nulis ke `item_units`. UI yang nyimpen lewat `update` biasa (RLS `item_units_update` yang sudah ada otomatis berlaku, gak ada tabel/kolom baru yang butuh policy baru).
+- **Render QR + cetak label murni fitur UI (client-side, window print terpisah)** — gak ada tabel/kolom penyimpanan gambar. QR di-generate on-the-fly (data URI) dari teks `barcode` yang sudah tersimpan, dirender di `window.open()` baru (bukan `@media print` di halaman yang sama) — native `<dialog>`/Modal gak konsisten diprint lintas browser.
+
+### `item_units.barcode`
+
+```sql
+alter table item_units add column barcode text unique;
+```
+
+- Nullable, `unique` global (bukan scoped ke `item_id`). Postgres izinin banyak `NULL` dalam 1 kolom `unique`, jadi barang tanpa kode gak saling bentrok satu sama lain.
+- Kode internal digenerate lewat `generate_document_number('item_unit_barcodes')` (fungsi yang sudah ada, `memory/architecture/data/document-numbering-schema.md`) — dipanggil dari client (`supabase.rpc('generate_document_number', { p_doc_type: 'item_unit_barcodes' })`), hasilnya (teks) dipakai UI buat `update item_units set barcode = <hasil> where id = <row>` — bukan RPC yang langsung nulis ke `item_units`, konsisten sama pola CRUD `item_units` yang sudah ada.
+- Seed baris baru di `document_number_types` (migration `0022`): `('item_unit_barcodes', 'SKU', 'Kode Scan Barang (item_units.barcode)')`.
+
+### Riwayat: percobaan pertama (migration `0021`, sudah di-drop migration `0022`)
+
+Migration `0021` awalnya bikin sequence bespoke `item_unit_barcode_seq` + fungsi `generate_item_unit_barcode()` (`security invoker`, `language sql`, format `SKU-000001`). Migration `0022` men-`drop function`+`drop sequence` keduanya — gak ada objek lain yang mereferensikannya (dicek eksplisit lewat schema-reviewer sebelum drop), jadi aman. Disimpan di sini sebagai riwayat evolusi keputusan, bukan mekanisme yang masih berlaku — kalau lihat referensi ke `item_unit_barcode_seq`/`generate_item_unit_barcode()` di tempat lain (git history, PR lama), itu udah digantikan total.
+
+Full body: `supabase/migrations/0021_item_unit_barcode.sql` (kolom + percobaan pertama, sudah di-drop) + `supabase/migrations/0022_item_unit_barcode_reuse_document_numbering.sql` (mekanisme final).
 
 ## Stock Opname (Penyesuaian Stok Fisik) — migration `0020_stock_opname_schema.sql` + `0021_seed_stock_opname_accounts.sql`
 
