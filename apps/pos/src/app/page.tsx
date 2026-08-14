@@ -5,11 +5,17 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 
+type PricedUnit = {
+  unit_label: string;
+  conversion_factor: number;
+  price: number;
+};
+
 type CatalogItem = {
   id: string;
   name: string;
   uom: string;
-  price: number;
+  units: PricedUnit[];
   qtyOnHand: number;
 };
 
@@ -65,6 +71,40 @@ const ACCOUNT_CODES = {
   PERSEDIAAN_BARANG_JADI: "1420",
 } as const;
 
+function CatalogCard({ item, onAdd }: { item: CatalogItem; onAdd: (item: CatalogItem, unit: PricedUnit) => void }) {
+  const [unitLabel, setUnitLabel] = useState(item.units[0].unit_label);
+  const unit = item.units.find((u) => u.unit_label === unitLabel) ?? item.units[0];
+
+  return (
+    <div className="rounded-lg border border-slate-200 p-4 text-left">
+      <button
+        onClick={() => onAdd(item, unit)}
+        disabled={item.qtyOnHand <= 0}
+        className="w-full text-left disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <div className="font-medium">{item.name}</div>
+        <div className="text-sm text-slate-500">
+          Rp{unit.price.toLocaleString("id-ID")}/{unit.unit_label}
+        </div>
+        <div className="text-xs text-slate-400">Stok: {item.qtyOnHand}</div>
+      </button>
+      {item.units.length > 1 && (
+        <select
+          value={unitLabel}
+          onChange={(e) => setUnitLabel(e.target.value)}
+          className="mt-2 w-full rounded border border-slate-200 text-xs"
+        >
+          {item.units.map((u) => (
+            <option key={u.unit_label} value={u.unit_label}>
+              {u.unit_label}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 export default function CheckoutPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
@@ -99,7 +139,6 @@ export default function CheckoutPage() {
         .select(
           "id, name, uom, item_units(unit_label, conversion_factor, price, is_base, barcode), inventory_balances(qty_on_hand)"
         )
-        .eq("item_type", "FINISHED_GOOD")
         .is("archived_at", null)
         .order("name"),
       supabase
@@ -143,16 +182,19 @@ export default function CheckoutPage() {
     const rows = (itemsRes.data ?? []) as unknown as ItemRow[];
     const mapped: CatalogItem[] = rows
       .map((row) => {
-        const baseUnit = (row.item_units ?? []).find((u) => u.is_base);
+        const priced = (row.item_units ?? [])
+          .filter((u): u is typeof u & { price: number } => u.price != null && u.price > 0)
+          .sort((a, b) => Number(b.is_base) - Number(a.is_base))
+          .map((u) => ({ unit_label: u.unit_label, conversion_factor: u.conversion_factor, price: u.price }));
         return {
           id: row.id,
           name: row.name,
           uom: row.uom,
-          price: baseUnit?.price ?? 0,
+          units: priced,
           qtyOnHand: row.inventory_balances?.qty_on_hand ?? 0,
         };
       })
-      .filter((item) => item.price > 0);
+      .filter((item) => item.units.length > 0);
     setCatalog(mapped);
 
     // Semua satuan jual (base ATAU bukan) yang punya barcode + harga -- dipakai
@@ -223,11 +265,11 @@ export default function CheckoutPage() {
     setExtraLines((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function addToCart(item: CatalogItem) {
+  function addToCart(item: CatalogItem, unit: PricedUnit) {
     setCheckoutError(null);
     setSuccessMessage(null);
     setCart((prev) => {
-      const existing = prev.find((l) => l.item_id === item.id && l.unit_label === item.uom);
+      const existing = prev.find((l) => l.item_id === item.id && l.unit_label === unit.unit_label);
       if (existing) {
         return prev.map((l) =>
           l === existing ? { ...l, qty_sold: l.qty_sold + 1 } : l
@@ -238,9 +280,9 @@ export default function CheckoutPage() {
         {
           item_id: item.id,
           name: item.name,
-          unit_label: item.uom,
-          conversion_factor: 1,
-          unit_price: item.price,
+          unit_label: unit.unit_label,
+          conversion_factor: unit.conversion_factor,
+          unit_price: unit.price,
           qty_sold: 1,
           available: item.qtyOnHand,
         },
@@ -399,22 +441,11 @@ export default function CheckoutPage() {
         </form>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {catalog.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => addToCart(item)}
-              disabled={item.qtyOnHand <= 0}
-              className="rounded-lg border border-slate-200 p-4 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <div className="font-medium">{item.name}</div>
-              <div className="text-sm text-slate-500">
-                Rp{item.price.toLocaleString("id-ID")}/{item.uom}
-              </div>
-              <div className="text-xs text-slate-400">Stok: {item.qtyOnHand}</div>
-            </button>
+            <CatalogCard key={item.id} item={item} onAdd={addToCart} />
           ))}
           {catalog.length === 0 && (
             <div className="col-span-full text-slate-400">
-              Belum ada barang jadi dengan harga jual (`item_units`) yang bisa dijual.
+              Belum ada barang dengan harga jual (`item_units`) yang bisa dijual.
             </div>
           )}
         </div>
