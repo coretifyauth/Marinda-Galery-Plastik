@@ -55,6 +55,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 - Penerimaan barang tidak boleh melebihi jumlah yang masih tersisa dari yang dipesan di Purchase Order-nya (per barang).
 - Pembelian bahan baku selalu masuk Persediaan (aset), tidak pernah langsung jadi Beban.
 - Penerimaan barang harus tertelusur ke Purchase Order dan tagihan (Bill) yang menyertainya.
+- Purchase Order boleh **dibatalkan** selama belum ada penerimaan barang sama sekali terhadapnya — begitu sudah ada 1 GRN, PO itu gak bisa dibatalkan lagi (koreksi cukup bikin PO baru). Karena PO memang tidak pernah punya jurnal, membatalkannya juga tidak memunculkan jurnal pembalik apa pun — murni status akhir yang gak bisa diubah lagi.
 
 **Skenario**
 - Pesan bahan baku lewat PO, barang datang persis sesuai pesanan — Persediaan naik, harga rata-rata diperbarui (atau jadi harga awal kalau ini penerimaan pertama barang itu), Utang Usaha muncul dari tagihan yang menyertai.
@@ -123,6 +124,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 - Sales Order tidak boleh dianggap kejadian akuntansi — gak ada jurnal apa pun sampai barangnya beneran dikirim (Goods Issue).
 - Pengiriman terhadap satu baris Sales Order tidak boleh melebihi qty yang dipesan di baris itu.
 - Sales Order sama sekali tidak wajib — penjualan tanpa tahap pemesanan (spontan) tetap sah dan tidak perlu melalui Sales Order.
+- Sales Order boleh **dibatalkan** selama belum ada pengiriman barang (Goods Issue) sama sekali terhadapnya — mirror persis aturan pembatalan Purchase Order di atas, murni status akhir, tidak ada jurnal yang dibalik karena SO memang tidak pernah punya jurnal.
 
 **Skenario**
 - Customer pesan 200 unit buat acara tertentu, stok gudang saat dipesan cuma 80 — Sales Order dibuat duluan tanpa jurnal apa pun. Produksi menambah stok belakangan. Barang dikirim 2 tahap (120 lalu 80) — masing-masing tahap memunculkan invoice terpisah, sampai total terkirim sama dengan yang dipesan.
@@ -160,22 +162,27 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 - Tiap barang boleh (opsional) dikasih 1 atau lebih "satuan jual" — masing-masing punya **faktor konversi** ke satuan dasar (berapa satuan dasar = 1 satuan jual ini) dan **harga jual per satuan jual itu**. Satuan dasar sendiri juga terhitung sebagai "satuan jual" (faktor konversi 1) — jadi kalau barang cuma dijual dalam 1 satuan aja (kasus paling umum), cukup 1 baris data: satuan dasar + harganya.
 - **Sisi stok/HPP SELALU dihitung di satuan dasar** — begitu customer pilih "beli 2 lusin", sistem otomatis konversi jadi qty satuan dasar (2 × 12 = 24 buah) SEBELUM ngurangin stok/ngitung HPP. Barang besar/kecil kemasannya, `avg_cost` dan posisi stok gak pernah "ngerti" satuan jual — cuma ngerti satuan dasar.
 - **Harga per satuan jual itu independen, BUKAN hasil kali otomatis dari harga satuan dasar.** Harga per lusin biasanya dikasih diskon grosir (misal Rp22.000/lusin, bukan 12 × Rp2.000 = Rp24.000) — itu keputusan bisnis yang diisi manual per satuan jual, bukan dihitung sistem.
-- Ini murni **data referensi** buat menyarankan nominal invoice, sama persis prinsipnya kayak harga jual satuan dasar sebelumnya — nominal akhir yang beneran tercatat di invoice tetap bisa diubah, dan perubahan harga di data master gak pernah retroaktif ngubah invoice yang udah terbit.
 - Cuma relevan buat transaksi yang melibatkan barang fisik — invoice financial-only (jasa, atau barang yang gak dilacak stok) gak pernah nyentuh satuan tambahan sama sekali, karena emang gak ada referensi ke barang di situ.
-- **Input qty di layar transaksi bisa campuran beberapa satuan sekaligus, bukan cuma pilih 1.** Kalau barang fisiknya dihitung/diterima/dikirim dalam campuran kemasan (misal sebagian dus penuh, sebagian pack lepas, sebagian pcs satuan), user gak perlu hitung manual dulu — tiap satuan yang berlaku buat barang itu muncul sebagai kolom isian sendiri di 1 baris, dan sistem yang jumlahkan ke qty satuan dasar. Ini berlaku di semua layar yang minta qty per barang: Purchase Order, Terima Barang, Sales Order, Jual Barang (Goods Issue), qty produksi, dan hasil hitung fisik (Stock Opname) — bukan cuma pas jual ke customer.
+- **Tiga pola input yang beda, tergantung internal vs jual vs beli (revisi 2026-08-14):**
+  - **Internal** (qty produksi, hasil hitung fisik/Stock Opname): input qty bisa **campuran beberapa satuan sekaligus** dalam 1 baris (misal sebagian dus penuh, sebagian pack lepas, sebagian pcs satuan) — tiap satuan yang berlaku buat barang itu muncul sebagai kolom isian sendiri, sistem jumlahkan otomatis ke qty satuan dasar. Cocok di sini karena gak ada harga sama sekali yang perlu diurus — cuma soal konversi qty.
+  - **Jual** (Sales Order, Jual Barang/Goods Issue): user pilih **1 satuan** dari satuan-satuan yang punya harga jual, lalu isi qty — harga otomatis muncul dari harga satuan itu, **gak ada lagi input harga manual sama sekali**. Barang yang belum punya satuan berharga gak bisa dipilih buat dijual sampai adminnya isi dulu harganya. Ini gantiin pola "input harga manual + tombol saran nominal" yang sebelumnya dipakai di sini — ketauan bikin bingung dan gak konsisten sama pola pemilihan satuan yang sudah dipakai di aplikasi kasir (POS) sejak awal.
+  - **Beli** (Purchase Order, Terima Barang): user pilih **1 satuan** juga (dropdown SEMUA satuan barang itu, gak difilter yang punya harga jual), lalu isi qty **dan** harga beli MANUAL untuk satuan itu. Beda dari sisi jual: harga beli gak pernah otomatis, karena harga jual ke customer (yang tersimpan di data satuan barang) gak ada hubungannya sama harga beli dari supplier — sistem ini gak nyimpen "harga beli referensi" terpisah. Kalau 1 kali terima barang campur kemasan dengan harga beda per satuan, dipecah jadi beberapa baris (1 baris = 1 satuan).
 
 **Aturan Bisnis**
 - Tiap barang maksimal punya 1 "satuan dasar" (faktor konversi wajib 1) — sisanya boleh berapa pun satuan tambahan.
-- Qty yang beneran dikonsumsi/ditambah ke stok SELALU di satuan dasar, gak peduli kombinasi satuan apa yang dipakai user pas input.
-- Harga tiap satuan independen — gak wajib proporsional ke harga satuan dasar.
+- Qty yang beneran dikonsumsi/ditambah ke stok SELALU di satuan dasar, gak peduli kombinasi/pilihan satuan apa yang dipakai user pas input.
+- Harga tiap satuan independen — gak wajib proporsional ke harga satuan dasar. Nominal invoice/pesanan **otomatis diturunkan** dari harga satuan yang dipilih di sisi jual; nominal PO/Terima Barang tetap ketik manual (gak ada harga beli referensi tersimpan).
 
 **Skenario**
-- Barang dijual pakai satuan jual bukan satuan dasar (misal 1 lusin) — qty dikonversi ke satuan dasar dulu buat ngitung HPP, harga jual pakai harga satuan jual itu sendiri (bisa beda dari harga satuan dasar × faktor konversi).
-- Barang punya 3 satuan: pcs (dasar), pack (isi 12), box (isi 144). User terima/hitung/jual barang ini dengan campuran 2 pcs + 2 pack + 0 box dalam 1 baris — sistem jumlahkan otomatis jadi 26 pcs (2×1 + 2×12 + 0×144) sebelum dicatat ke stok, user gak perlu hitung sendiri atau pura-pura semuanya 1 satuan.
+- Barang dijual pakai satuan jual bukan satuan dasar (misal 1 lusin) — user pilih "lusin" di layar Sales Order/Goods Issue, harga otomatis muncul dari harga satuan itu (bisa beda dari harga satuan dasar × faktor konversi, biasanya diskon grosir), qty & harga dikonversi ke satuan dasar sebelum dicatat.
+- Barang dibeli dalam satuan "dus" (bukan pcs lepasan) — user pilih "dus" di layar Purchase Order, isi qty & harga beli per dus sendiri (gak ada auto-fill), dikonversi ke satuan dasar sebelum dicatat.
+- Barang punya 3 satuan: pcs (dasar), pack (isi 12), box (isi 144). User hitung barang ini (Stock Opname/qty produksi) dengan campuran 2 pcs + 2 pack + 0 box dalam 1 baris — sistem jumlahkan otomatis jadi 26 pcs (2×1 + 2×12 + 0×144) sebelum dicatat ke stok, user gak perlu hitung sendiri atau pura-pura semuanya 1 satuan.
 
 **Common Mistakes**
-- Nyimpen qty transaksi di satuan JUAL (misal "2", maksudnya 2 lusin) tanpa dikonversi ke satuan dasar — stok kelihatan cuma berkurang dikit padahal fisiknya udah berkurang jauh lebih banyak, HPP juga keitung jauh lebih kecil dari seharusnya.
-- Menghitung harga per satuan jual sebagai hasil kali otomatis dari harga satuan dasar (misal harga lusin dipaksa = 12 × harga per buah) — mengabaikan diskon grosir yang biasanya memang beda dari harga eceran.
+- Nyimpen qty transaksi di satuan JUAL/BELI (misal "2", maksudnya 2 lusin) tanpa dikonversi ke satuan dasar — stok kelihatan cuma berkurang/bertambah dikit padahal fisiknya jauh lebih banyak, HPP juga keitung jauh lebih kecil dari seharusnya.
+- Menghitung harga per satuan jual sebagai hasil kali otomatis dari harga satuan dasar (misal harga lusin dipaksa = 12 × harga per buah) — mengabaikan diskon grosir yang biasanya memang beda dari harga eceran. Harga tiap satuan diisi manual sekali di data master barang, bukan dihitung ulang tiap transaksi.
+- Pakai pola "isi qty campur beberapa satuan sekaligus" di layar jual/beli (Sales Order/Goods Issue/Purchase Order) — itu cocoknya buat internal doang. Jual butuh pilih 1 satuan biar harga bisa otomatis muncul; beli butuh pilih 1 satuan biar harganya jelas per baris (bisa beda-beda per satuan).
+- Nyoba samain harga beli dari supplier dengan harga jual ke customer yang tersimpan di data satuan barang — dua hal yang gak berhubungan, harga beli PO/Terima Barang selalu ketik manual.
 
 ### Kode Scan Barang (Barcode/QR per Satuan Jual)
 

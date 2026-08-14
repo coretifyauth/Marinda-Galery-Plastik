@@ -127,7 +127,9 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### `purchase_orders` + `purchase_order_lines`
 
-Komitmen pesan ke supplier — **belum ada journal entry**. Header (`supplier_id`, `po_date`, `expected_date`, `source_ref`) + lines (`item_id`, `qty_ordered`, `unit_cost_expected`). Status (`OPEN`/`PARTIALLY_RECEIVED`/`FULLY_RECEIVED`/`CANCELLED`) derived dari perbandingan `SUM(goods_receipt_lines.qty_received)` per line vs `qty_ordered` — pola sama status invoice AR/AP. Immutable (reuse `block_edit_delete`) — koreksi PO cukup bikin PO baru, gak ada retur/edit di scope ini.
+Komitmen pesan ke supplier — **belum ada journal entry**. Header (`supplier_id`, `po_date`, `expected_date`, `source_ref`, `cancelled_at`) + lines (`item_id`, `qty_ordered`, `unit_cost_expected`). Status (`OPEN`/`PARTIALLY_RECEIVED`/`FULLY_RECEIVED`/`CANCELLED`) derived — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_receipt_lines.qty_received)` per line vs `qty_ordered`.
+
+**Cancel (`cancelled_at`, migration `0024_purchase_order_sales_order_cancel.sql`)** — koreksi salah input SEBELUM ada realisasi fisik apa pun cukup lewat `cancel_purchase_order`, gak perlu PO baru. Header PO gak lagi pakai `block_edit_delete` generik (yang blanket-block SEMUA update) — diganti trigger bespoke `purchase_orders_block_edit_delete_or_cancel()` niru pola selective-lock `accounts_published_lock` (`coa-schema.md`): bandingin tuple SEMUA kolom selain `id`/`cancelled_at`, tolak kalau ada yang berubah ATAU kalau `cancelled_at` udah keisi (sekali dibatalkan, gak bisa diapa-apain lagi termasuk dibatalkan ulang). `purchase_order_lines` TETAP full-immutable (`block_edit_delete` generik gak disentuh) — baris gak pernah berubah pas header dibatalkan.
 
 ```sql
 create table purchase_orders (
@@ -137,12 +139,15 @@ create table purchase_orders (
   expected_date date,
   source_ref text not null,
   created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  cancelled_at timestamptz -- migration 0024, nullable, state terminal
 );
 
+-- migration 0024 — ganti block_edit_delete generik, izinkan SATU-SATUNYA transisi:
+-- cancelled_at null -> now(), kolom lain (termasuk cancelled_at kalau udah keisi) terkunci.
 create trigger purchase_orders_block_edit_delete
   before update or delete on purchase_orders
-  for each row execute function block_edit_delete();
+  for each row execute function purchase_orders_block_edit_delete_or_cancel();
 
 create table purchase_order_lines (
   id uuid primary key default gen_random_uuid(),
@@ -233,11 +238,24 @@ create function create_purchase_order(
 
 Full body: `supabase/migrations/0004_inventory_schema.sql`.
 
+### RPC `cancel_purchase_order` — batalkan PO (migration `0024`)
+
+`security invoker`, murni stempel status — **gak bikin/balikin jurnal apa pun** (PO emang gak pernah punya jurnal, beda dari `cancel_ar_invoice`/`cancel_ap_bill` yang bikin reversing entry). Guard: raise exception kalau ada `goods_receipt_lines` yang udah nunjuk ke `purchase_order_lines` PO ini (artinya udah ada realisasi fisik — PO itu "kepakai", gak boleh dibatalkan lagi, prinsip sama smart-delete master data). Kalau lolos: `update purchase_orders set cancelled_at = now() where id = ... and cancelled_at is null`.
+
+```sql
+create function cancel_purchase_order(p_purchase_order_id uuid) returns void
+  language plpgsql security invoker as $$ ... $$;
+```
+
+Full body: `supabase/migrations/0024_purchase_order_sales_order_cancel.sql`.
+
 ### RPC `create_goods_receipt` — GRN + Bill + update Persediaan sekaligus
 
 Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) hitung total amount dari lines (baris Persediaan dasar) + gabung sama `p_extra_debit_lines` kalau ada, (2) panggil `create_ap_bill` (reuse) buat bikin bill+jurnal utang, ikut kirim `p_apply_tax`, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO) jalan otomatis pas langkah (3).
 
 **Kategori Campur & PPN (migration `0012_grn_compound_ppn.sql`, closes `memory/scope-debt/grn-kategori-campur-ppn.md`)** — dulu signature ini cuma terima 1 `p_debit_account_id` tunggal dan gak pernah kirim `p_apply_tax` ke `create_ap_bill`, beda dari `create_ap_bill` yang dipanggil manual lewat `/ap-bills` (sudah kategori campur+PPN sejak `0025_compound_transactional_entries_schema.sql`). Sekarang disamakan: 2 param baru **di akhir** signature (`p_extra_debit_lines` default `null`, `p_apply_tax` default `false`) — additive, `create or replace function` gak butuh drop dulu, caller lama yang belum kirim param baru tetap jalan (default null/false = perilaku identik sebelum `0012`).
+
+**Guard cancel (migration `0024`)** — `cancel_purchase_order` cuma jaga satu arah (PO yang UDAH punya realisasi gak bisa dibatalkan). Arah sebaliknya dijaga di sini: awal body nambah `if exists (... purchase_orders where id = p_purchase_order_id and cancelled_at is not null) then raise exception ...` — PO yang UDAH dibatalkan gak bisa lagi jadi dasar GRN baru. Signature gak berubah (`create or replace` langsung, gak perlu drop).
 
 ```sql
 create or replace function create_goods_receipt(
@@ -254,10 +272,11 @@ Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) + `su
 
 ### RLS & Grant (Purchase Order & Penerimaan Barang)
 
-Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Keempat tabel ini transaksional — **gak ada policy `update`/`delete`** (immutable, 2 lapis proteksi sama kayak journal entry — RLS default-deny + trigger `block_edit_delete`).
+Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. `purchase_order_lines`/`goods_receipt_notes`/`goods_receipt_lines` tetap **gak ada policy `update`/`delete`** (immutable total, 2 lapis proteksi — RLS default-deny + trigger `block_edit_delete`). `purchase_orders` beda sejak migration `0024`: dapat 1 policy `update` baru (role gate sama pola `insert` — admin/accountant), tapi kolom mana yang boleh berubah dijaga trigger `purchase_orders_block_edit_delete_or_cancel()`, BUKAN `WITH CHECK` per-kolom (pola sama `accounts_update`/`accounts_published_lock` di `coa-schema.md`).
 
 ```sql
 grant select, insert on purchase_orders to authenticated;
+grant update on purchase_orders to authenticated; -- migration 0024, cuma buat cancelled_at (dijaga trigger)
 grant select, insert on purchase_order_lines to authenticated;
 grant select, insert on goods_receipt_notes to authenticated;
 grant select, insert on goods_receipt_lines to authenticated;
@@ -440,7 +459,9 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### `sales_orders` + `sales_order_lines`
 
-Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `purchase_orders`/`purchase_order_lines` (`customer_id` gantiin `supplier_id`, `unit_price` gantiin `unit_cost_expected`). Status (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`/`CANCELLED`) derived dari perbandingan `SUM(goods_issue_lines.qty_issued)` per `so_line_id` vs `qty_ordered` — pola sama status PO. Immutable (reuse `block_edit_delete`) — koreksi pesanan cukup bikin SO baru.
+Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `purchase_orders`/`purchase_order_lines` (`customer_id` gantiin `supplier_id`, `unit_price` gantiin `unit_cost_expected`, `cancelled_at` juga mirror). Status (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`/`CANCELLED`) derived — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_issue_lines.qty_issued)` per `so_line_id` vs `qty_ordered`.
+
+**Cancel (`cancelled_at`, migration `0024_purchase_order_sales_order_cancel.sql`)** — mirror persis mekanisme PO (lihat submodule "Purchase Order & Penerimaan Barang" di atas): trigger bespoke `sales_orders_block_edit_delete_or_cancel()` gantiin `block_edit_delete` generik, `cancel_sales_order` RPC guard terhadap `goods_issue_lines` (bukan `goods_receipt_lines`), `create_goods_issue` dapat guard balik (tolak kalau `so_line_id` nunjuk SO yang udah `cancelled_at`). `sales_order_lines` TETAP full-immutable.
 
 ```sql
 create table sales_orders (
@@ -450,12 +471,14 @@ create table sales_orders (
   expected_date date,
   source_ref text not null,
   created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  cancelled_at timestamptz -- migration 0024, nullable, state terminal
 );
 
+-- migration 0024 — mirror purchase_orders_block_edit_delete_or_cancel()
 create trigger sales_orders_block_edit_delete
   before update or delete on sales_orders
-  for each row execute function block_edit_delete();
+  for each row execute function sales_orders_block_edit_delete_or_cancel();
 
 create table sales_order_lines (
   id uuid primary key default gen_random_uuid(),
@@ -515,16 +538,28 @@ create function create_sales_order(
 
 Full body: `supabase/migrations/0004_inventory_schema.sql`.
 
+### RPC `cancel_sales_order` — batalkan SO (migration `0024`)
+
+Mirror persis `cancel_purchase_order`: `security invoker`, gak bikin jurnal, guard terhadap `goods_issue_lines` (via `sales_order_lines`) sebelum stempel `cancelled_at = now()`.
+
+```sql
+create function cancel_sales_order(p_sales_order_id uuid) returns void
+  language plpgsql security invoker as $$ ... $$;
+```
+
+Full body: `supabase/migrations/0024_purchase_order_sales_order_cancel.sql`.
+
 ### RLS & Grant (Sales Order & Pemenuhan Bertahap)
 
-Pola identik `purchase_orders`/`purchase_order_lines`: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. Immutable — **gak ada policy `update`/`delete`** (RLS default-deny + `block_edit_delete`).
+Pola identik `purchase_orders`/`purchase_order_lines`: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. `sales_order_lines` tetap immutable — **gak ada policy `update`/`delete`**. `sales_orders` dapat policy `update` baru sejak migration `0024` (role gate sama, kolom dijaga trigger — mirror `purchase_orders`).
 
 ```sql
 grant select, insert on sales_orders to authenticated;
+grant update on sales_orders to authenticated; -- migration 0024, cuma buat cancelled_at (dijaga trigger)
 grant select, insert on sales_order_lines to authenticated;
 ```
 
-Detail lengkap: `supabase/migrations/0004_inventory_schema.sql`.
+Detail lengkap: `supabase/migrations/0004_inventory_schema.sql` + `supabase/migrations/0024_purchase_order_sales_order_cancel.sql`.
 
 ## Kategori & Brand Barang — migration `0023_item_categories_brands.sql`
 

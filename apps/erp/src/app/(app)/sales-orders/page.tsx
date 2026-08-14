@@ -14,7 +14,7 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
-import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
+import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
 
 type LineInput = { item_id: string; qty_ordered: string; unit_price: string };
 
@@ -26,6 +26,7 @@ const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
   PARTIALLY_FULFILLED: "bg-amber-50 text-amber-700",
   FULLY_FULFILLED: "bg-emerald-50 text-emerald-700",
+  CANCELLED: "bg-slate-100 text-slate-400 line-through",
 };
 
 export default function SalesOrdersPage() {
@@ -50,7 +51,7 @@ export default function SalesOrdersPage() {
     const { data, error } = await supabase
       .from("sales_orders")
       .select(
-        "id, customer_id, so_date, expected_date, source_ref, created_at, customers(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
+        "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, customers(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
       )
       .order("so_date", { ascending: false });
     if (error) {
@@ -104,6 +105,13 @@ export default function SalesOrdersPage() {
 
   function updateLine(index: number, patch: Partial<LineInput>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+
+  function updateLineQty(index: number, change: UomQtyChange | null) {
+    updateLine(index, {
+      qty_ordered: change ? String(change.baseQty) : "",
+      unit_price: change ? String(change.basePrice) : "",
+    });
   }
 
   function addLine() {
@@ -168,6 +176,12 @@ export default function SalesOrdersPage() {
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
+  // Cuma barang yang punya minimal 1 item_units berharga yang bisa dipesan lewat form ini --
+  // harga wajib otomatis dari item_units.price, gak ada lagi jalur input manual (lihat
+  // memory/domain/inventory.md submodule "Satuan Jual & Harga").
+  const sellableItems = items.filter((item) =>
+    itemUnits.some((u) => u.item_id === item.id && u.price != null)
+  );
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
@@ -293,42 +307,33 @@ export default function SalesOrdersPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Item</span>
-                <span>Qty Pesan per Satuan</span>
-                <span>Harga/Satuan Dasar</span>
+                <span>Qty & Satuan (harga otomatis)</span>
                 <span />
               </div>
               {lines.map((line, i) => {
-                const selectedItem = items.find((it) => it.id === line.item_id);
-                const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
+                const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id && u.price != null);
                 return (
-                  <div key={i} className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem_2.5rem] gap-2">
-                    <Select value={line.item_id} onChange={(e) => updateLine(i, { item_id: e.target.value, qty_ordered: "" })}>
+                  <div key={i} className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2">
+                    <Select
+                      value={line.item_id}
+                      onChange={(e) => updateLine(i, { item_id: e.target.value, qty_ordered: "", unit_price: "" })}
+                    >
                       <option value="">Pilih item...</option>
-                      {items.map((item) => (
+                      {sellableItems.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name} ({item.uom})
                         </option>
                       ))}
                     </Select>
-                    {line.item_id ? (
-                      <MultiUomQtyInput
-                        key={line.item_id}
-                        units={unitsForItem}
-                        baseUom={selectedItem?.uom ?? ""}
-                        onChange={(change) => updateLine(i, { qty_ordered: change.baseQty })}
-                      />
+                    {line.item_id && unitsForItem.length > 0 ? (
+                      <UomPriceQtyInput key={line.item_id} units={unitsForItem} onChange={(change) => updateLineQty(i, change)} />
                     ) : (
-                      <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
+                      <span className="flex items-center text-xs text-slate-400">
+                        {line.item_id ? "Barang ini belum punya harga jual" : "Pilih item dulu"}
+                      </span>
                     )}
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={line.unit_price}
-                      onChange={(e) => updateLine(i, { unit_price: e.target.value })}
-                    />
                     <button
                       type="button"
                       onClick={() => removeLine(i)}
@@ -341,6 +346,12 @@ export default function SalesOrdersPage() {
                   </div>
                 );
               })}
+              {sellableItems.length === 0 && (
+                <p className="text-xs text-amber-600">
+                  Belum ada barang dengan harga jual (item_units). Tambah satuan + harga di
+                  halaman Items dulu.
+                </p>
+              )}
               <Button type="button" variant="secondary" onClick={addLine} className="w-fit">
                 + Tambah item
               </Button>

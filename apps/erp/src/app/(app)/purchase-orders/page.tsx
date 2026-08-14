@@ -14,7 +14,7 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
-import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
+import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
 
 type LineInput = { item_id: string; qty_ordered: string; unit_cost_expected: string };
 
@@ -26,6 +26,7 @@ const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
   PARTIALLY_RECEIVED: "bg-amber-50 text-amber-700",
   FULLY_RECEIVED: "bg-emerald-50 text-emerald-700",
+  CANCELLED: "bg-slate-100 text-slate-400 line-through",
 };
 
 export default function PurchaseOrdersPage() {
@@ -52,7 +53,7 @@ export default function PurchaseOrdersPage() {
     const { data, error } = await supabase
       .from("purchase_orders")
       .select(
-        "id, supplier_id, po_date, expected_date, source_ref, created_at, suppliers(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, suppliers(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
       )
       .order("po_date", { ascending: false });
     if (error) {
@@ -106,6 +107,13 @@ export default function PurchaseOrdersPage() {
 
   function updateLine(index: number, patch: Partial<LineInput>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+
+  function updateLineQtyCost(index: number, change: UnitCostQtyChange | null) {
+    updateLine(index, {
+      qty_ordered: change ? String(change.baseQty) : "",
+      unit_cost_expected: change ? String(change.baseCost) : "",
+    });
   }
 
   function addLine() {
@@ -285,18 +293,22 @@ export default function PurchaseOrdersPage() {
             </div>
 
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Item</span>
-                <span>Qty Pesan per Satuan</span>
-                <span>Harga/Satuan Dasar</span>
+                <span>Qty, Satuan & Harga Beli</span>
                 <span />
               </div>
               {lines.map((line, i) => {
                 const selectedItem = items.find((it) => it.id === line.item_id);
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
                 return (
-                  <div key={i} className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem_2.5rem] gap-2">
-                    <Select value={line.item_id} onChange={(e) => updateLine(i, { item_id: e.target.value, qty_ordered: "" })}>
+                  <div key={i} className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2">
+                    <Select
+                      value={line.item_id}
+                      onChange={(e) =>
+                        updateLine(i, { item_id: e.target.value, qty_ordered: "", unit_cost_expected: "" })
+                      }
+                    >
                       <option value="">Pilih item...</option>
                       {rawMaterials.map((item) => (
                         <option key={item.id} value={item.id}>
@@ -305,22 +317,15 @@ export default function PurchaseOrdersPage() {
                       ))}
                     </Select>
                     {line.item_id ? (
-                      <MultiUomQtyInput
+                      <UnitCostQtyInput
                         key={line.item_id}
                         units={unitsForItem}
                         baseUom={selectedItem?.uom ?? ""}
-                        onChange={(change) => updateLine(i, { qty_ordered: change.baseQty })}
+                        onChange={(change) => updateLineQtyCost(i, change)}
                       />
                     ) : (
                       <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
                     )}
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={line.unit_cost_expected}
-                      onChange={(e) => updateLine(i, { unit_cost_expected: e.target.value })}
-                    />
                     <button
                       type="button"
                       onClick={() => removeLine(i)}

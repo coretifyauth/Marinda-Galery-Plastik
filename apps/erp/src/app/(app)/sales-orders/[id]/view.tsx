@@ -39,6 +39,7 @@ const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
   PARTIALLY_FULFILLED: "bg-amber-50 text-amber-700",
   FULLY_FULFILLED: "bg-emerald-50 text-emerald-700",
+  CANCELLED: "bg-slate-100 text-slate-400 line-through",
 };
 
 export function SalesOrderDetailView({ id }: { id: string }) {
@@ -48,6 +49,8 @@ export function SalesOrderDetailView({ id }: { id: string }) {
   const [fulfillments, setFulfillments] = useState<FulfillmentRow[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [activeTab, setActiveTab] = useState("lines");
 
   const [showFulfillForm, setShowFulfillForm] = useState(false);
@@ -66,7 +69,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     const { data: soData, error: soErr } = await supabase
       .from("sales_orders")
       .select(
-        "id, customer_id, so_date, expected_date, source_ref, created_at, customers(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
+        "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, customers(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
       )
       .eq("id", id)
       .single();
@@ -223,6 +226,23 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     await load();
   }
 
+  async function handleCancel() {
+    if (!so) return;
+    if (!window.confirm(`Batalkan sales order ${so.source_ref}?`)) return;
+
+    setCancelError(null);
+    setCancelling(true);
+    const { error } = await supabase.rpc("cancel_sales_order", {
+      p_sales_order_id: so.id,
+    });
+    setCancelling(false);
+    if (error) {
+      setCancelError(error.message);
+      return;
+    }
+    await load();
+  }
+
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -233,7 +253,8 @@ export function SalesOrderDetailView({ id }: { id: string }) {
 
   const status = soStatus(so);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  const canFulfill = canWrite && status !== "FULLY_FULFILLED";
+  const canFulfill = canWrite && status !== "FULLY_FULFILLED" && status !== "CANCELLED";
+  const canCancel = canWrite && status === "OPEN";
 
   const detailGroups = [
     {
@@ -266,9 +287,15 @@ export function SalesOrderDetailView({ id }: { id: string }) {
             {so.source_ref}
           </span>
         </div>
+        {canCancel && (
+          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+            {cancelling ? "Membatalkan..." : "Batalkan SO"}
+          </Button>
+        )}
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
+      {cancelError && <FormError>{cancelError}</FormError>}
 
       <DetailRows groups={detailGroups} />
 

@@ -31,14 +31,20 @@ export type PurchaseOrder = {
   expected_date: string | null;
   source_ref: string;
   created_at: string;
+  cancelled_at: string | null;
   suppliers: { name: string };
   purchase_order_lines: PurchaseOrderLine[];
 };
 
-export type PoStatus = "OPEN" | "PARTIALLY_RECEIVED" | "FULLY_RECEIVED";
+export type PoStatus = "OPEN" | "PARTIALLY_RECEIVED" | "FULLY_RECEIVED" | "CANCELLED";
 
-/** Status derived dari SUM(goods_receipt_lines.qty_received) per line vs qty_ordered — bukan kolom, ref inventory-schema.md. */
-export function poStatus(po: Pick<PurchaseOrder, "purchase_order_lines">): PoStatus {
+/**
+ * Status derived: `cancelled_at` menang duluan (state terminal, lihat
+ * cancel_purchase_order di inventory-schema.md), baru dihitung dari
+ * SUM(goods_receipt_lines.qty_received) per line vs qty_ordered.
+ */
+export function poStatus(po: Pick<PurchaseOrder, "purchase_order_lines" | "cancelled_at">): PoStatus {
+  if (po.cancelled_at) return "CANCELLED";
   const totals = po.purchase_order_lines.map((line) => ({
     ordered: line.qty_ordered,
     received: line.goods_receipt_lines.reduce((sum, r) => sum + r.qty_received, 0),

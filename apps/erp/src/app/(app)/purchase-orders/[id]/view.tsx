@@ -17,6 +17,7 @@ const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
   PARTIALLY_RECEIVED: "bg-amber-50 text-amber-700",
   FULLY_RECEIVED: "bg-emerald-50 text-emerald-700",
+  CANCELLED: "bg-slate-100 text-slate-400 line-through",
 };
 
 export function PurchaseOrderDetailView({ id }: { id: string }) {
@@ -24,14 +25,17 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   const [checkingSession, setCheckingSession] = useState(true);
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [grns, setGrns] = useState<GrnRef[]>([]);
+  const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [activeTab, setActiveTab] = useState("lines");
 
   const load = useCallback(async () => {
     const { data: poData, error: poErr } = await supabase
       .from("purchase_orders")
       .select(
-        "id, supplier_id, po_date, expected_date, source_ref, created_at, suppliers(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, suppliers(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
       )
       .eq("id", id)
       .single();
@@ -57,6 +61,12 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
         router.replace("/login");
         return;
       }
+      const { data: roleRows } = await supabase
+        .from("user_roles")
+        .select("role_name")
+        .eq("user_id", session.user.id);
+      if (!active) return;
+      setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await load();
       if (active) setCheckingSession(false);
     });
@@ -64,6 +74,23 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
       active = false;
     };
   }, [router, load]);
+
+  async function handleCancel() {
+    if (!po) return;
+    if (!window.confirm(`Batalkan purchase order ${po.source_ref}?`)) return;
+
+    setCancelError(null);
+    setCancelling(true);
+    const { error } = await supabase.rpc("cancel_purchase_order", {
+      p_purchase_order_id: po.id,
+    });
+    setCancelling(false);
+    if (error) {
+      setCancelError(error.message);
+      return;
+    }
+    await load();
+  }
 
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
@@ -74,6 +101,8 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   }
 
   const status = poStatus(po);
+  const canWrite = roles.includes("admin") || roles.includes("accountant");
+  const canCancel = canWrite && status === "OPEN";
 
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
   // jadi cetak ulang kapan pun otomatis nunjukkan qty diterima terkini. Kop surat + blok tanda
@@ -150,12 +179,20 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
             {po.source_ref}
           </span>
         </div>
-        <Button variant="toolbar" onClick={handlePrint}>
-          Cetak
-        </Button>
+        <div className="flex items-center gap-2">
+          {canCancel && (
+            <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? "Membatalkan..." : "Batalkan PO"}
+            </Button>
+          )}
+          <Button variant="toolbar" onClick={handlePrint}>
+            Cetak
+          </Button>
+        </div>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
+      {cancelError && <FormError>{cancelError}</FormError>}
 
       <DetailRows groups={detailGroups} />
 

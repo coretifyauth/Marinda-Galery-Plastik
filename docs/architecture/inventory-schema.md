@@ -348,7 +348,7 @@ Sama seperti submodule "Satuan Jual & Harga" — gak ada relasi baru.
 1. Penerimaan barang tidak boleh melebihi jumlah yang dipesan di Purchase Order.
 2. Pemakaian/pengurangan stok tidak boleh melebihi jumlah yang tersedia.
 3. Pengiriman terhadap Sales Order (kalau dipakai) tidak boleh melebihi jumlah yang dipesan.
-4. Purchase Order, Sales Order, penerimaan barang, produksi, dan penjualan barang tidak pernah bisa diedit atau dihapus setelah tercatat — koreksi harus lewat pencatatan baru.
+4. Purchase Order, Sales Order, penerimaan barang, produksi, dan penjualan barang tidak pernah bisa diedit atau dihapus setelah tercatat — koreksi harus lewat pencatatan baru. **Satu pengecualian**: Purchase Order dan Sales Order boleh **dibatalkan** (bukan diedit — status akhir yang gak bisa diubah lagi) selama belum ada realisasi fisik apa pun (belum ada penerimaan barang untuk PO, belum ada pengiriman barang untuk SO).
 5. Data master (daftar barang, resep) tetap boleh diubah kapan saja — hanya catatan transaksi yang bersifat permanen.
 
 ## Siapa Boleh Apa
@@ -358,4 +358,5 @@ Sama seperti submodule "Satuan Jual & Harga" — gak ada relasi baru.
 | Melihat semua data (barang, resep, pesanan, penerimaan, produksi, penjualan) | Semua user yang sudah login |
 | Mengubah data barang & resep | Role `admin` atau `accountant` |
 | Membuat Purchase Order, Sales Order, mencatat penerimaan, mencatat produksi, mencatat penjualan, mencatat opname | Role `admin` atau `accountant` |
+| Membatalkan Purchase Order/Sales Order (hanya kalau belum ada realisasi fisik) | Role `admin` atau `accountant` |
 | Mengedit/menghapus transaksi yang sudah tercatat | **Tidak ada seorang pun** |

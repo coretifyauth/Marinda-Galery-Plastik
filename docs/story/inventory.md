@@ -68,10 +68,10 @@ Di halaman detail item juga keliatan **Qty On Hand** & **Avg Cost** (dari `inven
 - **Tanggal PO**: `2026-08-03`
 - **Estimasi Tiba**: `2026-08-05`
 - **Rujukan dokumen (source_ref)**: `PO-PLASTINDO-014`
-- Baris item (klik **+ Tambah item** buat nambah baris):
-  1. Ember Plastik 10L — Qty Pesan `40` — Harga/Unit `18000`
-  2. Kursi Plastik Lipat — Qty Pesan `10` — Harga/Unit `45000`
-  3. Rak Plastik Serbaguna — Qty Pesan `8` — Harga/Unit `60000`
+- Baris item (klik **+ Tambah item** buat nambah baris) — tiap baris: pilih item, isi Qty, pilih satuan dari dropdown (default satuan dasar `pcs`), isi Harga Beli manual buat satuan itu (gak ada auto-fill, harga beli gak ada hubungannya sama harga jual di data satuan barang):
+  1. Ember Plastik 10L — Qty `40` — Satuan `pcs` — Harga `18000`
+  2. Kursi Plastik Lipat — Qty `10` — Satuan `pcs` — Harga `45000`
+  3. Rak Plastik Serbaguna — Qty `8` — Satuan `pcs` — Harga `60000`
 
 Klik **Simpan PO**. Baris baru muncul di list dengan badge status **OPEN** (abu-abu). Klik baris itu → masuk `/purchase-orders/[id]`, keliatan detail: tanggal, rujukan, tabel "Item Dipesan" (Qty Pesan vs Qty Diterima — masih 0 — vs Harga/Unit), dan section "Goods Receipts" (masih kosong). **Belum ada jurnal apa pun** — PO cuma komitmen.
 
@@ -79,7 +79,7 @@ Klik **Simpan PO**. Baris baru muncul di list dengan badge status **OPEN** (abu-
 
 **Menu:** Inventory → **Goods Receipts** (`/goods-receipts`). Klik **+ New**.
 
-- **Purchase Order**: pilih `PO-PLASTINDO-014 — PT Plastindo Jaya` → begitu dipilih, baris "Item (sisa PO)" otomatis muncul, qty & harga ter-prefill dari PO
+- **Purchase Order**: pilih `PO-PLASTINDO-014 — PT Plastindo Jaya` → begitu dipilih, baris "Item (sisa PO)" otomatis muncul, qty & harga ter-prefill dari PO (satuan default `pcs`, sama seperti pas PO dibuat)
 - **Tanggal Terima**: `2026-08-05`
 - **No. Surat Jalan**: `SJ-PLASTINDO-014`
 - **Rujukan Bill (source_ref)**: `GRN-PLASTINDO-014`
@@ -162,7 +162,7 @@ Toko Serba Ada Barokah (pelanggan grosir volume besar) mau 30 Paket Alat Makan b
 - **Tanggal Pesan**: `2026-08-22`
 - **Butuh Tanggal**: `2026-08-30`
 - **Rujukan dokumen**: `SO-BAROKAH-005`
-- Baris: Paket Alat Makan — Qty Pesan `30` — Harga/Unit `6000`
+- Baris: dropdown **Item** (cuma nampilin barang berharga jual) pilih `Paket Alat Makan`, **Qty** `30`, dropdown satuan di sebelahnya pilih `pcs` (bukan `paket besar` — pesanan ini lepasan, bukan bundel) → harga `@Rp6.000` tampil otomatis, gak diketik manual.
 
 Klik **Simpan Sales Order**. List nambah baris dengan badge **OPEN**. **Gak ada jurnal apa pun di titik ini** (halaman ini eksplisit bilang itu di atas form) — piutang & pendapatan baru diakui pas barang beneran dikirim lewat Goods Issue.
 
@@ -209,7 +209,7 @@ Total terkirim 18+12=30 = qty_ordered → status SO jadi **FULLY_FULFILLED**, to
 
 `inventory_balances` Paket Alat Makan: 36→**6 pcs** (avg tetap 3.950, konsumsi gak ngubah rata-rata).
 
-## Tahap 12 — Penjualan Langsung ke Warung Bu Siti (Goods Issue Tanpa SO, Multi-Unit + Saran Harga, 2 September 2026)
+## Tahap 12 — Penjualan Langsung ke Warung Bu Siti (Goods Issue Tanpa SO, Pilih Satuan + Harga Otomatis, 2 September 2026)
 
 Warung Bu Siti (grosir kecil) datang langsung minta 1 paket besar (isi 5) — barang ready, gak perlu lewat Sales Order. **Menu:** Inventory → **Goods Issues** (`/goods-issues`). Klik **+ New**.
 
@@ -217,8 +217,8 @@ Warung Bu Siti (grosir kecil) datang langsung minta 1 paket besar (isi 5) — ba
 - **Tanggal**: `2026-09-02`
 - **Rujukan dokumen**: `Nota grosir #101`
 - **Deskripsi**: `Jual Paket Alat Makan ke Warung Bu Siti`
-- Baris "Barang Jadi Keluar": **Item** = `Paket Alat Makan (pcs)`, **Satuan Jual** = `paket besar (@28.000)`, **Qty** = `1`
-- Klik tombol **Saran** di sebelah field "Jumlah Pendapatan" → otomatis keisi `28000` (qty 1 × harga satuan `paket besar`). Field ini tetap bisa diedit manual kalau harga disepakati beda.
+- Baris "Barang Jadi Keluar": dropdown **Item** cuma nampilin barang yang punya minimal 1 satuan berharga — pilih `Paket Alat Makan (pcs)`. Isi **Qty** = `1`, dropdown satuan di sebelahnya pilih `paket besar` — harga `@Rp28.000` langsung tampil otomatis di sebelah input, gak perlu diketik.
+- Field "Jumlah Pendapatan" di atas form ikut ke-update otomatis jadi `Rp28.000` (read-only, dijumlah dari semua baris) — gak ada lagi tombol "Saran" atau input manual.
 - **Akun Piutang Usaha (debit)**: `1300 — Piutang Usaha`
 - **Akun Pendapatan (kredit)**: `4200 — Pendapatan Penjualan Grosir`
 - **Akun HPP (debit, jurnal kedua)**: `5100 — Harga Pokok Penjualan`

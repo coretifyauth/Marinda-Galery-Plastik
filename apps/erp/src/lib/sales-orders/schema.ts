@@ -31,14 +31,20 @@ export type SalesOrder = {
   expected_date: string | null;
   source_ref: string;
   created_at: string;
+  cancelled_at: string | null;
   customers: { name: string };
   sales_order_lines: SalesOrderLine[];
 };
 
-export type SoStatus = "OPEN" | "PARTIALLY_FULFILLED" | "FULLY_FULFILLED";
+export type SoStatus = "OPEN" | "PARTIALLY_FULFILLED" | "FULLY_FULFILLED" | "CANCELLED";
 
-/** Status derived dari SUM(goods_issue_lines.qty_issued) per line vs qty_ordered — bukan kolom, ref inventory-schema.md submodule "Sales Order & Pemenuhan Bertahap". */
-export function soStatus(so: Pick<SalesOrder, "sales_order_lines">): SoStatus {
+/**
+ * Status derived: `cancelled_at` menang duluan (state terminal, lihat
+ * cancel_sales_order di inventory-schema.md), baru dihitung dari
+ * SUM(goods_issue_lines.qty_issued) per line vs qty_ordered.
+ */
+export function soStatus(so: Pick<SalesOrder, "sales_order_lines" | "cancelled_at">): SoStatus {
+  if (so.cancelled_at) return "CANCELLED";
   const totals = so.sales_order_lines.map((line) => ({
     ordered: line.qty_ordered,
     issued: line.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0),

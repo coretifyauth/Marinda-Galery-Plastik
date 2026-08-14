@@ -20,7 +20,7 @@ import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
-import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
+import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
 
 type LineInput = {
   po_line_id: string;
@@ -163,6 +163,13 @@ export default function GoodsReceiptsPage() {
 
   function updateLine(index: number, patch: Partial<LineInput>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+
+  function updateLineQtyCost(index: number, change: UnitCostQtyChange | null) {
+    updateLine(index, {
+      qty_received: change ? String(change.baseQty) : "",
+      unit_cost: change ? String(change.baseCost) : "",
+    });
   }
 
   async function handleCreate(e: FormEvent) {
@@ -398,28 +405,22 @@ export default function GoodsReceiptsPage() {
 
             {purchaseOrderId && (
               <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem] gap-2 text-sm font-medium text-slate-500">
+                <div className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2 text-sm font-medium text-slate-500">
                   <span>Item (sisa PO)</span>
-                  <span>Qty Terima per Satuan</span>
-                  <span>Harga Riil/Satuan Dasar</span>
+                  <span>Qty, Satuan & Harga Riil</span>
                 </div>
                 {lines.length === 0 && (
                   <p className="text-sm text-slate-400">PO ini sudah diterima penuh.</p>
                 )}
                 {lines.map((line, i) => (
-                  <div key={line.po_line_id} className="grid grid-cols-[1fr_minmax(12rem,auto)_8rem] gap-2">
+                  <div key={line.po_line_id} className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2">
                     <span className="flex items-center text-sm text-slate-700">{line.item_label}</span>
-                    <MultiUomQtyInput
+                    <UnitCostQtyInput
                       units={itemUnits.filter((u) => u.item_id === line.item_id)}
                       baseUom={line.uom}
                       initialBaseQty={line.qty_received}
-                      onChange={(change) => updateLine(i, { qty_received: change.baseQty })}
-                    />
-                    <Input
-                      type="number"
-                      min="0"
-                      value={line.unit_cost}
-                      onChange={(e) => updateLine(i, { unit_cost: e.target.value })}
+                      initialBaseCost={line.unit_cost}
+                      onChange={(change) => updateLineQtyCost(i, change)}
                     />
                   </div>
                 ))}

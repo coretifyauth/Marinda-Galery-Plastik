@@ -7,7 +7,7 @@ import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { createGoodsIssueSchema, type GoodsIssue } from "@/lib/goods-issues/schema";
-import { MultiUomQtyInput, type MultiUomChange } from "@/components/ui/multi-uom-qty-input";
+import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
 import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
 import { fetchTaxSettings, resolvedPpnKeluaran, type TaxSettings } from "@/lib/tax-settings/schema";
 import { resolveChargeLines, resolveChargeLineLegs, type ChargeLineInput } from "@/lib/charge-lines/schema";
@@ -23,10 +23,10 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
-type LineInput = { item_id: string; qty: string; amount: number | null };
+type LineInput = { item_id: string; qty: string; amount: number };
 
 function emptyLine(): LineInput {
-  return { item_id: "", qty: "", amount: null };
+  return { item_id: "", qty: "", amount: 0 };
 }
 
 export default function GoodsIssuesPage() {
@@ -42,7 +42,6 @@ export default function GoodsIssuesPage() {
   const [customerId, setCustomerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
   const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
@@ -133,13 +132,15 @@ export default function GoodsIssuesPage() {
   }, [router, loadCustomers, loadItems, loadDefaultAccounts, loadIssues, loadChargeTypes, loadTaxSettings]);
 
   function updateLineItem(index: number, itemId: string) {
-    // Ganti item -> breakdown qty per satuan sebelumnya gak relevan lagi, reset.
-    setLines((prev) => prev.map((l, i) => (i === index ? { item_id: itemId, qty: "", amount: null } : l)));
+    // Ganti item -> qty & harga baris sebelumnya gak relevan lagi, reset.
+    setLines((prev) => prev.map((l, i) => (i === index ? { item_id: itemId, qty: "", amount: 0 } : l)));
   }
 
-  function updateLineQty(index: number, change: MultiUomChange) {
+  function updateLineQty(index: number, change: UomQtyChange | null) {
     setLines((prev) =>
-      prev.map((l, i) => (i === index ? { ...l, qty: change.baseQty, amount: change.amount } : l))
+      prev.map((l, i) =>
+        i === index ? { ...l, qty: change ? String(change.baseQty) : "", amount: change?.amount ?? 0 } : l
+      )
     );
   }
 
@@ -151,15 +152,9 @@ export default function GoodsIssuesPage() {
     setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  /**
-   * Saran nominal dari item_units.price (murni referensi, bukan dihitung server-side —
-   * lihat memory/domain/inventory.md submodule "Satuan Jual & Harga"). Cuma ngisi field
-   * `amount`, tetap bisa diedit manual sebelum submit — RPC tetap terima p_amount apa adanya.
-   */
-  function suggestAmountFromUnitPrices() {
-    const suggested = lines.reduce((sum, l) => sum + (l.amount ?? 0), 0);
-    setAmount(String(suggested));
-  }
+  // Total pendapatan = Σ(qty x item_units.price) tiap baris, otomatis dari UomPriceQtyInput
+  // -- gak ada lagi input manual (ref memory/domain/inventory.md submodule "Satuan Jual & Harga").
+  const totalAmount = lines.reduce((sum, l) => sum + l.amount, 0);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -167,7 +162,7 @@ export default function GoodsIssuesPage() {
 
     const activeLines = lines.filter((l) => l.item_id.trim() !== "" && l.qty.trim() !== "");
 
-    // MultiUomQtyInput udah ngejumlah breakdown per satuan -> qty satuan dasar (l.qty).
+    // UomPriceQtyInput udah ngonversi qty satuan terpilih -> qty satuan dasar (l.qty).
     // create_goods_issue tetap terima qty di satuan dasar, sama kayak sebelum fitur ini ada
     // (ref memory/domain/inventory.md submodule "Satuan Jual & Harga").
     const convertedLines = activeLines.map((l) => ({
@@ -176,7 +171,7 @@ export default function GoodsIssuesPage() {
     }));
 
     const creditLines = [
-      { account_id: defaultAccounts["ar.revenue"]?.id ?? "", amount: Number(amount) },
+      { account_id: defaultAccounts["ar.revenue"]?.id ?? "", amount: totalAmount },
       ...resolveChargeLines(extraLines, chargeTypes),
     ];
 
@@ -228,7 +223,6 @@ export default function GoodsIssuesPage() {
     setCustomerId("");
     setInvoiceDate("");
     setDescription("");
-    setAmount("");
     setLines([emptyLine()]);
     setExtraLines([]);
     setApplyTax(false);
@@ -241,6 +235,12 @@ export default function GoodsIssuesPage() {
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
+  // Cuma barang yang punya minimal 1 item_units berharga yang bisa dijual lewat form ini --
+  // harga wajib otomatis dari item_units.price, gak ada lagi jalur input manual (lihat
+  // memory/domain/inventory.md submodule "Satuan Jual & Harga").
+  const sellableItems = items.filter((item) =>
+    itemUnits.some((u) => u.item_id === item.id && u.price != null)
+  );
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
@@ -394,18 +394,11 @@ export default function GoodsIssuesPage() {
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="amount">Jumlah Pendapatan</Label>
-                <div className="flex gap-1.5">
-                  <Input
-                    id="amount"
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                  />
-                  <Button type="button" variant="secondary" onClick={suggestAmountFromUnitPrices}>
-                    Saran
-                  </Button>
+                <div
+                  id="amount"
+                  className="flex items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900"
+                >
+                  Rp{totalAmount.toLocaleString("id-ID")}
                 </div>
               </div>
               <LockedAccountField
@@ -433,31 +426,31 @@ export default function GoodsIssuesPage() {
             <div className="flex flex-col gap-2">
               <div className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Barang Jadi Keluar</span>
-                <span>Qty per Satuan</span>
+                <span>Qty & Satuan (harga otomatis)</span>
                 <span />
               </div>
               {lines.map((line, i) => {
-                const selectedItem = items.find((it) => it.id === line.item_id);
-                const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
+                const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id && u.price != null);
                 return (
                   <div key={i} className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2">
                     <Select value={line.item_id} onChange={(e) => updateLineItem(i, e.target.value)}>
                       <option value="">Pilih item...</option>
-                      {items.map((item) => (
+                      {sellableItems.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name} ({item.uom})
                         </option>
                       ))}
                     </Select>
-                    {line.item_id ? (
-                      <MultiUomQtyInput
+                    {line.item_id && unitsForItem.length > 0 ? (
+                      <UomPriceQtyInput
                         key={line.item_id}
                         units={unitsForItem}
-                        baseUom={selectedItem?.uom ?? ""}
                         onChange={(change) => updateLineQty(i, change)}
                       />
                     ) : (
-                      <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
+                      <span className="flex items-center text-xs text-slate-400">
+                        {line.item_id ? "Barang ini belum punya harga jual" : "Pilih item dulu"}
+                      </span>
                     )}
                     <button
                       type="button"
@@ -471,6 +464,12 @@ export default function GoodsIssuesPage() {
                   </div>
                 );
               })}
+              {sellableItems.length === 0 && (
+                <p className="text-xs text-amber-600">
+                  Belum ada barang dengan harga jual (item_units). Tambah satuan + harga di
+                  halaman Items dulu.
+                </p>
+              )}
               <Button type="button" variant="secondary" onClick={addLine} className="w-fit">
                 + Tambah item
               </Button>
