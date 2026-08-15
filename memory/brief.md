@@ -83,11 +83,12 @@ Ledger keputusan desain yang sengaja ditunda. 1 file = 1 konsep: kasus, kenapa d
 Status saat ini — semua di bawah ini masih **Ditunda**:
 - `user-role-admin-assignment.md` — policy admin assign role, butuh `security definer` function.
 - `print-template-letterhead-signature.md` — kop surat resmi + blok tanda tangan di cetakan AR Invoice/PO, butuh data konfigurasi identitas perusahaan yang belum ada.
-- `stock-display-uom-breakdown.md` — tampilan stok ERP+POS masih angka satuan dasar mentah, belum breakdown greedy ke box/pack/pcs pakai `item_units.conversion_factor`.
 - `pos-ppn-default-checkbox.md` — checkbox "Kena PPN" di POS gak ikut default `tax_settings.is_active`, selalu unchecked.
 - `pos-ux-efficiency-backlog.md` — 9 item improvement UX kasir POS (search, kategori, shortcut keyboard, numpad qty, kembalian, riwayat/cetak ulang, auto-fokus scan, struk digital).
 - `pos-cart-layout-density.md` — panel keranjang POS kepenuhan, perlu baris item lebih lega + section bawah (biaya tambahan/PPN/pembayaran) di-collapse.
 - `pos-scan-kamera-hp-tablet.md` — scan barcode di POS cuma dukung scanner fisik HID, belum ada jalur scan pakai kamera HP/tablet.
+
+Item `stock-display-uom-breakdown.md` sudah **Selesai** (2026-08-15) — `formatStockBreakdown()` (greedy, urut `item_units.conversion_factor` terbesar->terkecil, fallback ke `qty item.uom` polos kalau item gak punya satuan campuran) diduplikasi persis di `apps/erp/src/lib/stock-display.ts` + `apps/pos/src/lib/stock-display.ts` (belum ada shared package antar app, `tech-stack-decisions.md`). Dipakai di `/inventory` (list "Posisi Persediaan", nambah fetch `item_units`), `/items/[id]` (baris "Qty On Hand"), dan kartu katalog POS (`apps/pos/src/app/page.tsx`, breakdown dari `item.units` yang udah ke-fetch, gak nambah query baru). Sudah dihapus dari folder ini.
 
 Item `ar-invoice-remaining-return-credit-gap.md` sudah **Selesai** (2026-08-13) — `ar_invoice_remaining()` sekarang nambah reducer add-back `+ ar_return_credits` (join via `ar_credit_notes.invoice_id`), mirror persis fix AP (migration `0020_ar_invoice_remaining_return_credit_fix.sql`, diverifikasi cocok dengan `ap_bill_remaining()` live sebelum di-push). `invoiceStatus()` frontend (`apps/erp/src/lib/ar-invoices/schema.ts`) + 3 query call site (`ar-invoices/page.tsx`, `ar-invoices/[id]/view.tsx`, `customers/[id]/view.tsx`) ikut diupdate ambil `ar_return_credits(amount)` nested di `ar_credit_notes`. Sudah dihapus dari folder ini.
 

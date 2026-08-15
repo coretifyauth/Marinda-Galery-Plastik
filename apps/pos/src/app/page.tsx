@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { generateDocumentNumber } from "@/lib/document-numbers";
+import { formatStockBreakdown } from "@/lib/stock-display";
 
 type PricedUnit = {
   unit_label: string;
@@ -86,7 +87,9 @@ function CatalogCard({ item, onAdd }: { item: CatalogItem; onAdd: (item: Catalog
         <div className="text-sm text-slate-500">
           Rp{unit.price.toLocaleString("id-ID")}/{unit.unit_label}
         </div>
-        <div className="text-xs text-slate-400">Stok: {item.qtyOnHand}</div>
+        <div className="text-xs text-slate-400">
+          Stok: {formatStockBreakdown(item.qtyOnHand, item.uom, item.units)}
+        </div>
       </button>
       {item.units.length > 1 && (
         <select

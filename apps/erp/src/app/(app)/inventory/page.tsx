@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { Item } from "@/lib/items/schema";
 import type { InventoryBalance } from "@/lib/inventory/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
+import { formatStockBreakdown } from "@/lib/stock-display";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 
@@ -13,15 +15,17 @@ export default function InventoryPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
+  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
-    const [itemsRes, balancesRes] = await Promise.all([
+    const [itemsRes, balancesRes, itemUnitsRes] = await Promise.all([
       supabase
         .from("items")
         .select("id, name, item_type, uom, inventory_account_id, archived_at")
         .order("name"),
       supabase.from("inventory_balances").select("item_id, qty_on_hand, avg_cost"),
+      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
     ]);
     if (itemsRes.error) {
       setLoadError(itemsRes.error.message);
@@ -30,6 +34,7 @@ export default function InventoryPage() {
     setLoadError(null);
     setItems((itemsRes.data ?? []) as Item[]);
     setBalances((balancesRes.data ?? []) as InventoryBalance[]);
+    setItemUnits((itemUnitsRes.data ?? []) as ItemUnit[]);
   }, []);
 
   useEffect(() => {
@@ -89,6 +94,7 @@ export default function InventoryPage() {
               const balance = balances.find((b) => b.item_id === item.id);
               const qty = balance?.qty_on_hand ?? 0;
               const avgCost = balance?.avg_cost ?? 0;
+              const unitsForItem = itemUnits.filter((u) => u.item_id === item.id);
               return (
                 <tr key={item.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
                   <td className="px-4 py-2 font-medium text-black">{item.name}</td>
@@ -96,7 +102,7 @@ export default function InventoryPage() {
                     {avgCost.toLocaleString("id-ID")}/{item.uom}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">
-                    {qty} {item.uom}
+                    {formatStockBreakdown(qty, item.uom, unitsForItem)}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{(qty * avgCost).toLocaleString("id-ID")}</td>
                 </tr>

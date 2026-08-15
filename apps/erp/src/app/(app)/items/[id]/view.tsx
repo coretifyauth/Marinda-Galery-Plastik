@@ -12,6 +12,7 @@ import type { InventoryBalance } from "@/lib/inventory/schema";
 import type { ItemCategory } from "@/lib/item-categories/schema";
 import type { ItemBrand } from "@/lib/item-brands/schema";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { formatStockBreakdown } from "@/lib/stock-display";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -156,7 +157,7 @@ export function ItemDetailView({ id }: { id: string }) {
     {
       title: "Ringkasan Stok",
       rows: [
-        { label: "Qty On Hand", value: `${totalQty} ${item.uom}` },
+        { label: "Qty On Hand", value: formatStockBreakdown(totalQty, item.uom, units) },
         { label: "Avg Cost / " + item.uom, value: (balance?.avg_cost ?? 0).toLocaleString("id-ID") },
         { label: "Nilai Persediaan", value: totalValue.toLocaleString("id-ID") },
       ],
