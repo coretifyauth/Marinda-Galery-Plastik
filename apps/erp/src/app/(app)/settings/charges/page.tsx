@@ -568,6 +568,9 @@ function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
       return;
     }
     setSubmitting(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     const { error: err } = await supabase
       .from("company_settings")
       .update({
@@ -575,6 +578,7 @@ function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
         address: parsed.data.address || null,
         npwp: parsed.data.npwp || null,
         logo_url: parsed.data.logo_url || null,
+        updated_by: user?.id ?? null,
       })
       .eq("id", true);
     setSubmitting(false);
