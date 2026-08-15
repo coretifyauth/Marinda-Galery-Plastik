@@ -125,6 +125,7 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 - Persis 1 baris `is_base=true` per item, `conversion_factor` wajib 1 buat baris itu (`check ((is_base and conversion_factor = 1) or not is_base)`).
 - `unique(item_id, unit_label)` — gak boleh 2 satuan sama nama dalam 1 item.
 - Partial unique index `item_id where is_base` — jaga maksimal 1 baris base per item.
+- **`conversion_factor` antar satuan 1 item harus nested rapi** (tiap angka kelipatan bulat dari angka di bawahnya, mis. pcs=1/pack=12/box=144 — bukan box=100) — trigger `item_units_nested_conversion_guard` (migration `0025_item_units_nested_conversion_guard.sql`), dijaga di level DB (bukan cuma UI). Syarat ini yang bikin breakdown tampilan stok box/pack/pcs (`formatStockBreakdown()` di `apps/erp/src/lib/stock-display.ts` + `apps/pos/src/lib/stock-display.ts`, murni fitur tampilan — 0 tabel/RPC baru) presisi — tanpa nested, greedy breakdown bisa nyisain pecahan gak presisi.
 
 **Skenario referensi**
 - Item dijual pakai satuan bukan-dasar (misal lusin, faktor 12) di Sales Order/Goods Issue — user pilih satuan "lusin" di `UomPriceQtyInput`, harga otomatis muncul dari `item_units.price` baris itu (independen, boleh beda dari price satuan dasar × faktor — biasanya ada diskon grosir), UI konversi qty & harga ke satuan dasar SEBELUM manggil RPC.

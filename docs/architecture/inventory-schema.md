@@ -280,6 +280,7 @@ Gak ada RPC baru — `item_units` murni data master, CRUD langsung lewat tabel (
 | Qty yang dikonsumsi/ditambah ke stok selalu di satuan dasar, gak peduli kombinasi satuan yang dipakai user pas input | Konversi terjadi di UI sebelum RPC dipanggil — tabel transaksional manapun (`purchase_order_lines`, `goods_receipt_lines`, `sales_order_lines`, `goods_issue_lines`, `production_order_lines`, `stock_opname_lines`) cuma pernah menyimpan qty satuan dasar |
 | Harga per satuan jual independen, tidak wajib proporsional ke harga satuan dasar | `item_units.price` diisi manual per baris, gak ada perhitungan otomatis dari harga satuan lain |
 | Harga cuma saran, gak retroaktif ngubah invoice yang udah terbit | Sama prinsip snapshot seperti sebelumnya — `item_units` cuma dibaca UI pas invoice BARU dibuat |
+| Faktor konversi antar satuan 1 barang harus kelipatan bulat rapi (biar tampilan stok gabungan box/pack/pcs presisi) | Trigger `item_units_nested_conversion_guard` (`0025_item_units_nested_conversion_guard.sql`) — tolak insert/update kalau kombinasi faktor gak nested, berlaku di level DB (bukan cuma validasi UI) |
 
 **Interaksi Antar Tabel**
 

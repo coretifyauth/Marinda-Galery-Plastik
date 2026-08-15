@@ -38,6 +38,15 @@ export function openPrintWindow(title: string, bodyHtml: string): boolean {
     text-transform: uppercase; text-align: center;
   }
   .total-row td { font-weight: 700; border-top: 2px solid #1e293b; border-bottom: none; }
+  .letterhead {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+    padding-bottom: 12px; border-bottom: 2px solid #1e293b;
+  }
+  .letterhead-name { font-size: 16px; font-weight: 700; }
+  .letterhead-meta { font-size: 11px; color: #64748b; }
+  .signature-block { display: flex; justify-content: space-between; margin-top: 48px; }
+  .signature-col { width: 30%; text-align: center; font-size: 12px; }
+  .signature-line { margin-top: 56px; padding-top: 4px; border-top: 1px solid #1e293b; }
 </style>
 </head>
 <body>
@@ -47,4 +56,44 @@ ${bodyHtml}
 </html>`);
   printWindow.document.close();
   return true;
+}
+
+export type LetterheadCompany = { name: string; address: string | null; npwp: string | null; logo_url: string | null };
+
+/** Kop surat -- ditaruh di atas body cetakan. Gak render apa pun kalau company null
+ * (query company_settings gagal, harusnya gak pernah terjadi di kondisi normal -- baris
+ * singleton-nya selalu ada sejak migration 0026). */
+export function buildLetterheadHtml(company: LetterheadCompany | null): string {
+  if (!company) return "";
+  const logoImg = company.logo_url
+    ? `<img src="${escapeHtml(company.logo_url)}" alt="" style="max-height:56px;max-width:140px;object-fit:contain;" />`
+    : "";
+  return `
+    <div class="letterhead">
+      ${logoImg}
+      <div>
+        <div class="letterhead-name">${escapeHtml(company.name)}</div>
+        ${company.address ? `<div class="letterhead-meta">${escapeHtml(company.address)}</div>` : ""}
+        ${company.npwp ? `<div class="letterhead-meta">NPWP: ${escapeHtml(company.npwp)}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+/** Blok tanda tangan -- ditaruh di bawah body cetakan, 1 kolom per jabatan aktif
+ * (document_signatories.archived_at is null), urut sort_order. Cuma label jabatan + garis
+ * kosong (keputusan desain migration 0026) -- gak render apa pun kalau belum ada jabatan
+ * yang didaftar. */
+export function buildSignatureBlockHtml(labels: string[]): string {
+  if (labels.length === 0) return "";
+  const cols = labels
+    .map(
+      (label) => `
+        <div class="signature-col">
+          <div>${escapeHtml(label)}</div>
+          <div class="signature-line">&nbsp;</div>
+        </div>`
+    )
+    .join("");
+  return `<div class="signature-block">${cols}</div>`;
 }

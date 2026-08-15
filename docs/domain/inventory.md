@@ -172,6 +172,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 - Tiap barang maksimal punya 1 "satuan dasar" (faktor konversi wajib 1) — sisanya boleh berapa pun satuan tambahan.
 - Qty yang beneran dikonsumsi/ditambah ke stok SELALU di satuan dasar, gak peduli kombinasi/pilihan satuan apa yang dipakai user pas input.
 - Harga tiap satuan independen — gak wajib proporsional ke harga satuan dasar. Nominal invoice/pesanan **otomatis diturunkan** dari harga satuan yang dipilih di sisi jual; nominal PO/Terima Barang tetap ketik manual (gak ada harga beli referensi tersimpan).
+- Faktor konversi antar satuan 1 barang harus kelipatan bulat rapi dari satuan di bawahnya (mis. pcs=1, pack=12, box=144 — bukan box=100) — dijaga sistem otomatis, bukan cuma aturan penulisan data. Ini supaya layar posisi stok/kartu barang bisa menampilkan angka gabungan yang ringkas ("1 box, 2 pack, 4 pcs") tanpa nyisain pecahan gak presisi.
 
 **Skenario**
 - Barang dijual pakai satuan jual bukan satuan dasar (misal 1 lusin) — user pilih "lusin" di layar Sales Order/Goods Issue, harga otomatis muncul dari harga satuan itu (bisa beda dari harga satuan dasar × faktor konversi, biasanya diskon grosir), qty & harga dikonversi ke satuan dasar sebelum dicatat.

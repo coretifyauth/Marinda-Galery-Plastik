@@ -30,7 +30,9 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
-import { escapeHtml, openPrintWindow } from "@/lib/print/print-window";
+import { buildLetterheadHtml, buildSignatureBlockHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
+import { fetchCompanySettings, type CompanySettings } from "@/lib/company-settings/schema";
+import { fetchActiveSignatoryLabels } from "@/lib/document-signatories/schema";
 
 type ReturnLineInput = {
   item_id: string;
@@ -116,6 +118,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [customerReturnCredits, setCustomerReturnCredits] = useState<ArReturnCredit[]>([]);
   const [goodsIssue, setGoodsIssue] = useState<GoodsIssueForInvoice | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
+  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
+  const [signatoryLabels, setSignatoryLabels] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("jurnal");
 
@@ -294,6 +298,10 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
+      const [company, labels] = await Promise.all([fetchCompanySettings(), fetchActiveSignatoryLabels()]);
+      if (!active) return;
+      setCompanySettings(company);
+      setSignatoryLabels(labels);
       await load();
       if (active) setCheckingSession(false);
     });
@@ -766,8 +774,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
   // jadi cetak ulang kapan pun otomatis nunjukkan kondisi terkini (retur/write-off/pembatalan
-  // yang terjadi setelah cetakan pertama), bukan angka beku waktu pertama dicetak. Kop surat +
-  // blok tanda tangan sengaja belum ada, lihat memory/scope-debt/print-template-letterhead-signature.md.
+  // yang terjadi setelah cetakan pertama), bukan angka beku waktu pertama dicetak. Kop surat
+  // (company_settings) + blok tanda tangan (document_signatories) dibaca live juga.
   function handlePrint() {
     if (!invoice) return;
 
@@ -821,6 +829,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       .join("");
 
     const body = `
+      ${buildLetterheadHtml(companySettings)}
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
         <div>
           <h1>Invoice</h1>
@@ -843,6 +852,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           <tr class="total-row"><td>Outstanding</td><td class="num">Rp${outstanding.toLocaleString("id-ID")}</td></tr>
         </tbody>
       </table>
+      ${buildSignatureBlockHtml(signatoryLabels)}
     `;
 
     if (!openPrintWindow(`Invoice ${invoice.source_ref}`, body)) {

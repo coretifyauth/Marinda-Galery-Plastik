@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { TaxSettings } from "@/lib/tax-settings/schema";
+import { updateCompanySettingsSchema, type CompanySettings } from "@/lib/company-settings/schema";
+import { createDocumentSignatorySchema, type DocumentSignatory } from "@/lib/document-signatories/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -522,6 +524,298 @@ function FixedAssetPresetsManager({ accounts, canWrite }: { accounts: Account[];
   );
 }
 
+/** Kelola company_settings — singleton (pola sama TaxSettingsCard di bawah), dibaca live
+ * buat kop surat cetakan AR Invoice/PO (memory/domain/print-templates.md). */
+function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
+  const [settings, setSettings] = useState<CompanySettings | null>(null);
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [npwp, setNpwp] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("company_settings").select("*").maybeSingle();
+    if (data) {
+      const s = data as CompanySettings;
+      setSettings(s);
+      setName(s.name);
+      setAddress(s.address ?? "");
+      setNpwp(s.npwp ?? "");
+      setLogoUrl(s.logo_url ?? "");
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (active) await load();
+    })();
+    return () => {
+      active = false;
+    };
+  }, [load]);
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    const parsed = updateCompanySettingsSchema.safeParse({ name, address, npwp, logo_url: logoUrl });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+    setSubmitting(true);
+    const { error: err } = await supabase
+      .from("company_settings")
+      .update({
+        name: parsed.data.name,
+        address: parsed.data.address || null,
+        npwp: parsed.data.npwp || null,
+        logo_url: parsed.data.logo_url || null,
+      })
+      .eq("id", true);
+    setSubmitting(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setSaved(true);
+    await load();
+  }
+
+  if (!settings) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h2 className="mb-1 font-semibold text-black">Identitas Perusahaan (Kop Surat)</h2>
+      <p className="mb-3 text-sm text-slate-500">
+        Muncul di kop surat cetakan AR Invoice &amp; Purchase Order. Logo cuma link ke gambar yang
+        sudah di-host di tempat lain — belum ada upload file di fase ini.
+      </p>
+      <form onSubmit={handleSave} className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="company_name">Nama Perusahaan</Label>
+            <Input id="company_name" value={name} onChange={(e) => setName(e.target.value)} disabled={!canWrite} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="company_npwp">NPWP</Label>
+            <Input id="company_npwp" value={npwp} onChange={(e) => setNpwp(e.target.value)} disabled={!canWrite} />
+          </div>
+          <div className="flex flex-col gap-1 sm:col-span-2">
+            <Label htmlFor="company_address">Alamat</Label>
+            <Input
+              id="company_address"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              disabled={!canWrite}
+            />
+          </div>
+          <div className="flex flex-col gap-1 sm:col-span-2">
+            <Label htmlFor="company_logo">URL Logo (opsional)</Label>
+            <Input
+              id="company_logo"
+              value={logoUrl}
+              onChange={(e) => setLogoUrl(e.target.value)}
+              placeholder="https://..."
+              disabled={!canWrite}
+            />
+          </div>
+        </div>
+        {logoUrl && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">Preview:</span>
+            {/* eslint-disable-next-line @next/next/no-img-element -- logo_url link eksternal, bukan asset Next.js */}
+            <img src={logoUrl} alt="Logo perusahaan" className="h-10 max-w-30 object-contain" />
+          </div>
+        )}
+        {canWrite && (
+          <Button type="submit" disabled={submitting} className="w-fit">
+            {submitting ? "Menyimpan..." : "Simpan Identitas Perusahaan"}
+          </Button>
+        )}
+        {saved && <p className="text-sm text-emerald-600">Tersimpan.</p>}
+        {error && <FormError>{error}</FormError>}
+      </form>
+    </div>
+  );
+}
+
+/** Kelola document_signatories — pola mirip CatalogManager (list+Modal create+archive
+ * toggle), tapi tambah "Hapus" permanen (migration 0027_document_signatories_hard_delete.sql
+ * -- aman karena gak ada FK manapun ke tabel ini) dan field sort_order (urutan kolom
+ * blok tanda tangan cetakan, kiri ke kanan). */
+function DocumentSignatoriesManager({ canWrite }: { canWrite: boolean }) {
+  const [rows, setRows] = useState<DocumentSignatory[]>([]);
+  const [label, setLabel] = useState("");
+  const [sortOrder, setSortOrder] = useState("0");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase
+      .from("document_signatories")
+      .select("id, label, sort_order, archived_at, created_at, updated_at")
+      .order("sort_order");
+    setRows((data ?? []) as DocumentSignatory[]);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (active) await load();
+    })();
+    return () => {
+      active = false;
+    };
+  }, [load]);
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const parsed = createDocumentSignatorySchema.safeParse({ label, sort_order: sortOrder });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+    setSubmitting(true);
+    const { error: err } = await supabase.from("document_signatories").insert(parsed.data);
+    setSubmitting(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setLabel("");
+    setSortOrder("0");
+    setShowForm(false);
+    await load();
+  }
+
+  async function toggleArchive(row: DocumentSignatory) {
+    await supabase
+      .from("document_signatories")
+      .update({ archived_at: row.archived_at ? null : new Date().toISOString() })
+      .eq("id", row.id);
+    await load();
+  }
+
+  async function handleDelete(row: DocumentSignatory) {
+    if (!window.confirm(`Hapus permanen jabatan "${row.label}"? Gak bisa dibatalkan.`)) return;
+    setError(null);
+    setDeletingId(row.id);
+    const { error: err } = await supabase.from("document_signatories").delete().eq("id", row.id);
+    setDeletingId(null);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    await load();
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold text-black">Penandatangan Cetakan</h2>
+        {canWrite && (
+          <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
+            + Tambah
+          </Button>
+        )}
+      </div>
+      <p className="mb-3 text-sm text-slate-500">
+        Jabatan yang muncul di blok tanda tangan cetakan (mis. Kepala Toko, Bagian Gudang) — cuma
+        label jabatan + garis kosong, gak ada nama pegawai. Urutan menentukan posisi kolom dari
+        kiri ke kanan.
+      </p>
+      <table className="mb-3 w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
+            <th className="py-1.5">Jabatan</th>
+            <th className="py-1.5">Urutan</th>
+            <th className="py-1.5">Status</th>
+            {canWrite && <th className="py-1.5" />}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id} className="border-b border-slate-100">
+              <td className="py-1.5">{row.label}</td>
+              <td className="py-1.5">{row.sort_order}</td>
+              <td className="py-1.5">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs ${
+                    row.archived_at ? "bg-slate-100 text-slate-400" : "bg-emerald-50 text-emerald-700"
+                  }`}
+                >
+                  {row.archived_at ? "Nonaktif" : "Aktif"}
+                </span>
+              </td>
+              {canWrite && (
+                <td className="py-1.5 text-right">
+                  <div className="flex justify-end gap-1.5">
+                    <Button type="button" variant="toolbar" onClick={() => toggleArchive(row)}>
+                      {row.archived_at ? "Aktifkan" : "Nonaktifkan"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="toolbar"
+                      disabled={deletingId === row.id}
+                      onClick={() => handleDelete(row)}
+                    >
+                      Hapus
+                    </Button>
+                  </div>
+                </td>
+              )}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={4} className="py-3 text-center text-slate-400">
+                Belum ada jabatan penandatangan.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {error && <FormError>{error}</FormError>}
+
+      {canWrite && (
+        <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Penandatangan">
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="signatory-label">Jabatan</Label>
+              <Input
+                id="signatory-label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="mis. Kepala Toko"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="signatory-sort">Urutan</Label>
+              <Input id="signatory-sort" type="number" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
+                Batal
+              </Button>
+              <Button type="submit" disabled={submitting}>
+                {submitting ? "..." : "+ Tambah"}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function TaxSettingsCard({ canWrite }: { canWrite: boolean }) {
   const [settings, setSettings] = useState<TaxSettings | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -665,6 +959,7 @@ const settingsTabs: TabDef[] = [
   { key: "fixed_assets", label: "Aset Tetap" },
   { key: "charge_categories", label: "Kategori Tambahan" },
   { key: "tax", label: "Pajak" },
+  { key: "print_documents", label: "Dokumen Cetak" },
 ];
 
 export default function ChargesSettingsPage() {
@@ -714,7 +1009,8 @@ export default function ChargesSettingsPage() {
       <div>
         <h1 className="text-xl font-semibold text-black">Settings</h1>
         <p className="text-sm text-slate-500">
-          Setup Default Akun, katalog kategori biaya tambahan (POS/AR/AP), dan pengaturan PPN.{" "}
+          Setup Default Akun, katalog kategori biaya tambahan (POS/AR/AP), pengaturan PPN, dan
+          identitas perusahaan/penandatangan buat cetakan dokumen.{" "}
           {!canWrite && "Cuma role admin yang bisa ubah — kamu cuma bisa lihat."}
         </p>
       </div>
@@ -744,6 +1040,12 @@ export default function ChargesSettingsPage() {
         </div>
       )}
       {activeTab === "tax" && <TaxSettingsCard canWrite={canWrite} />}
+      {activeTab === "print_documents" && (
+        <div className="flex flex-col gap-6">
+          <CompanySettingsCard canWrite={canWrite} />
+          <DocumentSignatoriesManager canWrite={canWrite} />
+        </div>
+      )}
     </div>
   );
 }

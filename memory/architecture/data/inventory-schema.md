@@ -699,6 +699,53 @@ grant select, insert, update, delete on item_units to authenticated;
 
 Full body: `supabase/migrations/0004_inventory_schema.sql`.
 
+### Nested Conversion Factor Guard — migration `0025_item_units_nested_conversion_guard.sql`
+
+Syarat data buat `memory/domain/inventory.md` submodule "Stock Display UOM Breakdown" (tampilan stok breakdown greedy box/pack/pcs, `apps/erp/src/lib/stock-display.ts` + `apps/pos/src/lib/stock-display.ts`) bisa diandalkan — breakdown greedy (`floor(sisa/factor)` diulang dari satuan terbesar ke terkecil) cuma presisi kalau `conversion_factor` antar satuan 1 item **nested rapi** (tiap angka kelipatan bulat dari angka di bawahnya, mis. pcs=1, pack=12, box=144 — bukan pcs=1, pack=12, box=100). Trigger ini pengaman DB level (berlaku walau insert/update langsung dari Supabase Studio, bukan cuma lewat UI aplikasi) — beda dari kebanyakan constraint `item_units` lain yang input-trust (lihat `unit_label` vs `items.uom` di submodule sebelumnya).
+
+```sql
+create function check_item_units_nested_conversion() returns trigger
+language plpgsql
+as $$
+declare
+  factors numeric(14,4)[];
+  f numeric(14,4);
+  prev numeric(14,4);
+begin
+  perform 1 from item_units where item_id = new.item_id and id is distinct from new.id for update;
+
+  select array_agg(conversion_factor order by conversion_factor)
+    into factors
+  from item_units
+  where item_id = new.item_id
+    and id is distinct from new.id;
+
+  factors := array_append(factors, new.conversion_factor);
+  select array_agg(x order by x) into factors from unnest(factors) x;
+
+  prev := null;
+  foreach f in array factors loop
+    if prev is not null and f <> prev and mod(f, prev) <> 0 then
+      raise exception 'Faktor konversi satuan harus kelipatan bulat dari satuan lain di item yang sama (nested rapi) -- % bukan kelipatan %', f, prev;
+    end if;
+    prev := f;
+  end loop;
+
+  return new;
+end;
+$$;
+
+create trigger item_units_nested_conversion_guard
+  before insert or update of conversion_factor on item_units
+  for each row execute function check_item_units_nested_conversion();
+```
+
+- **`for update` row lock di baris sibling item yang sama** — item_units master data low-traffic (murah), tapi tanpa lock 2 transaksi concurrent bisa lolos validasi masing-masing sendiri-sendiri padahal kombinasi akhirnya gak nested (mis. transaksi A nambah factor 5 dan transaksi B nambah factor 7 bersamaan ke item yang sama-sama cuma punya factor 1 — masing-masing "nested" terhadap 1, tapi 5 dan 7 gak nested satu sama lain).
+- **Migration ini juga jalanin backfill check** (`do $$ ... $$` block, dieksekusi sekali pas migration apply) yang scan SEMUA item existing yang udah punya >1 baris `item_units` — kalau ada yang udah gak nested SEBELUM migration ini, `raise exception` dan migration gagal total (bukan silently pass, biar ketauan sekarang bukan kejutan nanti pas ada yang iseng nambah/edit satuan lain buat item itu dan ke-trigger nyalahin baris yang gak terkait).
+- Trigger cuma fire `before insert or update of conversion_factor` — update kolom lain (`unit_label`, `price`, `is_base`, `barcode`) gak memicu re-validasi (gak perlu, faktor konversinya gak berubah).
+
+Full body: `supabase/migrations/0025_item_units_nested_conversion_guard.sql`.
+
 ## Kode Scan Barang (Barcode/QR per Satuan Jual) — migration `0021_item_unit_barcode.sql` + `0022_item_unit_barcode_reuse_document_numbering.sql`
 
 Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Kode Scan Barang (Barcode/QR per Satuan Jual)". Nambah kolom identitas scan buat kasir POS — ditaruh di `item_units` (satuan jual), bukan `items`, karena kemasan fisik beda (dus/pcs/pack) biasanya punya barcode/label beda-beda di dunia nyata.

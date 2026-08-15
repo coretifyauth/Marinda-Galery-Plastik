@@ -9,7 +9,9 @@ import { BackLink } from "@/components/ui/back-link";
 import { Button } from "@/components/ui/button";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
-import { escapeHtml, openPrintWindow } from "@/lib/print/print-window";
+import { buildLetterheadHtml, buildSignatureBlockHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
+import { fetchCompanySettings, type CompanySettings } from "@/lib/company-settings/schema";
+import { fetchActiveSignatoryLabels } from "@/lib/document-signatories/schema";
 
 type GrnRef = { id: string; receipt_date: string; delivery_note_ref: string | null };
 
@@ -26,6 +28,8 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [grns, setGrns] = useState<GrnRef[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
+  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
+  const [signatoryLabels, setSignatoryLabels] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -67,6 +71,10 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
+      const [company, labels] = await Promise.all([fetchCompanySettings(), fetchActiveSignatoryLabels()]);
+      if (!active) return;
+      setCompanySettings(company);
+      setSignatoryLabels(labels);
       await load();
       if (active) setCheckingSession(false);
     });
@@ -105,8 +113,8 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   const canCancel = canWrite && status === "OPEN";
 
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
-  // jadi cetak ulang kapan pun otomatis nunjukkan qty diterima terkini. Kop surat + blok tanda
-  // tangan sengaja belum ada, lihat memory/scope-debt/print-template-letterhead-signature.md.
+  // jadi cetak ulang kapan pun otomatis nunjukkan qty diterima terkini. Kop surat (company_settings)
+  // + blok tanda tangan (document_signatories) dibaca live sama kayak data PO-nya sendiri.
   function handlePrint() {
     if (!po) return;
     const lineRows = po.purchase_order_lines
@@ -123,6 +131,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     const total = po.purchase_order_lines.reduce((sum, l) => sum + l.qty_ordered * l.unit_cost_expected, 0);
 
     const body = `
+      ${buildLetterheadHtml(companySettings)}
       <div style="margin-bottom:16px;">
         <h1>Purchase Order</h1>
         <div class="meta">${escapeHtml(po.source_ref)}</div>
@@ -141,6 +150,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
           <tr class="total-row"><td colspan="3">Total</td><td class="num">Rp${total.toLocaleString("id-ID")}</td></tr>
         </tbody>
       </table>
+      ${buildSignatureBlockHtml(signatoryLabels)}
     `;
 
     if (!openPrintWindow(`PO ${po.source_ref}`, body)) {

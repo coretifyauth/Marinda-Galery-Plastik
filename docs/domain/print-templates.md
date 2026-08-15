@@ -12,7 +12,7 @@ Solusinya: tiap halaman detail dokumen yang relevan dapat tombol "Cetak" yang me
 
 ## Konsep Inti
 
-Fitur ini murni **layer presentasi** — gak ada tabel/data baru yang disimpan. Cetakan selalu dirender dari data yang sudah ada di sistem (`ar_invoices`, `purchase_orders`, dst), bukan hasil generate yang disimpan terpisah.
+Fitur ini tadinya murni **layer presentasi** — gak ada tabel/data baru yang disimpan, cetakan dirender langsung dari data yang sudah ada di sistem (`ar_invoices`, `purchase_orders`, dst). Sejak submodule "Kop Surat & Blok Tanda Tangan" di bawah, ada 2 baris config baru (identitas perusahaan, daftar penandatangan) — tapi prinsipnya tetap sama: gak ada hasil cetak yang disimpan/di-generate terpisah, cuma sumber datanya sekarang ada 2 (data transaksi + config cetakan).
 
 ### Live Data, Bukan Snapshot Beku
 
@@ -48,7 +48,6 @@ Fitur ini murni **layer presentasi** — gak ada tabel/data baru yang disimpan. 
 
 **Cara Kerja**
 - Baru **AR Invoice** dan **Purchase Order** yang punya tombol cetak. Dokumen transaksional lain (AP Bill, Goods Receipt, Goods Issue, dst) belum dicakup — ditambahkan belakangan sesuai kebutuhan nyata, pola implementasinya sama (reuse mekanisme yang sama, cukup tambah 1 handler per halaman detail).
-- Kop surat resmi (nama perusahaan, alamat, logo) dan blok tanda tangan (Dibuat oleh/Diperiksa oleh/Disetujui oleh) **sengaja belum ada** — cetakan Fase 1 murni data transaksi. Lihat `memory/scope-debt/print-template-letterhead-signature.md`.
 
 **Aturan Bisnis**
 - AR Invoice: cetakan menampilkan info invoice (nomor, tanggal, jatuh tempo, customer), rincian barang (kalau invoice-nya "Full" — ada Goods Issue di baliknya) atau catatan "financial-only" (kalau gak ada barang fisik), dan ringkasan (jumlah, terbayar, DP, retur, write-off, outstanding).
@@ -57,6 +56,28 @@ Fitur ini murni **layer presentasi** — gak ada tabel/data baru yang disimpan. 
 **Common Mistakes**
 - Mengira semua dokumen transaksional otomatis bisa dicetak begitu fitur ini ada — cuma 2 jenis dokumen yang sudah didukung Fase 1.
 
+### Kop Surat & Blok Tanda Tangan
+
+**Cara Kerja**
+- Cetakan AR Invoice dan Purchase Order sekarang punya **kop surat resmi** di atas (nama perusahaan, alamat, NPWP, logo kalau ada) dan **blok tanda tangan** di bawah (kolom per jabatan penandatangan, masing-masing cuma judul jabatan + garis kosong buat ditandatangani manual — bukan e-signature).
+- Identitas perusahaan disimpan sebagai 1 baris konfigurasi tunggal (mirip pengaturan PPN) — admin isi/ubah lewat halaman Settings, bukan lewat kode.
+- Daftar jabatan penandatangan (misal "Kepala Toko", "Bagian Gudang") juga dikelola admin lewat Settings — bisa ditambah, diurutkan (menentukan urutan kolom di kertas dari kiri ke kanan), dinonaktifkan sementara, atau dihapus permanen kalau memang gak relevan lagi.
+- Sengaja **tanpa kolom nama pegawai** di daftar jabatan — cetakan cuma butuh nunjukkan siapa yang HARUS tanda tangan di posisi apa (berdasarkan jabatan), bukan mencatat nama orangnya di sistem.
+
+**Aturan Bisnis**
+- Kop surat & blok tanda tangan ikut aturan "Live Data" di atas — perubahan nama perusahaan atau daftar jabatan langsung kepakai di cetakan berikutnya, gak perlu update kode.
+- Cuma jabatan yang statusnya aktif yang muncul di blok tanda tangan; jabatan yang dinonaktifkan sementara (bukan dihapus) gak muncul tapi datanya tetap ada kalau mau diaktifkan lagi.
+
+**Skenario**
+- Toko ganti alamat — admin update di Settings, cetakan invoice/PO berikutnya langsung pakai alamat baru, gak perlu ada yang deploy kode.
+- Ada jabatan baru yang perlu ikut tanda tangan (misal "Bagian Gudang" ditambah selain "Kepala Toko") — admin tambah 1 baris di Settings, kolom tanda tangan baru otomatis muncul di cetakan berikutnya tanpa ubah apa pun di halaman invoice/PO.
+
+**Common Mistakes**
+- Menganggap blok tanda tangan butuh nama pegawai tersimpan di sistem — cukup jabatan, penandatanganan fisiknya manual di kertas.
+- Mengira logo perusahaan bisa diunggah langsung ke sistem — fase ini cuma nerima link ke gambar yang sudah di-host di tempat lain.
+
 ## Glossary
 
 - **Cetak (print template)**: tampilan siap-print 1 dokumen transaksi, dibuka di window baru, dirender live dari data terkini — bukan file/snapshot yang disimpan.
+- **Kop surat**: identitas perusahaan (nama, alamat, NPWP, logo) yang muncul di bagian atas cetakan, dikelola sebagai 1 baris konfigurasi tunggal.
+- **Blok tanda tangan**: kolom-kolom di bagian bawah cetakan (1 kolom per jabatan penandatangan aktif) — judul jabatan + garis kosong, ditandatangani manual di kertas.
