@@ -60,6 +60,13 @@ type PaymentDetail = {
   amount: number;
 };
 
+type InvoiceCreditLine = {
+  id: string;
+  amount: number;
+  is_tax: boolean;
+  accounts: { code: string; name: string };
+};
+
 type DepositApplicationDetail = {
   id: string;
   amount: number;
@@ -117,6 +124,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [customerDeposits, setCustomerDeposits] = useState<ArDeposit[]>([]);
   const [customerReturnCredits, setCustomerReturnCredits] = useState<ArReturnCredit[]>([]);
   const [goodsIssue, setGoodsIssue] = useState<GoodsIssueForInvoice | null>(null);
+  const [creditLines, setCreditLines] = useState<InvoiceCreditLine[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [signatoryLabels, setSignatoryLabels] = useState<string[]>([]);
@@ -191,6 +199,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       { data: wos, error: woErr },
       { data: reps, error: repErr },
       { data: gi },
+      { data: creditLineRows },
       { data: depApps, error: depAppErr },
       { data: custDeposits, error: custDepositsErr },
       { data: custReturnCredits, error: custReturnCreditsErr },
@@ -239,6 +248,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("invoice_id", id)
         .maybeSingle(),
       supabase
+        .from("ar_invoice_credit_lines")
+        .select("id, amount, is_tax, accounts(code, name)")
+        .eq("ar_invoice_id", id)
+        .order("is_tax"),
+      supabase
         .from("ar_deposit_applications")
         .select("id, amount, source_ref, journal_entry_id, ar_deposits(source_ref)")
         .eq("invoice_id", id),
@@ -266,6 +280,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
     setPayments((pay ?? []) as unknown as PaymentDetail[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
+    setCreditLines((creditLineRows ?? []) as unknown as InvoiceCreditLine[]);
     setWriteoffs((wos ?? []) as unknown as WriteoffDetail[]);
     setReplacements((reps ?? []) as unknown as WarrantyReplacement[]);
     setGoodsIssue((gi ?? null) as unknown as GoodsIssueForInvoice | null);
@@ -814,6 +829,20 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           ? `<div class="watermark">Dihapusbukukan — Piutang Tak Tertagih</div>`
           : "";
 
+    // Rincian ar_invoice_credit_lines (kategori pendapatan tambahan + PPN Keluaran, migration
+    // 0025_compound_transactional_entries_schema.sql) -- cuma ditampilkan kalau LEBIH dari 1
+    // baris (artinya beneran ada kategori tambahan/PPN di luar pendapatan utama). Invoice biasa
+    // (1 baris polos) gak perlu breakdown yang cuma ngulang angka "Jumlah Invoice" di bawahnya.
+    const creditLineRows =
+      creditLines.length > 1
+        ? creditLines
+            .map(
+              (cl) =>
+                `<tr><td>${cl.is_tax ? "PPN Keluaran" : escapeHtml(cl.accounts.name)}</td><td class="num">Rp${cl.amount.toLocaleString("id-ID")}</td></tr>`
+            )
+            .join("")
+        : "";
+
     // Baris ringkasan yang berasal dari relasi objek lain (pembayaran/DP/retur/write-off)
     // cuma ditampilkan kalau nilainya beneran ada (>0) -- invoice yang belum pernah kena
     // retur/write-off gak perlu nunjukkan baris "Retur: Rp0" di kertas.
@@ -848,6 +877,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       <div style="margin-top:20px;">${itemSection}</div>
       <table style="margin-top:20px;">
         <tbody>
+          ${creditLineRows}
           ${summaryRows}
           <tr class="total-row"><td>Outstanding</td><td class="num">Rp${outstanding.toLocaleString("id-ID")}</td></tr>
         </tbody>

@@ -40,6 +40,7 @@ Fitur ini tadinya murni **layer presentasi** — gak ada tabel/data baru yang di
 **Aturan Bisnis**
 - AR Invoice: harga per item cuma ada kalau baris itu fulfillment dari Sales Order (satu-satunya tempat harga jual per item tersimpan — `sales_order_lines.unit_price`). Invoice dari jalur jual langsung (walk-in, gak lewat SO) gak punya harga per item di mana pun (nominal invoice cuma tersimpan sebagai total lump-sum per kategori) — tabel itemnya tetap qty-only, bukan berarti fiturnya belum lengkap.
 - Baris ringkasan AR Invoice yang ikut aturan sembunyikan-kalau-nol: Terbayar, DP Diterapkan, Retur, Piutang Tak Tertagih. Jumlah Invoice dan Outstanding SELALU tampil (bukan data relasi, itu angka inti dokumennya sendiri).
+- Invoice yang punya kategori pendapatan tambahan (mis. ongkir) dan/atau PPN Keluaran wajib nampilin rinciannya per baris di cetakan, bukan cuma 1 angka total gabungan — pembaca kertas (customer) berhak tahu berapa yang murni harga barang vs biaya tambahan vs pajak.
 
 **Common Mistakes**
 - Mengira semua tabel item di semua cetakan otomatis dapat kolom harga — cuma kalau harga per unit itu memang tersimpan di data sumbernya. Mengarang harga (misal pakai cost/HPP sebagai pengganti harga jual) MALAH salah — HPP itu biaya kita, bukan harga yang ditagih ke customer, jangan ditampilkan sebagai "harga" di dokumen customer-facing.
