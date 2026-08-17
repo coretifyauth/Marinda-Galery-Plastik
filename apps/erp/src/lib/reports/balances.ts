@@ -35,31 +35,45 @@ export async function fetchAccounts(): Promise<Account[]> {
   return (data ?? []) as Account[];
 }
 
-/** Baris jurnal dengan `entry_date <= asOfDate` — bahan Trial Balance. */
+/**
+ * Saldo per akun (`entry_date <= asOfDate`) — bahan Trial Balance/Balance Sheet, juga
+ * `tbStart`/`tbEnd` di Cash Flow. Lewat RPC `report_account_balances_up_to` (SUM/GROUP BY
+ * di database), BUKAN fetch raw `journal_lines` lalu reduce di JS — query ini kumulatif
+ * sejak transaksi pertama, jadi paling rawan kena `max_rows` PostgREST (`supabase/config.toml`)
+ * begitu data tumbuh. Ref: `memory/scope-debt/journal-lines-unbounded-aggregate.md`.
+ */
 export async function fetchLinesUpTo(asOfDate: string): Promise<ReportLine[]> {
-  const { data, error } = await supabase
-    .from("journal_lines")
-    .select("account_id, debit, credit, journal_entries!inner(entry_date)")
-    .lte("journal_entries.entry_date", asOfDate);
+  const { data, error } = await supabase.rpc("report_account_balances_up_to", { p_as_of: asOfDate });
   if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as ReportLine[];
+  return (data ?? []) as ReportLine[];
 }
 
 /**
- * Baris jurnal dengan `startDate <= entry_date <= endDate` — bahan Income Statement/Cash Flow.
- * Include `journal_entry_id` (beda dari `fetchLinesUpTo`) — Income Statement butuh ini buat
- * exclude baris closing entry (`period-closing.ts` bagian `fetchClosingJournalEntryIds`,
- * ref `memory/scope-debt/income-statement-closing-entry-self-cancel.md`), Cash Flow butuh
- * buat group baris per entry (`classifyInvestingFinancing`).
+ * Saldo per akun (`startDate <= entry_date <= endDate`, closing entry dikecualikan) — bahan
+ * Income Statement DAN Cash Flow (lewat `computeIncomeStatement` internal di `computeCashFlow`).
+ * Lewat RPC `report_account_balances_between` (SUM/GROUP BY + exclude closing entry, dua-duanya
+ * di database) — cuma butuh total per akun, gak butuh tau baris per `journal_entry_id` (beda
+ * dari kebutuhan `classifyInvestingFinancing` di Cash Flow, yang sekarang punya RPC sendiri:
+ * `fetchInvestingFinancing`/`report_cash_flow_investing_financing` di `cash-flow.ts`).
+ * Ref: `memory/scope-debt/journal-lines-unbounded-aggregate.md`.
+ *
+ * `journal_entry_id` di hasilnya diisi `""` — placeholder biar tetap satisfy tipe `EntryLine`
+ * yang dipakai `computeIncomeStatement` (buat filter-by-journal_entry_id-nya sendiri). Exclude
+ * closing entry SUDAH kejadian di SQL, jadi placeholder itu gak akan pernah dicocokkan/dibaca
+ * lagi buat filtering.
  */
-export async function fetchLinesBetween(startDate: string, endDate: string): Promise<EntryLine[]> {
-  const { data, error } = await supabase
-    .from("journal_lines")
-    .select("journal_entry_id, account_id, debit, credit, journal_entries!inner(entry_date)")
-    .gte("journal_entries.entry_date", startDate)
-    .lte("journal_entries.entry_date", endDate);
+export async function fetchAccountBalancesBetween(
+  startDate: string,
+  endDate: string,
+  excludeEntryIds: ReadonlySet<string> = new Set()
+): Promise<EntryLine[]> {
+  const { data, error } = await supabase.rpc("report_account_balances_between", {
+    p_start_date: startDate,
+    p_end_date: endDate,
+    p_exclude_entry_ids: Array.from(excludeEntryIds),
+  });
   if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as EntryLine[];
+  return ((data ?? []) as ReportLine[]).map((row) => ({ ...row, journal_entry_id: "" }));
 }
 
 /**

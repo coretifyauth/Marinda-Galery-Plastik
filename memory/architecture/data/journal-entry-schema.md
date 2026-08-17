@@ -57,7 +57,7 @@ create index journal_lines_journal_entry_id_idx on journal_lines(journal_entry_i
 create index journal_lines_account_id_idx on journal_lines(account_id);
 ```
 
-Index di `journal_entry_id` buat query "semua baris 1 entry" (dipakai trigger balance-check tiap commit). Index di `account_id` buat query "hitung saldo 1 akun" (bakal sering dipanggil pas laporan/rollup — lihat catatan `ar_invoice_remaining`-style rollup di `memory/scope-debt/trial-balance-rollup.md`, masih ditunda ke Fase 7).
+Index di `journal_entry_id` buat query "semua baris 1 entry" (dipakai trigger balance-check tiap commit). Index di `account_id` buat query "hitung saldo 1 akun" (dipakai laporan/rollup — sejak 2026-08-17 lewat RPC agregat `SUM...GROUP BY` di database, bukan fetch+reduce di TypeScript lagi).
 
 ### Trigger
 
@@ -295,8 +295,8 @@ grant select, insert on journal_lines to authenticated;
 
 ## Period Closing (Tutup Buku)
 
-Gak ada tabel/RPC baru di file ini — kuncian per rentang waktu (`period_closings`) dan RPC `close_period` dibangun penuh di `memory/architecture/data/financial-reports-schema.md` (migration `0016_period_closing.sql`), karena butuh Income Statement jalan dulu buat tau angka definitif per akun yang mau ditutup (ditunda dari Fase 2 ke Fase 7).
+Gak ada tabel/RPC baru di file ini — kuncian per rentang waktu (`period_closings`) dan RPC `close_period` dibangun penuh di `memory/architecture/data/financial-reports-schema.md` (migration `0008_period_closing_schema.sql`), karena butuh Income Statement jalan dulu buat tau angka definitif per akun yang mau ditutup (ditunda dari Fase 2 ke Fase 7).
 
-Dampak balik ke tabel di file ini: trigger `journal_entries_block_retroactive_into_closed_period` (ditambah migration `0016_period_closing.sql`) nolak `insert` baru ke `journal_entries` yang `entry_date`-nya jatuh di rentang yang udah tercatat di `period_closings`. Closing entry itu sendiri tetap dibuat lewat `create_journal_entry` yang sudah ada di submodule "Konsep Inti" — gak ada RPC pencatatan jurnal baru buat proses ini.
+Dampak balik ke tabel di file ini: trigger `journal_entries_block_retroactive_into_closed_period` (ditambah migration `0008_period_closing_schema.sql`) nolak `insert` baru ke `journal_entries` yang `entry_date`-nya jatuh di rentang yang udah tercatat di `period_closings`. Closing entry itu sendiri tetap dibuat lewat `create_journal_entry` yang sudah ada di submodule "Konsep Inti" — gak ada RPC pencatatan jurnal baru buat proses ini.
 
 Ringkasan compact cara kerja + constraint: `memory/domain/general-ledger.md` bagian "Period Closing (Tutup Buku)". Detail teknis penuh (DDL `period_closings`, RPC `close_period`, exclusion constraint GiST buat cegah overlap): `memory/architecture/data/financial-reports-schema.md` bagian "Period Closing".

@@ -1,5 +1,5 @@
 import type { Account } from "@/lib/accounts/schema";
-import { computeAccountBalances, fetchAccounts, fetchLinesBetween, sumBalances } from "./balances";
+import { computeAccountBalances, fetchAccountBalancesBetween, fetchAccounts, sumBalances } from "./balances";
 import { fetchClosingJournalEntryIds } from "./period-closing";
 import type { EntryLine, IncomeStatement } from "./types";
 
@@ -43,10 +43,8 @@ export function computeIncomeStatement(
 }
 
 export async function getIncomeStatement(startDate: string, endDate: string): Promise<IncomeStatement> {
-  const [accounts, lines, closingEntryIds] = await Promise.all([
-    fetchAccounts(),
-    fetchLinesBetween(startDate, endDate),
-    fetchClosingJournalEntryIds(),
-  ]);
-  return computeIncomeStatement(accounts, lines, startDate, endDate, closingEntryIds);
+  const [accounts, closingEntryIds] = await Promise.all([fetchAccounts(), fetchClosingJournalEntryIds()]);
+  const lines = await fetchAccountBalancesBetween(startDate, endDate, closingEntryIds);
+  // Exclude closing entry udah kejadian di RPC (SQL), jadi filter di computeIncomeStatement dikosongkan (no-op).
+  return computeIncomeStatement(accounts, lines, startDate, endDate, new Set());
 }

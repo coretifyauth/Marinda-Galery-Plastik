@@ -11,7 +11,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/general-ledger.md`. Struktur mod
 - **General Ledger**: kumpulan semua journal entry per akun — sumber saldo, termasuk rollup header/leaf yang udah didesain di COA.
 - **Accrual basis** (bukan cash basis) — Revenue diakui pas earned (barang/jasa berpindah), Expense diakui pas incurred — bukan pas kas beneran pindah (matching principle). Ini alasan `Piutang Usaha`/`Utang Usaha` ada di COA: nampung jeda waktu antara kejadian dan kas.
 
-**Contoh transaksi generik** (dipakai buat referensi test/validasi logic, bukan seed data — seed data spesifik ada di `docs/story/`)
+**Contoh transaksi generik** (dipakai buat referensi test/validasi logic, bukan seed data)
 
 | # | Kejadian | Debit | Kredit |
 |---|---|---|---|
@@ -30,7 +30,7 @@ Transaksi #3: beli persediaan nambah asset, BUKAN langsung expense — HPP baru 
 - **Immutability**: `journal_entries`/`journal_lines` gak pernah di-UPDATE/DELETE setelah dibuat. Koreksi = entry baru yang membalik (debit↔kredit ditukar), rujuk entry asli via `reverses_entry_id`.
 - **Traceability**: `source_ref` wajib diisi tiap entry (nomor nota/kuitansi/kontrak).
 - **Atomicity**: header + semua lines dibuat dalam 1 transaksi/RPC — gagal sebagian = batal semua, gak boleh nyisa entry setengah jadi.
-- **Rollup saldo per akun buat Trial Balance/Neraca** — query read-side murni dari `journal_lines` (`SUM(debit)-SUM(credit)`, dikelompokkan per `account_id`, digabung naik ke parent lewat `accounts.parent_id`), belum ditulis karena belum ada konsumennya. Ditunda ke Fase 7 (Financial Reports) — ref `memory/scope-debt/trial-balance-rollup.md`.
+- **Rollup saldo per akun buat Trial Balance/Neraca** — query read-side murni dari `journal_lines` (`SUM(debit)-SUM(credit)`, dikelompokkan per `account_id`, digabung naik ke parent lewat `accounts.parent_id`). Sudah diimplementasikan sejak Fase 7 (Financial Reports, `apps/erp/src/lib/reports/`), tapi caranya fetch+reduce di TypeScript (tarik semua baris mentah lalu jumlahin di client), bukan agregat di sisi database — **sudah diperbaiki 2026-08-17**, sekarang RPC `SUM...GROUP BY` di database.
 
 **Common Mistakes**
 - Posting cuma 1 baris (lupa sisi lawan) — harus gagal validasi, bukan lolos.
@@ -42,8 +42,9 @@ Transaksi #3: beli persediaan nambah asset, BUKAN langsung expense — HPP baru 
 ## Period Closing (Tutup Buku)
 
 **Entitas & Jurnal**
-- Dibangun di Fase 7 (`0016_period_closing.sql`). Tutup periode (rentang tanggal bebas, gak hardcode bulanan): akun Revenue/Expense di-nol-kan via closing entry (selisih laba/rugi dipindah ke `Laba Ditahan`), lalu periode dikunci — gak ada entry baru boleh bertanggal masuk ke situ (trigger `journal_entries_block_retroactive_into_closed_period`).
+- Dibangun di Fase 7 (`0008_period_closing_schema.sql`). Tutup periode (rentang tanggal bebas, gak hardcode bulanan): akun Revenue/Expense di-nol-kan via closing entry (selisih laba/rugi dipindah ke `Laba Ditahan`), lalu periode dikunci — gak ada entry baru boleh bertanggal masuk ke situ (trigger `journal_entries_block_retroactive_into_closed_period`).
 - Ditunda dari Fase 2 ke Fase 7 karena butuh laporan keuangan/Income Statement jalan dulu buat tau total definitif per akun yang mau ditutup. RPC `close_period` hitung ulang saldo langsung dari `journal_lines` (gak percaya angka dari client). Periode harus ditutup berurutan-bersambung, gak ada jalur reopen. Detail teknis penuh: `memory/architecture/data/financial-reports-schema.md` bagian "Period Closing".
+- Akun tujuan closing (`Laba Ditahan`) SATU akun aja buat semua closing, apa pun cadence-nya — belum ada pemisahan Laba Tahun Berjalan (belum final) vs Laba Ditahan (tahun-tahun lalu, final). Gap: `memory/scope-debt/current-year-earnings-vs-retained-earnings.md`.
 - **Cara kerja langkah demi langkah** (detail non-teknis: `docs/domain/general-ledger.md` bagian "Period Closing (Tutup Buku)"):
   1. User kasih rentang tanggal + akun equity tujuan (`Laba Ditahan`).
   2. Server hitung ULANG saldo Revenue/Expense rentang itu dari `journal_lines` — bukan pakai angka laporan yang mungkin udah dilihat user sebelumnya (bisa basi kalau ada entry baru masuk di antaranya).

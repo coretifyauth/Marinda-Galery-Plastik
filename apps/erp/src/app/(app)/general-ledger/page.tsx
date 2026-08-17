@@ -4,26 +4,34 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
+import {
+  DEFAULT_LEDGER_PAGE_SIZE,
+  LEDGER_PAGE_SIZE_OPTIONS,
+  fetchAccountLedgerPage,
+  type LedgerLine,
+  type LedgerPage,
+} from "@/lib/reports/ledger";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { FormHint } from "@/components/ui/form-message";
+import { Pagination } from "@/components/ui/pagination";
 
-type LedgerLine = {
-  id: string;
-  debit: number;
-  credit: number;
-  journal_entries: {
-    entry_date: string;
-    description: string | null;
-    source_ref: string;
-  };
-};
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const EMPTY_LEDGER_PAGE: LedgerPage = { rows: [], total: 0, openingBalance: { debit: 0, credit: 0 } };
 
 export default function GeneralLedgerPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
-  const [lines, setLines] = useState<LedgerLine[]>([]);
+  const [asOfDate, setAsOfDate] = useState(today());
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_LEDGER_PAGE_SIZE);
+  const [ledgerPage, setLedgerPage] = useState<LedgerPage>(EMPTY_LEDGER_PAGE);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingLines, setLoadingLines] = useState(false);
 
@@ -50,39 +58,43 @@ export default function GeneralLedgerPage() {
     };
   }, [router]);
 
-  const loadLedger = useCallback(async (accountId: string) => {
-    setLoadingLines(true);
-    const { data, error } = await supabase
-      .from("journal_lines")
-      .select("id, debit, credit, journal_entries(entry_date, description, source_ref)")
-      .eq("account_id", accountId);
-    setLoadingLines(false);
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setLines((data ?? []) as unknown as LedgerLine[]);
-  }, []);
+  const loadLedger = useCallback(
+    async (accountId: string, asOf: string, pageArg: number, pageSizeArg: number) => {
+      setLoadingLines(true);
+      try {
+        const result = await fetchAccountLedgerPage(accountId, asOf, pageArg, pageSizeArg);
+        setLedgerPage(result);
+        setLoadError(null);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Gagal memuat ledger");
+      } finally {
+        setLoadingLines(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!selectedAccountId) {
       return;
     }
-    Promise.resolve().then(() => loadLedger(selectedAccountId));
+    Promise.resolve().then(() => {
+      setPage(0);
+      loadLedger(selectedAccountId, asOfDate, 0, pageSize);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAccountId, loadLedger]);
 
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
 
-  const sortedLines = [...lines].sort((a, b) =>
-    a.journal_entries.entry_date.localeCompare(b.journal_entries.entry_date)
-  );
-
   const isDebitNormal = selectedAccount?.normal_balance === "debit";
-  const rows = sortedLines.reduce<(LedgerLine & { running: number })[]>((acc, line) => {
-    const prevRunning = acc.length > 0 ? acc[acc.length - 1].running : 0;
+  const openingNet = isDebitNormal
+    ? ledgerPage.openingBalance.debit - ledgerPage.openingBalance.credit
+    : ledgerPage.openingBalance.credit - ledgerPage.openingBalance.debit;
+  const rows = ledgerPage.rows.reduce<(LedgerLine & { running: number })[]>((acc, line) => {
+    const prevRunning = acc.length > 0 ? acc[acc.length - 1].running : openingNet;
     const delta = isDebitNormal ? line.debit - line.credit : line.credit - line.debit;
     return [...acc, { ...line, running: prevRunning + delta }];
   }, []);
@@ -94,21 +106,42 @@ export default function GeneralLedgerPage() {
         <p className="text-sm text-slate-500">Histori transaksi + saldo berjalan per akun.</p>
       </div>
 
-      <div className="flex flex-col gap-1.5 sm:w-80">
-        <Label htmlFor="account">Pilih akun</Label>
-        <Select
-          id="account"
-          value={selectedAccountId}
-          onChange={(e) => setSelectedAccountId(e.target.value)}
-        >
-          <option value="">-- pilih akun --</option>
-          {leafAccounts.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.code} — {a.name}
-            </option>
-          ))}
-        </Select>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1.5 sm:w-80">
+          <Label htmlFor="account">Pilih akun</Label>
+          <Select
+            id="account"
+            value={selectedAccountId}
+            onChange={(e) => setSelectedAccountId(e.target.value)}
+          >
+            <option value="">-- pilih akun --</option>
+            {leafAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.code} — {a.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="as_of_date">Sampai Tanggal</Label>
+          <Input
+            id="as_of_date"
+            type="date"
+            value={asOfDate}
+            onChange={(e) => {
+              setAsOfDate(e.target.value);
+              setPage(0);
+              if (selectedAccountId) loadLedger(selectedAccountId, e.target.value, 0, pageSize);
+            }}
+          />
+        </div>
       </div>
+
+      <FormHint>
+        Transaksi bertanggal setelah &quot;Sampai Tanggal&quot; disembunyikan dari daftar dan saldo
+        berjalan di bawah — samakan dengan filter yang dipakai Trial Balance/Balance Sheet.
+      </FormHint>
 
       {loadError && <p className="text-sm text-red-600">{loadError}</p>}
 
@@ -160,6 +193,21 @@ export default function GeneralLedgerPage() {
               ))}
             </tbody>
           </table>
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={ledgerPage.total}
+            onPageChange={(newPage) => {
+              setPage(newPage);
+              loadLedger(selectedAccountId, asOfDate, newPage, pageSize);
+            }}
+            pageSizeOptions={LEDGER_PAGE_SIZE_OPTIONS}
+            onPageSizeChange={(newSize) => {
+              setPageSize(newSize);
+              setPage(0);
+              loadLedger(selectedAccountId, asOfDate, 0, newSize);
+            }}
+          />
         </div>
       )}
     </div>

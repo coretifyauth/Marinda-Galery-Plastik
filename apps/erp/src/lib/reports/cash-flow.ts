@@ -1,5 +1,6 @@
+import { supabase } from "@/lib/supabase/client";
 import type { Account } from "@/lib/accounts/schema";
-import { fetchAccounts, fetchLinesBetween, fetchLinesUpTo } from "./balances";
+import { fetchAccountBalancesBetween, fetchAccounts, fetchLinesUpTo } from "./balances";
 import { computeIncomeStatement } from "./income-statement";
 import { fetchClosingJournalEntryIds } from "./period-closing";
 import { computeTrialBalance } from "./trial-balance";
@@ -81,6 +82,18 @@ function operatingWorkingCapitalDeltas(
  * Closing entry gak perlu di-exclude di sini secara eksplisit — dia gak pernah
  * punya baris Kas (cuma nyentuh Revenue/Expense/Equity), jadi otomatis kelewat
  * dari `hasKasLine` check di bawah.
+ *
+ * CATATAN (2026-08-17): fungsi ini SEKARANG HANYA dipakai sebagai reference
+ * implementation buat test (`reports.test.ts`) — butuh raw per-baris `journal_lines`
+ * yang dikelompokkan per `journal_entry_id`, gak bisa diagregat jadi 1 angka total
+ * di database lewat SUM/GROUP BY biasa (beda dari Trial Balance/Income Statement,
+ * `memory/scope-debt/journal-lines-unbounded-aggregate.md`). Di production,
+ * `getCashFlow` manggil RPC `report_cash_flow_investing_financing`
+ * (`supabase/migrations/0040_report_cash_flow_investing_financing_rpc.sql`) yang
+ * isinya replikasi PERSIS logic di bawah ini di SQL. Kalau logic klasifikasi di sini
+ * berubah (kode akun Kas/Aset Tetap/`FINANCING_LIABILITY_CODES`), WAJIB dibuat
+ * migration baru yang mirror perubahannya — gak ada mekanisme otomatis yang jaga
+ * 2 tempat ini tetap sinkron.
  */
 export function classifyInvestingFinancing(
   accounts: Account[],
@@ -126,10 +139,24 @@ export function classifyInvestingFinancing(
   return { investing, financing };
 }
 
+/** RPC-based counterpart ke `classifyInvestingFinancing` — dipakai `getCashFlow`, lihat catatan di atas fungsi itu. */
+export async function fetchInvestingFinancing(
+  startDate: string,
+  endDate: string
+): Promise<{ investing: number; financing: number }> {
+  const { data, error } = await supabase.rpc("report_cash_flow_investing_financing", {
+    p_start_date: startDate,
+    p_end_date: endDate,
+  });
+  if (error) throw new Error(error.message);
+  const row = (data as { investing: number; financing: number }[] | null)?.[0];
+  return row ?? { investing: 0, financing: 0 };
+}
+
 export function computeCashFlow(
   accounts: Account[],
   periodLines: EntryLine[],
-  entryLines: EntryLine[],
+  investingFinancing: { investing: number; financing: number },
   tbStart: TrialBalance,
   tbEnd: TrialBalance,
   startDate: string,
@@ -149,7 +176,7 @@ export function computeCashFlow(
 
   const operating = incomeStatement.netIncome + depreciationAddBack + workingCapitalContribution;
 
-  const { investing, financing } = classifyInvestingFinancing(accounts, entryLines);
+  const { investing, financing } = investingFinancing;
   const netChange = operating + investing + financing;
 
   const beginningCash = sumByAccountIds(tbStart.balances, kasIds);
@@ -172,25 +199,26 @@ export function computeCashFlow(
 
 export async function getCashFlow(startDate: string, endDate: string): Promise<CashFlow> {
   const tbStartDate = dayBefore(startDate);
-  const [accounts, periodEntryLines, tbStartRaw, tbEndRaw, closingEntryIds] = await Promise.all([
+  const [accounts, closingEntryIds, tbStartRaw, tbEndRaw, investingFinancing] = await Promise.all([
     fetchAccounts(),
-    fetchLinesBetween(startDate, endDate),
+    fetchClosingJournalEntryIds(),
     fetchLinesUpTo(tbStartDate),
     fetchLinesUpTo(endDate),
-    fetchClosingJournalEntryIds(),
+    fetchInvestingFinancing(startDate, endDate),
   ]);
+  const periodLines = await fetchAccountBalancesBetween(startDate, endDate, closingEntryIds);
 
   const tbStart = computeTrialBalance(accounts, tbStartRaw, tbStartDate);
   const tbEnd = computeTrialBalance(accounts, tbEndRaw, endDate);
 
   return computeCashFlow(
     accounts,
-    periodEntryLines,
-    periodEntryLines,
+    periodLines,
+    investingFinancing,
     tbStart,
     tbEnd,
     startDate,
     endDate,
-    closingEntryIds
+    new Set()
   );
 }

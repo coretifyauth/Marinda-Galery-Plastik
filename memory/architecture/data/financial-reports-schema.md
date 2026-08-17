@@ -1,6 +1,6 @@
 # Financial Reports — Schema (Finalized — Read Model, Bukan Tabel Baru)
 
-Fase 7 roadmap. Ref konsep bisnis: `docs/domain/financial-reports.md` + `memory/domain/financial-reports.md`. Ref skenario nyata (angka riil tervalidasi): `docs/story/financial-reports.md`. Ref schema yang dibaca (bukan diubah): `memory/architecture/data/coa-schema.md` (`accounts`), `memory/architecture/data/journal-entry-schema.md` (`journal_entries`+`journal_lines`).
+Fase 7 roadmap. Ref konsep bisnis: `docs/domain/financial-reports.md` + `memory/domain/financial-reports.md`. Ref schema yang dibaca (bukan diubah): `memory/architecture/data/coa-schema.md` (`accounts`), `memory/architecture/data/journal-entry-schema.md` (`journal_entries`+`journal_lines`).
 
 Struktur module → submodule di file ini SAMA urutannya dengan `docs/architecture/financial-reports-schema.md` dan `memory/domain/financial-reports.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
 
@@ -15,7 +15,7 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
   - Kenapa bukan SQL view: nambah 1 lapis DB object buat sesuatu yang bisa diekspresiin penuh dari query + reduce biasa nambah beban maintenance (perlu migration tiap ganti logic) tanpa manfaat konkret di skala data UMKM ini.
 - **Urutan wajib panggil**: `getTrialBalance` → `getIncomeStatement` → `getBalanceSheet` → `getCashFlow` (`getBalanceSheet` manggil `getIncomeStatement` internal buat Laba Ditahan; `getCashFlow` manggil `getTrialBalance` 2x + `getIncomeStatement` 1x). Detail dependency per fungsi: lihat submodule masing-masing di bawah.
 - **Income Statement/Cash Flow untuk 1 rentang tanggal spesifik gak kepengaruh Period Closing sama sekali** — keduanya query `journal_lines` yang bertanggal DALAM rentang yang diminta, gak peduli rentang itu "tertutup" atau "terbuka". Period Closing cuma mengunci **entry BARU** yang mau masuk ke rentang yang udah tertutup (lihat submodule "Tutup Buku" di bawah) — data yang udah ada tetap bisa dilaporkan seperti biasa.
-- **Performance query di skala besar masih terbuka** — fetch+reduce di TypeScript narik SEMUA baris `journal_lines` yang relevan ke aplikasi (bukan agregat di sisi DB). Aman di skala UMKM ini (puluhan-ratusan baris), tapi kalau nanti volume data naik jauh (ribuan+ baris per query), perlu direvisit: entah aktifkan `db-aggregates-enabled` di Supabase Dashboard (di luar migration), atau bikin materialized view/RPC agregat khusus. Beda dari rollup akun header (lihat di bawah) — ini soal JUMLAH baris yang ditarik, bukan soal logic gabung akun.
+- **Performance query di skala besar — sudah diperbaiki (2026-08-17)** — Trial Balance/Balance Sheet/Income Statement/Cash Flow, General Ledger, dan tab Ledger akun semua sekarang agregat/pagination DB-side lewat RPC (`SUM...GROUP BY`, `supabase/migrations/0039_report_account_balances_rpc.sql`, `0040_report_cash_flow_investing_financing_rpc.sql`, `0041_report_account_ledger_opening_balance_rpc.sql`), bukan lagi fetch+reduce di TypeScript. Beda dari rollup akun header (lihat di bawah) — ini soal JUMLAH baris yang ditarik, bukan soal logic gabung akun.
 - **Rollup akun header (parent dari leaf child lewat `parent_id`) sudah diimplementasi** di `rollupAccountBalances`/`accountDepth` (`src/lib/reports/balances.ts`) — dipakai Trial Balance page (`/reports/trial-balance`) buat nampilin akun header (mis. `1000 Kas` = gabungan `1100`+`1200`) sebagai baris tersendiri, rekursif, kontra tetap dikurangkan bukan ditambah (aturan sama `sumBalances`). Cuma buat tampilan (`TrialBalance.rolledBalances`) — total kolom Debit/Kredit tetap dari leaf doang (`TrialBalance.balances`), biar gak dobel-hitung.
 
 ### RLS Policy (4 laporan baca — Trial Balance/Income Statement/Balance Sheet/Cash Flow)
@@ -53,7 +53,7 @@ Filter Trial Balance query di atas ke `entry_date between :start and :end` (buka
 Laba Bersih = SUM(saldo akun revenue) - SUM(saldo akun expense)
 ```
 
-**Exclude baris closing entry** (`fetchClosingJournalEntryIds()` di `period-closing.ts` — semua `period_closings.journal_entry_id` yang gak null) sebelum di-reduce. Tanpa ini, kalau rentang yang di-query persis sama dengan periode yang baru ditutup, baris penolan Revenue/Expense dari closing entry-nya sendiri (bertanggal `end_date` periode itu) ikut kehitung dan membatalkan balik saldo yang baru aja dinolkan — hasilnya 0, bukan angka historis. Ketemu + diperbaiki setelah `close_period` dibangun (kronologi lengkap: `docs/story/financial-reports.md` bagian 5).
+**Exclude baris closing entry** (`fetchClosingJournalEntryIds()` di `period-closing.ts` — semua `period_closings.journal_entry_id` yang gak null) sebelum di-reduce. Tanpa ini, kalau rentang yang di-query persis sama dengan periode yang baru ditutup, baris penolan Revenue/Expense dari closing entry-nya sendiri (bertanggal `end_date` periode itu) ikut kehitung dan membatalkan balik saldo yang baru aja dinolkan — hasilnya 0, bukan angka historis. Ketemu + diperbaiki setelah `close_period` dibangun.
 
 ## Balance Sheet
 
@@ -67,6 +67,8 @@ Laba Bersih = SUM(saldo akun revenue) - SUM(saldo akun expense)
 Validasi wajib: `Total Asset = Total Liability + Total Equity` — kalau meleset, bug ada di query rollup (akun kelewat, atau closing Laba Ditahan lupa disertain), bukan toleransi pembulatan.
 
 **`Laba Ditahan` di `computeBalanceSheet` tetap dihitung ulang dari Income Statement, TERLEPAS dari Period Closing sekarang udah ada** (lihat submodule "Tutup Buku" di bawah) — dan ini justru sengaja gak diubah kodenya, bukan lupa. Begitu suatu periode ditutup lewat `close_period`, closing entry-nya nge-nol-in saldo Revenue/Expense periode itu SUNGGUHAN di `journal_lines` (bukan cuma di laporan) — jadi begitu ada periode yang udah ditutup, sisa saldo Revenue/Expense yang keliatan di Trial Balance kumulatif otomatis cuma representasi periode yang **masih berjalan** (belum ditutup), karena periode-periode sebelumnya udah nol. `computeBalanceSheet` gak perlu tau apakah Period Closing pernah jalan atau enggak — rumus `revenueTotal - expenseTotal` dari Trial Balance kumulatif tetap benar di kedua kondisi (belum pernah ditutup: itu representasi SEMUA histori; udah pernah ditutup: itu otomatis representasi cuma periode terbuka doang). Saldo `3200 Laba Ditahan` yang REAL (dari closing entry yang udah lewat) ikut kehitung otomatis lewat baris akun equity biasa di Trial Balance — gak butuh logic khusus.
+
+**Baris `Laba Ditahan` di Neraca SATU angka gabungan** — belum ada pemisahan current-year (baris derived dari Income Statement di atas) vs prior-years (saldo real `3200` dari closing yang udah lewat) jadi 2 baris terpisah. Kalau user udah pernah hard-close beberapa kali dalam 1 tahun fiskal (mis. bulanan), saldo `3200` yang REAL itu sendiri udah campur laba final tahun lalu + laba periode-periode berjalan tahun ini yang udah sempat di-hard-close. Gap: `memory/scope-debt/current-year-earnings-vs-retained-earnings.md`.
 
 ## Cash Flow Statement
 
@@ -85,7 +87,7 @@ Validasi wajib: `Total Asset = Total Liability + Total Equity` — kalau meleset
 
 ## Tutup Buku (Period Closing)
 
-Beda dari 4 laporan di atas (murni read), Period Closing itu **financial write** — sesuai `CLAUDE.md`, wajib lewat RPC atomik. Migration: `supabase/migrations/0016_period_closing.sql`. Ref konsep bisnis: `docs/domain/general-ledger.md` bagian "Period Closing", `memory/domain/general-ledger.md`.
+Beda dari 4 laporan di atas (murni read), Period Closing itu **financial write** — sesuai `CLAUDE.md`, wajib lewat RPC atomik. Migration: `supabase/migrations/0008_period_closing_schema.sql`. Ref konsep bisnis: `docs/domain/general-ledger.md` bagian "Period Closing", `memory/domain/general-ledger.md`.
 
 ### Keputusan
 
@@ -145,7 +147,7 @@ create trigger journal_entries_block_retroactive_into_closed_period_trigger
 
 Alur: (1) validasi `end_date >= start_date`, gak overlap, kontigu ke closing terakhir; (2) validasi akun tujuan kategori `equity`; (3) `SELECT account_id, SUM(debit)-SUM(credit) as net ... GROUP BY account_id HAVING <> 0` buat semua akun `revenue`/`expense` yang punya aktivitas dalam rentang; (4) tiap akun dengan `net > 0` (saldo debit bersih) di-kredit sebesar itu buat di-nol-in, `net < 0` (saldo kredit bersih) di-debit; (5) selisih total debit-kredit dari langkah 4 = Laba Bersih periode itu — dipindah ke akun ekuitas tujuan (kredit kalau laba, debit kalau rugi); (6) kalau ada baris sama sekali, panggil `create_journal_entry` yang udah ada (reuse balance-check & atomicity-nya); (7) insert baris `period_closings`.
 
-Full SQL: `supabase/migrations/0016_period_closing.sql` (gak diduplikasi di sini biar gak ada 2 sumber kebenaran — file migration itu sendiri udah banyak komentar humanable per langkah).
+Full SQL: `supabase/migrations/0008_period_closing_schema.sql` (gak diduplikasi di sini biar gak ada 2 sumber kebenaran — file migration itu sendiri udah banyak komentar humanable per langkah).
 
 ### RLS Policy (`period_closings`)
 

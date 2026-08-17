@@ -21,7 +21,7 @@ Cash Flow is the only report needing data from 2 points in time, not 1.
 
 **Validation philosophy** — kalau data-nya real (double-entry selalu balance), semua laporan turunan PASTI konsisten satu sama lain. Ketauan gak konsisten = bug di logic laporan turunan, bukan di data mentah `journal_lines` (yang selalu benar langsung).
 
-**Worked example** (1 period, fully validated end-to-end, angka ilustrasi generik — angka riil tervalidasi lintas 6 fase: `docs/story/financial-reports.md`)
+**Worked example** (1 period, fully validated end-to-end, angka ilustrasi generik)
 
 Opening: Kas 10.000.000, Modal Pemilik 10.000.000. 7 transactions: (1) buy fixed asset 15.000.000 via Utang Bank direct (non-cash), (2) buy inventory 3.000.000 half cash/half AP, (3) sell 8.000.000 half cash/half AR, (4) COGS 2.000.000 on that sale, (5) pay salary 1.500.000 cash, (6) depreciation 250.000, (7) pay down AP 500.000 cash.
 
@@ -49,7 +49,7 @@ All accounts + balance at 1 point in time, `SUM(debit)=SUM(credit)` total (Core 
 
 Revenue + Expense accounts from Trial Balance, for a date RANGE (resets each period, matching principle). `Laba Bersih = Total Revenue - Total Expense`.
 
-**Exclude baris closing entry** (`fetchClosingJournalEntryIds()` di `period-closing.ts` — semua `period_closings.journal_entry_id` yang gak null) sebelum di-reduce. Tanpa ini, kalau rentang yang di-query persis sama dengan periode yang baru ditutup, baris penolan Revenue/Expense dari closing entry-nya sendiri (bertanggal `end_date` periode itu) ikut kehitung dan membatalkan balik saldo yang baru aja dinolkan — hasilnya 0, bukan angka historis. Ketemu + diperbaiki setelah `close_period` dibangun (kronologi lengkap: `docs/story/financial-reports.md` bagian 5). **Trial Balance SENGAJA gak exclude ini** — TB butuh efek closing entry biar saldo Revenue/Expense kumulatif emang keliatan udah ke-nol-in, itu justru tujuannya.
+**Exclude baris closing entry** (`fetchClosingJournalEntryIds()` di `period-closing.ts` — semua `period_closings.journal_entry_id` yang gak null) sebelum di-reduce. Tanpa ini, kalau rentang yang di-query persis sama dengan periode yang baru ditutup, baris penolan Revenue/Expense dari closing entry-nya sendiri (bertanggal `end_date` periode itu) ikut kehitung dan membatalkan balik saldo yang baru aja dinolkan — hasilnya 0, bukan angka historis. Ketemu + diperbaiki setelah `close_period` dibangun. **Trial Balance SENGAJA gak exclude ini** — TB butuh efek closing entry biar saldo Revenue/Expense kumulatif emang keliatan udah ke-nol-in, itu justru tujuannya.
 
 **Constraints**
 - Income Statement = date range; Balance Sheet = single date. Never interchange.
@@ -88,7 +88,7 @@ Laba Bersih
 
 **Why Indirect chosen**: all inputs (Laba Bersih, AR/Inventory/AP deltas) already exist from the other 3 reports — zero extra schema.
 
-**Non-cash investing/financing**: if an asset is acquired directly against a liability (no Kas account touched at all — see real example `docs/story/fixed-assets.md` Tahap 1: `Debit Mobil Pickup Antar Barang / Kredit Utang Bank`, zero cash lines), both Investing and Financing show 0 for that event. Not a bug — disclosed as a supplemental non-cash footnote per accounting standards, never hidden.
+**Non-cash investing/financing**: if an asset is acquired directly against a liability (no Kas account touched at all — e.g. `Debit Mobil Pickup Antar Barang / Kredit Utang Bank`, zero cash lines), both Investing and Financing show 0 for that event. Not a bug — disclosed as a supplemental non-cash footnote per accounting standards, never hidden.
 
 **Investing vs Financing grouping is still hardcoded by account code** (`2200 Utang Bank` mutation = Financing, `16xx` Aset Tetap accounts touching Kas = Investing) — no generic category flag on `journal_entries`/`journal_lines` yet. If a new liability-type account is added later, this hardcoded list needs manual update.
 
@@ -116,7 +116,7 @@ Deferred from phase 2 to phase 7 — needs Income Statement to know the definiti
 
 **Real problem**: banks request reports for a SPECIFIC period ("Laba Rugi Juli 2026") and make lending decisions off that exact number. If a late-discovered transaction (e.g. a missed July receipt) is allowed to post retroactively into July after that report was already handed to the bank, Laba Bersih silently changes — the bank never knows the number it decided on has shifted. Different from reversing entries (phase 2, `general-ledger.md` constraint #4) — those are *visible* corrections in the history; this is about a period already "sealed" and handed to an external party, which must never silently change.
 
-**Secondary problem**: without resetting Revenue/Expense each period, the owner can't compare month-to-month performance (numbers accumulate since company founding — `docs/story/company-profile.md`) to decide things like raising prices or switching suppliers.
+**Secondary problem**: without resetting Revenue/Expense each period, the owner can't compare month-to-month performance (numbers accumulate since company founding) to decide things like raising prices or switching suppliers.
 
 **Mechanism** (detail: `general-ledger.md`): RPC `close_period(start_date, end_date, retained_earnings_account_id, source_ref)` — hitung ulang saldo Revenue/Expense periode itu langsung dari `journal_lines`, nol-in via closing entry ke `create_journal_entry` yang udah ada, catat rentangnya di `period_closings` (ledger append-only, bukan tabel "periode" dengan status). Trigger baru di `journal_entries` nolak entry baru yang bertanggal masuk ke rentang tertutup. Wajib berurutan-bersambung, gak ada reopen.
 
@@ -132,7 +132,7 @@ Deferred from phase 2 to phase 7 — needs Income Statement to know the definiti
 **Common Mistakes**
 - Membolehkan `journal_entries` baru bertanggal masuk ke rentang yang udah tertutup — harus ditolak trigger sebelum sempat tercatat.
 - Menerima nominal Revenue/Expense dari client buat closing entry — `close_period` wajib hitung ulang sendiri dari `journal_lines`, gak percaya angka dari luar.
-- Menganggap performance rollup di skala besar udah dioptimasi — fetch+reduce di TypeScript narik SEMUA baris `journal_lines` relevan ke aplikasi (bukan agregat di sisi DB), aman di skala UMKM tapi belum direvisit buat volume data jauh lebih besar (`memory/scope-debt/trial-balance-rollup.md`, masih terbuka).
+- Menganggap performance rollup di skala besar udah dioptimasi — fetch+reduce di TypeScript narik SEMUA baris `journal_lines` relevan ke aplikasi (bukan agregat di sisi DB), aman di skala UMKM tapi belum direvisit buat volume data jauh lebih besar — **sudah diperbaiki 2026-08-17**, sekarang agregat/pagination DB-side (RPC `SUM...GROUP BY`), termasuk General Ledger & tab Ledger akun. Detail: `memory/architecture/data/financial-reports-schema.md`.
 
 ## Glossary
 

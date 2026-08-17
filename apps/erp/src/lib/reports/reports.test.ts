@@ -231,10 +231,11 @@ describe("classifyInvestingFinancing", () => {
 describe("computeCashFlow — angka domain doc", () => {
   const tbStart = computeTrialBalance(accounts, linesUpTo("2026-06-30"), "2026-06-30");
   const tbEnd = computeTrialBalance(accounts, linesUpTo("2026-07-31"), "2026-07-31");
+  const julyLines = linesBetween("2026-07-01", "2026-07-31");
   const cf = computeCashFlow(
     accounts,
-    linesBetween("2026-07-01", "2026-07-31"),
-    linesBetween("2026-07-01", "2026-07-31"),
+    julyLines,
+    classifyInvestingFinancing(accounts, julyLines),
     tbStart,
     tbEnd,
     "2026-07-01",
@@ -290,10 +291,11 @@ describe("computeCashFlow — akun neraca baru otomatis ke-track (regresi bug mi
 
   const tbStart = computeTrialBalance(accountsWithNewLine, linesUpToNew("2026-06-30"), "2026-06-30");
   const tbEnd = computeTrialBalance(accountsWithNewLine, linesUpToNew("2026-07-31"), "2026-07-31");
+  const julyLinesNew = linesBetweenNew("2026-07-01", "2026-07-31");
   const cf = computeCashFlow(
     accountsWithNewLine,
-    linesBetweenNew("2026-07-01", "2026-07-31"),
-    linesBetweenNew("2026-07-01", "2026-07-31"),
+    julyLinesNew,
+    classifyInvestingFinancing(accountsWithNewLine, julyLinesNew),
     tbStart,
     tbEnd,
     "2026-07-01",
