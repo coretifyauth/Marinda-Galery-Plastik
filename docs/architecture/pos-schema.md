@@ -1,6 +1,6 @@
 # POS / Jualan Eceran — Struktur Data & Teknis
 
-Konsep bisnisnya ada di `docs/domain/pos.md`. Skenario nyata: `docs/story/pos.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/pos-schema.md`.
+Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/pos-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

@@ -1,6 +1,6 @@
 # Financial Reports — Struktur Data
 
-Fase 7. Konsep bisnisnya ada di `docs/domain/financial-reports.md`. Skenario nyata (angka tervalidasi lintas 6 fase): `docs/story/financial-reports.md`. Detail teknis: `memory/architecture/data/financial-reports-schema.md`.
+Fase 7. Konsep bisnisnya ada di `docs/domain/financial-reports.md`. Detail teknis: `memory/architecture/data/financial-reports-schema.md`.
 
 Struktur module → submodule di file ini SAMA urutannya dengan `docs/domain/financial-reports.md` dan `memory/domain/financial-reports.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
 

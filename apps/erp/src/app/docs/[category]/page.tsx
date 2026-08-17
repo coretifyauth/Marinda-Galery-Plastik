@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { DOC_CATEGORIES, isValidCategory } from "@/lib/docs/categories";
+import { DOC_CATEGORIES, isGroupedCategory, isValidCategory } from "@/lib/docs/categories";
 import { listDocs } from "@/lib/docs/fs";
 import { DocsCategoryView } from "./view";
 
@@ -10,7 +10,11 @@ export default async function DocsCategoryPage({
 }) {
   const { category } = await params;
 
-  if (!isValidCategory(category)) {
+  // Kategori grouped (tutorial) punya route literal sendiri di /docs/tutorial
+  // (lebih spesifik, menang duluan di Next.js routing) -- kalau somehow nyampe
+  // sini juga, tolak eksplisit daripada nampilin daftar kosong (listDocs bakal
+  // baca folder tutorial yang isinya subfolder modul, bukan file .md langsung).
+  if (!isValidCategory(category) || isGroupedCategory(category)) {
     notFound();
   }
 

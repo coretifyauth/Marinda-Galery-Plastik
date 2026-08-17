@@ -71,6 +71,19 @@ export type ArDeposit = {
 
 export type ArDepositStatus = "belum_dipakai" | "sebagian" | "selesai";
 
+export type ArDepositListRow = {
+  id: string;
+  customer_id: string;
+  deposit_date: string;
+  source_ref: string;
+  amount: number;
+  journal_entry_id: string;
+  created_at: string;
+  remaining: number;
+  status: ArDepositStatus;
+  customers: { name: string };
+};
+
 /**
  * Status derived dari SUM(applications aktif) + SUM(refunds) + SUM(forfeitures) vs amount —
  * bukan kolom, sama pola invoiceStatus()/billStatus(). Sejak migration 0012, ketiga disposisi

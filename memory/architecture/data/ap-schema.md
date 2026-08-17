@@ -1,6 +1,6 @@
 # Accounts Payable — Schema (Finalized)
 
-Fase 4 roadmap. Ref konsep bisnis: `docs/domain/accounts-payable.md` + `memory/domain/accounts-payable.md`. Ref seed/skenario: `docs/story/accounts-payable.md`. Ref schema yang di-reuse: `memory/architecture/data/journal-entry-schema.md` (RPC `create_journal_entry`+`reverse_journal_entry`, fungsi `set_updated_at()`+`block_edit_delete()`). Ref pola yang di-mirror: `memory/architecture/data/ar-schema.md` — struktur DDL identik, cuma arah kebalik (kita berutang, bukan piutang).
+Fase 4 roadmap. Ref konsep bisnis: `docs/domain/accounts-payable.md` + `memory/domain/accounts-payable.md`. Ref schema yang di-reuse: `memory/architecture/data/journal-entry-schema.md` (RPC `create_journal_entry`+`reverse_journal_entry`, fungsi `set_updated_at()`+`block_edit_delete()`). Ref pola yang di-mirror: `memory/architecture/data/ar-schema.md` — struktur DDL identik, cuma arah kebalik (kita berutang, bukan piutang).
 
 Struktur module → submodule di file ini SAMA urutannya dengan `docs/architecture/ap-schema.md` dan `memory/domain/accounts-payable.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule"). Submodule yang lahir sebagai konsekuensi langsung dari submodule lain (AP Return Credit dari Retur Barang, pencabutan `apply_ap_return_credit` dari Retur Barang juga, "AP Payment — Selaras AR" dari Konsep Inti) digabung ke submodule induknya.
 
@@ -494,6 +494,12 @@ $$ language sql stable;
 
 **`record_ap_payment` (`0011`)** pakai fungsi ini alih-alih ngecek langsung ke `ap_bills.amount`, mirror `record_ar_payment` pasca-`0010`. **`cancel_ap_bill`** hard-block tambahan kalau bill udah punya `ap_credit_notes` (pola sama guard payment: bill udah "kesentuh" transaksi lain) — sempat juga punya auto-reverse loop buat `ap_return_credit_applications` aktif, dihapus `0009` bareng tabelnya (gak ada lagi apa pun buat di-unwind di sisi itu).
 
+### `ap_bills_with_status` view — migration `0032_ap_bill_status_view.sql`
+
+Nutup scope-debt filter status di list `/ap-bills`. Reuse `ap_bill_remaining()` di atas buat `outstanding` (via `cross join lateral`, sekali per baris), tapi status BUKAN cuma "outstanding vs amount" — `billStatus()` (`apps/erp/src/lib/ap-bills/schema.ts`) sengaja bedakan retur (`ap_credit_notes`, doang gak dianggap "sebagian") dari payment/DP aktif, jadi view punya lateral subquery kePisah buat `allocated` (SUM `ap_payments`) dan `deposit_applied` (SUM `ap_deposit_applications` exclude ter-reverse) dipakai threshold `sebagian`. `is_cancelled` cek `journal_entries.reverses_entry_id = journal_entry_id`. Pola sama persis `ap_deposits_with_status` (0031, pattern pertama).
+
+**Kolom `origin` ditambah migration `0038_ap_bill_ar_invoice_origin_filter.sql`** (`CREATE OR REPLACE VIEW`, nambah 1 kolom di akhir tanpa drop view/grant) — nutup filter "Tipe" di list yang sama (`grn` kalau `exists` baris `goods_receipt_notes.bill_id = ab.id`, else `langsung`), gantiin fungsi client `billOrigin()` yang sebelumnya dihitung dari embed `goods_receipt_notes(id)` nested (sekarang dihapus dari select list, gak dipakai lagi).
+
 ### RPC `create_ap_credit_note` (Opsi A)
 
 `p_lines` null/kosong → financial-only (1 jurnal, gak nyentuh inventory, `p_amount` dipakai apa adanya). `p_lines` terisi → full, bill wajib punya `goods_receipt_notes`, **`p_amount` DIABAIKAN dan DIGANTI** hasil penjumlahan cost fisik tiap baris (`consume_weighted_average`, dikumpulin ke `v_total_cost_returned` lewat loop yang jalan DULUAN sebelum jurnal dibikin). **Gak ada akun kontra** — beda dari `create_ar_credit_note`, karena Persediaan itu akun neraca.
@@ -535,7 +541,7 @@ Pola identik semua tabel transaksional AP/AR lain: `select` terbuka semua `authe
 
 ### Seed demo
 
-`supabase/migrations/0036_seed_demo_ap_credit_notes.sql` — skenario 6-10 di `docs/story/accounts-payable.md`, lanjutan cross-modul dari `docs/story/inventory.md` (bill Toko Gula Sejahtera Tahap 3 `GRN-GULA-001` & Tahap 5 `GRN-GULA-002`).
+`supabase/migrations/0036_seed_demo_ap_credit_notes.sql` — seed skenario retur AP demo, lanjutan cross-modul dari seed inventory (bill Toko Gula Sejahtera Tahap 3 `GRN-GULA-001` & Tahap 5 `GRN-GULA-002`).
 
 ### Pencabutan `apply_ap_return_credit` (dipakai motong bill lain) — migration `0009_ap_remove_return_credit_apply.sql`
 
@@ -637,6 +643,12 @@ $$ language sql stable;
 ```
 
 Guard tiap tabel transaksional (`ap_deposit_applications_guard`, `ap_deposit_refunds_guard`, `ap_deposit_forfeitures_guard`) semuanya cek `new.amount > ap_deposit_remaining(new.deposit_id)`. `ap_deposit_applications_guard` juga cek supplier match (deposit vs bill), bill belum dibatalkan, dan `ap_bill_remaining(new.bill_id)` — pola identik `ar_deposit_applications_guard`.
+
+### `ap_deposits_with_status` view — migration `0031_ap_deposit_status_view.sql`
+
+View pertama di project ini. Nutup scope-debt filter status di list `/ap-deposits` (sebelumnya status cuma dihitung client-side lewat `depositStatus()` dari data nested, gak bisa di-`WHERE`-kan). Reuse `ap_deposit_remaining()` di atas lewat `cross join lateral` (biar dievaluasi sekali per baris, bukan 3x), lalu derive `status` (`belum_dipakai | sebagian | selesai`) dengan threshold yang identik dengan `depositStatus()` di `apps/erp/src/lib/ap-deposits/schema.ts`. `security_invoker = true` wajib supaya RLS `ap_deposits_select` (`auth.role() = 'authenticated'`) tetap ke-enforce lewat view, bukan lari ke privilege pemilik view. `grant select ... to authenticated` eksplisit, pola sama semua relasi baru lain di project ini.
+
+List page (`apps/erp/src/lib/ap-deposits/queries.ts`) query langsung ke view ini, bukan tabel `ap_deposits` — jadi gak perlu lagi fetch nested `ap_deposit_applications`/`refunds`/`forfeitures` cuma buat dihitung ulang di client. Halaman detail (`[id]/view.tsx`) tetap pakai tabel dasar + `depositStatus()` client-side (butuh breakdown applied/refunded/forfeited per baris, bukan cuma status ringkasan).
 
 ### 2 fungsi existing yang diperluas (`create or replace` di `0013`, bukan tabel baru)
 

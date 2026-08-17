@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import { poStatus, lineRemaining, type PurchaseOrder } from "@/lib/purchase-orders/schema";
-import { createGoodsReceiptSchema, type GoodsReceiptNote } from "@/lib/goods-receipts/schema";
+import { createGoodsReceiptSchema, type CreateGoodsReceiptInput } from "@/lib/goods-receipts/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsReceipts } from "@/lib/goods-receipts/queries";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
@@ -21,6 +23,7 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
+import { Pagination } from "@/components/ui/pagination";
 
 type LineInput = {
   po_line_id: string;
@@ -31,14 +34,23 @@ type LineInput = {
   unit_cost: string;
 };
 
+// Input kecil buat baris filter di header tabel -- pola sama kayak journal-entries/page.tsx.
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
+
 export default function GoodsReceiptsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
-  const [receipts, setReceipts] = useState<GoodsReceiptNote[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [purchaseOrderFilter, setPurchaseOrderFilter] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   const [purchaseOrderId, setPurchaseOrderId] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
@@ -51,27 +63,31 @@ export default function GoodsReceiptsPage() {
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   const receivablePOs = purchaseOrders.filter(
     (po) => poStatus(po) !== "FULLY_RECEIVED" && poStatus(po) !== "CANCELLED"
   );
 
-  const loadReceipts = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("goods_receipt_notes")
-      .select(
-        "id, purchase_order_id, bill_id, delivery_note_ref, receipt_date, created_at, purchase_orders(source_ref, suppliers(name)), ap_bills(source_ref, amount), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
-      )
-      .order("receipt_date", { ascending: false });
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setReceipts((data ?? []) as unknown as GoodsReceiptNote[]);
-  }, []);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
+  // lihat journal-entries/page.tsx).
+  const filterKey = `${dateFrom}|${dateTo}|${purchaseOrderFilter}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
+
+  const filters = {
+    dateFrom,
+    dateTo,
+    purchaseOrderId: purchaseOrderFilter,
+    page,
+    pageSize,
+  };
+  const receiptsQuery = useGoodsReceipts(filters);
+  const receipts = receiptsQuery.data?.rows ?? [];
+  const total = receiptsQuery.data?.total ?? 0;
 
   const loadPurchaseOrders = useCallback(async () => {
     const { data } = await supabase
@@ -123,7 +139,6 @@ export default function GoodsReceiptsPage() {
         loadPurchaseOrders(),
         loadItemUnits(),
         loadDefaultAccounts(),
-        loadReceipts(),
         loadExpenseCategories(),
         loadTaxSettings(),
       ]);
@@ -137,7 +152,6 @@ export default function GoodsReceiptsPage() {
     loadPurchaseOrders,
     loadItemUnits,
     loadDefaultAccounts,
-    loadReceipts,
     loadExpenseCategories,
     loadTaxSettings,
   ]);
@@ -174,7 +188,41 @@ export default function GoodsReceiptsPage() {
     });
   }
 
-  async function handleCreate(e: FormEvent) {
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateGoodsReceiptInput) => {
+      const billSourceRef = await generateDocumentNumber("ap_bills");
+      const { error } = await supabase.rpc("create_goods_receipt", {
+        p_purchase_order_id: input.purchase_order_id,
+        p_receipt_date: input.receipt_date,
+        p_delivery_note_ref: input.delivery_note_ref || null,
+        p_lines: input.lines,
+        p_bill_description: input.bill_description || null,
+        p_bill_source_ref: billSourceRef,
+        p_debit_account_id: input.debit_account_id,
+        p_payable_account_id: input.payable_account_id,
+        p_extra_debit_lines: input.extra_debit_lines,
+        p_apply_tax: input.apply_tax,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      setPurchaseOrderId("");
+      setReceiptDate("");
+      setDeliveryNoteRef("");
+      setBillDescription("");
+      setLines([]);
+      setExtraLines([]);
+      setApplyTax(false);
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["goods_receipt_notes"] });
+      loadPurchaseOrders();
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan goods receipt");
+    },
+  });
+
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -201,42 +249,7 @@ export default function GoodsReceiptsPage() {
       return;
     }
 
-    setSubmitting(true);
-    let billSourceRef: string;
-    try {
-      billSourceRef = await generateDocumentNumber("ap_bills");
-    } catch (err) {
-      setSubmitting(false);
-      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_goods_receipt", {
-      p_purchase_order_id: parsed.data.purchase_order_id,
-      p_receipt_date: parsed.data.receipt_date,
-      p_delivery_note_ref: parsed.data.delivery_note_ref || null,
-      p_lines: parsed.data.lines,
-      p_bill_description: parsed.data.bill_description || null,
-      p_bill_source_ref: billSourceRef,
-      p_debit_account_id: parsed.data.debit_account_id,
-      p_payable_account_id: parsed.data.payable_account_id,
-      p_extra_debit_lines: parsed.data.extra_debit_lines,
-      p_apply_tax: parsed.data.apply_tax,
-    });
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-
-    setPurchaseOrderId("");
-    setReceiptDate("");
-    setDeliveryNoteRef("");
-    setBillDescription("");
-    setLines([]);
-    setExtraLines([]);
-    setApplyTax(false);
-    setShowForm(false);
-    await Promise.all([loadReceipts(), loadPurchaseOrders()]);
+    createMutation.mutate(parsed.data);
   }
 
   if (checkingSession) {
@@ -255,18 +268,20 @@ export default function GoodsReceiptsPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
+      {receiptsQuery.error && (
+        <FormError>{(receiptsQuery.error as Error).message}</FormError>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-black">Goods Receipts</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {receipts.length}
+              {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => loadReceipts()}>
+            <Button variant="toolbar" onClick={() => receiptsQuery.refetch()}>
               Refresh
             </Button>
             {canWrite && (
@@ -285,6 +300,45 @@ export default function GoodsReceiptsPage() {
               <th className="px-4 py-2">Items Diterima</th>
               <th className="px-4 py-2">Bill</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
+            </tr>
+            <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter purchase order"
+                  value={purchaseOrderFilter}
+                  onChange={(e) => setPurchaseOrderFilter(e.target.value)}
+                  className={compactFilterInputClass}
+                >
+                  <option value="">Semua PO</option>
+                  {purchaseOrders.map((po) => (
+                    <option key={po.id} value={po.id}>
+                      {po.source_ref}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              <th className="px-4 py-1.5">
+                <div className="flex gap-1">
+                  <input
+                    type="date"
+                    aria-label="Dari tanggal"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                  <input
+                    type="date"
+                    aria-label="Sampai tanggal"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                </div>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -315,12 +369,20 @@ export default function GoodsReceiptsPage() {
             {receipts.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada goods receipt.
+                  {receiptsQuery.isLoading ? "Memuat..." : "Belum ada goods receipt."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <Modal
@@ -453,8 +515,8 @@ export default function GoodsReceiptsPage() {
               <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
                 Batal
               </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Menyimpan..." : "Simpan Penerimaan"}
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Menyimpan..." : "Simpan Penerimaan"}
               </Button>
             </div>
         </form>

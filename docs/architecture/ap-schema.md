@@ -1,6 +1,6 @@
 # Accounts Payable — Struktur Data & Teknis
 
-Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Skenario nyata: `docs/story/accounts-payable.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/ap-schema.md`. Strukturnya cerminan persis dari Accounts Receivable (`docs/architecture/ar-schema.md`), arah kebalik — di sini kita yang berutang, bukan piutang.
+Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/ap-schema.md`. Strukturnya cerminan persis dari Accounts Receivable (`docs/architecture/ar-schema.md`), arah kebalik — di sini kita yang berutang, bukan piutang.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

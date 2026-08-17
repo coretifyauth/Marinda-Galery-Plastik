@@ -12,7 +12,7 @@ Next.js app scaffolded (App Router, TypeScript strict, Tailwind), Supabase clien
 
 ## Non-negotiable process (from AGENT.md)
 
-1. Explain business/accounting context and teach interactively until the user actually understands — not a one-shot explanation. Only after understanding is reached: write it up in `docs/domain/` + `memory/domain/`, then build `docs/story/`. Never skip to implementation.
+1. Explain business/accounting context and teach interactively until the user actually understands — not a one-shot explanation. Only after understanding is reached: write it up in `docs/domain/` + `memory/domain/`. Never skip to implementation.
 2. Design/update the ERD (entities, relations, FKs, cardinality) before schema.
 3. Check impact on existing ERD/modules before changing anything.
 4. Order: schema -> API -> UI.

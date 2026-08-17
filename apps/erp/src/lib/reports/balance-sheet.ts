@@ -7,8 +7,7 @@ import type { BalanceSheet, TrialBalance } from "./types";
  * kumulatif sejak transaksi pertama (Trial Balance filter `<= asOfDate`
  * sudah otomatis kumulatif) — bukan dibaca dari akun `3200 Laba Ditahan`
  * yang gak pernah diposting (Period Closing formal belum ada, lihat
- * `memory/scope-debt/period-closing.md`). Konsekuensinya sudah dijelaskan
- * di `docs/story/financial-reports.md` bagian "Kenapa Laba Bersih-nya Minus".
+ * `memory/scope-debt/period-closing.md`).
  */
 export function computeBalanceSheet(trialBalance: TrialBalance): BalanceSheet {
   const assets = trialBalance.balances.filter((b) => b.category === "asset");

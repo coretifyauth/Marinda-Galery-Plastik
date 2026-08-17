@@ -22,7 +22,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 - **Cancellation guard**: invoice cuma boleh dibatalkan (reversing entry via `cancel_ar_invoice`) kalau `ar_payments` buat invoice itu masih 0 baris. Begitu ada payment, pembatalan ditolak — piutang udah kesentuh transaksi lain, nasib pembayarannya jadi keputusan bisnis terpisah (belum di-scope).
 - **Semua guard reducer manggil `ar_invoice_remaining()`** — bukan ngitung ulang manual per fungsi. Nambah reducer baru ke depan cuma perlu ubah 1 fungsi ini, bukan nyisir semua guard satu-satu.
 
-**Skenario referensi** (detail angka: `docs/story/accounts-receivable.md`)
+**Skenario referensi**
 
 | # | Kasus | Pola |
 |---|---|---|

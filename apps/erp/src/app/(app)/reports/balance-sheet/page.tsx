@@ -157,7 +157,7 @@ export default function BalanceSheetPage() {
       <FormHint>
         Laba Ditahan di sini dihitung ulang tiap kali (kumulatif sejak transaksi pertama tercatat),
         bukan dibaca dari akun terpisah — Period Closing formal belum ada
-        (`memory/scope-debt/period-closing.md`). Detail dampaknya: `docs/story/financial-reports.md`.
+        (`memory/scope-debt/period-closing.md`).
       </FormHint>
     </div>
   );

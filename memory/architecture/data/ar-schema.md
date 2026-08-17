@@ -1,6 +1,6 @@
 # Accounts Receivable — Schema (Finalized)
 
-Fase 3 roadmap. Ref konsep bisnis: `docs/domain/accounts-receivable.md` + `memory/domain/accounts-receivable.md`. Ref seed/skenario: `docs/story/accounts-receivable.md`. Ref schema yang di-reuse: `memory/architecture/data/journal-entry-schema.md` (RPC `create_journal_entry`, fungsi `set_updated_at()` & `block_edit_delete()`).
+Fase 3 roadmap. Ref konsep bisnis: `docs/domain/accounts-receivable.md` + `memory/domain/accounts-receivable.md`. Ref schema yang di-reuse: `memory/architecture/data/journal-entry-schema.md` (RPC `create_journal_entry`, fungsi `set_updated_at()` & `block_edit_delete()`).
 
 Struktur module → submodule di file ini SAMA urutannya dengan `docs/architecture/ar-schema.md` dan `memory/domain/accounts-receivable.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule"). Submodule yang lahir sebagai konsekuensi langsung dari submodule lain (AR Return Credit dari Retur Barang, Cicil Dibalikin & sentralisasi `ar_invoice_remaining` dari Konsep Inti) digabung ke submodule induknya, bukan section historis terpisah kayak sebelumnya.
 
@@ -410,6 +410,12 @@ Sebelum migration ini, 5 fungsi beda (`ar_payment_allocations_no_over_allocation
 
 Ditutup 2026-08-13, migration `0020_ar_invoice_remaining_return_credit_fix.sql` — nambah reducer ke-5, add-back `+ coalesce(sum(ar_return_credits.amount) via join ar_credit_notes, 0)`, mirror persis `ap_bill_remaining()` (migration `0010_ap_bill_remaining_return_credit_fix.sql`, diverifikasi cocok dengan definisi live sebelum di-push). Tanpa add-back ini outstanding invoice bisa keliatan minus kalau ada retur dengan excess reclass pada invoice yang udah dibayar sebagian/lunas — padahal Piutang Usaha-nya sendiri sudah balik ke 0 lewat jurnal reklasifikasi terpisah (lihat "AR Return Credit" di bawah). `invoiceStatus()` frontend (`apps/erp/src/lib/ar-invoices/schema.ts`) + 3 call site query (`ar-invoices/page.tsx`, `ar-invoices/[id]/view.tsx`, `customers/[id]/view.tsx`) diupdate bareng, nambah nested select `ar_return_credits(amount)` di bawah `ar_credit_notes`.
 
+### `ar_invoices_with_status` view — migration `0033_ar_invoice_status_view.sql` (nomor file current, bukan nomor pra-squash yang disebut di atas)
+
+Nutup scope-debt filter status di list `/ar-invoices`. Reuse `ar_invoice_remaining()` di atas buat `outstanding`, tapi status butuh reducer `allocated`/`deposit_applied`/`written_off` kePisah (lateral subquery masing-masing) karena `invoiceStatus()` (`apps/erp/src/lib/ar-invoices/schema.ts`) sengaja bedakan retur doang (gak dianggap "sebagian") dari payment/DP/writeoff aktif — mirror `ap_bills_with_status` (0032). Cabang `dihapusbukukan` (`written_off > 0 and outstanding <= 0.005`) dicek sebelum `lunas` polos, sama urutan ternary di client.
+
+**Kolom `origin` ditambah migration `0038_ap_bill_ar_invoice_origin_filter.sql`** (`CREATE OR REPLACE VIEW`, mirror perlakuan `ap_bills_with_status`) — nutup filter "Tipe" (`financial_only` kalau gak ada baris `goods_issues` buat invoice ini, `sales_order` kalau salah satu `goods_issue_lines.so_line_id`-nya keisi, else `goods_issue`), gantiin fungsi client `invoiceOrigin()` yang sebelumnya dihitung dari embed `goods_issues(id, goods_issue_lines(so_line_id))` nested (sekarang dihapus dari select list).
+
 ### AR Customer Credit (Kelebihan Bayar) — dicabut total (migration `0040_ar_payment_strict_invoice_match.sql`)
 
 Sempat ada mekanisme "customer transfer lebih dari total invoice yang dilunasin, excess-nya jadi saldo kredit" — tabel `ar_customer_credits`/`ar_customer_credit_applications`/`ar_customer_credit_refunds` (migration `0027`), RPC `apply_ar_customer_credit`/`refund_ar_customer_credit`, akun liability `Saldo Kredit Customer` (`2400`). Semuanya dicabut total (tabel di-drop, RPC di-drop) begitu keputusan bisnis "payment gak boleh overpay" jalan — gak ada lagi jalur buat kelebihan bayar "nyantol", `record_ar_payment` `raise exception` kalau amount ngelebihin sisa. Rationale: `docs/domain/accounts-receivable.md` bagian "Kenapa cicil boleh tapi overpay gak boleh". **Tetap dicabut permanen** — cicil dibalikin (`0010`, lihat di atas) tapi overpay-jadi-saldo-ngambang ini TIDAK dibalikin.
@@ -567,7 +573,7 @@ Sempat ada loop ketiga (setelah unwind `ar_deposit_applications`, sebelum `ar_cu
 
 #### Backfill data lama — migration `0032`
 
-Retur Warung Kang Ade (`0023_seed_demo_ar_credit_notes.sql`, sebelum fitur ini ada) udah lebih dulu bikin invoice-nya minus tanpa lewat jalur otomatis di atas — migration seed `0032` manual insert jurnal reklasifikasi + baris `ar_return_credits` yang SEHARUSNYA otomatis kebentuk kalau fitur ini udah ada waktu itu, lalu demo `refund_ar_return_credit` buat nunjukin disposisinya. Kompatibel apa adanya sama `0041` (gak pernah insert ke `ar_return_credit_applications`, gak perlu diedit). Detail skenario: `docs/story/accounts-receivable.md` Skenario 11.
+Retur Warung Kang Ade (`0023_seed_demo_ar_credit_notes.sql`, sebelum fitur ini ada) udah lebih dulu bikin invoice-nya minus tanpa lewat jalur otomatis di atas — migration seed `0032` manual insert jurnal reklasifikasi + baris `ar_return_credits` yang SEHARUSNYA otomatis kebentuk kalau fitur ini udah ada waktu itu, lalu demo `refund_ar_return_credit` buat nunjukin disposisinya. Kompatibel apa adanya sama `0041` (gak pernah insert ke `ar_return_credit_applications`, gak perlu diedit).
 
 #### Catatan terbuka — belum ada cap gabungan lintas invoice/waktu
 
@@ -754,6 +760,10 @@ $$ language sql stable;
 
 Status 1 deposit (belum dipakai / sebagian / selesai) **derived** dari `ar_deposit_remaining()` vs `amount`, bukan kolom — konsisten sama pola status invoice/status "dibatalkan" (cek reversal).
 
+### `ar_deposits_with_status` view — migration `0037_ar_deposit_status_view.sql`
+
+Nutup scope-debt filter status di list `/ar-deposits`. Mirror persis `ap_deposits_with_status` (0031, arah kebalik — DP diterima dari customer, bukan dibayar ke supplier): reuse `ar_deposit_remaining()` di atas lewat `cross join lateral` (sekali per baris), `security_invoker = true` biar RLS `ar_deposits_select` tetap ke-enforce lewat view, grant eksplisit ke `authenticated`. `apps/erp/src/lib/ar-deposits/queries.ts` query view ini langsung, gak perlu lagi fetch nested `ar_deposit_applications`/`refunds`/`forfeitures` cuma buat dihitung ulang di client — itu tetap dipakai di halaman detail `[id]/view.tsx`.
+
 ### RPC: `create_ar_deposit`, `apply_ar_deposit`, `refund_ar_deposit`, `forfeit_ar_deposit`
 
 `security invoker`, pola sama RPC AR lain — semua reuse `create_journal_entry`, gak pernah insert manual ke `journal_entries`/`journal_lines`. `create_ar_deposit` insert `ar_deposits`. `apply_ar_deposit` insert `ar_deposit_applications` (nominal diinput eksplisit dari caller). `refund_ar_deposit` (**baru `0012`**) insert `ar_deposit_refunds`. `forfeit_ar_deposit` (**signature baru `0012`**, nambah `p_amount` — sebelumnya gak nerima nominal, `drop function` dulu buat signature lama karena beda jumlah param) insert `ar_deposit_forfeitures` pakai nominal eksplisit, bukan `ar_deposits.amount` langsung lagi.
@@ -762,7 +772,7 @@ Full body (definisi terkini): `supabase/migrations/0005_ar_schema.sql`.
 
 ### `cancel_ar_invoice` diperluas — auto-unwind `ar_deposit_applications`
 
-**Keputusan desain paling penting di submodule ini.** Sebelum ini, `cancel_ar_invoice` (`0009_ar_invoice_cancellation.sql`) cuma reverse jurnal invoice-nya sendiri. Kalau invoice itu udah punya `ar_deposit_applications`, itu bakal bikin Piutang Usaha nyasar minus (jurnal application gak ikut ke-reverse) dan DP-nya nyangkut gak jelas statusnya — dianalisa lewat contoh angka konkret bareng user, lihat `docs/story/accounts-receivable.md` Skenario 9.
+**Keputusan desain paling penting di submodule ini.** Sebelum ini, `cancel_ar_invoice` (`0009_ar_invoice_cancellation.sql`) cuma reverse jurnal invoice-nya sendiri. Kalau invoice itu udah punya `ar_deposit_applications`, itu bakal bikin Piutang Usaha nyasar minus (jurnal application gak ikut ke-reverse) dan DP-nya nyangkut gak jelas statusnya — dianalisa lewat contoh angka konkret bareng user.
 
 Fix-nya **`create or replace function`** di `0024_ar_deposits_schema.sql` (bukan edit `0009`, migration lama tetep gak disentuh, SQL lengkap ada di submodule "Konsep Inti") — RPC ini sekarang, setelah reverse jurnal invoice, loop semua `ar_deposit_applications` invoice itu yang masih aktif (belum di-reverse) dan ikut manggil `reverse_journal_entry` buat tiap satu. Signature (nama param, urutan, return type) identik persis versi 0009 — caller existing (`src/app/(app)/ar-invoices/[id]/view.tsx`, manggil pakai named-parameter object) gak perlu berubah.
 

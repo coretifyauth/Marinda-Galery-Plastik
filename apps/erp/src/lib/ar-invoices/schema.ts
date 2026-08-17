@@ -24,10 +24,13 @@ export type ArInvoice = {
   created_at: string;
   customers: { name: string };
   ar_payments: { amount: number }[];
-  ar_credit_notes?: { amount: number; ar_return_credits?: { amount: number }[] }[];
+  ar_credit_notes?: {
+    amount: number;
+    ar_return_credits?: { amount: number }[];
+    warranty_replacements?: { discount_reversed_amount: number; return_credit_settled_amount: number }[];
+  }[];
   ar_deposit_applications?: { amount: number }[];
   ar_bad_debt_writeoffs?: { amount: number }[];
-  goods_issues?: { id: string; goods_issue_lines: { so_line_id: string | null }[] }[];
 };
 
 export type ArInvoiceOrigin = "sales_order" | "goods_issue" | "financial_only";
@@ -39,12 +42,25 @@ export type ArInvoiceOrigin = "sales_order" | "goods_issue" | "financial_only";
  * (3) financial-only — invoice dicatat manual lewat /ar-invoices, gak ada `goods_issues` sama
  * sekali (gak ada stok/HPP yang kesentuh, mis. pendapatan jasa). 0 vs 1 baris `goods_issues`
  * per invoice, gak pernah lebih dari 1 -- tiap `create_goods_issue` call bikin invoice barunya
- * sendiri (fulfillment dicicil = invoice terpisah tiap cicilan). */
-export function invoiceOrigin(invoice: Pick<ArInvoice, "goods_issues">): ArInvoiceOrigin {
-  const gi = (invoice.goods_issues ?? [])[0];
-  if (!gi) return "financial_only";
-  return gi.goods_issue_lines.some((l) => l.so_line_id) ? "sales_order" : "goods_issue";
-}
+ * sendiri (fulfillment dicicil = invoice terpisah tiap cicilan). Dihitung server-side lewat
+ * kolom `origin` di `ar_invoices_with_status` (migration `0038`), bukan lagi fungsi client --
+ * lihat `ArInvoiceListRow`. */
+export type ArInvoiceListRow = {
+  id: string;
+  customer_id: string;
+  invoice_date: string;
+  due_date: string;
+  description: string | null;
+  source_ref: string;
+  amount: number;
+  journal_entry_id: string;
+  created_at: string;
+  outstanding: number;
+  returned: number;
+  status: ArInvoiceStatus;
+  origin: ArInvoiceOrigin;
+  customers: { name: string };
+};
 
 export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "dihapusbukukan";
 
@@ -62,6 +78,20 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "d
  * doang. Tanpa add-back ini outstanding bisa keliatan minus padahal GL-nya udah balance. Saldo
  * kredit itu sendiri gak lagi bisa "dititip" motong invoice lain (dicabut, lihat "Saldo Kredit
  * dari Retur") — resolusinya cuma refund tunai atau warranty replacement.
+ * `warranty_replacements.discount_reversed_amount - return_credit_settled_amount` (nested di bawah
+ * `ar_credit_notes`) juga di-ADD BACK — `create_warranty_replacement` bikin jurnal Debit Piutang
+ * Usaha / Kredit Retur & Potongan Penjualan yang membalikkan diskon retur proporsional ke qty
+ * yang ditukar barang (customer gak jadi dapat diskon karena barangnya diganti, bukan direfund).
+ * `ar_credit_notes.amount` sendiri immutable (gak berubah pas ada replacement belakangan), jadi
+ * tanpa add-back ini invoice yang retur penuh + ganti barang penuh bakal keliatan "lunas" padahal
+ * Piutang Usaha di GL udah balik ke penuh. WAJIB di-net-in sama `return_credit_settled_amount` —
+ * kalau credit note sumbernya punya `ar_return_credits` aktif, `create_warranty_replacement` bikin
+ * jurnal KETIGA (Debit return_credit_liability / Kredit Piutang Usaha) yang nyettle saldo kredit
+ * retur itu pakai barang, nominalnya SELALU sama persis dengan `discount_reversed_amount` pas
+ * kasus ini — net efeknya ke Piutang Usaha invoice = 0 (reversal & settlement saling
+ * menetralkan). Add-back mentah tanpa net-in bikin outstanding kelebihan hitung persis sejumlah
+ * `return_credit_settled_amount` (mirror fix server-side
+ * `0028_ar_invoice_remaining_warranty_replacement_fix.sql`).
  * `ar_deposit_applications` selalu aktif kalau invoice-nya masih hidup (belum
  * dibatalkan) — begitu invoice dibatalkan, `cancel_ar_invoice` nolak keras kalau udah ada
  * write-off (gak bisa dibatalkan lewat jalur itu), jadi gak perlu exclude yang di-reverse
@@ -92,9 +122,25 @@ export function invoiceStatus(
     (sum, c) => sum + (c.ar_return_credits ?? []).reduce((s, rc) => s + rc.amount, 0),
     0
   );
+  const warrantyReplacementReversed = (invoice.ar_credit_notes ?? []).reduce(
+    (sum, c) =>
+      sum +
+      (c.warranty_replacements ?? []).reduce(
+        (s, wr) => s + (wr.discount_reversed_amount - wr.return_credit_settled_amount),
+        0
+      ),
+    0
+  );
   const depositApplied = (invoice.ar_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
   const writtenOff = (invoice.ar_bad_debt_writeoffs ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const outstanding = invoice.amount - allocated - returned - depositApplied - writtenOff + returnCreditsSettled;
+  const outstanding =
+    invoice.amount -
+    allocated -
+    returned -
+    depositApplied -
+    writtenOff +
+    returnCreditsSettled +
+    warrantyReplacementReversed;
   if (isCancelled) {
     return {
       status: "dibatalkan",

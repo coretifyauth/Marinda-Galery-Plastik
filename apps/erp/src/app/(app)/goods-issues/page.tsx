@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
-import { createGoodsIssueSchema, type GoodsIssue } from "@/lib/goods-issues/schema";
+import { createGoodsIssueSchema, type CreateGoodsIssueInput } from "@/lib/goods-issues/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsIssues } from "@/lib/goods-issues/queries";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
 import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
 import { fetchTaxSettings, resolvedPpnKeluaran, type TaxSettings } from "@/lib/tax-settings/schema";
@@ -22,6 +25,7 @@ import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { Pagination } from "@/components/ui/pagination";
 
 type LineInput = { item_id: string; qty: string; amount: number };
 
@@ -29,15 +33,25 @@ function emptyLine(): LineInput {
   return { item_id: "", qty: "", amount: 0 };
 }
 
+// Input kecil buat baris filter di header tabel -- pola sama kayak journal-entries/page.tsx.
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
+
 export default function GoodsIssuesPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
-  const [issues, setIssues] = useState<GoodsIssue[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [refSearchInput, setRefSearchInput] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
 
   const [customerId, setCustomerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
@@ -49,23 +63,27 @@ export default function GoodsIssuesPage() {
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const loadIssues = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("goods_issues")
-      .select(
-        "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices(source_ref, amount, customers(name)), goods_issue_lines(id, item_id, qty_issued, total_cost, items(name, uom))"
-      )
-      .order("issue_date", { ascending: false });
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setIssues((data ?? []) as unknown as GoodsIssue[]);
-  }, []);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
+  // lihat journal-entries/page.tsx).
+  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
+
+  const filters = {
+    dateFrom,
+    dateTo,
+    sourceRefSearch: debouncedRefSearch,
+    page,
+    pageSize,
+  };
+  const issuesQuery = useGoodsIssues(filters);
+  const issues = issuesQuery.data?.rows ?? [];
+  const total = issuesQuery.data?.total ?? 0;
 
   const loadCustomers = useCallback(async () => {
     const { data } = await supabase
@@ -120,7 +138,6 @@ export default function GoodsIssuesPage() {
         loadCustomers(),
         loadItems(),
         loadDefaultAccounts(),
-        loadIssues(),
         loadChargeTypes(),
         loadTaxSettings(),
       ]);
@@ -129,7 +146,7 @@ export default function GoodsIssuesPage() {
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadItems, loadDefaultAccounts, loadIssues, loadChargeTypes, loadTaxSettings]);
+  }, [router, loadCustomers, loadItems, loadDefaultAccounts, loadChargeTypes, loadTaxSettings]);
 
   function updateLineItem(index: number, itemId: string) {
     // Ganti item -> qty & harga baris sebelumnya gak relevan lagi, reset.
@@ -156,7 +173,41 @@ export default function GoodsIssuesPage() {
   // -- gak ada lagi input manual (ref memory/domain/inventory.md submodule "Satuan Jual & Harga").
   const totalAmount = lines.reduce((sum, l) => sum + l.amount, 0);
 
-  async function handleCreate(e: FormEvent) {
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateGoodsIssueInput) => {
+      // Doc type ar_invoices, bukan goods_issues -- create_goods_issue sekaligus bikin baris
+      // ar_invoices (form ini "Invoice + Goods Issue"), 1 source_ref dipakai bareng keduanya.
+      const sourceRef = await generateDocumentNumber("ar_invoices");
+      const { error } = await supabase.rpc("create_goods_issue", {
+        p_customer_id: input.customer_id,
+        p_invoice_date: input.invoice_date,
+        p_description: input.description || null,
+        p_source_ref: sourceRef,
+        p_credit_lines: input.credit_lines,
+        p_receivable_account_id: input.receivable_account_id,
+        p_lines: input.lines,
+        p_hpp_account_id: input.hpp_account_id,
+        p_finished_good_account_id: input.finished_good_account_id,
+        p_apply_tax: input.apply_tax,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      setCustomerId("");
+      setInvoiceDate("");
+      setDescription("");
+      setLines([emptyLine()]);
+      setExtraLines([]);
+      setApplyTax(false);
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["goods_issues"] });
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan goods issue");
+    },
+  });
+
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -191,43 +242,7 @@ export default function GoodsIssuesPage() {
       return;
     }
 
-    setSubmitting(true);
-    // Doc type ar_invoices, bukan goods_issues -- create_goods_issue sekaligus bikin baris
-    // ar_invoices (form ini "Invoice + Goods Issue"), 1 source_ref dipakai bareng keduanya.
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_invoices");
-    } catch (err) {
-      setSubmitting(false);
-      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_goods_issue", {
-      p_customer_id: parsed.data.customer_id,
-      p_invoice_date: parsed.data.invoice_date,
-      p_description: parsed.data.description || null,
-      p_source_ref: sourceRef,
-      p_credit_lines: parsed.data.credit_lines,
-      p_receivable_account_id: parsed.data.receivable_account_id,
-      p_lines: parsed.data.lines,
-      p_hpp_account_id: parsed.data.hpp_account_id,
-      p_finished_good_account_id: parsed.data.finished_good_account_id,
-      p_apply_tax: parsed.data.apply_tax,
-    });
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-
-    setCustomerId("");
-    setInvoiceDate("");
-    setDescription("");
-    setLines([emptyLine()]);
-    setExtraLines([]);
-    setApplyTax(false);
-    setShowForm(false);
-    await loadIssues();
+    createMutation.mutate(parsed.data);
   }
 
   if (checkingSession) {
@@ -252,18 +267,20 @@ export default function GoodsIssuesPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
+      {issuesQuery.error && (
+        <FormError>{(issuesQuery.error as Error).message}</FormError>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-black">Goods Issues</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {issues.length}
+              {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => loadIssues()}>
+            <Button variant="toolbar" onClick={() => issuesQuery.refetch()}>
               Refresh
             </Button>
             {canWrite && (
@@ -282,6 +299,39 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-2">Items Keluar (HPP, satuan dasar)</th>
               <th className="px-4 py-2 text-right">Pendapatan</th>
               <th className="px-4 py-2 text-right">Total HPP</th>
+            </tr>
+            <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <input
+                  type="text"
+                  placeholder="Cari source ref..."
+                  value={refSearchInput}
+                  onChange={(e) => setRefSearchInput(e.target.value)}
+                  className={compactFilterInputClass}
+                />
+              </th>
+              <th className="px-4 py-1.5">
+                <div className="flex gap-1">
+                  <input
+                    type="date"
+                    aria-label="Dari tanggal"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                  <input
+                    type="date"
+                    aria-label="Sampai tanggal"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                </div>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -315,12 +365,20 @@ export default function GoodsIssuesPage() {
             {issues.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada goods issue.
+                  {issuesQuery.isLoading ? "Memuat..." : "Belum ada goods issue."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <Modal
@@ -499,8 +557,8 @@ export default function GoodsIssuesPage() {
               <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
                 Batal
               </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Menyimpan..." : "Simpan Penjualan"}
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Menyimpan..." : "Simpan Penjualan"}
               </Button>
             </div>
         </form>

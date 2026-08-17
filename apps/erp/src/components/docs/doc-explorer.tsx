@@ -6,38 +6,52 @@ import { usePathname } from "next/navigation";
 import { ChevronDown, Search } from "lucide-react";
 import type { DocCategoryId, DocTreeCategory } from "@/lib/docs/categories";
 
+// Kunci collapse gabungan "kategori" (flat) atau "kategori/modul" (grouped),
+// biar 1 Set bisa nampung dua level tanpa perlu struktur nested terpisah.
+type CollapseKey = string;
+
+function moduleKey(category: DocCategoryId, moduleId: string): CollapseKey {
+  return `${category}/${moduleId}`;
+}
+
 export function DocExplorer({ tree }: { tree: DocTreeCategory[] }) {
   const pathname = usePathname();
   const [query, setQuery] = useState("");
   const [explorerOpen, setExplorerOpen] = useState(true);
-  // Kebalikan dari sidebar.tsx: set ini nyimpen kategori yang di-COLLAPSE,
-  // mulai kosong biar semua kategori default EXPANDED (beda dari sidebar app
-  // yang default collapsed — di sini tujuan utamanya emang browsing ~20 doc).
-  const [collapsed, setCollapsed] = useState<Set<DocCategoryId>>(() => new Set());
+  // Kebalikan dari sidebar.tsx: set ini nyimpen kategori/modul yang di-COLLAPSE,
+  // mulai kosong biar semua default EXPANDED (beda dari sidebar app yang
+  // default collapsed -- di sini tujuan utamanya emang browsing banyak doc).
+  const [collapsed, setCollapsed] = useState<Set<CollapseKey>>(() => new Set());
 
-  function toggleCategory(id: DocCategoryId) {
+  function toggle(key: CollapseKey) {
     setCollapsed((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(id);
+        next.add(key);
       }
       return next;
     });
   }
 
   // Filter ringan client-side (judul yang udah di-load, bukan full-text search
-  // ke isi dokumen) — kategori tanpa hasil match otomatis disembunyikan.
+  // ke isi dokumen) — kategori/modul tanpa hasil match otomatis disembunyikan.
   const filteredTree = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return tree;
     return tree
-      .map((category) => ({
-        ...category,
-        docs: category.docs.filter((doc) => doc.title.toLowerCase().includes(q)),
-      }))
-      .filter((category) => category.docs.length > 0);
+      .map((category): DocTreeCategory | null => {
+        if (category.kind === "flat") {
+          const docs = category.docs.filter((doc) => doc.title.toLowerCase().includes(q));
+          return docs.length > 0 ? { ...category, docs } : null;
+        }
+        const modules = category.modules
+          .map((mod) => ({ ...mod, docs: mod.docs.filter((doc) => doc.title.toLowerCase().includes(q)) }))
+          .filter((mod) => mod.docs.length > 0);
+        return modules.length > 0 ? { ...category, modules } : null;
+      })
+      .filter((c): c is DocTreeCategory => c !== null);
   }, [tree, query]);
 
   return (
@@ -72,7 +86,7 @@ export function DocExplorer({ tree }: { tree: DocTreeCategory[] }) {
               <div key={category.category} className="flex flex-col gap-0.5">
                 <button
                   type="button"
-                  onClick={() => toggleCategory(category.category)}
+                  onClick={() => toggle(category.category)}
                   className="flex items-center gap-1 rounded-md py-1 pl-1 text-sm font-medium text-slate-700 hover:text-blue-700"
                 >
                   <ChevronDown
@@ -82,24 +96,69 @@ export function DocExplorer({ tree }: { tree: DocTreeCategory[] }) {
                   />
                   {category.label}
                 </button>
-                {!isCollapsed &&
-                  category.docs.map((doc) => {
-                    const href = `/docs/${category.category}/${doc.slug}`;
-                    const active = pathname === href;
-                    return (
-                      <Link
-                        key={doc.slug}
-                        href={href}
-                        className={`truncate rounded-md py-1 pl-6 pr-2 text-sm ${
-                          active
-                            ? "bg-slate-100 font-medium text-blue-700"
-                            : "text-slate-600 hover:bg-slate-50 hover:text-blue-700"
-                        }`}
-                      >
-                        {doc.title}
-                      </Link>
-                    );
-                  })}
+                {!isCollapsed && category.kind === "flat" && (
+                  <>
+                    {category.docs.map((doc) => {
+                      const href = `/docs/${category.category}/${doc.slug}`;
+                      const active = pathname === href;
+                      return (
+                        <Link
+                          key={doc.slug}
+                          href={href}
+                          className={`truncate rounded-md py-1 pl-6 pr-2 text-sm ${
+                            active
+                              ? "bg-slate-100 font-medium text-blue-700"
+                              : "text-slate-600 hover:bg-slate-50 hover:text-blue-700"
+                          }`}
+                        >
+                          {doc.title}
+                        </Link>
+                      );
+                    })}
+                  </>
+                )}
+                {!isCollapsed && category.kind === "grouped" && (
+                  <>
+                    {category.modules.map((mod) => {
+                      const key = moduleKey(category.category, mod.id);
+                      const modCollapsed = collapsed.has(key) && !query;
+                      return (
+                        <div key={mod.id} className="flex flex-col gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => toggle(key)}
+                            className="flex items-center gap-1 rounded-md py-1 pl-5 text-xs font-medium uppercase tracking-wide text-slate-500 hover:text-blue-700"
+                          >
+                            <ChevronDown
+                              className={`h-3 w-3 shrink-0 transition-transform ${
+                                modCollapsed ? "-rotate-90" : ""
+                              }`}
+                            />
+                            {mod.label}
+                          </button>
+                          {!modCollapsed &&
+                            mod.docs.map((doc) => {
+                              const href = `/docs/${category.category}/${mod.id}/${doc.slug}`;
+                              const active = pathname === href;
+                              return (
+                                <Link
+                                  key={doc.slug}
+                                  href={href}
+                                  className={`truncate rounded-md py-1 pl-9 pr-2 text-sm ${
+                                    active
+                                      ? "bg-slate-100 font-medium text-blue-700"
+                                      : "text-slate-600 hover:bg-slate-50 hover:text-blue-700"
+                                  }`}
+                                >
+                                  {doc.title}
+                                </Link>
+                              );
+                            })}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
             );
           })}

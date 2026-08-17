@@ -40,7 +40,7 @@ Ada 2 folder dokumentasi terpisah, buat 2 pembaca berbeda — jangan tercampur:
   brief.md                <- entry point, peta seluruh /docs
   /domain                 <- knowledge bisnis/akuntansi, versi naratif (padanan: memory/domain)
   /architecture            <- ERD & struktur data tiap modul, dijelasin non-teknis (tabel, bukan DDL/RPC/trigger)
-  /story                  <- skenario bisnis riil (1 perusahaan fiktif), dipakai berkelanjutan lintas fase roadmap
+  /tutorial                <- user guide operasional per task/workflow ("klik di mana, isi apa"), dibangun/diupdate lewat skill `/tutorial`
 ```
 
 `memory/brief.md` dan `docs/brief.md` masing-masing adalah peta lengkap foldernya sendiri — baca yang relevan tiap orientasi ulang. Detail isi tiap folder ada di kedua file itu, gak diduplikat di sini.
@@ -53,7 +53,7 @@ Berlaku di semua 4 lokasi (`docs/domain`, `docs/architecture`, `memory/domain`, 
 
 **`docs/domain/<modul>.md`** (naratif, TANPA nama RPC/tabel/kolom/migration):
 - `##` level modul: "Masalah yang Diselesaikan", "Konsep Inti" (entitas bisnis dasar yang dipakai semua submodule).
-- `###` per submodule, isi pakai **bold label** (bukan heading lebih dalam): **Cara Kerja** (alur bisnis + jurnal per skenario — akun yang didebit/dikredit, TANPA nominal konkret, itu ranah `docs/story/`), **Aturan Bisnis** (boleh/tidak boleh, bahasa bisnis murni), **Skenario** (poin ringkas), **Common Mistakes** (kesalahan pemahaman/pemakaian sisi bisnis, bukan bug teknis).
+- `###` per submodule, isi pakai **bold label** (bukan heading lebih dalam): **Cara Kerja** (alur bisnis + jurnal per skenario — akun yang didebit/dikredit, TANPA nominal konkret), **Aturan Bisnis** (boleh/tidak boleh, bahasa bisnis murni), **Skenario** (poin ringkas), **Common Mistakes** (kesalahan pemahaman/pemakaian sisi bisnis, bukan bug teknis).
 
 **`docs/architecture/<modul>-schema.md`** (teknis, semua konten dalam bentuk tabel markdown):
 - `##` level modul: "Peta Data (ERD) — Ringkasan Semua Tabel" (satu baris per tabel, mewakili SEMUA tabel modul itu).
@@ -72,15 +72,14 @@ Jangan generate ulang logic yang sudah tercatat di `memory/domain/*.md` atau `me
 1. **Item scope-debt yang statusnya berubah jadi "Selesai" → filenya dihapus dari `memory/scope-debt/`.** Jangan dibiarin numpuk sebagai arsip — riwayat keputusan sudah cukup terjejak di git history + migration file.
 2. **Referensi ke file scope-debt yang baru dihapus wajib dibersihkan** di `memory/domain/*.md`, `docs/domain/*.md`, dan `memory/architecture/data/*.md` yang nyebut nama filenya — hapus link matinya, ringkasan keputusan cukup tetap ada inline (biasanya sudah ada di prosa sekitarnya).
 
-### Rencana ke depan (belum dibangun)
+### Docs viewer di web app
 
-Isi `/docs` rencananya bakal direpresentasikan di web app-nya sendiri, di routing `/docs` — semacam halaman dokumentasi produk buat user, biar gak perlu buka file `.md` manual. Dicatat di sini biar gak ilang dari radar; belum ada implementasi.
+Isi `/docs` direpresentasikan juga di web app-nya sendiri, di routing `/docs` (`apps/erp/src/app/docs/`) — halaman dokumentasi produk buat user, biar gak perlu buka file `.md` manual. Kategori yang tampil (`domain`/`architecture`/`tutorial`) mengikuti persis nama subfolder `docs/` — nambah subfolder kategori baru di `docs/` wajib didaftarkan juga di `apps/erp/src/lib/docs/categories.ts` (+ icon di `apps/erp/src/app/docs/page.tsx`), kalau tidak subfolder itu gak akan muncul di viewer. Ada 2 bentuk kategori (`isGroupedCategory` di `categories.ts`): **flat** (`domain`/`architecture`, 1 file per modul, rute `/docs/<category>/<slug>`) dan **grouped** (`tutorial`, disegmentasi 2 level `<modul>/<task>.md`, rute `/docs/<category>/<module>/<slug>` — modul baru di dalam kategori grouped **otomatis** ke-detect dari nama subfolder, gak perlu daftar kode).
 
 ## Rules (proses wajib sebelum fitur baru)
 
 1. **Business/domain context** — jalankan siklus penuh "Cara Mengajar" di atas secara interaktif (business context → accounting logic → common mistake), bukan sekali jelas lalu lanjut. Terus gali & cek pemahaman user (tanya balik, kasih contoh angka, jawab "kenapa" dari sisi bisnis dulu) **sampai user beneran paham** konsepnya — jangan buru-buru ke dokumentasi apalagi kode.
    - **Baru setelah user paham** (bukan sebelum atau bersamaan): tulis knowledge yang udah dibangun ke `docs/domain/<nama-modul>.md` (naratif) + `memory/domain/<nama-modul>.md` (compact). Dokumen ini adalah HASIL dari pemahaman yang udah tercapai lewat diskusi, bukan draft yang ditulis duluan terus "dijelasin" belakangan.
-   - Setelah domain doc selesai, bangun `docs/story/<nama-modul>.md` — skenario bisnis konkret, lanjutan dari cerita perusahaan fiktif yang udah berjalan (`docs/story/company-profile.md` dan file story fase-fase sebelumnya) — sebelum lanjut ke tahap desain data.
 2. Rancang ERD — entity, relasi, FK, cardinality
 3. Cek kausalitas — dampak ke ERD/modul existing, apakah break sesuatu
 4. Baru lanjut: schema -> API -> UI

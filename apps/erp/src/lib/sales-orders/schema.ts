@@ -38,6 +38,25 @@ export type SalesOrder = {
 
 export type SoStatus = "OPEN" | "PARTIALLY_FULFILLED" | "FULLY_FULFILLED" | "CANCELLED";
 
+export type SalesOrderListRow = {
+  id: string;
+  customer_id: string;
+  so_date: string;
+  expected_date: string | null;
+  source_ref: string;
+  created_at: string;
+  cancelled_at: string | null;
+  status: SoStatus;
+  customers: { name: string };
+  sales_order_lines: {
+    id: string;
+    item_id: string;
+    qty_ordered: number;
+    unit_price: number;
+    items: { name: string; uom: string };
+  }[];
+};
+
 /**
  * Status derived: `cancelled_at` menang duluan (state terminal, lihat
  * cancel_sales_order di inventory-schema.md), baru dihitung dari

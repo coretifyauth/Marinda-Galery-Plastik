@@ -42,6 +42,7 @@ type ReturnLineInput = {
   qty_available: number;
   qty_returned: string;
   condition: "RESALABLE" | "DAMAGED";
+  unit_price: number | null;
 };
 type ReplacementLineInput = { item_id: string; name: string; uom: string; qty_remaining: number; qty: string };
 
@@ -151,6 +152,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
+  // Nominal retur otomatis dihitung dari qty x harga jual per item (sales_order_lines.unit_price),
+  // cuma valid kalau SEMUA baris yang qty-nya diisi punya harga itu -- item dari jalur jual
+  // langsung (walk-in, gak lewat Sales Order) gak punya harga per item di mana pun (lihat
+  // docs/domain/print-templates.md "Harga Per Item"), jadi baris kayak gitu tetap wajib input manual.
+  const returActiveLines = returLines.filter((l) => (Number(l.qty_returned) || 0) > 0);
+  const returAutoCalcEligible =
+    !!goodsIssue && returActiveLines.length > 0 && returActiveLines.every((l) => l.unit_price != null);
+  const returAutoAmount = returAutoCalcEligible
+    ? returActiveLines.reduce((sum, l) => sum + (l.unit_price ?? 0) * (Number(l.qty_returned) || 0), 0)
+    : null;
+  const effectiveReturAmount = returAutoCalcEligible ? returAutoAmount ?? 0 : Number(returAmount) || 0;
+
   const [showWriteoffForm, setShowWriteoffForm] = useState(false);
   const [writeoffDate, setWriteoffDate] = useState("");
   const [writeoffAmount, setWriteoffAmount] = useState("");
@@ -182,7 +195,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
       )
       .eq("id", id)
       .single();
@@ -344,6 +357,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             qty_available: l.qty_issued,
             qty_returned: "",
             condition: "RESALABLE" as const,
+            unit_price: l.sales_order_lines?.unit_price ?? null,
           }))
         : []
     );
@@ -370,7 +384,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const parsed = createArCreditNoteSchema.safeParse({
       invoice_id: invoice.id,
       credit_note_date: returDate,
-      amount: returAmount,
+      amount: effectiveReturAmount,
       contra_revenue_account_id: defaultAccounts["ar.contra_revenue"]?.id ?? "",
       receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
       lines: activeLines,
@@ -785,7 +799,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
   // Sama pola kayak returExcess di ap-bills/[id]/view.tsx -- excess cuma kejadian kalau
   // nominal retur ngelebihin outstanding invoice saat ini.
-  const returExcess = Math.max(0, (Number(returAmount) || 0) - Math.max(0, outstanding));
+  const returExcess = Math.max(0, effectiveReturAmount - Math.max(0, outstanding));
   const returHasResalable = returLines.some(
     (l) => l.condition === "RESALABLE" && (Number(l.qty_returned) || 0) > 0
   );
@@ -1672,15 +1686,24 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                 <Input id="retur_date" type="date" value={returDate} onChange={(e) => setReturDate(e.target.value)} />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_amount">Nominal Retur (kurangin piutang)</Label>
+                <Label htmlFor="retur_amount">
+                  Nominal Retur (kurangin piutang)
+                  {returAutoCalcEligible && " — otomatis dari qty x harga jual"}
+                </Label>
                 <Input
                   id="retur_amount"
                   type="number"
                   min="0"
                   placeholder="0"
-                  value={returAmount}
+                  value={returAutoCalcEligible ? effectiveReturAmount : returAmount}
+                  disabled={returAutoCalcEligible}
                   onChange={(e) => setReturAmount(e.target.value)}
                 />
+                {goodsIssue && !returAutoCalcEligible && returActiveLines.length > 0 && (
+                  <p className="text-xs text-slate-500">
+                    Ada item retur yang gak punya harga jual tercatat (bukan dari Sales Order) — isi nominal manual.
+                  </p>
+                )}
               </div>
               <LockedAccountField
                 label="Akun Retur & Potongan Penjualan (debit)"

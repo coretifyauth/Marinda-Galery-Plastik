@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import { createItemSchema, itemTypes, type Item } from "@/lib/items/schema";
+import { createItemSchema, itemTypes, type CreateItemInput } from "@/lib/items/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useItems } from "@/lib/items/queries";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { createItemCategorySchema, type ItemCategory } from "@/lib/item-categories/schema";
 import { createItemBrandSchema, type ItemBrand } from "@/lib/item-brands/schema";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -16,19 +19,39 @@ import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { Pagination } from "@/components/ui/pagination";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+
+// Input kecil buat baris filter di header tabel -- pola sama journal-entries/page.tsx.
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
+
+type ItemRef = { category_id: string | null; brand_id: string | null };
 
 export default function ItemsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [activeTab, setActiveTab] = useState("items");
-  const [items, setItems] = useState<Item[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [categories, setCategories] = useState<ItemCategory[]>([]);
   const [brands, setBrands] = useState<ItemBrand[]>([]);
+  // Lean, unpaginated list dipakai KHUSUS buat hitung "Jumlah Barang" di sub-tab
+  // Kategori/Brand -- item table utama sekarang dipaginasi, jadi gak bisa lagi hitung dari
+  // situ. Sub-tab kategori/brand sengaja gak disentuh (lihat catatan rollout), cuma sumber
+  // datanya dipindah ke fetch kecil ini.
+  const [itemRefs, setItemRefs] = useState<ItemRef[]>([]);
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [nameSearchInput, setNameSearchInput] = useState("");
+  const [itemTypeFilter, setItemTypeFilter] = useState<"" | (typeof itemTypes)[number]>("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const debouncedNameSearch = useDebouncedValue(nameSearchInput, 300);
 
   const [name, setName] = useState("");
   const [itemType, setItemType] = useState<(typeof itemTypes)[number]>("RAW_MATERIAL");
@@ -36,7 +59,6 @@ export default function ItemsPage() {
   const [categoryId, setCategoryId] = useState("");
   const [brandId, setBrandId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   const [categoryName, setCategoryName] = useState("");
@@ -51,25 +73,46 @@ export default function ItemsPage() {
 
   const inventoryRoleKey = itemType === "RAW_MATERIAL" ? "inventory.raw_material" : "inventory.finished_good";
 
-  const loadItems = useCallback(async () => {
-    const [{ data, error }, { data: units }, { data: cats }, { data: brs }] = await Promise.all([
-      supabase
-        .from("items")
-        .select("id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at")
-        .order("name"),
-      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
-      supabase.from("item_categories").select("id, name, archived_at").order("name"),
-      supabase.from("item_brands").select("id, name, archived_at").order("name"),
-    ]);
-    if (error) {
-      setLoadError(error.message);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
+  // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
+  const filterKey = `${debouncedNameSearch}|${itemTypeFilter}|${categoryFilter}|${brandFilter}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
+
+  const filters = {
+    nameSearch: debouncedNameSearch,
+    itemType: itemTypeFilter,
+    categoryId: categoryFilter,
+    brandId: brandFilter,
+    page,
+    pageSize,
+  };
+  const itemsQuery = useItems(filters);
+  const items = itemsQuery.data?.rows ?? [];
+  const total = itemsQuery.data?.total ?? 0;
+
+  // item_units: keyed off item id, dipakai buat nampilin harga satuan jual per item di baris
+  // tabel -- tetap fetch semua (gak difilter per-halaman), sama kayak sebelum rollout ini.
+  const loadAux = useCallback(async () => {
+    const [{ data: units }, { data: cats }, { data: brs }, { data: refs, error: refsError }] =
+      await Promise.all([
+        supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
+        supabase.from("item_categories").select("id, name, archived_at").order("name"),
+        supabase.from("item_brands").select("id, name, archived_at").order("name"),
+        supabase.from("items").select("category_id, brand_id"),
+      ]);
+    if (refsError) {
+      setLoadError(refsError.message);
       return;
     }
     setLoadError(null);
-    setItems((data ?? []) as Item[]);
     setItemUnits((units ?? []) as ItemUnit[]);
     setCategories((cats ?? []) as ItemCategory[]);
     setBrands((brs ?? []) as ItemBrand[]);
+    setItemRefs((refs ?? []) as ItemRef[]);
   }, []);
 
   const loadDefaultAccounts = useCallback(async () => {
@@ -89,15 +132,35 @@ export default function ItemsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadItems(), loadDefaultAccounts()]);
+      await Promise.all([loadAux(), loadDefaultAccounts()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems, loadDefaultAccounts]);
+  }, [router, loadAux, loadDefaultAccounts]);
 
-  async function handleCreate(e: FormEvent) {
+  const createItemMutation = useMutation({
+    mutationFn: async (input: CreateItemInput) => {
+      const { error } = await supabase.from("items").insert(input);
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: async () => {
+      setName("");
+      setItemType("RAW_MATERIAL");
+      setUom("");
+      setCategoryId("");
+      setBrandId("");
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["items"] });
+      await loadAux();
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan item");
+    },
+  });
+
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     const parsed = createItemSchema.safeParse({
@@ -112,20 +175,7 @@ export default function ItemsPage() {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
       return;
     }
-    setSubmitting(true);
-    const { error } = await supabase.from("items").insert(parsed.data);
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-    setName("");
-    setItemType("RAW_MATERIAL");
-    setUom("");
-    setCategoryId("");
-    setBrandId("");
-    setShowForm(false);
-    await loadItems();
+    createItemMutation.mutate(parsed.data);
   }
 
   async function handleCreateCategory(e: FormEvent) {
@@ -145,7 +195,7 @@ export default function ItemsPage() {
     }
     setCategoryName("");
     setShowCategoryForm(false);
-    await loadItems();
+    await loadAux();
   }
 
   async function handleCreateBrand(e: FormEvent) {
@@ -165,7 +215,7 @@ export default function ItemsPage() {
     }
     setBrandName("");
     setShowBrandForm(false);
-    await loadItems();
+    await loadAux();
   }
 
   if (checkingSession) {
@@ -178,7 +228,7 @@ export default function ItemsPage() {
   const activeBrands = brands.filter((b) => !b.archived_at);
 
   const tabs: TabDef[] = [
-    { key: "items", label: "Items", badge: items.length },
+    { key: "items", label: "Items", badge: total },
     { key: "categories", label: "Kategori", badge: categories.length },
     { key: "brands", label: "Brand", badge: brands.length },
   ];
@@ -194,6 +244,7 @@ export default function ItemsPage() {
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
+      {itemsQuery.error && <FormError>{(itemsQuery.error as Error).message}</FormError>}
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
@@ -203,11 +254,11 @@ export default function ItemsPage() {
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-black">Items</span>
               <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-                {items.length}
+                {total}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
-              <Button variant="toolbar" onClick={() => loadItems()}>
+              <Button variant="toolbar" onClick={() => itemsQuery.refetch()}>
                 Refresh
               </Button>
               {canWrite && (
@@ -227,6 +278,65 @@ export default function ItemsPage() {
                 <th className="px-4 py-2">Kategori</th>
                 <th className="px-4 py-2">Brand</th>
                 <th className="px-4 py-2">Akun Persediaan</th>
+              </tr>
+              <tr className="border-b border-slate-200 bg-slate-50/50">
+                <th className="px-4 py-1.5">
+                  <input
+                    type="text"
+                    placeholder="Cari nama..."
+                    value={nameSearchInput}
+                    onChange={(e) => setNameSearchInput(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                </th>
+                <th className="px-4 py-1.5">
+                  <select
+                    aria-label="Filter tipe"
+                    value={itemTypeFilter}
+                    onChange={(e) => setItemTypeFilter(e.target.value as "" | (typeof itemTypes)[number])}
+                    className={compactFilterInputClass}
+                  >
+                    <option value="">Semua Tipe</option>
+                    {itemTypes.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </th>
+                <th className="px-4 py-1.5" />
+                <th className="px-4 py-1.5" />
+                <th className="px-4 py-1.5">
+                  <select
+                    aria-label="Filter kategori"
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                    className={compactFilterInputClass}
+                  >
+                    <option value="">Semua Kategori</option>
+                    {activeCategories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </th>
+                <th className="px-4 py-1.5">
+                  <select
+                    aria-label="Filter brand"
+                    value={brandFilter}
+                    onChange={(e) => setBrandFilter(e.target.value)}
+                    className={compactFilterInputClass}
+                  >
+                    <option value="">Semua Brand</option>
+                    {activeBrands.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </th>
+                <th className="px-4 py-1.5" />
               </tr>
             </thead>
             <tbody>
@@ -264,12 +374,20 @@ export default function ItemsPage() {
               {items.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
-                    Belum ada item.
+                    {itemsQuery.isLoading ? "Memuat..." : "Belum ada item."}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={setPage}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageSizeChange={setPageSize}
+          />
         </div>
       )}
 
@@ -304,7 +422,7 @@ export default function ItemsPage() {
                   onClick={() => router.push(`/item-categories/${cat.id}`)}
                 >
                   <td className="px-4 py-2 font-medium text-black">{cat.name}</td>
-                  <td className="px-4 py-2">{items.filter((i) => i.category_id === cat.id).length}</td>
+                  <td className="px-4 py-2">{itemRefs.filter((i) => i.category_id === cat.id).length}</td>
                   <td className="px-4 py-2">
                     {cat.archived_at ? (
                       <span className="text-xs text-slate-400">Dinonaktifkan</span>
@@ -357,7 +475,7 @@ export default function ItemsPage() {
                   onClick={() => router.push(`/item-brands/${brand.id}`)}
                 >
                   <td className="px-4 py-2 font-medium text-black">{brand.name}</td>
-                  <td className="px-4 py-2">{items.filter((i) => i.brand_id === brand.id).length}</td>
+                  <td className="px-4 py-2">{itemRefs.filter((i) => i.brand_id === brand.id).length}</td>
                   <td className="px-4 py-2">
                     {brand.archived_at ? (
                       <span className="text-xs text-slate-400">Dinonaktifkan</span>
@@ -462,8 +580,8 @@ export default function ItemsPage() {
             <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
               Batal
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? "Menyimpan..." : "Simpan Item"}
+            <Button type="submit" disabled={createItemMutation.isPending}>
+              {createItemMutation.isPending ? "Menyimpan..." : "Simpan Item"}
             </Button>
           </div>
         </form>

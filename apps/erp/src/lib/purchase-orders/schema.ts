@@ -38,6 +38,25 @@ export type PurchaseOrder = {
 
 export type PoStatus = "OPEN" | "PARTIALLY_RECEIVED" | "FULLY_RECEIVED" | "CANCELLED";
 
+export type PurchaseOrderListRow = {
+  id: string;
+  supplier_id: string;
+  po_date: string;
+  expected_date: string | null;
+  source_ref: string;
+  created_at: string;
+  cancelled_at: string | null;
+  status: PoStatus;
+  suppliers: { name: string };
+  purchase_order_lines: {
+    id: string;
+    item_id: string;
+    qty_ordered: number;
+    unit_cost_expected: number;
+    items: { name: string; uom: string };
+  }[];
+};
+
 /**
  * Status derived: `cancelled_at` menang duluan (state terminal, lihat
  * cancel_purchase_order di inventory-schema.md), baru dihitung dari

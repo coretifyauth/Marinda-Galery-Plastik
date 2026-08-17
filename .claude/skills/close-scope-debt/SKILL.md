@@ -28,7 +28,3 @@ Operasionalisasi rule di `memory/brief.md` / `AGENTS.md`: item scope-debt yang s
    - Edit tiap file yang mereferensikannya untuk menghapus link mati (pola: hapus klausa `+ \`memory/scope-debt/nama-file.md\`` dari kalimat yang menyebutnya, jangan hapus seluruh kalimat)
 
 5. **Update index** — hapus entry file itu dari daftar scope-debt "masih Ditunda" di `memory/brief.md`, tambahkan catatan singkat kalau perlu (pola: lihat bagaimana `fixed-assets-akun-kontra-asset.md` dicatat setelah dihapus).
-
-## Referensi implementasi sebelumnya
-
-Proses ini sudah pernah dijalankan manual untuk `fixed-assets-akun-kontra-asset.md`. Cek histori git di `memory/domain/chart-of-accounts.md`, `memory/domain/fixed-assets.md`, `docs/domain/chart-of-accounts.md`, `docs/domain/fixed-assets.md`, dan `memory/architecture/data/fixed-assets-schema.md` untuk lihat pola persisnya kalau ragu.

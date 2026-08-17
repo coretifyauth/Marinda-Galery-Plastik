@@ -28,7 +28,6 @@ export type ApBill = {
   ap_payments: { amount: number }[];
   ap_credit_notes?: { amount: number; ap_return_credits?: { amount: number }[] }[];
   ap_deposit_applications?: { amount: number }[];
-  goods_receipt_notes?: { id: string }[];
 };
 
 export type ApBillOrigin = "grn" | "langsung";
@@ -36,10 +35,25 @@ export type ApBillOrigin = "grn" | "langsung";
 /** Bill lahir dari PO -> Goods Receipt (`goods_receipt_notes.bill_id` nunjuk balik ke bill ini) vs
  * bill langsung dicatat manual lewat /ap-bills (gak ada goods_receipt_notes sama sekali, biasanya
  * beban non-persediaan atau nota yang gak lewat PO). 0 vs 1 baris `goods_receipt_notes` per bill,
- * gak pernah lebih dari 1 -- tiap create_goods_receipt call bikin bill barunya sendiri. */
-export function billOrigin(bill: Pick<ApBill, "goods_receipt_notes">): ApBillOrigin {
-  return (bill.goods_receipt_notes ?? []).length > 0 ? "grn" : "langsung";
-}
+ * gak pernah lebih dari 1 -- tiap create_goods_receipt call bikin bill barunya sendiri. Dihitung
+ * server-side lewat kolom `origin` di `ap_bills_with_status` (migration `0038`), bukan lagi
+ * fungsi client -- lihat `ApBillListRow`. */
+export type ApBillListRow = {
+  id: string;
+  supplier_id: string;
+  bill_date: string;
+  due_date: string;
+  description: string | null;
+  source_ref: string;
+  supplier_document_ref: string | null;
+  amount: number;
+  journal_entry_id: string;
+  created_at: string;
+  outstanding: number;
+  status: ApBillStatus;
+  origin: ApBillOrigin;
+  suppliers: { name: string };
+};
 
 export type ApBillStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
 

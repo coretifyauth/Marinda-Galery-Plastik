@@ -38,7 +38,7 @@ export function DocReaderView({
       <p className="mb-6 text-sm text-slate-400">
         Terakhir diubah {formattedDate} · {minutes} menit baca
       </p>
-      <MarkdownContent raw={raw} />
+      <MarkdownContent raw={raw} category={category} />
     </div>
   );
 }

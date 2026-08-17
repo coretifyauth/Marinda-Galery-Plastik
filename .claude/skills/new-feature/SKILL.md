@@ -20,7 +20,6 @@ Ini bukan satu langkah, tapi 3 sub-langkah berurutan, gak boleh diloncat:
 **1c. Baru setelah user paham** — bukan sebelum, bukan bersamaan — tulis knowledge yang udah dibangun ke:
    - `docs/domain/<nama-modul>.md` (naratif, hasil dari pemahaman yang udah tercapai lewat diskusi — bukan draft yang ditulis duluan lalu "dijelasin" belakangan)
    - `memory/domain/<nama-modul>.md` (compact, padanan teknis)
-   - `docs/story/<nama-modul>.md` (skenario bisnis konkret, lanjutan cerita perusahaan fiktif yang sudah berjalan — `docs/story/company-profile.md` + file story fase sebelumnya)
 
    Ikuti struktur module → submodule baku (`AGENTS.md` > "Format Baku: Struktur Module → Submodule") — entitas dasar masuk "Konsep Inti", tiap fitur tambahan (retur, DP, dst) jadi submodule `###` sendiri dengan **Cara Kerja**/**Aturan Bisnis**/**Skenario**/**Common Mistakes**. Kalau modul ini nanti juga dapet `docs/architecture/<nama-modul>-schema.md` + `memory/architecture/data/<nama-modul>-schema.md`, posisi submodule di sana WAJIB sama urutan/pengelompokannya sama yang di `docs/domain`.
 

@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
-import { createApBillSchema, billStatus, billOrigin, type ApBill } from "@/lib/ap-bills/schema";
+import { createApBillSchema, type ApBillOrigin, type ApBillStatus, type CreateApBillInput } from "@/lib/ap-bills/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useApBills } from "@/lib/ap-bills/queries";
 import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
 import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
 import {
@@ -14,6 +16,7 @@ import {
   type ChargeLineInput,
 } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -23,7 +26,14 @@ import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { Modal } from "@/components/ui/modal";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
+import { Pagination } from "@/components/ui/pagination";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+
+// Input kecil buat baris filter di header tabel -- Input/Select biasa terlalu besar buat
+// muat di dalam <th>, jadi dibikin versi compact lokal (pola sama journal-entries/page.tsx).
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
+const compactFilterSelectClass = compactFilterInputClass;
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -32,14 +42,34 @@ const statusStyle: Record<string, string> = {
   dibatalkan: "bg-slate-100 text-slate-400 line-through",
 };
 
+const originLabel: Record<string, string> = {
+  grn: "Dari GRN",
+  langsung: "Bill Langsung",
+};
+
+const originStyle: Record<string, string> = {
+  grn: "bg-blue-50 text-blue-700",
+  langsung: "bg-slate-100 text-slate-600",
+};
+
 export default function ApBillsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [bills, setBills] = useState<ApBill[]>([]);
-  const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [refSearchInput, setRefSearchInput] = useState("");
+  const [supplierDocRefSearchInput, setSupplierDocRefSearchInput] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ApBillStatus | "">("");
+  const [originFilter, setOriginFilter] = useState<ApBillOrigin | "">("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
+  const debouncedSupplierDocRefSearch = useDebouncedValue(supplierDocRefSearchInput, 300);
 
   const [supplierId, setSupplierId] = useState("");
   const [billDate, setBillDate] = useState("");
@@ -53,35 +83,33 @@ export default function ApBillsPage() {
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   const activeExpenseCategories = expenseCategories.filter((c) => !c.archived_at);
 
-  const loadReversedEntryIds = useCallback(async () => {
-    const { data } = await supabase
-      .from("journal_entries")
-      .select("reverses_entry_id")
-      .not("reverses_entry_id", "is", null);
-    setReversedEntryIds(
-      new Set(((data ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
-    );
-  }, []);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
+  // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
+  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${debouncedSupplierDocRefSearch}|${supplierFilter}|${statusFilter}|${originFilter}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
 
-  const loadBills = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("ap_bills")
-      .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount), goods_receipt_notes(id)"
-      )
-      .order("bill_date", { ascending: false });
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setBills((data ?? []) as unknown as ApBill[]);
-  }, []);
+  const filters = {
+    dateFrom,
+    dateTo,
+    sourceRefSearch: debouncedRefSearch,
+    supplierDocumentRefSearch: debouncedSupplierDocRefSearch,
+    supplierId: supplierFilter,
+    status: statusFilter,
+    origin: originFilter,
+    page,
+    pageSize,
+  };
+  const billsQuery = useApBills(filters);
+  const bills = billsQuery.data?.rows ?? [];
+  const total = billsQuery.data?.total ?? 0;
 
   const loadSuppliers = useCallback(async () => {
     const { data } = await supabase
@@ -123,8 +151,6 @@ export default function ApBillsPage() {
       await Promise.all([
         loadSuppliers(),
         loadDefaultAccounts(),
-        loadBills(),
-        loadReversedEntryIds(),
         loadExpenseCategories(),
         loadTaxSettings(),
       ]);
@@ -133,9 +159,41 @@ export default function ApBillsPage() {
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadDefaultAccounts, loadBills, loadReversedEntryIds, loadExpenseCategories, loadTaxSettings]);
+  }, [router, loadSuppliers, loadDefaultAccounts, loadExpenseCategories, loadTaxSettings]);
 
-  async function handleCreate(e: FormEvent) {
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateApBillInput) => {
+      const sourceRef = await generateDocumentNumber("ap_bills");
+      const { error } = await supabase.rpc("create_ap_bill", {
+        p_supplier_id: input.supplier_id,
+        p_bill_date: input.bill_date,
+        p_description: input.description || null,
+        p_source_ref: sourceRef,
+        p_debit_lines: input.debit_lines,
+        p_payable_account_id: input.payable_account_id,
+        p_apply_tax: input.apply_tax,
+        p_supplier_document_ref: input.supplier_document_ref || null,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      setSupplierId("");
+      setBillDate("");
+      setDescription("");
+      setSupplierDocumentRef("");
+      setAmount("");
+      setDebitCategoryId("");
+      setExtraLines([]);
+      setApplyTax(false);
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["ap_bills"] });
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan bill");
+    },
+  });
+
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -159,41 +217,7 @@ export default function ApBillsPage() {
       return;
     }
 
-    setSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ap_bills");
-    } catch (err) {
-      setSubmitting(false);
-      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_ap_bill", {
-      p_supplier_id: parsed.data.supplier_id,
-      p_bill_date: parsed.data.bill_date,
-      p_description: parsed.data.description || null,
-      p_source_ref: sourceRef,
-      p_debit_lines: parsed.data.debit_lines,
-      p_payable_account_id: parsed.data.payable_account_id,
-      p_apply_tax: parsed.data.apply_tax,
-      p_supplier_document_ref: parsed.data.supplier_document_ref || null,
-    });
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-
-    setSupplierId("");
-    setBillDate("");
-    setDescription("");
-    setSupplierDocumentRef("");
-    setAmount("");
-    setDebitCategoryId("");
-    setExtraLines([]);
-    setApplyTax(false);
-    setShowForm(false);
-    await loadBills();
+    createMutation.mutate(parsed.data);
   }
 
   if (checkingSession) {
@@ -212,18 +236,18 @@ export default function ApBillsPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
+      {billsQuery.error && <FormError>{(billsQuery.error as Error).message}</FormError>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-black">AP Bills</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {bills.length}
+              {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => loadBills()}>
+            <Button variant="toolbar" onClick={() => billsQuery.refetch()}>
               Refresh
             </Button>
             {canWrite && (
@@ -245,11 +269,92 @@ export default function ApBillsPage() {
               <th className="px-4 py-2 text-right">Outstanding</th>
               <th className="px-4 py-2">Status</th>
             </tr>
+            <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter supplier"
+                  value={supplierFilter}
+                  onChange={(e) => setSupplierFilter(e.target.value)}
+                  className={compactFilterSelectClass}
+                >
+                  <option value="">Semua supplier</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              <th className="px-4 py-1.5">
+                <div className="flex gap-1">
+                  <input
+                    type="date"
+                    aria-label="Dari tanggal"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                  <input
+                    type="date"
+                    aria-label="Sampai tanggal"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                </div>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <div className="flex gap-1">
+                  <input
+                    type="text"
+                    placeholder="Cari source ref..."
+                    value={refSearchInput}
+                    onChange={(e) => setRefSearchInput(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Cari nota supplier..."
+                    value={supplierDocRefSearchInput}
+                    onChange={(e) => setSupplierDocRefSearchInput(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                </div>
+              </th>
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter tipe"
+                  value={originFilter}
+                  onChange={(e) => setOriginFilter(e.target.value as ApBillOrigin | "")}
+                  className={compactFilterSelectClass}
+                >
+                  <option value="">Semua tipe</option>
+                  <option value="grn">{originLabel.grn}</option>
+                  <option value="langsung">{originLabel.langsung}</option>
+                </select>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter status"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as ApBillStatus | "")}
+                  className={compactFilterSelectClass}
+                >
+                  <option value="">Semua status</option>
+                  <option value="belum">Belum</option>
+                  <option value="sebagian">Sebagian</option>
+                  <option value="lunas">Lunas</option>
+                  <option value="dibatalkan">Dibatalkan</option>
+                </select>
+              </th>
+            </tr>
           </thead>
           <tbody>
             {bills.map((bill) => {
-              const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
-              const { status, outstanding } = billStatus(bill, isCancelled);
+              const { status, outstanding } = bill;
               const overdue =
                 status !== "lunas" && status !== "dibatalkan" && bill.due_date < new Date().toISOString().slice(0, 10);
               return (
@@ -277,13 +382,9 @@ export default function ApBillsPage() {
                     )}
                   </td>
                   <td className="px-4 py-2">
-                    {billOrigin(bill) === "grn" ? (
-                      <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">Dari GRN</span>
-                    ) : (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                        Bill Langsung
-                      </span>
-                    )}
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${originStyle[bill.origin]}`}>
+                      {originLabel[bill.origin]}
+                    </span>
                   </td>
                   <td className="px-4 py-2 text-right font-mono">
                     {bill.amount.toLocaleString("id-ID")}
@@ -302,12 +403,20 @@ export default function ApBillsPage() {
             {bills.length === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada bill.
+                  {billsQuery.isLoading ? "Memuat..." : "Belum ada bill."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah AP Bill" maxWidth="max-w-2xl">
@@ -433,8 +542,8 @@ export default function ApBillsPage() {
             <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
               Batal
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? "Menyimpan..." : "Simpan Bill"}
+            <Button type="submit" disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Menyimpan..." : "Simpan Bill"}
             </Button>
           </div>
         </form>

@@ -20,7 +20,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`. Struktur m
 - **Cancellation guard**: `cancel_ap_bill` nolak kalau `ap_payments` bill itu udah ≥1 baris — **diterapkan dari awal** (beda dari AR yang nambah guard ini belakangan setelah kebukti perlu).
 - **Bayar gabungan gak didukung**: `record_ap_payment` cuma nerima 1 `p_bill_id` — gak ada lagi jalur "1 payment nutup beberapa bill sekaligus" sejak `0011`.
 
-**Skenario referensi** (detail angka: `docs/story/accounts-payable.md`)
+**Skenario referensi**
 
 | # | Kasus | Beda dari AR |
 |---|---|---|

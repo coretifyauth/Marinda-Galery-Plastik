@@ -126,6 +126,8 @@ Menutup `memory/scope-debt/compound-transactional-entries.md` + `memory/scope-de
 
 Gak ada tabel baru. Status "dibatalkan" derived dari `exists (select 1 from journal_entries where reverses_entry_id = pos_sales.revenue_journal_entry_id)` — pola sama `ar_invoices` (`ar-schema.md`).
 
+**`pos_sales_with_status` view — migration `0036_pos_sale_status_view.sql`**: nutup scope-debt filter status di list `/pos-sales`. Expose `status` (`normal`/`dibatalkan`, dari exists-check di atas) + `total` (SUM `pos_sale_lines.line_amount`) biar list page bisa filter server-side dan gak perlu lagi query `journal_entries.reverses_entry_id` terpisah + embed `pos_sale_lines` cuma buat di-reduce ulang di client. Pola sama family `*_with_status` lain (`ap_deposits_with_status` 0031, dst).
+
 **Interaksi Antar Tabel**
 
 `void_pos_sale` nyentuh 2 `journal_entries` (bukan 1 kayak `cancel_ar_invoice`) karena `pos_sales` dari awal emang selalu punya 2 jurnal terpisah. Juga nyentuh `inventory_balances` langsung (update manual, bukan lewat `consume_weighted_average`) — beda dari RPC lain yang cuma baca/kurangin stok, ini satu-satunya RPC POS yang NAMBAH `qty_on_hand` balik.

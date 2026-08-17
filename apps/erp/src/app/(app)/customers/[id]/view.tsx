@@ -62,7 +62,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       supabase
         .from("ar_invoices")
         .select(
-          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
         )
         .eq("customer_id", id)
         .order("invoice_date", { ascending: false }),

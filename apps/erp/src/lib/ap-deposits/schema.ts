@@ -71,6 +71,19 @@ export type ApDeposit = {
 
 export type ApDepositStatus = "belum_dipakai" | "sebagian" | "selesai";
 
+export type ApDepositListRow = {
+  id: string;
+  supplier_id: string;
+  deposit_date: string;
+  source_ref: string;
+  amount: number;
+  journal_entry_id: string;
+  created_at: string;
+  remaining: number;
+  status: ApDepositStatus;
+  suppliers: { name: string };
+};
+
 /**
  * Status derived dari SUM(applications aktif) + SUM(refunds) + SUM(forfeitures) vs amount —
  * mirror persis depositStatus() di ar-deposits/schema.ts (arah kebalik: asset ke supplier,

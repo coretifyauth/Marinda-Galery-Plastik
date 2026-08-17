@@ -22,7 +22,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/fixed-assets.md`. Struktur modul
 - **Published-lock**: begitu aset punya minimal 1 baris penyusutan, field penentu nilai (nilai perolehan, residu, umur manfaat, metode, tarif, 3 kolom akun) terkunci — nama & status arsip tetap bebas diubah kapan pun.
 - **Disposal aset belum ada mekanismenya** — aset tercatat konstan sampai beneran dijual/dibuang, tapi belum ada RPC/tabel buat mencatat pelepasan & laba-rugi dari situ. Belum ada scope-debt file buat ini (belum digali lebih lanjut).
 
-**Skenario referensi** (detail angka: `docs/story/fixed-assets.md`)
+**Skenario referensi**
 
 | # | Kasus | Pola |
 |---|---|---|

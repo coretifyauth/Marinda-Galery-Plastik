@@ -2,7 +2,7 @@
 
 ## Masalah yang Diselesaikan
 
-Semua fase sebelumnya (COA → General Ledger → AR → AP → Inventory → Fixed Assets) itu **infrastruktur pengumpulan data** — tiap transaksi dicatat rapi sebagai baris jurnal berpasangan (debit/kredit). Tapi bank yang mau ngasih pinjaman modal ke pemilik usaha (motivasi utama, `docs/story/company-profile.md`) gak mau baca ratusan baris jurnal mentah. Mereka minta **4 laporan standar**: Trial Balance, Income Statement (Laba Rugi), Balance Sheet (Neraca), Cash Flow Statement (Arus Kas).
+Semua fase sebelumnya (COA → General Ledger → AR → AP → Inventory → Fixed Assets) itu **infrastruktur pengumpulan data** — tiap transaksi dicatat rapi sebagai baris jurnal berpasangan (debit/kredit). Tapi bank yang mau ngasih pinjaman modal ke pemilik usaha (motivasi utama) gak mau baca ratusan baris jurnal mentah. Mereka minta **4 laporan standar**: Trial Balance, Income Statement (Laba Rugi), Balance Sheet (Neraca), Cash Flow Statement (Arus Kas).
 
 Modul ini beda dari semua modul sebelumnya: **gak ada catatan baru, gak ada transaksi baru dicatat.** Financial Reports murni **merangkum ulang (read-only)** data yang udah ada sejak Fase 2 — jawab "jadi gimana kondisi bisnisnya sekarang", bukan "apa yang terjadi".
 
@@ -24,7 +24,7 @@ Modul ini beda dari semua modul sebelumnya: **gak ada catatan baru, gak ada tran
   ```
   Kenapa Income Statement harus duluan dari Balance Sheet: Ekuitas = Modal Pemilik + Laba Ditahan, dan Laba Ditahan adalah hasil closing dari Laba Bersih Income Statement. Tanpa itu, Neraca gak bakal balance (Ekuitas kurang komponen). Kenapa Cash Flow butuh 2 Trial Balance, bukan 1: baris "kenaikan Piutang" cuma bisa dihitung dari Piutang akhir periode dikurangi Piutang awal periode — ini satu-satunya laporan yang butuh data dari **2 titik waktu**, bukan cuma 1 titik kayak 3 laporan lainnya.
 - **Kalau data-nya real, laporan-laporan ini PASTI konsisten satu sama lain** — karena semuanya berakar dari pencatatan berpasangan (debit=kredit) yang udah dijaga sejak awal. Kalau ketauan gak konsisten (Neraca gak balance, Kas hasil Cash Flow gak cocok saldo Kas beneran), itu ARTINYA ada bug di logic laporan turunan — bukan toleransi pembulatan, dan bukan berarti data mentahnya salah.
-- Ada 1 skenario lengkap tervalidasi (beberapa transaksi 1 periode, keempat laporan dicocokkan satu sama lain sampai closing) yang dipakai buat ngebuktiin keempat laporan ini emang selalu konsisten — detail angka lengkapnya (angka riil, bukan ilustrasi) ada di `docs/story/financial-reports.md`.
+- Ada 1 skenario lengkap yang pernah divalidasi (beberapa transaksi 1 periode, keempat laporan dicocokkan satu sama lain sampai closing) buat mastiin keempat laporan ini emang selalu konsisten.
 
 ### Trial Balance (Neraca Saldo)
 

@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { BomHeader } from "@/lib/bom/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
-import { createProductionOrderSchema, type ProductionOrder } from "@/lib/production-orders/schema";
+import { createProductionOrderSchema, type CreateProductionOrderInput } from "@/lib/production-orders/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useProductionOrders } from "@/lib/production-orders/queries";
 import { generateDocumentNumber } from "@/lib/document-numbers";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -17,41 +20,58 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
+import { Pagination } from "@/components/ui/pagination";
+
+// Input kecil buat baris filter di header tabel -- pola sama kayak journal-entries/page.tsx.
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
 
 export default function ProductionOrdersPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [boms, setBoms] = useState<BomHeader[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
-  const [orders, setOrders] = useState<ProductionOrder[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [refSearchInput, setRefSearchInput] = useState("");
+  const [bomFilter, setBomFilter] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
 
   const [bomHeaderId, setBomHeaderId] = useState("");
   const [qtyProduced, setQtyProduced] = useState("");
   const [productionDate, setProductionDate] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   const activeBoms = boms.filter((b) => b.is_active);
   const selectedBom = boms.find((b) => b.id === bomHeaderId);
 
-  const loadOrders = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("production_orders")
-      .select(
-        "id, bom_header_id, qty_produced, production_date, source_ref, journal_entry_id, created_at, bom_headers(items(name)), production_order_lines(id, item_id, qty_consumed, total_cost, items(name, uom))"
-      )
-      .order("production_date", { ascending: false });
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setOrders((data ?? []) as unknown as ProductionOrder[]);
-  }, []);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
+  // lihat journal-entries/page.tsx).
+  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${bomFilter}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
+
+  const filters = {
+    dateFrom,
+    dateTo,
+    sourceRefSearch: debouncedRefSearch,
+    bomHeaderId: bomFilter,
+    page,
+    pageSize,
+  };
+  const ordersQuery = useProductionOrders(filters);
+  const orders = ordersQuery.data?.rows ?? [];
+  const total = ordersQuery.data?.total ?? 0;
 
   const loadBoms = useCallback(async () => {
     const { data } = await supabase
@@ -87,15 +107,40 @@ export default function ProductionOrdersPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadBoms(), loadItemUnits(), loadDefaultAccounts(), loadOrders()]);
+      await Promise.all([loadBoms(), loadItemUnits(), loadDefaultAccounts()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadBoms, loadItemUnits, loadDefaultAccounts, loadOrders]);
+  }, [router, loadBoms, loadItemUnits, loadDefaultAccounts]);
 
-  async function handleCreate(e: FormEvent) {
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateProductionOrderInput) => {
+      const sourceRef = await generateDocumentNumber("production_orders");
+      const { error } = await supabase.rpc("create_production_order", {
+        p_bom_header_id: input.bom_header_id,
+        p_qty_produced: input.qty_produced,
+        p_production_date: input.production_date,
+        p_source_ref: sourceRef,
+        p_finished_good_debit_account_id: input.finished_good_debit_account_id,
+        p_raw_material_credit_account_id: input.raw_material_credit_account_id,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      setBomHeaderId("");
+      setQtyProduced("");
+      setProductionDate("");
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["production_orders"] });
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan production order");
+    },
+  });
+
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -111,34 +156,7 @@ export default function ProductionOrdersPage() {
       return;
     }
 
-    setSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("production_orders");
-    } catch (err) {
-      setSubmitting(false);
-      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_production_order", {
-      p_bom_header_id: parsed.data.bom_header_id,
-      p_qty_produced: parsed.data.qty_produced,
-      p_production_date: parsed.data.production_date,
-      p_source_ref: sourceRef,
-      p_finished_good_debit_account_id: parsed.data.finished_good_debit_account_id,
-      p_raw_material_credit_account_id: parsed.data.raw_material_credit_account_id,
-    });
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-
-    setBomHeaderId("");
-    setQtyProduced("");
-    setProductionDate("");
-    setShowForm(false);
-    await loadOrders();
+    createMutation.mutate(parsed.data);
   }
 
   if (checkingSession) {
@@ -157,18 +175,20 @@ export default function ProductionOrdersPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
+      {ordersQuery.error && (
+        <FormError>{(ordersQuery.error as Error).message}</FormError>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-black">Production Orders</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {orders.length}
+              {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => loadOrders()}>
+            <Button variant="toolbar" onClick={() => ordersQuery.refetch()}>
               Refresh
             </Button>
             {canWrite && (
@@ -187,6 +207,53 @@ export default function ProductionOrdersPage() {
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Konsumsi Bahan Baku</th>
               <th className="px-4 py-2 text-right">Total Biaya</th>
+            </tr>
+            <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5">
+                <input
+                  type="text"
+                  placeholder="Cari source ref..."
+                  value={refSearchInput}
+                  onChange={(e) => setRefSearchInput(e.target.value)}
+                  className={compactFilterInputClass}
+                />
+              </th>
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter resep (BOM)"
+                  value={bomFilter}
+                  onChange={(e) => setBomFilter(e.target.value)}
+                  className={compactFilterInputClass}
+                >
+                  <option value="">Semua barang jadi</option>
+                  {boms.map((bom) => (
+                    <option key={bom.id} value={bom.id}>
+                      {bom.items.name}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <div className="flex gap-1">
+                  <input
+                    type="date"
+                    aria-label="Dari tanggal"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                  <input
+                    type="date"
+                    aria-label="Sampai tanggal"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                </div>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -218,12 +285,20 @@ export default function ProductionOrdersPage() {
             {orders.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada production order.
+                  {ordersQuery.isLoading ? "Memuat..." : "Belum ada production order."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Jalankan Produksi" maxWidth="max-w-2xl">
@@ -313,8 +388,8 @@ export default function ProductionOrdersPage() {
               <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
                 Batal
               </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Memproses..." : "Jalankan Produksi"}
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Memproses..." : "Jalankan Produksi"}
               </Button>
             </div>
         </form>

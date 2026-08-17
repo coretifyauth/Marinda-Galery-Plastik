@@ -10,14 +10,15 @@ Peta seluruh `/docs`. Ini adalah knowledge base kamu — media informasi bisnis/
   /domain                 <- knowledge bisnis/akuntansi, naratif, buat belajar
   /architecture
     /data                 <- ERD & struktur data tiap modul, dijelasin non-teknis (tabel, bukan DDL)
-  /story                  <- skenario bisnis riil (1 perusahaan fiktif, Toko Plastik Makmur Jaya), dipakai berkelanjutan lintas fase roadmap
+  /tutorial                <- user guide operasional per task/workflow ("klik di mana, isi apa")
+    /<modul>               <- 1 subfolder per modul (chart-of-accounts, general-ledger, accounts-receivable, dst — lihat isi di bawah), dibangun/diupdate lewat skill `/tutorial`
 ```
 
-Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor. Nama file sama antara `docs/domain/*.md` dan `memory/domain/*.md` (padanan naratif vs compact — lihat `memory/brief.md` kalau butuh versi teknis/RPC/trigger).
+Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor. Nama file sama antara `docs/domain/*.md` dan `memory/domain/*.md` (padanan naratif vs compact — lihat `memory/brief.md` kalau butuh versi teknis/RPC/trigger). `docs/tutorial/` beda pola — disegmentasi 2 level (`<modul>/<task>.md`), bukan 1 file per modul kayak `domain`/`architecture`, karena granularity-nya per task/workflow, bukan per modul (lihat `.claude/skills/tutorial/SKILL.md`).
 
 ## Docs viewer di web app
 
-Seluruh isi `/docs` direpresentasikan juga di web app-nya sendiri, di routing `/docs` (`src/app/docs/`) — halaman dokumentasi produk biar gak perlu buka file `.md` manual. Baca file langsung dari folder ini lewat `src/lib/docs/fs.ts` (server-side, gak ada duplikasi konten), render markdown (termasuk fence ```mermaid) lewat `src/components/docs/`. Gerbang login sama seperti halaman ERP lain (`useRequireAuth`).
+Seluruh isi `/docs` direpresentasikan juga di web app-nya sendiri, di routing `/docs` (`apps/erp/src/app/docs/`) — halaman dokumentasi produk biar gak perlu buka file `.md` manual. Baca file langsung dari folder ini lewat `apps/erp/src/lib/docs/fs.ts` (server-side, gak ada duplikasi konten), render markdown (termasuk fence ```mermaid dan cross-reference link relatif antar tutorial) lewat `apps/erp/src/components/docs/`. Gerbang login sama seperti halaman ERP lain (`useRequireAuth`). Kategori `domain`/`architecture` flat (`/docs/<category>/<slug>`); kategori `tutorial` grouped per modul (`/docs/tutorial/<modul>/<slug>`) — daftar kategori mana yang grouped ada di `apps/erp/src/lib/docs/categories.ts` (`isGroupedCategory`), bukan hardcode per halaman.
 
 ## Isi saat ini
 
@@ -38,18 +39,18 @@ ERD & struktur data tiap modul, dalam bahasa non-teknis + tabel (bukan DDL menta
 - `document-numbering-schema.md` — 2 tabel baru (Daftar Jenis Dokumen, Penghitung Nomor) + 1 kolom baru di AP Bill (Nomor Nota Supplier).
 - `default-account-settings-schema.md` — 2 tabel baru (Default Akun, Preset Akun Aset Tetap), mengganti dropdown akun bebas di hampir semua form transaksi dengan field otomatis terkunci — dipicu bug nyata (salah pilih akun di panel Retur AP Bill).
 
-### story/
-Semua file di bawah — kecuali `company-profile.md` — ditulis sebagai **tutorial klik-per-klik di UI beneran** (menu sidebar, field, tombol, hasil yang harus muncul), bukan cuma cerita di atas kertas. Satu bisnis fiktif dipakai konsisten lintas file: **Toko Plastik Makmur Jaya**.
-- `company-profile.md` — profil bisnis Toko Plastik Makmur Jaya (retail + grosir perlengkapan plastik, Surabaya, dirintis Pak Herman 2019), pemain: `admin` Pak Herman & kasir `cashier` Mbak Rina (POS-only), 3 pelanggan grosir (Toko Kelontong Sumber Rejeki/Warung Bu Siti/Toko Serba Ada Barokah), 2 supplier (PT Plastindo Jaya/CV Sumber Plastik), 8 item termasuk barang rakitan BOM (Paket Alat Makan), 2 aset tetap (Mobil Pickup Antar Barang/Rak Display Toko) — konteks & motivasi dipakai berulang tiap fase roadmap.
-- `chart-of-accounts.md` — COA nyata Pak Herman (Kas header + Kas Toko/Kas di Bank, Pendapatan Penjualan Toko vs Grosir dipisah, dst) + tutorial `/accounts`: filter kategori, tambah akun leaf/child (normal_balance derived otomatis), published-lock banner, tab Ledger, leaf-only posting, kenapa `is_contra` gak ada di form create.
-- `general-ledger.md` — 6 transaksi Agustus 2026 (setoran modal, jual retail tunai, kirim ke Sumber Rejeki net-30, beli stok dari Plastindo Jaya, gaji Mbak Rina, cicilan mobil pickup 3-baris compound), tutorial input manual `/journal-entries` (indikator balance, compound baris) + `/general-ledger` standalone, saldo akhir Kas di Bank Rp10.800.000. Gap dicatat: RPC reversal ada tapi tombol trigger di UI belum ada (tampilan badge reversal sudah jalan).
-- `accounts-receivable.md` — 3 customer grosir (Sumber Rejeki/Bu Siti/Serba Ada Barokah), 10 skenario: invoice kompunding + PPN Keluaran, payment cicilan + anti-overpay, aging & credit hold, retur jalur full (kondisi Layak Jual/Rusak) + penggantian barang garansi, retur financial-only → AR Return Credit + refund tunai, write-off piutang tak tertagih, DP diterima (diterapkan penuh, atau hangus), invoice dibatalkan.
-- `accounts-payable.md` — mirror AR dari sisi utang: 2 supplier (Plastindo Jaya net-30/Sumber Plastik net-21), bill kompunding + PPN Masukan, payment cicilan (1 bill per payment), aging kebalik (kita yang telat), retur Opsi A (kurangi utang)/Opsi B (tukar barang)/Opsi C (tulis-jadi-beban), AP Return Credit refund tunai, DP dibayar (diselesaikan campuran: terapkan + refund + hangus), bill dibatalkan.
-- `inventory.md` — timeline Agustus–September 2026, 8 item (7 RAW_MATERIAL dari Plastindo Jaya/Sumber Plastik + 1 FINISHED_GOOD rakitan "Paket Alat Makan"), semuanya Weighted Average, alur PO→GRN (termasuk kenaikan harga & recalculation avg cost), BOM 3 bahan, 2 Production Order, Sales Order fulfillment bertahap ke Serba Ada Barokah, Goods Issue multi-unit ke Bu Siti, Stock Opname (3 item selisih, jurnal per baris gak di-netting). Posisi akhir per 10 September 2026 ≈ Rp2.820.550.
-- `fixed-assets.md` — akuisisi 2023–2024: Mobil Pickup Antar Barang (declining balance 35%/tahun, 2x posting tahunan) + Rak Display Toko (straight-line, 12x posting bulanan), pakai ulang akun kontra warisan skenario lama karena form Chart of Accounts gak ada toggle `is_contra`, plus uji coba trigger proteksi cap penyusutan. Posisi akhir per 31 Desember 2025: nilai buku total Rp88.050.000.
-- `document-numbering.md` — walkthrough AP Bill dari PT Plastindo Jaya (nomor internal `APB-2026-00007` + Nomor Nota Supplier `SP-0451` terpisah) dan AR Invoice ke Toko Kelontong Sumber Rejeki (cuma 1 nomor, `ARI-2026-00012`), plus contoh reset tahunan.
-- `financial-reports.md` — walkthrough UI 4 laporan read-only (Trial Balance/Income Statement/Balance Sheet/Cash Flow) + Tutup Buku (satu-satunya yang menulis), skenario latihan 7 transaksi Jan–Agu 2026 (beli Mobil Pickup via Utang Bank, restock dari Plastindo Jaya, penjualan retail POS + grosir Bu Siti, HPP, gaji Mbak Rina, penyusutan mobil pickup, cicilan utang) — TB=IS=BS=CF tervalidasi (total 34.250.000, Laba Bersih 4.250.000). Tutup Buku periode Jan–Agu 2026, plus gap yang sudah dibenerin: Income Statement re-query periode tertutup exclude baris closing entry sendiri, TB/BS sengaja gak exclude.
-- `pos.md` — 2 app terpisah (`apps/pos` kios kasir Mbak Rina, `apps/erp` admin Pak Herman), walkthrough checkout tunai & QRIS retail, setup Kategori Biaya Tambahan (Biaya Packing) + PPN di `/settings/charges`, checkout borongan Toko Serba Ada Barokah dengan biaya tambahan+PPN dalam 1 transaksi, checkout ditolak karena stok gak cukup (no-oversell client + server), riwayat `/pos-sales` + detail + Batalkan (`void_pos_sale` membalik jurnal & stok).
+### tutorial/
+User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial`. Batch 1 (alur harian inti) + Batch 2 (kasus khusus) + Batch 3 (gap: ledger/cetak/refund kredit/master data) sudah dibangun — cakupan modul sudah lengkap. Disegmentasi jadi 10 subfolder modul (42 file total):
+- `chart-of-accounts/` — `tambah-akun-baru.md`.
+- `general-ledger/` — `buat-jurnal-manual.md`, `lihat-buku-besar-akun.md`.
+- `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `tukar-barang-garansi.md`, `uang-muka-ar.md`, `cek-credit-hold-pelanggan.md`, `writeoff-piutang.md`, `batalkan-invoice-ar.md`.
+- `accounts-payable/` — `tambah-supplier-baru.md`, `buat-bill-ap.md`, `bayar-bill-ap.md`, `retur-barang-ap.md`, `uang-muka-ap.md`, `batalkan-bill-ap.md`.
+- `inventory/` — `tambah-item-master.md`, `atur-satuan-harga-barcode.md`, `kelola-kategori-brand-barang.md`, `buat-purchase-order.md`, `terima-barang-grn.md`, `jual-barang-goods-issue.md`, `buat-resep-bom.md`, `buat-production-order.md`, `buat-sales-order.md`, `kirim-penuhi-sales-order.md`, `stock-opname.md`, `lihat-stock-position.md`.
+- `fixed-assets/` — `tambah-aset-tetap.md`, `posting-penyusutan-aset.md`.
+- `financial-reports/` — `lihat-laporan-keuangan.md`, `tutup-buku-periode.md`.
+- `pos/` — `checkout-pos.md`, `batalkan-transaksi-pos.md`.
+- `settings/` — `atur-default-akun.md`, `atur-kategori-biaya-ppn.md`, `atur-kop-surat-cetakan.md` (prasyarat lintas modul — direferensikan dari banyak tutorial modul lain).
+- `lintas-modul/` — `cetak-dokumen.md`, `arsipkan-hapus-master-data.md`, `refund-saldo-kredit-retur.md` (task yang genuinely lintas modul, bukan milik 1 modul spesifik).
 
 ---
 

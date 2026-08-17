@@ -2,31 +2,44 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import {
   createFixedAssetSchema,
   depreciationMethods,
   accumulatedDepreciation,
   bookValue,
-  type FixedAsset,
+  type CreateFixedAssetInput,
   type DepreciationEntry,
 } from "@/lib/fixed-assets/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useFixedAssets } from "@/lib/fixed-assets/queries";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
+import { Pagination } from "@/components/ui/pagination";
 import { fetchFixedAssetAccountPresets, type FixedAssetAccountPreset } from "@/lib/default-accounts/schema";
+
+// Input kecil buat baris filter di header tabel -- pola sama journal-entries/page.tsx.
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
 
 export default function FixedAssetsPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [presets, setPresets] = useState<FixedAssetAccountPreset[]>([]);
-  const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [entries, setEntries] = useState<DepreciationEntry[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [nameSearchInput, setNameSearchInput] = useState("");
+  const [methodFilter, setMethodFilter] = useState<"" | (typeof depreciationMethods)[number]>("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const debouncedNameSearch = useDebouncedValue(nameSearchInput, 300);
 
   const [name, setName] = useState("");
   const [presetId, setPresetId] = useState("");
@@ -37,25 +50,28 @@ export default function FixedAssetsPage() {
   const [method, setMethod] = useState<(typeof depreciationMethods)[number]>("straight_line");
   const [rate, setRate] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   const activePresets = presets.filter((p) => !p.archived_at);
 
-  const loadAssets = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("fixed_assets")
-      .select(
-        "id, name, asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, acquisition_cost, salvage_value, useful_life_months, acquisition_date, depreciation_method, depreciation_rate, archived_at"
-      )
-      .order("acquisition_date");
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setAssets((data ?? []) as FixedAsset[]);
-  }, []);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
+  // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
+  const filterKey = `${debouncedNameSearch}|${methodFilter}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
+
+  const filters = {
+    nameSearch: debouncedNameSearch,
+    depreciationMethod: methodFilter,
+    page,
+    pageSize,
+  };
+  const assetsQuery = useFixedAssets(filters);
+  const assets = assetsQuery.data?.rows ?? [];
+  const total = assetsQuery.data?.total ?? 0;
 
   const loadEntries = useCallback(async () => {
     const { data } = await supabase
@@ -82,15 +98,48 @@ export default function FixedAssetsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadPresets(), loadAssets(), loadEntries()]);
+      await Promise.all([loadPresets(), loadEntries()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadPresets, loadAssets, loadEntries]);
+  }, [router, loadPresets, loadEntries]);
 
-  async function handleCreate(e: FormEvent) {
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateFixedAssetInput) => {
+      const { error } = await supabase.rpc("create_fixed_asset", {
+        p_name: input.name,
+        p_asset_account_id: input.asset_account_id,
+        p_accumulated_depreciation_account_id: input.accumulated_depreciation_account_id,
+        p_depreciation_expense_account_id: input.depreciation_expense_account_id,
+        p_acquisition_cost: input.acquisition_cost,
+        p_salvage_value: input.salvage_value,
+        p_useful_life_months: input.useful_life_months,
+        p_acquisition_date: input.acquisition_date,
+        p_depreciation_method: input.depreciation_method,
+        p_depreciation_rate: input.depreciation_rate ?? null,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      setName("");
+      setPresetId("");
+      setAcquisitionCost("");
+      setSalvageValue("0");
+      setUsefulLifeMonths("");
+      setAcquisitionDate("");
+      setMethod("straight_line");
+      setRate("");
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["fixed_assets"] });
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan aset");
+    },
+  });
+
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -112,35 +161,7 @@ export default function FixedAssetsPage() {
       return;
     }
 
-    setSubmitting(true);
-    const { error } = await supabase.rpc("create_fixed_asset", {
-      p_name: parsed.data.name,
-      p_asset_account_id: parsed.data.asset_account_id,
-      p_accumulated_depreciation_account_id: parsed.data.accumulated_depreciation_account_id,
-      p_depreciation_expense_account_id: parsed.data.depreciation_expense_account_id,
-      p_acquisition_cost: parsed.data.acquisition_cost,
-      p_salvage_value: parsed.data.salvage_value,
-      p_useful_life_months: parsed.data.useful_life_months,
-      p_acquisition_date: parsed.data.acquisition_date,
-      p_depreciation_method: parsed.data.depreciation_method,
-      p_depreciation_rate: parsed.data.depreciation_rate ?? null,
-    });
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-
-    setName("");
-    setPresetId("");
-    setAcquisitionCost("");
-    setSalvageValue("0");
-    setUsefulLifeMonths("");
-    setAcquisitionDate("");
-    setMethod("straight_line");
-    setRate("");
-    setShowForm(false);
-    await loadAssets();
+    createMutation.mutate(parsed.data);
   }
 
   if (checkingSession) {
@@ -159,18 +180,18 @@ export default function FixedAssetsPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
+      {assetsQuery.error && <FormError>{(assetsQuery.error as Error).message}</FormError>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-black">Fixed Assets</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {assets.length}
+              {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => Promise.all([loadAssets(), loadEntries()])}>
+            <Button variant="toolbar" onClick={() => Promise.all([assetsQuery.refetch(), loadEntries()])}>
               Refresh
             </Button>
             {canWrite && (
@@ -188,6 +209,32 @@ export default function FixedAssetsPage() {
               <th className="px-4 py-2 text-right">Nilai Perolehan</th>
               <th className="px-4 py-2 text-right">Akumulasi Penyusutan</th>
               <th className="px-4 py-2 text-right">Nilai Buku</th>
+            </tr>
+            <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5">
+                <input
+                  type="text"
+                  placeholder="Cari nama..."
+                  value={nameSearchInput}
+                  onChange={(e) => setNameSearchInput(e.target.value)}
+                  className={compactFilterInputClass}
+                />
+              </th>
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter metode"
+                  value={methodFilter}
+                  onChange={(e) => setMethodFilter(e.target.value as "" | (typeof depreciationMethods)[number])}
+                  className={compactFilterInputClass}
+                >
+                  <option value="">Semua Metode</option>
+                  <option value="straight_line">Straight-Line</option>
+                  <option value="declining_balance">Declining Balance</option>
+                </select>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -223,12 +270,20 @@ export default function FixedAssetsPage() {
             {assets.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada aset tetap.
+                  {assetsQuery.isLoading ? "Memuat..." : "Belum ada aset tetap."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <Modal
@@ -364,8 +419,8 @@ export default function FixedAssetsPage() {
             <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
               Batal
             </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? "Menyimpan..." : "Simpan Aset"}
+            <Button type="submit" disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Menyimpan..." : "Simpan Aset"}
             </Button>
           </div>
         </form>

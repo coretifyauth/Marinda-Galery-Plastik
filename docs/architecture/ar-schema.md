@@ -1,6 +1,6 @@
 # Accounts Receivable — Struktur Data & Teknis
 
-Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Skenario nyata: `docs/story/accounts-receivable.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/ar-schema.md`.
+Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/ar-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

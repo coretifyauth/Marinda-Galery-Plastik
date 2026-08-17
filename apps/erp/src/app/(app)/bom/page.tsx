@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { Item } from "@/lib/items/schema";
-import { createBomSchema, type BomHeader } from "@/lib/bom/schema";
+import { createBomSchema, type CreateBomInput } from "@/lib/bom/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useBoms } from "@/lib/bom/queries";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
+import { Pagination } from "@/components/ui/pagination";
 
 type LineInput = { raw_material_item_id: string; qty_per_batch: string };
 
@@ -18,38 +21,49 @@ function emptyLine(): LineInput {
   return { raw_material_item_id: "", qty_per_batch: "" };
 }
 
+// Input kecil buat baris filter di header tabel -- pola sama journal-entries/page.tsx.
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
+
 export default function BomPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
-  const [boms, setBoms] = useState<BomHeader[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [isActiveFilter, setIsActiveFilter] = useState<"" | "true" | "false">("");
+  const [finishedItemFilter, setFinishedItemFilter] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   const [finishedItemId, setFinishedItemId] = useState("");
   const [outputQty, setOutputQty] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
   const finishedGoods = items.filter((i) => i.item_type === "FINISHED_GOOD");
   const rawMaterials = items.filter((i) => i.item_type === "RAW_MATERIAL");
 
-  const loadBoms = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("bom_headers")
-      .select(
-        "id, finished_item_id, output_qty, is_active, created_at, items(name, uom), bom_lines(id, raw_material_item_id, qty_per_batch, items(name, uom))"
-      )
-      .order("created_at", { ascending: false });
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setBoms((data ?? []) as unknown as BomHeader[]);
-  }, []);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
+  // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
+  const filterKey = `${isActiveFilter}|${finishedItemFilter}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
+
+  const filters = {
+    isActive: isActiveFilter,
+    finishedItemId: finishedItemFilter,
+    page,
+    pageSize,
+  };
+  const bomsQuery = useBoms(filters);
+  const boms = bomsQuery.data?.rows ?? [];
+  const total = bomsQuery.data?.total ?? 0;
 
   const loadItems = useCallback(async () => {
     const { data } = await supabase
@@ -72,13 +86,45 @@ export default function BomPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadItems(), loadBoms()]);
+      await loadItems();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems, loadBoms]);
+  }, [router, loadItems]);
+
+  const createMutation = useMutation({
+    mutationFn: async (input: CreateBomInput) => {
+      const { data: header, error: headerError } = await supabase
+        .from("bom_headers")
+        .insert({ finished_item_id: input.finished_item_id, output_qty: input.output_qty })
+        .select("id")
+        .single();
+      if (headerError || !header) {
+        throw new Error(headerError?.message ?? "Gagal bikin BOM header");
+      }
+
+      const { error: linesError } = await supabase.from("bom_lines").insert(
+        input.lines.map((l) => ({
+          bom_header_id: header.id,
+          raw_material_item_id: l.raw_material_item_id,
+          qty_per_batch: l.qty_per_batch,
+        }))
+      );
+      if (linesError) throw new Error(linesError.message);
+    },
+    onSuccess: () => {
+      setFinishedItemId("");
+      setOutputQty("");
+      setLines([emptyLine()]);
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["bom_headers"] });
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan resep");
+    },
+  });
 
   function updateLine(index: number, patch: Partial<LineInput>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
@@ -92,7 +138,7 @@ export default function BomPage() {
     setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  async function handleCreate(e: FormEvent) {
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -106,36 +152,7 @@ export default function BomPage() {
       return;
     }
 
-    setSubmitting(true);
-    const { data: header, error: headerError } = await supabase
-      .from("bom_headers")
-      .insert({ finished_item_id: parsed.data.finished_item_id, output_qty: parsed.data.output_qty })
-      .select("id")
-      .single();
-    if (headerError || !header) {
-      setSubmitting(false);
-      setFormError(headerError?.message ?? "Gagal bikin BOM header");
-      return;
-    }
-
-    const { error: linesError } = await supabase.from("bom_lines").insert(
-      parsed.data.lines.map((l) => ({
-        bom_header_id: header.id,
-        raw_material_item_id: l.raw_material_item_id,
-        qty_per_batch: l.qty_per_batch,
-      }))
-    );
-    setSubmitting(false);
-    if (linesError) {
-      setFormError(linesError.message);
-      return;
-    }
-
-    setFinishedItemId("");
-    setOutputQty("");
-    setLines([emptyLine()]);
-    setShowForm(false);
-    await loadBoms();
+    createMutation.mutate(parsed.data);
   }
 
   if (checkingSession) {
@@ -154,18 +171,18 @@ export default function BomPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
+      {bomsQuery.error && <FormError>{(bomsQuery.error as Error).message}</FormError>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-black">BOM</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {boms.length}
+              {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => loadBoms()}>
+            <Button variant="toolbar" onClick={() => bomsQuery.refetch()}>
               Refresh
             </Button>
             {canWrite && (
@@ -182,6 +199,37 @@ export default function BomPage() {
               <th className="px-4 py-2">Output/Batch</th>
               <th className="px-4 py-2">Bahan Baku</th>
               <th className="px-4 py-2">Status</th>
+            </tr>
+            <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter barang jadi"
+                  value={finishedItemFilter}
+                  onChange={(e) => setFinishedItemFilter(e.target.value)}
+                  className={compactFilterInputClass}
+                >
+                  <option value="">Semua Barang Jadi</option>
+                  {finishedGoods.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter status"
+                  value={isActiveFilter}
+                  onChange={(e) => setIsActiveFilter(e.target.value as "" | "true" | "false")}
+                  className={compactFilterInputClass}
+                >
+                  <option value="">Semua Status</option>
+                  <option value="true">Aktif</option>
+                  <option value="false">Non-aktif</option>
+                </select>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -218,12 +266,20 @@ export default function BomPage() {
             {boms.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada resep.
+                  {bomsQuery.isLoading ? "Memuat..." : "Belum ada resep."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Buat Resep (BOM)" maxWidth="max-w-3xl">
@@ -311,8 +367,8 @@ export default function BomPage() {
               <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
                 Batal
               </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Menyimpan..." : "Simpan Resep"}
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Menyimpan..." : "Simpan Resep"}
               </Button>
             </div>
         </form>

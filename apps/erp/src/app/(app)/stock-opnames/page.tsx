@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import type { InventoryBalance } from "@/lib/inventory/schema";
-import { recordStockOpnameSchema, type StockOpname } from "@/lib/stock-opnames/schema";
+import { recordStockOpnameSchema, type RecordStockOpnameInput } from "@/lib/stock-opnames/schema";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useStockOpnames } from "@/lib/stock-opnames/queries";
 import { generateDocumentNumber } from "@/lib/document-numbers";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -18,6 +21,7 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
+import { Pagination } from "@/components/ui/pagination";
 
 type LineInput = { item_id: string; qty_actual: string };
 
@@ -25,37 +29,51 @@ function emptyLine(): LineInput {
   return { item_id: "", qty_actual: "" };
 }
 
+// Input kecil buat baris filter di header tabel -- pola sama kayak journal-entries/page.tsx.
+const compactFilterInputClass =
+  "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
+
 export default function StockOpnamesPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [items, setItems] = useState<Item[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
-  const [opnames, setOpnames] = useState<StockOpname[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [refSearchInput, setRefSearchInput] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
 
   const [opnameDate, setOpnameDate] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
-  const loadOpnames = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("stock_opnames")
-      .select(
-        "id, opname_date, source_ref, created_at, stock_opname_lines(id, item_id, qty_system, qty_actual, unit_cost, journal_entry_id, items(name, uom))"
-      )
-      .order("opname_date", { ascending: false });
-    if (error) {
-      setLoadError(error.message);
-      return;
-    }
-    setLoadError(null);
-    setOpnames((data ?? []) as unknown as StockOpname[]);
-  }, []);
+  // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
+  // lihat journal-entries/page.tsx).
+  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${pageSize}`;
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setPage(0);
+  }
+
+  const filters = {
+    dateFrom,
+    dateTo,
+    sourceRefSearch: debouncedRefSearch,
+    page,
+    pageSize,
+  };
+  const opnamesQuery = useStockOpnames(filters);
+  const opnames = opnamesQuery.data?.rows ?? [];
+  const total = opnamesQuery.data?.total ?? 0;
 
   const loadItems = useCallback(async () => {
     const [{ data }, { data: bal }, { data: units }] = await Promise.all([
@@ -88,13 +106,13 @@ export default function StockOpnamesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadItems(), loadDefaultAccounts(), loadOpnames()]);
+      await Promise.all([loadItems(), loadDefaultAccounts()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems, loadDefaultAccounts, loadOpnames]);
+  }, [router, loadItems, loadDefaultAccounts]);
 
   function openForm() {
     setFormError(null);
@@ -119,7 +137,29 @@ export default function StockOpnamesPage() {
     return balances.find((b) => b.item_id === itemId)?.qty_on_hand ?? 0;
   }
 
-  async function handleCreate(e: FormEvent) {
+  const createMutation = useMutation({
+    mutationFn: async (input: RecordStockOpnameInput) => {
+      const sourceRef = await generateDocumentNumber("stock_opnames");
+      const { error } = await supabase.rpc("record_stock_opname", {
+        p_opname_date: input.opname_date,
+        p_source_ref: sourceRef,
+        p_lines: input.lines,
+        p_shortage_expense_account_id: input.shortage_expense_account_id,
+        p_surplus_revenue_account_id: input.surplus_revenue_account_id,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: ["stock_opnames"] });
+      loadItems();
+    },
+    onError: (err) => {
+      setFormError(err instanceof Error ? err.message : "Gagal menyimpan opname");
+    },
+  });
+
+  function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -151,30 +191,7 @@ export default function StockOpnamesPage() {
       return;
     }
 
-    setSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("stock_opnames");
-    } catch (err) {
-      setSubmitting(false);
-      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("record_stock_opname", {
-      p_opname_date: parsed.data.opname_date,
-      p_source_ref: sourceRef,
-      p_lines: parsed.data.lines,
-      p_shortage_expense_account_id: parsed.data.shortage_expense_account_id,
-      p_surplus_revenue_account_id: parsed.data.surplus_revenue_account_id,
-    });
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-
-    setShowForm(false);
-    await Promise.all([loadOpnames(), loadItems()]);
+    createMutation.mutate(parsed.data);
   }
 
   if (checkingSession) {
@@ -203,18 +220,20 @@ export default function StockOpnamesPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
+      {opnamesQuery.error && (
+        <FormError>{(opnamesQuery.error as Error).message}</FormError>
+      )}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-black">Sesi Opname</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
-              {opnames.length}
+              {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <Button variant="toolbar" onClick={() => loadOpnames()}>
+            <Button variant="toolbar" onClick={() => opnamesQuery.refetch()}>
               Refresh
             </Button>
             {canWrite && (
@@ -230,6 +249,36 @@ export default function StockOpnamesPage() {
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Rujukan</th>
               <th className="px-4 py-2">Item Ada Selisih</th>
+            </tr>
+            <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5">
+                <div className="flex gap-1">
+                  <input
+                    type="date"
+                    aria-label="Dari tanggal"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                  <input
+                    type="date"
+                    aria-label="Sampai tanggal"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className={compactFilterInputClass}
+                  />
+                </div>
+              </th>
+              <th className="px-4 py-1.5">
+                <input
+                  type="text"
+                  placeholder="Cari rujukan..."
+                  value={refSearchInput}
+                  onChange={(e) => setRefSearchInput(e.target.value)}
+                  className={compactFilterInputClass}
+                />
+              </th>
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -263,12 +312,20 @@ export default function StockOpnamesPage() {
             {opnames.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada sesi opname.
+                  {opnamesQuery.isLoading ? "Memuat..." : "Belum ada sesi opname."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          onPageSizeChange={setPageSize}
+        />
       </div>
 
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Catat Sesi Opname" maxWidth="max-w-3xl">
@@ -381,8 +438,8 @@ export default function StockOpnamesPage() {
               <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
                 Batal
               </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "Menyimpan..." : "Simpan Opname"}
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? "Menyimpan..." : "Simpan Opname"}
               </Button>
             </div>
         </form>

@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { Landmark, Database, Newspaper } from "lucide-react";
+import { Landmark, Database, ListChecks } from "lucide-react";
 import { DOC_CATEGORIES, type DocCategoryId } from "@/lib/docs/categories";
 
 const categoryIcons: Record<DocCategoryId, typeof Landmark> = {
   domain: Landmark,
   architecture: Database,
-  story: Newspaper,
+  tutorial: ListChecks,
 };
 
 export default function DocsLandingPage() {
@@ -14,8 +14,8 @@ export default function DocsLandingPage() {
       <div>
         <h1 className="text-2xl font-semibold text-black">Documentation</h1>
         <p className="text-sm text-slate-500">
-          Knowledge base project ini — konsep bisnis/akuntansi, struktur data, dan skenario Toko
-          Plastik Makmur Jaya.
+          Knowledge base project ini — konsep bisnis/akuntansi, struktur data, dan panduan
+          langkah-demi-langkah tiap alur kerja di aplikasi.
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 # Inventory — Schema (Finalized)
 
-Fase 5 roadmap. Ref konsep bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md`. Ref seed/skenario: `docs/story/inventory.md`. Ref schema yang di-reuse: `memory/architecture/data/journal-entry-schema.md` (RPC `create_journal_entry`, fungsi `set_updated_at()`+`block_edit_delete()`), `memory/architecture/data/ap-schema.md` (`ap_bills`+`create_ap_bill`, **0 perubahan**), `memory/architecture/data/ar-schema.md` (`ar_invoices`+`create_ar_invoice`, **0 perubahan**). Migration: `supabase/migrations/0012_inventory_schema.sql`.
+Fase 5 roadmap. Ref konsep bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md`. Ref schema yang di-reuse: `memory/architecture/data/journal-entry-schema.md` (RPC `create_journal_entry`, fungsi `set_updated_at()`+`block_edit_delete()`), `memory/architecture/data/ap-schema.md` (`ap_bills`+`create_ap_bill`, **0 perubahan**), `memory/architecture/data/ar-schema.md` (`ar_invoices`+`create_ar_invoice`, **0 perubahan**). Migration: `supabase/migrations/0012_inventory_schema.sql`.
 
 DDL final di bawah, ERD & keputusan desain gak berubah dari revisi sebelumnya.
 
@@ -282,6 +282,10 @@ grant select, insert on goods_receipt_notes to authenticated;
 grant select, insert on goods_receipt_lines to authenticated;
 ```
 
+### `purchase_orders_with_status` view — migration `0034_purchase_order_status_view.sql`
+
+Nutup scope-debt filter status di list `/purchase-orders`. Beda dari AP/AR (status dari uang) — status PO dari QTY per baris, mirror `poStatus()` (`apps/erp/src/lib/purchase-orders/schema.ts`) persis: `cancelled_at` menang duluan (state terminal), baru `bool_and()` per baris (`goods_receipt_lines.qty_received` vs `purchase_order_lines.qty_ordered`) — dipilih ketimbang bandingin `SUM` total biar semantiknya sama persis `Array.prototype.every()` di client, termasuk vacuous-truth kalau PO gak punya baris (gak pernah kejadian karena schema wajib minimal 1 baris, tapi tetap dijaga biar match 1:1).
+
 Detail lengkap: `supabase/migrations/0004_inventory_schema.sql`.
 
 ## Produksi (Bill of Materials & Production Order)
@@ -462,6 +466,8 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `purchase_orders`/`purchase_order_lines` (`customer_id` gantiin `supplier_id`, `unit_price` gantiin `unit_cost_expected`, `cancelled_at` juga mirror). Status (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`/`CANCELLED`) derived — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_issue_lines.qty_issued)` per `so_line_id` vs `qty_ordered`.
 
 **Cancel (`cancelled_at`, migration `0024_purchase_order_sales_order_cancel.sql`)** — mirror persis mekanisme PO (lihat submodule "Purchase Order & Penerimaan Barang" di atas): trigger bespoke `sales_orders_block_edit_delete_or_cancel()` gantiin `block_edit_delete` generik, `cancel_sales_order` RPC guard terhadap `goods_issue_lines` (bukan `goods_receipt_lines`), `create_goods_issue` dapat guard balik (tolak kalau `so_line_id` nunjuk SO yang udah `cancelled_at`). `sales_order_lines` TETAP full-immutable.
+
+**`sales_orders_with_status` view — migration `0035_sales_order_status_view.sql`**: nutup scope-debt filter status di list `/sales-orders`. Mirror persis `purchase_orders_with_status` (0034) — `bool_and()` per baris (`goods_issue_lines.qty_issued` vs `sales_order_lines.qty_ordered`), `cancelled_at` menang duluan.
 
 ```sql
 create table sales_orders (

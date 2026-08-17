@@ -229,8 +229,7 @@ export default function AccountsPage() {
         {!canWrite && (
           <p className="mb-4 text-sm text-amber-600">
             Kamu belum punya role admin/accountant — submit di bawah kemungkinan
-            bakal ketolak RLS. Ini expected behavior, bukan bug (lihat
-            docs/story/chart-of-accounts.md).
+            bakal ketolak RLS. Ini expected behavior, bukan bug.
           </p>
         )}
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
