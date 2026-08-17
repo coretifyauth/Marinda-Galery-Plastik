@@ -66,8 +66,8 @@ export default function InventoryPage() {
       <div>
         <h1 className="text-xl font-semibold text-black">Posisi Persediaan</h1>
         <p className="text-sm text-slate-500">
-          Kartu stok tiap item — Weighted Average rata-rata berjalan. Read-only, derived dari
-          transaksi (PO/GRN/Production/Goods Issue).
+          Saldo akhir tiap item — Weighted Average rata-rata berjalan. Klik item buat lihat Kartu
+          Stok (riwayat mutasi kronologis) di tab detail-nya.
         </p>
       </div>
 
@@ -96,7 +96,11 @@ export default function InventoryPage() {
               const avgCost = balance?.avg_cost ?? 0;
               const unitsForItem = itemUnits.filter((u) => u.item_id === item.id);
               return (
-                <tr key={item.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                <tr
+                  key={item.id}
+                  className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                  onClick={() => router.push(`/items/${item.id}`)}
+                >
                   <td className="px-4 py-2 font-medium text-black">{item.name}</td>
                   <td className="px-4 py-2">
                     {avgCost.toLocaleString("id-ID")}/{item.uom}

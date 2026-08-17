@@ -241,3 +241,21 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 - Menggabungkan (netting) semua selisih dalam 1 sesi opname jadi 1 angka bersih sebelum dijurnal — kehilangan rincian per barang, gak bisa lagi lihat "barang apa yang sebenarnya hilang" vs "barang apa yang ternyata lebih".
 - Memakai harga historis (harga pas barang itu pertama masuk) buat menghitung nilai selisih — harusnya harga rata-rata berjalan yang berlaku SAAT opname terjadi.
 - Mencatat opname lewat jalur transaksi yang udah ada (retur, write-off, goods issue) — opname gak punya "lawan transaksi" (customer/supplier) sama sekali, butuh jalur sendiri.
+
+### Kartu Stok / Riwayat Mutasi per Item
+
+**Cara Kerja**
+- Semua submodule di atas (beli, produksi, jual, retur, write-off, opname) masing-masing sudah nyatet transaksinya sendiri-sendiri. Tapi posisi stok yang ditampilkan ke user cuma nunjukin **saldo akhir** — persis rekening bank yang cuma nunjukin "Saldo: Rp 5.000.000" tanpa daftar transaksi apa pun. Kalau saldo suatu barang kelihatan gak sesuai ekspektasi, gak ada cara langsung menjawab "kenapa segini" tanpa buka manual satu-satu ke setiap jenis transaksi yang mungkin menyentuh barang itu.
+- Kartu Stok menutup ini — klik 1 barang, lihat **riwayat kronologis** semua kejadian yang menggerakkan qty barang itu (tanggal, jenis kejadian, dokumen sumbernya, qty masuk/keluar, saldo berjalan setelah baris itu) — persis buku tabungan: tiap baris nunjukin transaksi + saldo setelahnya, bukan cuma angka akhir.
+- Ini murni **lapisan riwayat/audit trail** di atas posisi stok yang sudah ada — bukan cara baru menghitung qty/HPP. Posisi stok (qty & harga rata-rata berjalan) tetap dihitung dan disimpan persis seperti sebelumnya, gak berubah oleh fitur ini.
+- Tiap baris riwayat tertelusur balik ke dokumen sumber aslinya (invoice penjualan, bukti terima barang, production order, dst) — konsisten sama prinsip semua transaksi harus tertelusur ke dokumen sumber.
+
+**Aturan Bisnis**
+- Kartu Stok gak pernah jadi sumber kebenaran baru buat qty atau HPP — cuma cerminan dari transaksi yang udah tercatat di modul lain. Kalau suatu saat ada perbedaan antara jumlah riwayat dan saldo akhir yang tercatat, saldo akhir yang dianggap benar — riwayatnya yang harus diperbaiki, bukan sebaliknya.
+- Riwayat mencakup SEMUA jenis kejadian yang bisa menggerakkan stok barang, bukan cuma jalur transaksi inti (beli/produksi/jual) — termasuk juga retur (dari customer maupun ke supplier), barang rusak yang ditulis-jadi-beban, penggantian garansi, dan penyesuaian hasil hitung fisik.
+
+**Skenario**
+- Pemilik curiga stok Tepung Terigu turun drastis padahal gak inget ada penjualan besar bulan ini — buka Kartu Stok barang itu, lihat baris demi baris: sekian kilo masuk dari pembelian, sekian kilo keluar buat produksi, ada penyesuaian opname karena selisih hitung fisik — penyebabnya ketahuan tanpa perlu buka satu-satu halaman transaksi yang berbeda-beda.
+
+**Common Mistakes**
+- Menganggap Kartu Stok sebagai sumber kebenaran baru buat saldo stok — posisi stok (qty & harga rata-rata berjalan) yang sudah ada tetap yang utama, Kartu Stok cuma riwayat pendukung yang menjelaskan bagaimana angka itu terbentuk.

@@ -14,7 +14,7 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 - **`ap_bills`/`ar_invoices` tetap lump-sum, gak diubah sama sekali.** Rincian barang (qty & harga satuan) ditaruh di tabel baru (`goods_receipt_notes`/`goods_issues`) yang **nunjuk balik** ke bill/invoice yang sudah ada, bukan mengubah strukturnya. Alasan: dua tabel itu immutable & sudah punya data histori — mengubah strukturnya berarti migrasi data lama + bongkar UI yang sudah jalan, resiko besar buat manfaat yang bisa dicapai tanpa itu.
 - **Metode costing: Weighted Average, satu-satunya, berlaku semua item.** Sebelum migration `0038` sempat ada dua metode (FIFO per-lot + Weighted Average) yang ditentukan per `items.costing_method`; FIFO sudah dihapus total dari sistem (`0038_remove_fifo_costing.sql`) — kolom `costing_method` juga sudah di-drop karena jadi redundant (cuma ada 1 nilai yang mungkin).
-- **`inventory_balances` adalah satu-satunya state costing tersimpan** (bukan derived) di seluruh modul Inventory — beda dari pola dominan project ini (status AR/AP selalu derived dari query). Alasannya: rata-rata berjalan (`new_avg = (qty_before×avg_before + qty_in×unit_cost_in) / (qty_before+qty_in)`) itu rekursif — gak bisa diringkas jadi 1 agregat SQL sederhana kayak `SUM(debit)-SUM(credit)` atau `SUM(allocations)`, harus dihitung incremental tiap transaksi.
+- **`inventory_balances` adalah satu-satunya state costing tersimpan lewat INCREMENTAL update tiap transaksi** (bukan dihitung ulang dari nol) di seluruh modul Inventory. Alasannya: rata-rata berjalan (`new_avg = (qty_before×avg_before + qty_in×unit_cost_in) / (qty_before+qty_in)`) itu rekursif — gak bisa diringkas jadi 1 agregat SQL sederhana kayak `SUM(debit)-SUM(credit)` atau `SUM(allocations)`, harus dihitung incremental tiap transaksi. ~~Beda dari pola dominan project ini (status AR/AP selalu derived dari query)~~ — **UPDATE migration `0053_denormalize_transactional_status.sql`, 2026-08-17**: status AR/AP/PO/SO/POS/Deposit sekarang JUGA kolom tersimpan (bukan lagi dihitung ulang tiap query), tapi mekanismenya beda dari `inventory_balances`: itu kolom **cache** dari agregat yang MASIH BISA dihitung ulang dari nol kapan aja (trigger cuma nyimpen ulang hasil `SUM`/`CASE` yang sama persis kayak sebelumnya, insertable-only jadi gak perlu incremental delta), sementara `inventory_balances.avg_cost` gak bisa dihitung ulang dari nol tanpa incremental (riwayat urutan transaksinya harus diproses berurutan). Lihat `ar-schema.md` submodule AR Invoice buat detail lengkap migration `0053`.
 - **Penamaan tabel: master data gak pakai prefix modul, transaksional pakai.** Pola ini udah established di AR/AP (`customers`/`suppliers` polos, tapi `ar_invoices`/`ap_bills` pakai prefix). `items` konsisten sama pola itu (master data, polos). `inventory_balances` konsisten pakai prefix `inventory_` (transaksional/state). Tabel lain (`purchase_orders`, `goods_receipt_notes`, `bom_headers`, `production_orders`, `goods_issues`, dst) gak butuh prefix tambahan — namanya udah unik & jelas sendiri, gak ada modul lain yang bisa nabrak makna.
 
 ### ERD
@@ -127,7 +127,7 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### `purchase_orders` + `purchase_order_lines`
 
-Komitmen pesan ke supplier — **belum ada journal entry**. Header (`supplier_id`, `po_date`, `expected_date`, `source_ref`, `cancelled_at`) + lines (`item_id`, `qty_ordered`, `unit_cost_expected`). Status (`OPEN`/`PARTIALLY_RECEIVED`/`FULLY_RECEIVED`/`CANCELLED`) derived — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_receipt_lines.qty_received)` per line vs `qty_ordered`.
+Komitmen pesan ke supplier — **belum ada journal entry**. Header (`supplier_id`, `po_date`, `expected_date`, `source_ref`, `cancelled_at`) + lines (`item_id`, `qty_ordered`, `unit_cost_expected`). ~~Status (`OPEN`/`PARTIALLY_RECEIVED`/`FULLY_RECEIVED`/`CANCELLED`) derived~~ — **UPDATE migration `0053`** (lihat submodule view di bawah): sekarang kolom asli `purchase_orders.status`, gak lagi dihitung ulang tiap query — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_receipt_lines.qty_received)` per line vs `qty_ordered`.
 
 **Cancel (`cancelled_at`, migration `0024_purchase_order_sales_order_cancel.sql`)** — koreksi salah input SEBELUM ada realisasi fisik apa pun cukup lewat `cancel_purchase_order`, gak perlu PO baru. Header PO gak lagi pakai `block_edit_delete` generik (yang blanket-block SEMUA update) — diganti trigger bespoke `purchase_orders_block_edit_delete_or_cancel()` niru pola selective-lock `accounts_published_lock` (`coa-schema.md`): bandingin tuple SEMUA kolom selain `id`/`cancelled_at`, tolak kalau ada yang berubah ATAU kalau `cancelled_at` udah keisi (sekali dibatalkan, gak bisa diapa-apain lagi termasuk dibatalkan ulang). `purchase_order_lines` TETAP full-immutable (`block_edit_delete` generik gak disentuh) — baris gak pernah berubah pas header dibatalkan.
 
@@ -287,6 +287,8 @@ grant select, insert on goods_receipt_lines to authenticated;
 Nutup scope-debt filter status di list `/purchase-orders`. Beda dari AP/AR (status dari uang) — status PO dari QTY per baris, mirror `poStatus()` (`apps/erp/src/lib/purchase-orders/schema.ts`) persis: `cancelled_at` menang duluan (state terminal), baru `bool_and()` per baris (`goods_receipt_lines.qty_received` vs `purchase_order_lines.qty_ordered`) — dipilih ketimbang bandingin `SUM` total biar semantiknya sama persis `Array.prototype.every()` di client, termasuk vacuous-truth kalau PO gak punya baris (gak pernah kejadian karena schema wajib minimal 1 baris, tapi tetap dijaga biar match 1:1).
 
 Detail lengkap: `supabase/migrations/0004_inventory_schema.sql`.
+
+**Denormalisasi ke kolom asli — migration `0053_denormalize_transactional_status.sql`** (mekanisme lengkap & rationale di `ar-schema.md` submodule AR Invoice, ini mirror-nya): `status` sekarang KOLOM ASLI di `purchase_orders`, dijaga `recompute_purchase_order_status()` (`security definer`, hitung ulang `bool_and()` yang sama persis) lewat trigger `AFTER INSERT` di `purchase_order_lines`/`goods_receipt_lines`. Pembatalan (`cancel_purchase_order`) di-set langsung lewat trigger terpisah `purchase_orders_sync_status_on_cancel` (BEFORE UPDATE, gak lewat fungsi recompute) karena `purchase_orders_block_edit_delete_or_cancel` (`0024`) nolak SEMUA update lanjutan begitu `cancelled_at` kepasang — `recompute_purchase_order_status()` sendiri sengaja `return` lebih awal kalau PO udah `cancelled_at is not null`, biar gak nabrak trigger itu (misal pas backfill data lama). View `purchase_orders_with_status` sekarang `select` polos.
 
 ## Produksi (Bill of Materials & Production Order)
 
@@ -463,11 +465,13 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### `sales_orders` + `sales_order_lines`
 
-Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `purchase_orders`/`purchase_order_lines` (`customer_id` gantiin `supplier_id`, `unit_price` gantiin `unit_cost_expected`, `cancelled_at` juga mirror). Status (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`/`CANCELLED`) derived — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_issue_lines.qty_issued)` per `so_line_id` vs `qty_ordered`.
+Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `purchase_orders`/`purchase_order_lines` (`customer_id` gantiin `supplier_id`, `unit_price` gantiin `unit_cost_expected`, `cancelled_at` juga mirror). ~~Status (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`/`CANCELLED`) derived~~ — **UPDATE migration `0053`** (lihat submodule view di bawah): sekarang kolom asli `sales_orders.status` — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_issue_lines.qty_issued)` per `so_line_id` vs `qty_ordered`.
 
 **Cancel (`cancelled_at`, migration `0024_purchase_order_sales_order_cancel.sql`)** — mirror persis mekanisme PO (lihat submodule "Purchase Order & Penerimaan Barang" di atas): trigger bespoke `sales_orders_block_edit_delete_or_cancel()` gantiin `block_edit_delete` generik, `cancel_sales_order` RPC guard terhadap `goods_issue_lines` (bukan `goods_receipt_lines`), `create_goods_issue` dapat guard balik (tolak kalau `so_line_id` nunjuk SO yang udah `cancelled_at`). `sales_order_lines` TETAP full-immutable.
 
 **`sales_orders_with_status` view — migration `0035_sales_order_status_view.sql`**: nutup scope-debt filter status di list `/sales-orders`. Mirror persis `purchase_orders_with_status` (0034) — `bool_and()` per baris (`goods_issue_lines.qty_issued` vs `sales_order_lines.qty_ordered`), `cancelled_at` menang duluan.
+
+**Denormalisasi ke kolom asli — migration `0053_denormalize_transactional_status.sql`** (mirror persis mekanisme PO di atas): `status` sekarang KOLOM ASLI, dijaga `recompute_sales_order_status()` lewat trigger `AFTER INSERT` di `sales_order_lines`/`goods_issue_lines` + trigger `sales_orders_sync_status_on_cancel` (BEFORE UPDATE) buat kasus pembatalan — alasan & guard `cancelled_at is not null then return` sama persis PO. View sekarang `select` polos.
 
 ```sql
 create table sales_orders (
@@ -933,3 +937,139 @@ grant select, insert on stock_opname_lines to authenticated;
 ```
 
 Full body: `supabase/migrations/0004_inventory_schema.sql`.
+
+## Kartu Stok / Riwayat Mutasi per Item (Inventory Movement Ledger) — migration `0042_inventory_movements_schema.sql`
+
+Ref bisnis: `docs/domain/inventory.md` + `memory/domain/inventory.md` bagian "Kartu Stok / Riwayat Mutasi per Item". Menutup `memory/scope-debt/inventory-movement-ledger.md`. **Status: schema dasar sudah diapply, RPC yang nulis ke tabel ini + backfill data historis masih menyusul bertahap** — lihat "Rencana Bertahap" di akhir submodule ini.
+
+### Keputusan Desain
+
+- **Tabel ledger terpusat baru (`inventory_movements`), BUKAN view gabungan** — keputusan arsitektur eksplisit (dibahas 2026-08-16 & 2026-08-17): baca riwayat lebih cepat & konsisten jangka panjang (1 tabel rapi, gak perlu buka ±10 tabel tiap query), ditukar biaya awal lebih besar (harus ubah ±9-10 RPC + backfill).
+- **Saldo berjalan derived, BUKAN kolom tersimpan** — gak ada kolom `running_balance`. Dibaca lewat pola opening-balance (agregat `SUM(qty)` sampai cutoff) + halaman (baris di halaman itu doang), mirror persis `report_account_ledger_opening_balance` (General Ledger, migration `0041`). Dipilih ketimbang kolom tersimpan demi akurasi (gak ada risiko nilai tersimpan diam-diam menyimpang dari data mutasi asli, terutama karena logic insert disebar ke ±9-10 RPC berbeda — makin banyak tempat yang bisa salah nulis, makin penting saldo selalu dihitung ulang dari sumber asli, bukan dipercaya dari nilai yang di-maintain manual tiap RPC).
+- **`qty` bertanda** (positif=masuk, negatif=keluar), bukan kolom `direction` terpisah — supaya `SUM(qty)` langsung jadi saldo, gak perlu `CASE WHEN` di tiap query.
+- **11 kolom penunjuk sumber nullable, tepat 1 terisi per baris** (`check num_nonnulls(...) = 1`) — kolom mana yang terisi = jenis mutasinya, gak perlu kolom `source_type` teks terpisah yang rawan salah ketik pas disalin ke ±9-10 RPC. **Awalnya 10 kolom (migration `0042`)**, nambah jadi 11 di migration `0046` — lihat gap `purchase_replacement_lines` di bawah.
+- **Composite FK `(source_id, item_id) REFERENCES tabel_sumber(id, item_id)`, bukan FK 1 kolom** — FK 1 kolom cuma jamin "ID ada di tabel yang benar", gak jamin `item_id` di movement cocok sama `item_id` di baris sumber yang ditunjuk (kelas bug yang rawan muncul karena logic insert disebar ke banyak RPC — misal variabel ID header ketuker sama ID baris). Composite FK bikin Postgres sendiri yang jamin pasangan itu match, gak perlu trigger custom.
+- **`production_orders.item_id` kolom baru** — sebelumnya item hasil produksi cuma didapat gak langsung lewat `bom_header_id -> bom_headers.finished_item_id`. Ditambah (backfill dari situ) supaya composite FK ke `production_orders` bisa seragam kayak 9 sumber lain, bukan dikecualikan pakai trigger validasi terpisah. **`create_production_order` diperbaiki di migration yang sama** (`create or replace`, signature tetap sama) supaya ngisi kolom ini — WAJIB atomik sama penambahan kolom, kalau enggak RPC ini gagal total begitu kolom jadi `NOT NULL` (ketauan `schema-reviewer` sebelum apply, bukan pas production order pertama coba dibuat).
+- **Index `item_id` di 10 tabel sumber TIDAK diperlukan** — beda dari draf awal `memory/scope-debt/inventory-movement-ledger.md` poin 3 yang mengasumsikan desain "view gabungan" (query langsung ke 10 tabel tiap kartu stok dibuka). Karena desain akhirnya tabel ledger terpisah, halaman kartu stok cuma pernah query `inventory_movements` sendiri — 10 tabel sumber cuma disentuh sekali pas backfill (full table scan, gak butuh index) dan lewat composite FK (yang butuh `unique(id, item_id)`, bukan index performa baca).
+- **Gap ditemukan & ditutup: `purchase_replacement_lines` (migration `0046`)** — tabel dari RPC `create_purchase_replacement` ("Opsi B — tukar barang" di retur ke supplier) gak pernah masuk daftar ±10 tabel sumber asli (`memory/scope-debt/inventory-movement-ledger.md`), ketauan pas nulis migration RPC #4. RPC ini secara fisik ngeluarin barang rusak DAN masukin barang pengganti (net ke `qty_on_hand` nol karena item sama, tapi 2 kejadian fisik nyata) — kalau gak dicatat, kartu stok item itu gak akan pernah nunjukin kejadian tukar-barang ini sama sekali. Ditutup: kolom ke-11 `purchase_replacement_line_id` ditambah + composite FK + CHECK diperluas (dicari lewat `pg_constraint`/`pg_get_constraintdef` yang match `%num_nonnulls%`, BUKAN nama yang ditebak — constraint aslinya gak dikasih nama eksplisit pas `0042`). **Satu-satunya sumber yang 1 baris = 2 baris ledger** (bukan 1:1 kayak 10 sumber lain) — `purchase_replacement_line_id` yang sama dipakai di kedua baris (1 qty negatif buat barang rusak keluar, 1 qty positif buat barang pengganti masuk), sah karena CHECK `num_nonnulls=1` dicek PER BARIS LEDGER, bukan per baris sumber.
+
+### `inventory_movements`
+
+1 baris = 1 kejadian mutasi qty 1 item, ditulis sebagai efek samping dari RPC transaksi yang sudah ada (bukan RPC baru berdiri sendiri).
+
+DDL di bawah bentuk FINAL (11 kolom, sudah termasuk gap `purchase_replacement_line_id` yang ditutup migration `0046`) — bukan snapshot awal `0042` (10 kolom). Riwayat penambahan kolom ke-11 didokumentasikan di bullet "Gap ditemukan & ditutup" di atas.
+
+```sql
+create table inventory_movements (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references items(id),
+  movement_date date not null,
+  qty numeric(14,3) not null check (qty <> 0),
+  created_at timestamptz not null default now(),
+
+  goods_receipt_line_id uuid,
+  production_order_id uuid,
+  inventory_return_line_id uuid,
+  stock_opname_line_id uuid,
+  goods_issue_line_id uuid,
+  pos_sale_line_id uuid,
+  production_order_line_id uuid,
+  purchase_return_line_id uuid,
+  purchase_writeoff_line_id uuid,
+  warranty_replacement_line_id uuid,
+  purchase_replacement_line_id uuid, -- migration 0046, lihat "Gap ditemukan & ditutup" di atas
+
+  foreign key (goods_receipt_line_id, item_id) references goods_receipt_lines(id, item_id),
+  foreign key (production_order_id, item_id) references production_orders(id, item_id),
+  foreign key (inventory_return_line_id, item_id) references inventory_return_lines(id, item_id),
+  foreign key (stock_opname_line_id, item_id) references stock_opname_lines(id, item_id),
+  foreign key (goods_issue_line_id, item_id) references goods_issue_lines(id, item_id),
+  foreign key (pos_sale_line_id, item_id) references pos_sale_lines(id, item_id),
+  foreign key (production_order_line_id, item_id) references production_order_lines(id, item_id),
+  foreign key (purchase_return_line_id, item_id) references purchase_return_lines(id, item_id),
+  foreign key (purchase_writeoff_line_id, item_id) references purchase_writeoff_lines(id, item_id),
+  foreign key (warranty_replacement_line_id, item_id) references warranty_replacement_lines(id, item_id),
+  foreign key (purchase_replacement_line_id, item_id) references purchase_replacement_lines(id, item_id),
+
+  check (
+    num_nonnulls(
+      goods_receipt_line_id, production_order_id, inventory_return_line_id,
+      stock_opname_line_id, goods_issue_line_id, pos_sale_line_id,
+      production_order_line_id, purchase_return_line_id, purchase_writeoff_line_id,
+      warranty_replacement_line_id, purchase_replacement_line_id
+    ) = 1
+  )
+);
+
+create index inventory_movements_item_id_movement_date_id_idx
+  on inventory_movements(item_id, movement_date, id);
+
+create trigger inventory_movements_block_edit_delete
+  before update or delete on inventory_movements
+  for each row execute function block_edit_delete();
+```
+
+- `movement_date` — tanggal transaksi ASLI dari tabel sumbernya (misal `receipt_date` GRN, `production_date`, dst), bukan `created_at` insert — bisa beda kalau ada input mundur. Ini kolom yang dipakai opening-balance query, bukan `created_at`.
+- Composite FK otomatis "lolos" (skip validasi) kalau salah satu kolom pasangannya `NULL` (perilaku default `MATCH SIMPLE` Postgres) — jadi 9 dari 10 FK selalu trivially satisfied per baris, cuma 1 FK yang kolom penunjuknya terisi yang benar-benar divalidasi. Dikombinasikan sama `check(num_nonnulls(...)=1)`, ini yang jamin tepat 1 FK "aktif" per baris — dikonfirmasi `schema-reviewer` valid secara semantik Postgres.
+- Index `(item_id, movement_date, id)` — dipakai opening-balance (`WHERE item_id=... AND movement_date < cutoff`) dan pagination halaman (`ORDER BY movement_date, id WHERE item_id=...`), kolom `id` ikut buat tie-break deterministik kalau ada >1 mutasi item yang sama di tanggal yang sama.
+
+### Unique `(id, item_id)` di 10 tabel sumber — prasyarat composite FK
+
+`id` di tiap tabel sumber sudah unique (PK) — menambah `item_id` sebagai kolom kedua gak mungkin memunculkan duplikat baru, cuma menyediakan target yang bisa ditunjuk composite FK di atas.
+
+```sql
+alter table goods_receipt_lines add constraint goods_receipt_lines_id_item_id_key unique (id, item_id);
+alter table production_orders add constraint production_orders_id_item_id_key unique (id, item_id);
+alter table inventory_return_lines add constraint inventory_return_lines_id_item_id_key unique (id, item_id);
+alter table stock_opname_lines add constraint stock_opname_lines_id_item_id_key unique (id, item_id);
+alter table goods_issue_lines add constraint goods_issue_lines_id_item_id_key unique (id, item_id);
+alter table pos_sale_lines add constraint pos_sale_lines_id_item_id_key unique (id, item_id);
+alter table production_order_lines add constraint production_order_lines_id_item_id_key unique (id, item_id);
+alter table purchase_return_lines add constraint purchase_return_lines_id_item_id_key unique (id, item_id);
+alter table purchase_writeoff_lines add constraint purchase_writeoff_lines_id_item_id_key unique (id, item_id);
+alter table warranty_replacement_lines add constraint warranty_replacement_lines_id_item_id_key unique (id, item_id);
+```
+
+### `production_orders.item_id` — kolom baru + perbaikan `create_production_order`
+
+```sql
+alter table production_orders add column item_id uuid references items(id);
+
+update production_orders po
+set item_id = bh.finished_item_id
+from bom_headers bh
+where po.bom_header_id = bh.id;
+
+alter table production_orders alter column item_id set not null;
+```
+
+Backfill aman dari risiko orphan — `bom_header_id` sejak awal (`0004_inventory_schema.sql`) selalu `not null references bom_headers(id)` dan gak pernah dilonggarkan di migration manapun, `bom_headers` gak pernah hard-delete (cuma `is_active`) — jadi JOIN backfill dijamin match semua baris existing.
+
+`create_production_order` (`create or replace`, signature tetap sama) diperbaiki di migration yang sama supaya ngisi `item_id` di `INSERT INTO production_orders` pakai `v_finished_item_id` yang sudah dihitung dari `bom_headers` sejak awal fungsi — sebelumnya dihitung tapi cuma dipakai buat `inventory_balances`, gak pernah ditulis balik ke header.
+
+### RLS & Grant (Kartu Stok)
+
+Pola identik tabel transaksional lain (`goods_issues`, `stock_opname_lines`, dst) — `select` semua `authenticated`, `insert` cuma `admin`/`accountant` (baris ledger cuma lahir dari RPC transaksi yang sudah role-gated; RPC `create_pos_sale` yang `security definer` tetap bisa insert lewat privilege pemilik fungsi, gak butuh role `cashier` eksplisit di sini). **Gak ada** policy `update`/`delete` — immutable total, 2 lapis proteksi (RLS default-deny + trigger `block_edit_delete`).
+
+```sql
+grant select, insert on inventory_movements to authenticated;
+```
+
+### Rencana Bertahap — RPC & Backfill (belum diapply)
+
+Migration `0042` cuma schema dasar. RPC yang ditambah 1 blok `INSERT INTO inventory_movements` (additive, `create or replace`, gak ubah signature) menyusul bertahap, migration terpisah per RPC (atau kelompok kecil yang berkaitan), direview `schema-reviewer` satu-satu, urutan dari risiko paling rendah ke paling tinggi:
+
+1. ✅ `create_purchase_writeoff` (barang rusak, insidental) — migration `0043_inventory_movements_purchase_writeoff.sql`, sudah diapply.
+2. ✅ `create_warranty_replacement` (klaim garansi, jarang) — migration `0044_inventory_movements_warranty_replacement.sql`, sudah diapply.
+3. ✅ `record_stock_opname` (periodik, tapi kompleks — 1 RPC bisa hasilkan movement IN maupun OUT tergantung tanda `variance` per baris) — migration `0045_inventory_movements_stock_opname.sql`, sudah diapply.
+4. ✅ `create_ap_credit_note` + `create_purchase_replacement` (retur ke supplier, 2 opsi saling eksklusif) — migration `0046_inventory_movements_purchase_return_replacement.sql`, sudah diapply. Sekalian nutup gap `purchase_replacement_lines` (kolom ke-11, lihat "Keputusan Desain" di atas).
+5. ✅ `create_ar_credit_note` (retur dari customer) — migration `0047_inventory_movements_ar_credit_note.sql`, sudah diapply. Cuma kondisi `RESALABLE` yang masuk ledger (konsisten sama `inventory_balances` yang juga cuma disentuh kondisi itu) — baris `DAMAGED` gak pernah insert ke `inventory_movements`.
+6. ✅ `create_goods_receipt` (pembelian, cukup rutin) — migration `0048_inventory_movements_goods_receipt.sql`, sudah diapply. Body disalin dari definisi terkini (`0024`, sudah 2x di-extend dari awal — `0012` PPN + `0024` guard cancel PO), bukan definisi awal `0004` yang sudah usang.
+7. ✅ `create_production_order` (paling kompleks — 1 pemanggilan hasilkan 1 baris IN [barang jadi] + N baris OUT [tiap bahan baku dikonsumsi] sekaligus) — migration `0049_inventory_movements_production_order.sql`, sudah diapply. Body disalin dari definisi terkini di `0042` (yang sudah memperbaiki bug `item_id` production_orders), bukan dari `0004`.
+8. ✅ `create_goods_issue` + `create_pos_sale` (transaksi paling sering/harian — disentuh PALING TERAKHIR, setelah pola insert-nya terbukti aman di RPC lain) — migration `0050_inventory_movements_goods_issue_pos_sale.sql`, sudah diapply. `create_pos_sale` `security definer` — insert ke `inventory_movements` tetap jalan lewat privilege pemilik fungsi walau role `cashier` gak punya akses insert langsung (pola sama `pos_sales`/`pos_sale_lines`).
+
+**Seluruh 8 RPC (10 fungsi total, termasuk `create_ap_credit_note`+`create_purchase_replacement` sebagai 1 langkah dan `create_goods_issue`+`create_pos_sale` sebagai 1 langkah) sudah selesai.** Backfill data historis (11 skrip `INSERT INTO inventory_movements SELECT ... FROM <tabel_sumber>`, independen satu sama lain, dijaga `NOT EXISTS` per kolom sumber) + query rekonsiliasi (`SUM(inventory_movements.qty)` per item vs `inventory_balances.qty_on_hand`) sudah diapply migration `0051_inventory_movements_backfill.sql` — lolos tanpa mismatch.
+
+**Gap terpisah, belum ditutup: `void_pos_sale`** — RPC pembatalan transaksi POS mengembalikan `inventory_balances.qty_on_hand` tapi gak pernah insert kompensasi ke `inventory_movements`. Ditemukan lewat review migration `0051` (belum ada dampak nyata — dicek ke database live, belum pernah ada riwayat void POS sale sama sekali), ditunda sebagai item terpisah karena bukan bagian dari 8 RPC yang disepakati di awal. Detail: `memory/scope-debt/void-pos-sale-inventory-movement-gap.md`.
+
+Full body: `supabase/migrations/0042_inventory_movements_schema.sql`.

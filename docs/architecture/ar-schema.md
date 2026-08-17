@@ -40,7 +40,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 | pelanggan | Siapa yang berutang | |
 | tanggal invoice, jatuh tempo | Kapan diterbitkan, kapan harus lunas | Jatuh tempo dihitung sekali dari termin pelanggan **saat invoice dibuat**, lalu disimpan permanen — kalau termin pelanggan berubah belakangan, invoice lama tidak ikut berubah |
 | jumlah | Nilai tagihan | |
-| status (lunas/belum/dibatalkan) | — | **Tidak disimpan**, selalu dihitung ulang dari ada-tidaknya pembayaran yang tercatat buat invoice ini dibanding nilai invoice |
+| status (lunas/belum/dibatalkan), sisa tagihan, tipe asal | — | Kolom tersimpan, tapi **gak bisa diedit manual** — otomatis di-update sistem tiap ada pembayaran/DP/retur/writeoff/pembatalan baru yang nyentuh invoice ini |
 
 Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke-banyak) — kebijakan penagihan tetap gak izinin **bayar gabungan** maupun **kelebihan bayar**. Tapi **cicilan boleh** — 1 invoice bisa punya banyak baris pembayaran dari waktu ke waktu, `ar_payments.invoice_id` gak unik.
 
@@ -57,10 +57,10 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Pembayaran boleh kurang dari sisa tagihan, gak boleh lebih | `record_ar_payment` — cek `p_amount > ar_invoice_remaining(invoice_id)` |
-| Invoice/payment gak boleh diedit/dihapus | RLS tanpa policy `update`/`delete` + trigger `block_edit_delete` (reuse dari Journal Entry) |
+| Data invoice asli (pelanggan/tanggal/jumlah) gak boleh diedit/dihapus | RLS tanpa policy `update`/`delete` + trigger selektif — cuma kolom status/sisa tagihan yang boleh berubah, sisanya tetap terkunci total |
 | Invoice cuma bisa dibatalkan kalau belum ada pembayaran | `cancel_ar_invoice` — `count(*) from ar_payments where invoice_id = ...` > 0 → `raise exception` |
 | `due_date` snapshot, gak retroaktif ikut perubahan termin | `create_ar_invoice` — dihitung sekali dari `customers.payment_term_days` saat insert, disimpan sebagai kolom biasa |
-| Status invoice derived, bukan kolom manual | Dihitung dari `SUM(ar_payments.amount)` vs `ar_invoices.amount`, ditambah cek reversal di `journal_entries` |
+| Status invoice gak bisa nyimpang dari kenyataan pembayaran | Diupdate otomatis sistem tiap ada baris baru di pembayaran/DP/retur/writeoff/pembatalan — bukan dientri manual, dan gak bisa ketinggalan karena nempel di titik transaksi terjadi, bukan dihitung belakangan |
 
 **Interaksi Antar Tabel**
 

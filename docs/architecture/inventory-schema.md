@@ -56,6 +56,7 @@ erDiagram
 | `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`ar_invoices`), `items`, `inventory_balances`, transaksi jurnal |
 | `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan Purchase Order di sisi jual, belum ada transaksi jurnal. **Opsional**, bukan wajib | `customers`, `items` |
 | `stock_opnames` + `stock_opname_lines` | Sesi hitung fisik gudang — posisi stok disesuaikan langsung ke hasil hitung, selisih diakui sebagai beban/pendapatan | `items`, `inventory_balances`, transaksi jurnal (1 per baris yang ada selisih) |
+| `inventory_movements` | Kartu Stok — riwayat mutasi kronologis per barang (kapan masuk/keluar, dari mana, berapa). Lapisan riwayat di atas `inventory_balances`, bukan pengganti — kalau ada beda, `inventory_balances` yang benar | `items`, dan SATU dari 11 kemungkinan dokumen sumber tiap barisnya (lihat submodule "Kartu Stok / Riwayat Mutasi per Item") |
 
 ## Konsep Inti
 
@@ -343,6 +344,41 @@ Sama seperti submodule "Satuan Jual & Harga" — gak ada relasi baru.
 |---|---|---|
 | `stock_opname_lines` | banyak-ke-satu | `stock_opnames` |
 | `stock_opname_lines` | tiap baris menyesuaikan | `inventory_balances` |
+
+## Kartu Stok / Riwayat Mutasi per Item
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `inventory_movements` | Riwayat mutasi kronologis per barang — kapan masuk/keluar, dari kejadian apa, berapa qty, saldo berjalan setelah baris itu. Lapisan riwayat/jejak audit di atas `inventory_balances` (submodule "Konsep Inti"), BUKAN sumber kebenaran baru — kalau ada beda, `inventory_balances` yang dianggap benar | `items`, dan SATU dari 11 kemungkinan dokumen sumber tiap baris (semua submodule di atas: penerimaan barang, hasil & konsumsi produksi, penjualan lewat Goods Issue maupun kios/POS, retur dari customer maupun ke pemasok, penyesuaian opname, barang rusak ditulis-jadi-beban, penggantian garansi, tukar barang) |
+
+Saldo berjalan (angka "sisa stok setelah baris ini") **tidak disimpan** sebagai kolom — dihitung ulang tiap kali dibaca dari data mutasi asli (saldo awal halaman + akumulasi baris di halaman itu), supaya gak pernah ada angka tersimpan yang diam-diam menyimpang dari kenyataan.
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Tiap transaksi yang menggerakkan stok (penerimaan barang, produksi, penjualan, retur, opname, tulis-jadi-beban, penggantian garansi, tukar barang) | Seluruh RPC transaksi yang SUDAH ADA di submodule-submodule di atas (**tidak ada RPC baru**) | Selain efek aslinya (jurnal, update posisi stok), sekarang tiap RPC itu JUGA mencatat 1 (atau lebih, buat kasus tukar barang) baris riwayat ke Kartu Stok — otomatis, gak butuh langkah tambahan dari user | Baris riwayat wajib nunjuk ke SATU dokumen sumber yang benar-benar ada DAN barangnya cocok persis — dijaga otomatis di level database, gak bisa lolos walau ada salah ketik di kode |
+| Lihat riwayat 1 barang (Kartu Stok) | — (query baca, bukan RPC) | Saldo di awal halaman yang diminta dihitung 1x (total ringkas dari histori sebelumnya), baris-baris di halaman itu ditambah/dikurangi dari situ — supaya buka halaman manapun (baru atau lama) tetap cepat walau riwayat barangnya udah sangat panjang | — |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Kartu Stok gak pernah jadi sumber kebenaran baru — `inventory_balances` tetap yang utama | Baris Kartu Stok murni catatan pendamping, gak pernah dibaca balik buat menghitung ulang qty/HPP di RPC manapun |
+| Cakupan mencakup SEMUA jalur yang menggerakkan stok, bukan cuma jalur inti (beli/produksi/jual) | Termasuk juga retur (dari customer maupun ke pemasok), barang rusak yang ditulis-jadi-beban, penggantian garansi, dan penyesuaian opname |
+| Tiap baris riwayat tertelusur ke 1 dokumen sumber yang valid | Sistem menjamin otomatis (bukan cuma dipercaya dari kode) — kombinasi "dokumen sumber ada" DAN "barangnya cocok" dicek bareng di level database |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `inventory_movements` | banyak-ke-satu | `items` |
+| `inventory_movements` | tiap baris nunjuk ke TEPAT SATU dari 11 kemungkinan | dokumen sumber (lihat tabel Peta Data di atas) |
+| Penukaran barang (retur ke pemasok, opsi tukar) | SATU-SATUNYA kasus 1 dokumen sumber = 2 baris riwayat sekaligus (barang rusak keluar + barang pengganti masuk, item & qty sama) | `inventory_movements` |
+
+**Catatan cakupan:** ditemukan dalam proses pembangunan (bukan bagian rencana awal) — RPC pembatalan transaksi kios/POS belum ikut mencatat baris pemulihan ke Kartu Stok kalau ada transaksi yang dibatalkan. Belum pernah kejadian nyata sampai saat ini, dicatat sebagai pekerjaan terbuka terpisah (`memory/scope-debt/void-pos-sale-inventory-movement-gap.md`).
 
 ## Aturan Otomatis yang Dijaga Sistem (ringkasan)
 

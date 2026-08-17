@@ -43,7 +43,7 @@ Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik 
 | tanggal bill, jatuh tempo | Kapan diterima, kapan harus dibayar | Jatuh tempo dihitung sekali dari termin pemasok **saat bill dicatat**, lalu disimpan permanen — kalau termin pemasok berubah belakangan, bill lama tidak ikut berubah |
 | jumlah | Nilai tagihan | |
 | akun debit | Persediaan atau Beban, tergantung jenis pembelian | Dipilih manual tiap bill dibuat — beda dari invoice AR yang sisi debitnya selalu tetap (Piutang Usaha). Bisa lebih dari 1 kategori sekaligus dalam 1 nota — lihat bagian "Kategori Campur & PPN" di bawah |
-| status (lunas/sebagian/belum/dibatalkan) | — | **Tidak disimpan**, selalu dihitung ulang dari total pembayaran yang sudah dialokasikan |
+| status (lunas/sebagian/belum/dibatalkan), sisa utang, tipe asal | — | Kolom tersimpan, tapi **gak bisa diedit manual** — otomatis di-update sistem tiap ada pembayaran/DP/retur/pembatalan baru yang nyentuh bill ini |
 
 Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-banyak) — sempat ada desain yang mengizinkan 1 pembayaran dipecah ke banyak bill sekaligus ("bayar gabungan"), dicabut demi selaras kebijakan penagihan AR: pembayaran taat ke 1 obligasi spesifik. Tapi **cicilan boleh** — 1 bill bisa punya banyak baris pembayaran dari waktu ke waktu.
 
@@ -60,10 +60,10 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Pembayaran boleh kurang dari sisa tagihan, gak boleh lebih | `record_ap_payment` — cek `p_amount > ap_bill_remaining(bill_id)` |
-| Bill/payment gak boleh diedit/dihapus | RLS tanpa policy `update`/`delete` + trigger `block_edit_delete` |
+| Data bill asli (pemasok/tanggal/jumlah) gak boleh diedit/dihapus | RLS tanpa policy `update`/`delete` + trigger selektif — cuma kolom status/sisa utang yang boleh berubah, sisanya tetap terkunci total |
 | Bill cuma bisa dibatalkan kalau belum ada pembayaran/retur | `cancel_ap_bill` — cek `count(*)` dari `ap_payments` dan `ap_credit_notes` |
 | `due_date` snapshot, gak retroaktif ikut perubahan termin | `create_ap_bill` — dihitung sekali dari termin supplier saat insert, disimpan sebagai kolom biasa |
-| Status bill derived, bukan kolom manual | Dihitung dari `SUM(ap_payments.amount)` vs `ap_bills.amount`, ditambah cek reversal di `journal_entries` |
+| Status bill gak bisa nyimpang dari kenyataan pembayaran | Diupdate otomatis sistem tiap ada baris baru di pembayaran/DP/retur/pembatalan — bukan dientri manual |
 | Gak ada bayar gabungan lintas bill | `record_ap_payment` — parameter `p_bill_id` tunggal, gak ada array alokasi |
 
 **Interaksi Antar Tabel**

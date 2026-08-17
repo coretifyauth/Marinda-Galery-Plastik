@@ -13,6 +13,13 @@ import type { ItemCategory } from "@/lib/item-categories/schema";
 import type { ItemBrand } from "@/lib/item-brands/schema";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { formatStockBreakdown } from "@/lib/stock-display";
+import {
+  DEFAULT_MOVEMENT_PAGE_SIZE,
+  MOVEMENT_PAGE_SIZE_OPTIONS,
+  fetchItemMovementPage,
+  type ItemMovement,
+  type MovementPage,
+} from "@/lib/inventory/movements";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -22,6 +29,14 @@ import { BackLink } from "@/components/ui/back-link";
 import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { Tabs } from "@/components/ui/tabs";
+import { Pagination } from "@/components/ui/pagination";
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const EMPTY_MOVEMENT_PAGE: MovementPage = { rows: [], total: 0, openingBalance: 0 };
 
 export function ItemDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -59,6 +74,14 @@ export function ItemDetailView({ id }: { id: string }) {
   const [barcodeError, setBarcodeError] = useState<string | null>(null);
   const [generatingUnitId, setGeneratingUnitId] = useState<string | null>(null);
   const [printingUnitId, setPrintingUnitId] = useState<string | null>(null);
+
+  const [activeTab, setActiveTab] = useState("units");
+  const [movementAsOfDate, setMovementAsOfDate] = useState(today());
+  const [movementPageNum, setMovementPageNum] = useState(0);
+  const [movementPageSize, setMovementPageSize] = useState(DEFAULT_MOVEMENT_PAGE_SIZE);
+  const [movementPage, setMovementPage] = useState<MovementPage>(EMPTY_MOVEMENT_PAGE);
+  const [movementLoading, setMovementLoading] = useState(false);
+  const [movementError, setMovementError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [{ data: it, error: itErr }, { data: acc }, { data: bal }, { data: us }, { data: cats }, { data: brs }, resolvedDefaultAccounts] =
@@ -115,6 +138,30 @@ export function ItemDetailView({ id }: { id: string }) {
       active = false;
     };
   }, [router, load]);
+
+  const loadMovements = useCallback(
+    async (asOf: string, pageArg: number, pageSizeArg: number) => {
+      setMovementLoading(true);
+      try {
+        const result = await fetchItemMovementPage(id, asOf, pageArg, pageSizeArg);
+        setMovementPage(result);
+        setMovementError(null);
+      } catch (err) {
+        setMovementError(err instanceof Error ? err.message : "Gagal memuat Kartu Stok");
+      } finally {
+        setMovementLoading(false);
+      }
+    },
+    [id]
+  );
+
+  useEffect(() => {
+    if (activeTab !== "kartu-stok") return;
+    Promise.resolve().then(() => {
+      loadMovements(movementAsOfDate, movementPageNum, movementPageSize);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, movementPageNum, movementPageSize]);
 
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
@@ -401,6 +448,16 @@ export function ItemDetailView({ id }: { id: string }) {
 
       <DetailRows groups={detailGroups} />
 
+      <Tabs
+        tabs={[
+          { key: "units", label: "Satuan Jual & Harga", badge: units.length },
+          { key: "kartu-stok", label: "Kartu Stok" },
+        ]}
+        active={activeTab}
+        onChange={setActiveTab}
+      />
+
+      {activeTab === "units" && (
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
@@ -500,6 +557,101 @@ export function ItemDetailView({ id }: { id: string }) {
         </table>
 
       </div>
+      )}
+
+      {activeTab === "kartu-stok" && (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="movement_as_of_date">Sampai Tanggal</Label>
+              <Input
+                id="movement_as_of_date"
+                type="date"
+                value={movementAsOfDate}
+                onChange={(e) => {
+                  setMovementAsOfDate(e.target.value);
+                  setMovementPageNum(0);
+                  loadMovements(e.target.value, 0, movementPageSize);
+                }}
+              />
+            </div>
+          </div>
+
+          {movementError && <FormError>{movementError}</FormError>}
+
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Sumber</th>
+                  <th className="px-4 py-2">Referensi</th>
+                  <th className="px-4 py-2 text-right">Qty Masuk</th>
+                  <th className="px-4 py-2 text-right">Qty Keluar</th>
+                  <th className="px-4 py-2 text-right">Saldo Berjalan</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movementLoading && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                      Memuat...
+                    </td>
+                  </tr>
+                )}
+                {!movementLoading && movementPage.rows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                      Belum ada mutasi buat item ini.
+                    </td>
+                  </tr>
+                )}
+                {!movementLoading &&
+                  movementPage.rows.reduce<(ItemMovement & { running: number })[]>((acc, m) => {
+                    const prevRunning = acc.length > 0 ? acc[acc.length - 1].running : movementPage.openingBalance;
+                    return [...acc, { ...m, running: prevRunning + m.qty }];
+                  }, []).map((m) => (
+                    <tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="whitespace-nowrap px-4 py-2">{m.movement_date}</td>
+                      <td className="px-4 py-2">{m.source_label}</td>
+                      <td className="px-4 py-2">
+                        {m.source_ref ? (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600">
+                            {m.source_ref}
+                          </span>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono">
+                        {m.qty > 0 ? formatStockBreakdown(m.qty, item.uom, units) : ""}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono">
+                        {m.qty < 0 ? formatStockBreakdown(-m.qty, item.uom, units) : ""}
+                      </td>
+                      <td className="px-4 py-2 text-right font-mono font-medium">
+                        {formatStockBreakdown(m.running, item.uom, units)}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+            <Pagination
+              page={movementPageNum}
+              pageSize={movementPageSize}
+              total={movementPage.total}
+              onPageChange={(newPage) => {
+                setMovementPageNum(newPage);
+              }}
+              pageSizeOptions={MOVEMENT_PAGE_SIZE_OPTIONS}
+              onPageSizeChange={(newSize) => {
+                setMovementPageSize(newSize);
+                setMovementPageNum(0);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <Modal open={showUnitForm} onClose={() => setShowUnitForm(false)} title="Tambah Satuan Jual">
         <form onSubmit={handleAddUnit} className="flex flex-col gap-4">

@@ -64,7 +64,7 @@ Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger):
 
 **Peta Data (ERD)**
 
-Gak ada tabel baru — status "dibatalkan" dibaca dari ada-tidaknya jurnal pembalik, bukan kolom tersendiri (pola sama seperti pembatalan invoice AR).
+Gak ada tabel baru — status "dibatalkan" jadi kolom tersendiri di `pos_sales`, diupdate otomatis begitu ada jurnal pembalik masuk (bukan diedit manual), pola sama seperti status invoice AR.
 
 **Alur Teknis (RPC)**
 

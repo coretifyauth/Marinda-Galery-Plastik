@@ -178,6 +178,26 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 - Pakai harga historis (harga pas item itu pertama masuk) buat nilai selisih — harusnya `avg_cost` yang berlaku SAAT opname (`unit_cost` di-snapshot dari situ).
 - Coba catat opname lewat RPC transaksi lain (retur/write-off/goods issue) — opname gak punya lawan transaksi (customer/supplier) sama sekali, butuh RPC sendiri.
 
+## Kartu Stok / Riwayat Mutasi per Item (Inventory Movement Ledger)
+
+Menutup `memory/scope-debt/inventory-movement-ledger.md` (masih **Ditunda** — file ini baru desain, implementasi belum jalan; file scope-debt dihapus setelah schema->API->UI beneran selesai, bukan setelah desain ini ditulis).
+
+**Cara Kerja**
+- `/inventory` sekarang cuma nunjukin `inventory_balances.qty_on_hand`+`avg_cost` (saldo akhir) — gak ada riwayat gimana angka itu terbentuk. Ditutup lewat **tabel ledger terpusat baru `inventory_movements`** (keputusan arsitektur eksplisit, BUKAN view gabungan read-only — trade-off yang diterima sadar: baca riwayat lebih cepat & konsisten jangka panjang, ditukar biaya awal lebih besar karena harus ubah ±9-10 RPC + backfill data lama, lihat submodule "RPC & Backfill" di `memory/architecture/data/inventory-schema.md`).
+- **`inventory_balances` TETAP satu-satunya sumber kebenaran qty/avg_cost real-time** — `inventory_movements` murni lapisan riwayat/audit trail di atasnya, gak pernah dipakai buat hitung ulang stok/HPP. Kalau `SUM(inventory_movements.qty)` per item gak cocok sama `inventory_balances.qty_on_hand`, `inventory_balances` yang dianggap benar (dicek lewat query rekonsiliasi pas backfill).
+- 1 baris `inventory_movements` = 1 kejadian mutasi qty 1 item, `qty` bertanda (positif=masuk/negatif=keluar). **Saldo berjalan derived, bukan kolom tersimpan** — dibaca pakai pola opening-balance (agregat `SUM` sampai cutoff) + halaman (baris di halaman itu doang), mirror persis `report_account_ledger_opening_balance` (General Ledger, migration `0041`) — dipilih ketimbang window function polos atas seluruh riwayat karena tetap cepat walau riwayat 1 item udah panjang, dan ketimbang kolom tersimpan karena akurasi (gak ada risiko drift nilai tersimpan) jadi prioritas, bukan performa tulis.
+- Tiap baris nunjuk balik ke SATU dari ±10 tabel sumber transaksi lain (lihat detail kolom di `memory/architecture/data/inventory-schema.md`) — traceability ke dokumen sumber asli.
+
+**Aturan Bisnis**
+- Kartu Stok gak pernah jadi sumber kebenaran baru buat qty/HPP — cuma cerminan transaksi yang udah tercatat di modul lain (`inventory_balances` tetap yang utama).
+- Mencakup SEMUA jalur yang nyentuh `inventory_balances`, bukan cuma jalur inti — termasuk retur (AR & AP), write-off barang rusak, penggantian garansi, dan penyesuaian stock opname.
+
+**Skenario**
+- Saldo Tepung Terigu turun drastis tanpa penjelasan jelas — buka Kartu Stok barang itu, baris demi baris kelihatan: pembelian masuk, konsumsi produksi keluar, penyesuaian opname — penyebabnya ketahuan tanpa buka manual ke ±10 halaman transaksi berbeda.
+
+**Common Mistakes**
+- Menganggap `inventory_movements` jadi sumber kebenaran baru — `inventory_balances` tetap yang utama, ledger yang harus diperbaiki kalau ada selisih, bukan sebaliknya.
+
 ## Glossary
 
 - **Item**: master data barang (raw material atau finished good), costing-nya Weighted Average.
@@ -191,3 +211,4 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 - **item_units**: satuan jual per item (bisa lebih dari 1, misal buah & lusin), tiap baris punya faktor konversi ke satuan dasar + harga sendiri. Konversi qty ke satuan dasar terjadi di UI, bukan di RPC.
 - **Kode Scan (barcode/QR)**: identitas unik opsional per satuan jual (`item_units.barcode`), dipakai kasir POS buat lookup cepat pas checkout — bisa barcode asli pabrik atau kode internal yang digenerate sistem (`generate_document_number('item_unit_barcodes')`, format `SKU-2026-00001`).
 - **Stock Opname**: penyesuaian `inventory_balances.qty_on_hand` ke hasil hitung fisik gudang — gak menempel ke 1 transaksi tertentu (beda dari retur/write-off), dokumen sumbernya sesi hitung fisik itu sendiri. Selisih kurang → Beban Selisih Persediaan, selisih lebih → Pendapatan Selisih Persediaan (2 akun terpisah, gak di-netting).
+- **Kartu Stok (Inventory Movement Ledger)**: riwayat mutasi kronologis per item (`inventory_movements`) — lapisan audit trail di atas `inventory_balances`, bukan sumber kebenaran baru. Saldo berjalan derived (opening-balance + halaman), bukan kolom tersimpan.

@@ -124,9 +124,11 @@ Menutup `memory/scope-debt/compound-transactional-entries.md` + `memory/scope-de
 
 **Peta Data (ERD)**
 
-Gak ada tabel baru. Status "dibatalkan" derived dari `exists (select 1 from journal_entries where reverses_entry_id = pos_sales.revenue_journal_entry_id)` — pola sama `ar_invoices` (`ar-schema.md`).
+~~Gak ada tabel baru. Status "dibatalkan" derived dari `exists (select 1 from journal_entries where reverses_entry_id = pos_sales.revenue_journal_entry_id)`~~ — **UPDATE migration `0053`** (lihat di bawah): sekarang kolom asli `pos_sales.status`, pola cek yang sama (`exists ... reverses_entry_id`) tapi dijalanin sekali pas ada reversal, bukan tiap query — pola sama `ar_invoices` (`ar-schema.md`).
 
 **`pos_sales_with_status` view — migration `0036_pos_sale_status_view.sql`**: nutup scope-debt filter status di list `/pos-sales`. Expose `status` (`normal`/`dibatalkan`, dari exists-check di atas) + `total` (SUM `pos_sale_lines.line_amount`) biar list page bisa filter server-side dan gak perlu lagi query `journal_entries.reverses_entry_id` terpisah + embed `pos_sale_lines` cuma buat di-reduce ulang di client. Pola sama family `*_with_status` lain (`ap_deposits_with_status` 0031, dst).
+
+**Denormalisasi ke kolom asli — migration `0053_denormalize_transactional_status.sql`** (2026-08-17, sudah di-push & diverifikasi user lewat testing UI; mekanisme lengkap & rationale di `ar-schema.md` submodule AR Invoice): `total`/`status` sekarang KOLOM ASLI di `pos_sales`. `total` dijaga trigger `AFTER INSERT` di `pos_sale_lines` (`pos_sale_lines_sync_total`, `security definer`). `status` di-set langsung lewat trigger gabungan `journal_entries_sync_reversal_status` (dipakai bareng AR Invoice/AP Bill/AR&AP Deposit — 1 trigger di `journal_entries` buat semua modul yang statusnya bisa berubah gara-gara reversing entry). `pos_sales_block_edit_delete` (trigger immutability generik dari `0009`) diganti selective (`pos_sales_block_edit_delete_or_sync`) — kolom bisnis asli tetap immutable, `total`/`status` boleh diubah trigger. View `pos_sales_with_status` sekarang `select` polos.
 
 **Interaksi Antar Tabel**
 
