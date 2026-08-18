@@ -4,7 +4,15 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { Account } from "@/lib/accounts/schema";
-import { postDepreciationSchema, type FixedAsset, type DepreciationEntry } from "@/lib/fixed-assets/schema";
+import {
+  postDepreciationSchema,
+  createFixedAssetDisposalSchema,
+  disposalTypes,
+  disposalTypeLabels,
+  type FixedAsset,
+  type DepreciationEntry,
+  type FixedAssetDisposal,
+} from "@/lib/fixed-assets/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -13,6 +21,10 @@ import { FormError, FormHint } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
+import { LockedAccountField } from "@/components/ui/locked-account-field";
+import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
+import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
+import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 
 export function FixedAssetDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -20,6 +32,8 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const [asset, setAsset] = useState<FixedAsset | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<DepreciationEntry[]>([]);
+  const [disposal, setDisposal] = useState<FixedAssetDisposal | null>(null);
+  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -29,22 +43,40 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const [postError, setPostError] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
 
+  const [showDisposeForm, setShowDisposeForm] = useState(false);
+  const [disposeDate, setDisposeDate] = useState("");
+  const [disposeType, setDisposeType] = useState<(typeof disposalTypes)[number]>("sold");
+  const [disposeProceeds, setDisposeProceeds] = useState("0");
+  const [disposeCashMethod, setDisposeCashMethod] = useState<CashMethod>("TUNAI");
+  const [disposeNotes, setDisposeNotes] = useState("");
+  const [disposeError, setDisposeError] = useState<string | null>(null);
+  const [disposing, setDisposing] = useState(false);
+
   const load = useCallback(async () => {
-    const [{ data: fa, error: faErr }, { data: acc }, { data: de, error: deErr }] = await Promise.all([
-      supabase
-        .from("fixed_assets")
-        .select(
-          "id, name, asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, acquisition_cost, salvage_value, useful_life_months, acquisition_date, depreciation_method, depreciation_rate, archived_at"
-        )
-        .eq("id", id)
-        .single(),
-      supabase.from("accounts").select("id, code, name, category, normal_balance, is_contra, parent_id, archived_at"),
-      supabase
-        .from("depreciation_entries")
-        .select("id, fixed_asset_id, period, amount, journal_entry_id, created_at")
-        .eq("fixed_asset_id", id)
-        .order("period"),
-    ]);
+    const [{ data: fa, error: faErr }, { data: acc }, { data: de, error: deErr }, { data: disp }, defAcc] =
+      await Promise.all([
+        supabase
+          .from("fixed_assets")
+          .select(
+            "id, name, asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, acquisition_cost, salvage_value, useful_life_months, acquisition_date, depreciation_method, depreciation_rate, archived_at, disposed_at"
+          )
+          .eq("id", id)
+          .single(),
+        supabase.from("accounts").select("id, code, name, category, normal_balance, is_contra, parent_id, archived_at"),
+        supabase
+          .from("depreciation_entries")
+          .select("id, fixed_asset_id, period, amount, journal_entry_id, created_at")
+          .eq("fixed_asset_id", id)
+          .order("period"),
+        supabase
+          .from("fixed_asset_disposals")
+          .select(
+            "id, fixed_asset_id, disposal_date, disposal_type, proceeds_amount, proceeds_account_id, book_value_at_disposal, gain_loss_amount, gain_loss_account_id, journal_entry_id, notes, created_at"
+          )
+          .eq("fixed_asset_id", id)
+          .maybeSingle(),
+        fetchDefaultAccounts(),
+      ]);
     if (faErr) {
       setLoadError(faErr.message);
       return;
@@ -53,6 +85,8 @@ export function FixedAssetDetailView({ id }: { id: string }) {
     setAsset(fa as FixedAsset);
     setAccounts((acc ?? []) as Account[]);
     setEntries((de ?? []) as DepreciationEntry[]);
+    setDisposal((disp as FixedAssetDisposal | null) ?? null);
+    setDefaultAccounts(defAcc);
   }, [id]);
 
   useEffect(() => {
@@ -117,6 +151,63 @@ export function FixedAssetDetailView({ id }: { id: string }) {
     await load();
   }
 
+  async function handleDispose(e: FormEvent) {
+    e.preventDefault();
+    setDisposeError(null);
+
+    const proceedsAmount = Number(disposeProceeds) || 0;
+    const proceedsAccount = resolveCashAccount(disposeCashMethod, defaultAccounts);
+    const gainAccount = defaultAccounts["fixed_assets.disposal_gain"];
+    const lossAccount = defaultAccounts["fixed_assets.disposal_loss"];
+
+    const parsed = createFixedAssetDisposalSchema.safeParse({
+      fixed_asset_id: id,
+      disposal_date: disposeDate,
+      disposal_type: disposeType,
+      proceeds_amount: proceedsAmount,
+      proceeds_account_id: proceedsAmount > 0 ? proceedsAccount?.id : undefined,
+      gain_account_id: gainAccount?.id,
+      loss_account_id: lossAccount?.id,
+      notes: disposeNotes || undefined,
+    });
+    if (!parsed.success) {
+      setDisposeError(parsed.error.issues[0]?.message ?? "Input gak valid");
+      return;
+    }
+
+    setDisposing(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("fixed_asset_disposals");
+    } catch (err) {
+      setDisposing(false);
+      setDisposeError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+    const { error } = await supabase.rpc("create_fixed_asset_disposal", {
+      p_fixed_asset_id: parsed.data.fixed_asset_id,
+      p_disposal_date: parsed.data.disposal_date,
+      p_disposal_type: parsed.data.disposal_type,
+      p_source_ref: sourceRef,
+      p_proceeds_amount: parsed.data.proceeds_amount,
+      p_proceeds_account_id: parsed.data.proceeds_account_id ?? null,
+      p_gain_account_id: parsed.data.gain_account_id ?? null,
+      p_loss_account_id: parsed.data.loss_account_id ?? null,
+      p_notes: parsed.data.notes ?? null,
+    });
+    setDisposing(false);
+    if (error) {
+      setDisposeError(error.message);
+      return;
+    }
+
+    setShowDisposeForm(false);
+    setDisposeDate("");
+    setDisposeProceeds("0");
+    setDisposeNotes("");
+    await load();
+  }
+
   if (checkingSession) {
     return <p className="text-sm text-slate-500">Memuat...</p>;
   }
@@ -147,6 +238,12 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const isPublished = entries.length > 0;
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
+  const disposeProceedsNum = Number(disposeProceeds) || 0;
+  const disposeGainLoss = disposeProceedsNum - bookValue;
+  const disposeProceedsAccount = resolveCashAccount(disposeCashMethod, defaultAccounts);
+  const disposeGainAccount = defaultAccounts["fixed_assets.disposal_gain"];
+  const disposeLossAccount = defaultAccounts["fixed_assets.disposal_loss"];
+
   const detailGroups = [
     {
       title: "Informasi Aset",
@@ -175,7 +272,10 @@ export function FixedAssetDetailView({ id }: { id: string }) {
           label: "Akun Beban Penyusutan",
           value: expenseAccount ? `${expenseAccount.code} — ${expenseAccount.name}` : "-",
         },
-        { label: "Status", value: asset.archived_at ? "Diarsipkan" : "Aktif" },
+        {
+          label: "Status",
+          value: asset.disposed_at ? "Sudah Dilepas (Disposal)" : asset.archived_at ? "Diarsipkan" : "Aktif",
+        },
       ],
     },
     {
@@ -244,7 +344,144 @@ export function FixedAssetDetailView({ id }: { id: string }) {
         </form>
       </Modal>
 
-      {isPublished && (
+      <Modal open={showDisposeForm} onClose={() => setShowDisposeForm(false)} title="Lepas Aset (Disposal)">
+        <p className="mb-4 text-sm text-slate-500">
+          Aset ini berhenti dipakai selamanya — dijual, dibuang/rusak total, atau hilang. Nilai
+          buku dihitung ulang otomatis ({bookValue.toLocaleString("id-ID")}) dan dibandingkan ke
+          nilai jual buat nentuin laba/rugi pelepasan. Aksi ini gak bisa dibatalkan (koreksi cuma
+          lewat jurnal pembalik).
+        </p>
+        <JournalPreviewPanel
+          groups={[
+            [
+              accumulated > 0 && {
+                label: "Akumulasi Penyusutan (debit)",
+                resolved: accumAccount,
+                side: "debit",
+              },
+              { label: "Aset Tetap (kredit)", resolved: assetAccount, side: "credit" },
+              disposeProceedsNum > 0 && {
+                label: "Akun Kas/Bank (debit)",
+                resolved: disposeProceedsAccount,
+                side: "debit",
+              },
+              disposeGainLoss > 0 && {
+                label: "Laba Pelepasan Aset Tetap (kredit)",
+                resolved: disposeGainAccount,
+                side: "credit",
+              },
+              disposeGainLoss < 0 && {
+                label: "Rugi Pelepasan Aset Tetap (debit)",
+                resolved: disposeLossAccount,
+                side: "debit",
+              },
+            ],
+          ]}
+        />
+        <form onSubmit={handleDispose} className="mt-4 flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dispose_type">Jenis Pelepasan</Label>
+            <select
+              id="dispose_type"
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              value={disposeType}
+              onChange={(e) => {
+                const next = e.target.value as (typeof disposalTypes)[number];
+                setDisposeType(next);
+                if (next !== "sold") setDisposeProceeds("0");
+              }}
+            >
+              {disposalTypes.map((t) => (
+                <option key={t} value={t}>
+                  {disposalTypeLabels[t]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dispose_date">Tanggal Disposal</Label>
+            <Input
+              id="dispose_date"
+              type="date"
+              value={disposeDate}
+              onChange={(e) => setDisposeDate(e.target.value)}
+            />
+          </div>
+          {disposeType === "sold" ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="dispose_proceeds">Nilai Jual</Label>
+                <Input
+                  id="dispose_proceeds"
+                  type="number"
+                  min="0"
+                  value={disposeProceeds}
+                  onChange={(e) => setDisposeProceeds(e.target.value)}
+                />
+              </div>
+              <CashMethodField
+                label="Diterima Sebagai"
+                htmlFor="dispose_cash_method"
+                method={disposeCashMethod}
+                onChange={setDisposeCashMethod}
+                defaultAccounts={defaultAccounts}
+              />
+            </>
+          ) : (
+            <FormHint>
+              {disposeType === "scrapped"
+                ? "Dibuang/rusak total — gak ada uang masuk (nilai jual Rp0). Seluruh nilai buku diakui sebagai rugi pelepasan."
+                : "Hilang/dicuri — gak ada uang masuk (nilai jual Rp0). Seluruh nilai buku diakui sebagai rugi pelepasan."}
+            </FormHint>
+          )}
+          <LockedAccountField htmlFor="dispose_gain_account" resolved={disposeGainAccount} />
+          <LockedAccountField htmlFor="dispose_loss_account" resolved={disposeLossAccount} />
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dispose_notes">Catatan (opsional)</Label>
+            <Input
+              id="dispose_notes"
+              value={disposeNotes}
+              onChange={(e) => setDisposeNotes(e.target.value)}
+            />
+          </div>
+          <p
+            className={`text-sm font-medium ${
+              disposeGainLoss > 0 ? "text-emerald-600" : disposeGainLoss < 0 ? "text-red-600" : "text-slate-500"
+            }`}
+          >
+            {disposeGainLoss > 0 && `Laba pelepasan: ${disposeGainLoss.toLocaleString("id-ID")}`}
+            {disposeGainLoss < 0 && `Rugi pelepasan: ${Math.abs(disposeGainLoss).toLocaleString("id-ID")}`}
+            {disposeGainLoss === 0 && "Gak ada laba/rugi pelepasan"}
+          </p>
+          {disposeError && <FormError>{disposeError}</FormError>}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setShowDisposeForm(false)}>
+              Batal
+            </Button>
+            <Button type="submit" disabled={disposing}>
+              {disposing ? "Memproses..." : "Lepas Aset"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {asset.disposed_at && disposal && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-medium text-black">
+            🗑 Aset ini sudah di-disposal ({disposalTypeLabels[disposal.disposal_type]})
+          </p>
+          <p className="mt-1 text-sm text-slate-600">
+            Tanggal: {disposal.disposal_date} · Nilai Buku Saat Itu:{" "}
+            {disposal.book_value_at_disposal.toLocaleString("id-ID")} · Nilai Jual:{" "}
+            {disposal.proceeds_amount.toLocaleString("id-ID")} ·{" "}
+            {disposal.gain_loss_amount >= 0 ? "Laba" : "Rugi"}:{" "}
+            {Math.abs(disposal.gain_loss_amount).toLocaleString("id-ID")}
+          </p>
+          {disposal.notes && <p className="mt-1 text-sm text-slate-500">Catatan: {disposal.notes}</p>}
+        </div>
+      )}
+
+      {isPublished && !asset.disposed_at && (
         <p className="text-sm text-amber-600">
           🔒 Aset ini udah punya penyusutan — nilai perolehan/residu/umur manfaat/metode/akun
           terkunci (<code>fixed_assets_published_lock</code>). Cuma <code>name</code>/
@@ -254,8 +491,11 @@ export function FixedAssetDetailView({ id }: { id: string }) {
 
       <DetailRows groups={detailGroups} />
 
-      {canWrite && (
-        <div className="flex justify-end">
+      {canWrite && !asset.disposed_at && (
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setShowDisposeForm(true)}>
+            Lepas Aset
+          </Button>
           <Button variant="toolbar" onClick={() => setShowPostForm(true)}>
             Posting Penyusutan
           </Button>

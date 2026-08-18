@@ -402,11 +402,88 @@ Gak ada tabel/RPC terpisah — enum `depreciation_method` dan kolom `depreciatio
 - Simpan `depreciation_rate` sebagai tarif tahunan lalu dibagi 12 di kode pemanggil — harus eksplisit tarif per periode posting di kolomnya, biar gak ada konversi ambigu di 2 tempat.
 - Anggap `depreciation_entries` butuh kolom tambahan buat nampung `declining_balance` — gak perlu, `amount` udah eksplisit per baris (lihat DDL submodule "Konsep Inti").
 
+## Disposal Aset Tetap (Penjualan/Pembuangan/Kehilangan)
+
+Ref: `supabase/migrations/0054_fixed_asset_disposal_schema.sql`. Konsep bisnis: `docs/domain/fixed-assets.md` + `memory/domain/fixed-assets.md` submodule "Disposal Aset Tetap".
+
+### Keputusan
+
+- **`fixed_asset_disposals` bukan status column di `fixed_assets`** — disposal butuh nyimpen data sendiri (nilai buku snapshot, laba/rugi, akun yang dipetakan, jurnal) yang gak muat di 1-2 kolom tambahan `fixed_assets`. `fixed_assets.disposed_at` cuma penanda denormalisasi (null=aktif) buat filter cepat, ditulis RPC yang sama (bukan trigger AFTER INSERT terpisah kayak pola `0053` — `fixed_assets` gak punya `block_edit_delete` generik yang perlu di-bypass security definer, jadi RPC `security invoker` biasa udah cukup nulis langsung, lewat grant/policy `fixed_assets_update` yang sudah ada sejak `0007`).
+- **1 aset = 1 disposal, all-or-nothing** — `unique` di `fixed_asset_disposals.fixed_asset_id`, konsisten prinsip "1 aset = 1 unit fisik" (gak ada disposal parsial).
+- **Akun laba/rugi lewat `default_account_settings`**, bukan hardcode — 2 role baru (`fixed_assets.disposal_gain` default `4300 Pendapatan Lain-lain`, `fixed_assets.disposal_loss` akun baru `6200 Rugi Pelepasan Aset Tetap`). RPC nerima KEDUANYA sebagai parameter (`p_gain_account_id`, `p_loss_account_id`) — bukan RPC yang query `default_account_settings` sendiri (pola project: RPC selalu nerima `account_id` resolved dari caller, lihat `p_asset_account_id` dkk di `create_fixed_asset`), RPC yang milih dipakai yang mana berdasar tanda hasil hitung.
+- **Trigger cap penyusutan (`depreciation_entries_cap_check`, `0007`) di-`create or replace`, bukan trigger baru** — fungsi itu udah `select` dari `fixed_assets` tiap insert `depreciation_entries`, jadi nge-reuse buat sekalian cek `disposed_at is null` lebih murah daripada bikin trigger kedua.
+- **Kode akun `6000` (Beban Selisih Persediaan) dan `6100` (dipakai data live buat "Beban Biaya Pembelian", ditambah manual lewat Studio, gak lewat migration file) udah kepake** — akun rugi pelepasan baru pakai `6200`.
+
+### DDL
+
+```sql
+alter table fixed_assets add column disposed_at timestamptz;
+
+create type fixed_asset_disposal_type as enum ('sold', 'scrapped', 'lost');
+
+create table fixed_asset_disposals (
+  id uuid primary key default gen_random_uuid(),
+  fixed_asset_id uuid not null unique references fixed_assets(id),
+  disposal_date date not null,
+  disposal_type fixed_asset_disposal_type not null,
+  proceeds_amount numeric(14,2) not null default 0 check (proceeds_amount >= 0),
+  proceeds_account_id uuid references accounts(id),
+  book_value_at_disposal numeric(14,2) not null,
+  gain_loss_amount numeric(14,2) not null,
+  gain_loss_account_id uuid references accounts(id),
+  journal_entry_id uuid not null references journal_entries(id),
+  notes text,
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now(),
+  check ((proceeds_amount = 0 and proceeds_account_id is null) or (proceeds_amount > 0 and proceeds_account_id is not null)),
+  check ((gain_loss_amount = 0 and gain_loss_account_id is null) or (gain_loss_amount <> 0 and gain_loss_account_id is not null))
+);
+
+create index fixed_asset_disposals_fixed_asset_id_idx on fixed_asset_disposals(fixed_asset_id);
+```
+
+`gain_loss_amount` disimpan signed (positif=laba, negatif=rugi) — 2 `check` constraint di atas mastiin akun cuma keisi kalau nilainya beneran nonzero (konsisten sama pola `proceeds_amount`/`proceeds_account_id`).
+
+### Trigger
+
+```sql
+create trigger fixed_asset_disposals_block_edit_delete
+  before update or delete on fixed_asset_disposals
+  for each row execute function block_edit_delete();
+```
+
+`depreciation_entries_cap_check` (`0007`) di-`create or replace` nambah cek `disposed_at is not null` sebelum cek cap — DDL lengkap di migration `0054`.
+
+### RPC (financial write — atomik)
+
+`create_fixed_asset_disposal(p_fixed_asset_id, p_disposal_date, p_disposal_type, p_source_ref, p_proceeds_amount=0, p_proceeds_account_id=null, p_gain_account_id=null, p_loss_account_id=null, p_notes=null)`:
+
+1. Tolak kalau aset gak ada atau `disposed_at` udah keisi (dobel disposal).
+2. Tolak kalau `p_disposal_date` < periode penyusutan terakhir aset itu (kalau ada).
+3. Hitung `v_book_value := acquisition_cost - sum(depreciation_entries.amount)`, `v_gain_loss := p_proceeds_amount - v_book_value`.
+4. Susun `v_lines` (array `jsonb`, append kondisional — pola sama `close_period`, `0008`): debit Akumulasi Penyusutan (skip kalau 0), kredit Aset Tetap (nilai perolehan penuh, selalu ada), debit Kas/Bank (skip kalau `proceeds_amount=0`), baris penyeimbang laba (kredit, kalau `v_gain_loss>0`) atau rugi (debit, kalau `<0`) — skip kalau pas 0. Math generik ini otomatis benar buat semua kombinasi (fully-depreciated, dijual pas sama nilai buku, dst) tanpa branch tambahan — debit selalu = kredit karena identitas akuntansi, bukan dihitung manual per kasus.
+5. `create_journal_entry` (reuse, bukan insert manual).
+6. Insert `fixed_asset_disposals`, lalu `update fixed_assets set disposed_at = now()`.
+
+Full source: migration `0054_fixed_asset_disposal_schema.sql`.
+
+### RLS Policy
+
+Pola identik `depreciation_entries` — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, sengaja gak ada `update`/`delete` (RLS default-deny + `block_edit_delete`, 2 lapis).
+
+### Grant
+
+```sql
+grant select, insert on fixed_asset_disposals to authenticated;
+```
+
 ## Glossary
 
 - **`accounts.is_contra`**: flag boolean yang menentukan arah `normal_balance` generated column — kategori `asset`/`expense` dengan `is_contra=true` jadi normal kredit (kebalikan default).
 - **`fixed_assets`**: master data 1 unit aset fisik, menunjuk 3 akun COA (asset, akumulasi penyusutan, beban penyusutan) + field penyusutan (metode, tarif, umur manfaat, nilai residu).
 - **`depreciation_entries`**: histori posting penyusutan, 1 baris per periode per aset, `amount` eksplisit (bukan re-derive).
 - **`post_depreciation`**: RPC atomik yang menghitung nominal penyusutan sesuai metode aset, bikin jurnal, dan insert histori sekaligus.
+- **`fixed_asset_disposals`**: histori pelepasan aset (jual/buang/hilang), 1 baris per aset (unik), simpan nilai buku snapshot + laba/rugi pelepasan.
+- **`create_fixed_asset_disposal`**: RPC atomik yang menghitung nilai buku & laba/rugi pelepasan, bikin jurnal, insert histori, dan menandai `fixed_assets.disposed_at` sekaligus.
 
 Naratif lengkap + reasoning penuh: `docs/domain/fixed-assets.md`. Detail teknis non-teknis (ERD tabel): `docs/architecture/fixed-assets-schema.md`.

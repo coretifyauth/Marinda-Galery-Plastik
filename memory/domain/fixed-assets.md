@@ -20,7 +20,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/fixed-assets.md`. Struktur modul
 - **Immutability**: histori penyusutan gak bisa di-`UPDATE`/`DELETE` — RLS default-deny + trigger `block_edit_delete` (reuse dari Journal Entry). Koreksi = reversing entry + posting ulang.
 - **3 akun tervalidasi perannya** — trigger nolak kalau akun yang dipetakan ke aset ditunjuk ke kategori/status kontra yang salah (misal akumulasi penyusutan ditunjuk ke akun yang bukan kontra).
 - **Published-lock**: begitu aset punya minimal 1 baris penyusutan, field penentu nilai (nilai perolehan, residu, umur manfaat, metode, tarif, 3 kolom akun) terkunci — nama & status arsip tetap bebas diubah kapan pun.
-- **Disposal aset belum ada mekanismenya** — aset tercatat konstan sampai beneran dijual/dibuang, tapi belum ada RPC/tabel buat mencatat pelepasan & laba-rugi dari situ. Belum ada scope-debt file buat ini (belum digali lebih lanjut).
+- **Disposal aset** — pelepasan (jual/buang/hilang) dibahas di submodule "Disposal Aset Tetap" di bawah.
 
 **Skenario referensi**
 
@@ -61,6 +61,35 @@ Naratif lengkap + reasoning penuh: `docs/domain/fixed-assets.md`. Struktur modul
 **Common Mistakes**
 - Simpan tarif Saldo Menurun sebagai tarif tahunan lalu dibagi 12 di kode — harus eksplisit tarif per periode posting, biar gak ada konversi ambigu di 2 tempat beda.
 - Anggap `depreciation_entries` butuh kolom tambahan buat nampung Saldo Menurun — gak perlu, `amount` udah eksplisit per baris.
+
+## Disposal Aset Tetap (Penjualan/Pembuangan/Kehilangan)
+
+**Entitas & Jurnal**
+- `fixed_asset_disposals` — 1 baris per aset yang dilepas (unique per `fixed_asset_id`, gak bisa disposal 2x). Kolom kunci: tanggal disposal, jenis (`SOLD`/`SCRAPPED`/`LOST`), nilai jual (nol kalau `SCRAPPED`/`LOST`), nilai buku saat disposal (snapshot, bukan re-derive), laba/rugi (signed, derived tapi disimpan eksplisit), `journal_entry_id`.
+- `fixed_assets.disposed_at` — kolom denormalisasi (timestamp, null = masih aktif) buat filter cepat aset aktif vs sudah dilepas, pola sama `0053_denormalize_transactional_status.sql`.
+- **Jurnal**: Debit Akumulasi Penyusutan (penuh) + Debit Kas/Bank (nilai jual, kalau >0) + Kredit Aset Tetap (nilai perolehan) + baris penyeimbang laba (kredit) atau rugi (debit). Dipost lewat `create_journal_entry` (RPC existing, direuse — bukan insert manual), atomik dalam 1 RPC baru `create_fixed_asset_disposal`.
+- Akun laba pakai role `default_account_settings` baru `fixed_assets.disposal_gain` (default nunjuk ke 4300 Pendapatan Lain-lain, sama akun yang dipakai `ar.other_revenue` tapi role_key terpisah — boleh beda akun kalau admin mau nanti). Akun rugi pakai role baru `fixed_assets.disposal_loss` (akun baru, kode `6200 Rugi Pelepasan Aset Tetap` — `6000`/`6100` sudah dipakai akun lain, cek nomor final ke DB live sebelum migration diapply). Nilai jual (kalau ada) pakai role `cash.tunai`/`cash.bank` existing lewat `CashMethodField`.
+
+**Constraints**
+- **1 aset = 1 disposal** — unique constraint di `fixed_asset_disposals.fixed_asset_id`, gak ada disposal parsial/sebagian.
+- **Immutability** — sama pola Journal Entry & `depreciation_entries`, gak bisa `UPDATE`/`DELETE` (RLS default-deny + `block_edit_delete`). Koreksi = reversing entry.
+- **Blokir penyusutan pasca-disposal** — trigger di `depreciation_entries` cek `fixed_assets.disposed_at is null` sebelum izinin insert baris baru.
+- **Tanggal disposal >= tanggal penyusutan terakhir** aset itu — dicek RPC, dijamin trigger.
+- **Published-lock tetap berlaku** — field 3-akun/nilai/metode di `fixed_assets` udah terkunci dari penyusutan pertama, disposal gak buka kunci itu (gak relevan lagi begitu disposed).
+
+**Skenario referensi**
+
+| # | Kasus | Pola |
+|---|---|---|
+| 6 | Aset dijual untung | Nilai jual > nilai buku, kredit ke `fixed_assets.disposal_gain` |
+| 7 | Aset dijual rugi | Nilai jual < nilai buku, debit ke `fixed_assets.disposal_loss` |
+| 8 | Aset hilang/rusak total | Nilai jual nol, rugi penuh = seluruh nilai buku, gak ada baris Kas |
+
+**Common Mistakes**
+- Hapus baris `fixed_assets` begitu dijual/dibuang — harusnya insert `fixed_asset_disposals` + set `disposed_at`, histori tetap ada.
+- Lupa debit Akumulasi Penyusutan saat disposal — saldo kontra-aset nyangkut selamanya.
+- Hitung laba/rugi dari nilai perolehan, bukan nilai buku (nilai perolehan - akumulasi penyusutan berjalan).
+- Insert manual ke `journal_entries`/`journal_lines` buat disposal, bukan lewat `create_journal_entry` — melanggar pola project (RPC modul baru manggil RPC modul lama).
 
 ## Glossary
 

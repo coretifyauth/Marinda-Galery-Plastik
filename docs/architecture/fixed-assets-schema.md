@@ -56,7 +56,7 @@ Sistem memvalidasi otomatis bahwa ketiga akun ini dipetakan sesuai perannya masi
 | Penyusutan yang sudah diposting tidak pernah bisa diedit atau dihapus | RLS default-deny + trigger `block_edit_delete` (reuse dari Journal Entry) |
 | Aset yang sudah pernah disusutkan jadi "terkunci" sebagian (nilai, umur manfaat, metode, tarif, ketiga akun) | Trigger published-lock di `fixed_assets` |
 | Ketiga akun yang dipetakan divalidasi perannya saat aset didaftarkan/diubah | Trigger validasi 3 akun di `fixed_assets` |
-| Aset Tetap tercatat, gak berubah, sampai pelepasan | Tidak ada jalur yang mengubah nilai perolehan setelah tercatat (kecuali sebelum ada riwayat penyusutan). Pelepasan (disposal) sendiri belum punya RPC — catatan terbuka, lihat `docs/domain/fixed-assets.md` bagian "Konsep Inti" |
+| Aset Tetap tercatat, gak berubah, sampai pelepasan | Tidak ada jalur yang mengubah nilai perolehan setelah tercatat (kecuali sebelum ada riwayat penyusutan). Pelepasan (disposal): submodule "Disposal Aset Tetap" |
 
 **Interaksi Antar Tabel**
 
@@ -98,12 +98,48 @@ Tidak ada tabel baru — metode & tarif cuma 2 kolom tambahan di `fixed_assets` 
 |---|---|---|
 | `fixed_assets` (tarif penyusutan) | dipakai formula di dalam | `post_depreciation` |
 
+## Disposal Aset Tetap (Penjualan/Pembuangan/Kehilangan)
+
+Konsep bisnisnya: `docs/domain/fixed-assets.md` submodule "Disposal Aset Tetap".
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `fixed_asset_disposals` | Satu baris = satu aset yang dilepas (dijual/dibuang/hilang), menyimpan nilai buku saat itu & laba-rugi pelepasan | `fixed_assets` (1-ke-1, unik per aset), `journal_entries`, `accounts` (akun penerimaan kas & akun laba/rugi) |
+| `fixed_assets` (kolom tanggal dilepas) | Kolom penanda, terisi otomatis begitu aset di-disposal — dipakai buat filter cepat aset aktif vs sudah dilepas | — |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Lepas aset (jual/buang/hilang) | `create_fixed_asset_disposal` | Hitung ulang nilai buku (nilai perolehan - akumulasi penyusutan berjalan), bandingkan ke nilai jual yang diterima → laba atau rugi. Bikin satu transaksi jurnal (nolin Akumulasi Penyusutan, nolin akun Aset, catat kas masuk kalau ada, catat laba/rugi ke akun yang sesuai) dan catat riwayat disposal — semua sebagai satu langkah gabungan | Tolak kalau aset sudah pernah di-disposal; tolak kalau tanggal disposal lebih awal dari penyusutan terakhir yang sudah diposting |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Satu aset cuma bisa di-disposal sekali, gak ada disposal sebagian | Kolom penunjuk aset di `fixed_asset_disposals` unik |
+| Laba/rugi pelepasan dihitung dari Nilai Buku (bukan nilai perolehan mentah) | Dihitung otomatis di `create_fixed_asset_disposal`, bukan dientri manual |
+| Riwayat disposal gak bisa diedit/dihapus | RLS default-deny + trigger `block_edit_delete` (reuse dari Journal Entry) |
+| Aset yang sudah di-disposal gak bisa diposting penyusutan lagi | Trigger cap penyusutan (submodule "Konsep Inti") diperluas ikut cek status pelepasan aset |
+| Tanggal disposal gak boleh lebih awal dari penyusutan terakhir yang sudah diposting | Dicek di `create_fixed_asset_disposal` |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `fixed_asset_disposals` | satu-ke-satu (unik per aset) | `fixed_assets` |
+| `fixed_asset_disposals` | satu-ke-satu (`journal_entry_id`, `not null`) | `journal_entries` |
+| `fixed_asset_disposals` (akun penerimaan kas, akun laba/rugi) | masing-masing menunjuk (opsional, tergantung kasus) | `accounts` |
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
 |---|---|
-| Melihat daftar aset & riwayat penyusutan | Semua user yang sudah login |
+| Melihat daftar aset & riwayat penyusutan/disposal | Semua user yang sudah login |
 | Mendaftarkan aset baru, mengubah data aset (sebelum ada penyusutan) | Role `admin` atau `accountant` |
 | Memposting penyusutan | Role `admin` atau `accountant` |
-| Mengedit/menghapus riwayat penyusutan | **Tidak ada seorang pun** |
-| Menghapus aset secara permanen | **Tidak ada seorang pun** — hanya bisa diarsipkan |
+| Melepas aset (disposal) | Role `admin` atau `accountant` |
+| Mengedit/menghapus riwayat penyusutan atau disposal | **Tidak ada seorang pun** |
+| Menghapus aset secara permanen | **Tidak ada seorang pun** — hanya bisa diarsipkan (atau dilepas lewat disposal) |

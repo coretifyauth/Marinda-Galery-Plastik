@@ -34,7 +34,7 @@ Prinsipnya sama akar kayak Inventory: **matching principle** — biaya diakui be
 
 **Constraint Wajib**
 - **Penyusutan gak boleh melebihi (Nilai Perolehan - Nilai Residu).** Akumulasi Penyusutan punya batas atas — kalau posting penyusutan diteruskan lewat batas ini, nilai buku bisa jadi negatif, gak masuk akal secara akuntansi (aset gak mungkin bernilai negatif).
-- **Aset Tetap tercatat, gak berubah, sampai pelepasan.** Beda dari saldo Persediaan yang naik-turun tiap transaksi, saldo akun Aset Tetap per unit aset konstan dari akuisisi sampai aset itu dijual/dibuang — cuma Akumulasi Penyusutan yang bergerak. **Catatan terbuka**: pelepasan aset (disposal) — mencatat penjualan/pembuangan aset beserta laba-rugi dari pelepasannya — belum dibahas/dibangun di modul ini. Belum ada scope-debt file buat ini, karena keputusan desainnya (misal gimana ngitung laba-rugi pelepasan, apa aset yang udah dilepas masih perlu "kelihatan" di histori) belum digali lebih lanjut.
+- **Aset Tetap tercatat, gak berubah, sampai pelepasan.** Beda dari saldo Persediaan yang naik-turun tiap transaksi, saldo akun Aset Tetap per unit aset konstan dari akuisisi sampai aset itu dijual/dibuang — cuma Akumulasi Penyusutan yang bergerak. Pelepasan aset (penjualan/pembuangan/kehilangan) dibahas di submodule "Disposal Aset Tetap" di bawah.
 - **Tiap posting penyusutan tertelusur ke aset & periode yang jelas** — sama invarian traceability modul lain, harus jelas penyusutan periode mana buat aset yang mana, biar gak dobel posting atau kelewat.
 
 **Common Mistakes**
@@ -66,3 +66,33 @@ Prinsipnya sama akar kayak Inventory: **matching principle** — biaya diakui be
 **Common Mistakes**
 - Pakai rumus Saldo Menurun polos di periode terakhir tanpa penyesuaian — bisa bikin akumulasi penyusutan lewat atau kurang dari batas nilai residu.
 - Menganggap metode penyusutan bisa diganti kapan saja kayak field biasa — begitu aset punya riwayat penyusutan, ganti metode butuh proses revaluasi formal, bukan update field langsung.
+
+### Disposal Aset Tetap (Penjualan/Pembuangan/Kehilangan)
+
+**Cara Kerja**
+- Begitu aset tetap berhenti dipakai selamanya — dijual, dibuang/rusak total, atau hilang/dicuri — dicatat lewat proses **disposal**, bukan dihapus dari sistem. Aset & seluruh riwayat penyusutannya tetap ada buat ditelusur, cuma ditandai sudah "dilepas" per tanggal tertentu.
+- Nilai Buku dihitung ulang saat disposal (Nilai Perolehan dikurangi Akumulasi Penyusutan yang sudah berjalan sampai tanggal itu), lalu dibandingkan dengan Nilai Jual (uang yang benar-benar diterima, nol kalau dibuang/hilang):
+  ```
+  Laba/Rugi Pelepasan = Nilai Jual - Nilai Buku
+  ```
+- Satu jurnal, sekali posting, 3-4 baris tergantung kasus:
+  - Debit Akumulasi Penyusutan — nolin kontra-asetnya, sebesar akumulasi yang sudah berjalan.
+  - Kredit Aset Tetap — nolin akun asetnya, sebesar nilai perolehan penuh.
+  - Debit Kas/Bank — kalau ada uang masuk, sejumlah Nilai Jual. Gak ada baris ini kalau dibuang/hilang (Nilai Jual nol).
+  - Baris penyeimbang: Kredit akun Pendapatan Lain-lain (kalau untung) atau Debit akun Rugi Pelepasan Aset Tetap (kalau rugi).
+- Begitu aset di-disposal, gak bisa lagi diposting penyusutan buat aset itu — riwayat penyusutan yang sudah ada tetap kebaca, tapi periode setelah tanggal disposal gak relevan lagi (asetnya udah gak ada).
+
+**Aturan Bisnis**
+- Satu aset cuma bisa di-disposal sekali — all-or-nothing per unit fisik, konsisten sama prinsip "1 aset = 1 unit fisik" (gak ada disposal sebagian/parsial).
+- Disposal gak bisa dibatalkan lewat edit/hapus biasa (immutability, sama pola Journal Entry & histori penyusutan) — koreksi lewat jurnal pembalik kalau ternyata salah catat.
+- Tanggal disposal harus sama atau lebih baru dari tanggal penyusutan terakhir yang sudah diposting buat aset itu — gak masuk akal disposal duluan baru nyusutin belakangan.
+
+**Skenario**
+- Motor dijual Rp7 juta, nilai buku Rp6 juta → untung Rp1 juta, masuk Pendapatan Lain-lain.
+- Motor dijual Rp4 juta, nilai buku Rp6 juta → rugi Rp2 juta, masuk Rugi Pelepasan Aset Tetap.
+- Motor hilang/dicuri, nilai buku Rp6 juta, gak ada uang masuk sama sekali → rugi penuh Rp6 juta (seluruh nilai buku).
+
+**Common Mistakes**
+- Menghapus (delete) baris aset dari sistem begitu dijual/dibuang — harusnya di-disposal (ditandai + dijurnal), bukan dihapus, karena histori nilai perolehan & penyusutan tetap harus bisa ditelusur.
+- Lupa nolin Akumulasi Penyusutan saat disposal — kalau cuma nolin akun Aset Tetap doang tanpa Akumulasi Penyusutan, saldonya nyangkut selamanya padahal asetnya udah gak ada.
+- Menghitung laba/rugi dari Nilai Perolehan (harga beli mentah) bukan Nilai Buku — salah basis, harus dibandingkan ke Nilai Buku yang sudah dikurangi penyusutan berjalan.

@@ -51,6 +51,48 @@ export type FixedAsset = {
   depreciation_method: (typeof depreciationMethods)[number];
   depreciation_rate: number | null;
   archived_at: string | null;
+  disposed_at: string | null;
+};
+
+export const disposalTypes = ["sold", "scrapped", "lost"] as const;
+
+export const disposalTypeLabels: Record<(typeof disposalTypes)[number], string> = {
+  sold: "Dijual",
+  scrapped: "Dibuang / Rusak Total",
+  lost: "Hilang / Dicuri",
+};
+
+export const createFixedAssetDisposalSchema = z
+  .object({
+    fixed_asset_id: z.string().uuid("Pilih aset"),
+    disposal_date: z.string().min(1, "Tanggal disposal wajib diisi"),
+    disposal_type: z.enum(disposalTypes),
+    proceeds_amount: z.coerce.number().min(0, "Nilai jual gak boleh negatif").default(0),
+    proceeds_account_id: z.string().uuid().optional(),
+    gain_account_id: z.string().uuid().optional(),
+    loss_account_id: z.string().uuid().optional(),
+    notes: z.string().optional(),
+  })
+  .refine((v) => v.proceeds_amount === 0 || !!v.proceeds_account_id, {
+    message: "Akun kas/bank belum diset admin",
+    path: ["proceeds_account_id"],
+  });
+
+export type CreateFixedAssetDisposalInput = z.infer<typeof createFixedAssetDisposalSchema>;
+
+export type FixedAssetDisposal = {
+  id: string;
+  fixed_asset_id: string;
+  disposal_date: string;
+  disposal_type: (typeof disposalTypes)[number];
+  proceeds_amount: number;
+  proceeds_account_id: string | null;
+  book_value_at_disposal: number;
+  gain_loss_amount: number;
+  gain_loss_account_id: string | null;
+  journal_entry_id: string;
+  notes: string | null;
+  created_at: string;
 };
 
 export type DepreciationEntry = {
