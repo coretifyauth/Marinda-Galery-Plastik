@@ -607,10 +607,14 @@ export function ItemDetailView({ id }: { id: string }) {
                   </tr>
                 )}
                 {!movementLoading &&
-                  movementPage.rows.reduce<(ItemMovement & { running: number })[]>((acc, m) => {
-                    const prevRunning = acc.length > 0 ? acc[acc.length - 1].running : movementPage.openingBalance;
-                    return [...acc, { ...m, running: prevRunning + m.qty }];
-                  }, []).map((m) => (
+                  [...movementPage.rows]
+                    .reverse()
+                    .reduce<(ItemMovement & { running: number })[]>((acc, m) => {
+                      const prevRunning = acc.length > 0 ? acc[acc.length - 1].running : movementPage.openingBalance;
+                      return [...acc, { ...m, running: prevRunning + m.qty }];
+                    }, [])
+                    .reverse()
+                    .map((m) => (
                     <tr key={m.id} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="whitespace-nowrap px-4 py-2">{m.movement_date}</td>
                       <td className="px-4 py-2">{m.source_label}</td>

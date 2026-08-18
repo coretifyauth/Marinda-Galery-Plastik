@@ -20,21 +20,19 @@ export type MovementPage = {
 const SELECT_COLUMNS = "id, movement_date, qty, source_label, source_ref";
 
 /**
- * 1 halaman Kartu Stok (riwayat mutasi kronologis 1 item) + saldo berjalan (opening balance)
- * sebelum halaman ini — mirror persis `fetchAccountLedgerPage` (`lib/reports/ledger.ts`, General
- * Ledger). Baca dari view `inventory_movements_with_source` (migration `0052`, LEFT JOIN ke 11
+ * 1 halaman Kartu Stok, TERBARU DULU (`movement_date`+`id` descending) — beda dari General Ledger
+ * (`fetchAccountLedgerPage`, ascending) karena kebutuhan UI-nya kartu stok cuma peduli aktivitas
+ * terakhir. Baca dari view `inventory_movements_with_source` (migration `0052`, LEFT JOIN ke 11
  * kemungkinan tabel sumber + COALESCE jadi label+ref manusiawi) — bukan tabel `inventory_movements`
  * mentah, biar gak perlu 11 embed nested di query ini.
  *
- * Saldo berjalan per BARIS dihitung di komponen pemanggil (cumulative sum dari `openingBalance`),
- * BUKAN di sini — pola sama persis General Ledger, `MovementPage` cuma nyimpen data mentah +
- * 1 angka opening balance.
- *
- * PENTING: order (`movement_date` lalu `id`) di query halaman ini HARUS PERSIS SAMA dengan urutan
- * yang dipakai RPC opening balance (`report_item_movement_opening_balance`, migration `0052`) —
- * kalau enggak, offset "N baris sebelum halaman ini" gak nyambung sama baris yang beneran
- * ditampilkan, saldo berjalan bisa salah tanpa error apa pun (pelajaran sama seperti General
- * Ledger, `memory/scope-debt/journal-lines-unbounded-aggregate.md`).
+ * `openingBalance` tetap berarti "saldo tepat sebelum baris TERTUA di halaman ini" (sama makna
+ * kayak General Ledger) walau baris tertua itu sekarang ada di UJUNG array, bukan awal — komponen
+ * pemanggil yang balikin urutan buat ngitung saldo berjalan lalu balikin lagi buat tampil. Baris
+ * tertua di halaman ini punya posisi ascending `total - from - rows.length` (total baris DIKURANGI
+ * baris yang lebih baru di halaman-halaman sebelumnya DIKURANGI baris di halaman ini sendiri) —
+ * itu offset yang dikirim ke RPC `report_item_movement_opening_balance` (ascending, gak diubah).
+ * Reuse RPC yang ada, gak perlu RPC baru.
  */
 export async function fetchItemMovementPage(
   itemId: string,
@@ -45,28 +43,34 @@ export async function fetchItemMovementPage(
   const from = page * pageSize;
   const to = from + pageSize - 1;
 
-  const [pageResult, openingResult] = await Promise.all([
-    supabase
-      .from("inventory_movements_with_source")
-      .select(SELECT_COLUMNS, { count: "exact" })
-      .eq("item_id", itemId)
-      .lte("movement_date", asOfDate)
-      .order("movement_date", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, to),
-    supabase.rpc("report_item_movement_opening_balance", {
-      p_item_id: itemId,
-      p_as_of: asOfDate,
-      p_before_offset: from,
-    }),
-  ]);
+  const pageResult = await supabase
+    .from("inventory_movements_with_source")
+    .select(SELECT_COLUMNS, { count: "exact" })
+    .eq("item_id", itemId)
+    .lte("movement_date", asOfDate)
+    .order("movement_date", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to);
 
   if (pageResult.error) throw new Error(pageResult.error.message);
+  const total = pageResult.count ?? 0;
+  const rows = (pageResult.data ?? []) as unknown as ItemMovement[];
+  const beforeOffset = Math.max(0, total - from - rows.length);
+
+  const openingResult =
+    beforeOffset > 0
+      ? await supabase.rpc("report_item_movement_opening_balance", {
+          p_item_id: itemId,
+          p_as_of: asOfDate,
+          p_before_offset: beforeOffset,
+        })
+      : { data: 0, error: null };
+
   if (openingResult.error) throw new Error(openingResult.error.message);
 
   return {
-    rows: (pageResult.data ?? []) as unknown as ItemMovement[],
-    total: pageResult.count ?? 0,
+    rows,
+    total,
     openingBalance: (openingResult.data as number | null) ?? 0,
   };
 }
