@@ -378,7 +378,7 @@ Saldo berjalan (angka "sisa stok setelah baris ini") **tidak disimpan** sebagai 
 | `inventory_movements` | tiap baris nunjuk ke TEPAT SATU dari 11 kemungkinan | dokumen sumber (lihat tabel Peta Data di atas) |
 | Penukaran barang (retur ke pemasok, opsi tukar) | SATU-SATUNYA kasus 1 dokumen sumber = 2 baris riwayat sekaligus (barang rusak keluar + barang pengganti masuk, item & qty sama) | `inventory_movements` |
 
-**Catatan cakupan:** ditemukan dalam proses pembangunan (bukan bagian rencana awal) — RPC pembatalan transaksi kios/POS belum ikut mencatat baris pemulihan ke Kartu Stok kalau ada transaksi yang dibatalkan. Belum pernah kejadian nyata sampai saat ini, dicatat sebagai pekerjaan terbuka terpisah (`memory/scope-debt/void-pos-sale-inventory-movement-gap.md`).
+**Catatan cakupan:** gap ini sempat ditemukan dalam proses pembangunan (bukan bagian rencana awal) — RPC pembatalan transaksi kios/POS sempat belum ikut mencatat baris pemulihan ke Kartu Stok kalau ada transaksi yang dibatalkan. Sudah ditutup — pembatalan transaksi POS sekarang otomatis mencatat baris pemulihan ke Kartu Stok juga, konsisten dengan pembalikan saldo real-time.
 
 ## Aturan Otomatis yang Dijaga Sistem (ringkasan)
 
