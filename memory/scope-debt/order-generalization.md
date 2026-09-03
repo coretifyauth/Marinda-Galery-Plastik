@@ -18,9 +18,9 @@ Begitu ketiganya tercabut, gak ada lagi alasan struktural PO dan SO tetap 2 tabe
 ## Urutan pengerjaan (wajib, ada dependency)
 
 ```
-Fase 1: Counterparty   (customers+suppliers -> counterparties + counterparty_type_mapping)
-Fase 2: PO Not Mandatory (PO jadi opsional, biar simetris sama SO)
-Fase 3: Orders          (purchase_orders+sales_orders -> orders+order_lines)
+Fase 1: Counterparty   (customers+suppliers -> counterparties + counterparty_type_mapping) -- Ditunda
+Fase 2: PO Not Mandatory (PO jadi opsional, biar simetris sama SO) -- SELESAI (0058, 2026-09-03)
+Fase 3: Orders          (purchase_orders+sales_orders -> orders+order_lines) -- Ditunda, butuh Fase 1
 ```
 
 Fase 3 **gak bisa jalan tanpa Fase 1 beres** — `orders.counterparty_id` butuh tabel `counterparties` sudah ada. Fase 2 independen dari Fase 1 (bisa duluan/bareng), tapi harus beres SEBELUM Fase 3 biar `orders` gak mewarisi asimetri wajib/opsional dari `purchase_orders` lama.
@@ -86,18 +86,20 @@ create table counterparty_type_mapping (
 
 ---
 
-## Fase 2 — PO Tidak Lagi Wajib
+## Fase 2 — PO Tidak Lagi Wajib — **SELESAI** (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03)
 
-Saat ini `create_goods_receipt` mewajibkan `purchase_order_id` (`goods_receipt_notes.purchase_order_id` kolom `not null`, `supabase/migrations/0004_inventory_schema.sql`) — gak ada jalur terima barang tanpa PO sama sekali. Beda dari Sales Order yang udah opsional sejak migration `0024` (`goods_issue_lines.so_line_id` nullable).
+Diapply ke project live-linked, dikonfirmasi `supabase migration list` (local==remote 0058). Direview `schema-reviewer` 2 ronde (0 blocker, 1 warning ketemu & diperbaiki — validasi eksistensi supplier di jalur langsung, pesan readable bukan raw Postgres error).
 
-**Perubahan teknis:**
+**Yang diimplementasikan** (persis rencana awal, gak ada perubahan pendekatan):
 - `goods_receipt_notes.purchase_order_id` jadi nullable.
-- `goods_receipt_lines.po_line_id` (saat ini `not null`) ikut jadi nullable — GRN tanpa PO berarti baris GRN-nya gak nunjuk `po_line_id` manapun.
-- Trigger `goods_receipt_lines_no_over_receipt` perlu skip pengecekan kalau `po_line_id` NULL — mirror pola `goods_issue_lines_no_over_issue` yang udah skip kalau `so_line_id` null.
-- `create_goods_receipt` RPC perlu terima `p_purchase_order_id`/`po_line_id` sebagai opsional.
-- UI `/goods-receipts` perlu jalur "terima barang langsung tanpa PO".
+- `goods_receipt_lines.po_line_id` jadi nullable — GRN tanpa PO gak nunjuk `po_line_id` manapun.
+- Trigger `goods_receipt_lines_no_over_receipt` skip pengecekan kalau `po_line_id` NULL — mirror pola `goods_issue_lines_no_over_issue`.
+- `create_goods_receipt` RPC nambah param baru `p_supplier_id` (default null, wajib diisi kalau `p_purchase_order_id` NULL) — signature berubah total jadi `drop function if exists` dulu sebelum `create` ulang.
+- UI `apps/erp/src/app/(app)/goods-receipts/page.tsx` dapat toggle mode "Dari Purchase Order" vs "Langsung Tanpa PO" (Supplier select + item picker dinamis, pola sama `purchase-orders/page.tsx`). Detail page (`[id]/view.tsx`) disesuaikan tampilan PO/Supplier null-safe.
 
-**Catatan:** kalau Fase 3 (Orders) dikerjakan SETELAH fase ini, perubahan di atas cukup diterapkan sekali ke `orders`/`order_lines` langsung (gak perlu diterapkan dulu ke `purchase_orders` lama lalu dimigrasi lagi) — tapi keputusan SIMETRINYA (PO jadi opsional) tetap harus diputuskan di sini duluan, terlepas dari kapan implementasi schema-nya jalan.
+Detail teknis lengkap: `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Penerimaan Barang". Dokumentasi naratif (`docs/domain/inventory.md`, `docs/architecture/inventory-schema.md`) ikut diupdate.
+
+**Dampak ke Fase 3**: salah satu dari 2 asimetri PO-vs-SO yang jadi alasan file ini eksis (wajib/opsional) sekarang tercabut sepenuhnya — PO dan SO simetris penuh soal opsionalitas maupun tipe item. Kalau Fase 3 (Orders) dikerjakan nanti, perubahan skema di atas cukup diterapkan sekali ke `orders`/`order_lines` langsung (gak perlu diterapkan dulu ke `purchase_orders` lama lalu dimigrasi lagi).
 
 ---
 

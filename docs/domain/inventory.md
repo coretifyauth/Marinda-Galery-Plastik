@@ -44,26 +44,30 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 
 ### Purchase Order & Penerimaan Barang (3-Way Matching)
 
+**Purchase Order sekarang opsional (2026-09-03)** — dulu setiap penerimaan barang wajib berasal dari Purchase Order yang sudah dibuat lebih dulu. Sekarang, mirip pola di sisi penjualan (lihat submodule "Sales Order & Pemenuhan Bertahap"), penerimaan barang juga bisa dicatat **langsung tanpa Purchase Order** — cocok buat kasus beli dadakan (misal belanja langsung di toko, gak lewat proses pemesanan formal).
+
 **Cara Kerja**
-- Sebelum barang fisik diterima, ada tahap **komitmen**: perusahaan memesan barang ke supplier lewat **Purchase Order (PO)** — mencatat apa yang dipesan, berapa qty, dan harga yang disepakati. PO **belum mengubah apapun di General Ledger** — ini baru rencana/janji, belum kejadian akuntansi (belum ada pertukaran aset/liability apapun).
-- Begitu barang fisik sampai, dicatat **Goods Receipt Note (GRN)** — bukti penerimaan riil, isinya qty & harga yang **benar-benar** diterima (bisa beda dari yang dipesan). GRN inilah yang jadi dasar penambahan Persediaan (update rata-rata berjalan) dan yang memunculkan jurnal Debit Persediaan, Kredit Utang Usaha.
-- **3-way matching** adalah praktik mencocokkan **3 dokumen**: PO (apa yang dipesan), GRN (apa yang diterima), dan Bill/Invoice dari supplier (apa yang ditagih). Tujuannya mencegah: diterima kurang dari yang ditagih (dipesan 50 unit, datang cuma 48, tapi ditagih 50), harga beda dari kesepakatan (nego harga X, ditagih harga Y), dan ditagih tanpa barang pernah diterima sama sekali.
+- Sebelum barang fisik diterima, biasanya ada tahap **komitmen**: perusahaan memesan barang ke supplier lewat **Purchase Order (PO)** — mencatat apa yang dipesan, berapa qty, dan harga yang disepakati. PO **belum mengubah apapun di General Ledger** — ini baru rencana/janji, belum kejadian akuntansi (belum ada pertukaran aset/liability apapun). Tahap ini opsional — bisa dilewati buat pembelian yang gak direncanakan.
+- Begitu barang fisik sampai, dicatat **Goods Receipt Note (GRN)** — bukti penerimaan riil, isinya qty & harga yang **benar-benar** diterima. Kalau GRN ini berasal dari PO, qty & harga bisa dicocokkan ke PO (bisa beda dari yang dipesan). Kalau GRN dibuat langsung tanpa PO, supplier dipilih manual saat itu juga, dan item/qty/harga diketik manual sepenuhnya — gak ada apa pun buat dicocokkan. Di kedua jalur, GRN inilah yang jadi dasar penambahan Persediaan (update rata-rata berjalan) dan yang memunculkan jurnal Debit Persediaan, Kredit Utang Usaha.
+- **3-way matching** adalah praktik mencocokkan **3 dokumen**: PO (apa yang dipesan), GRN (apa yang diterima), dan Bill/Invoice dari supplier (apa yang ditagih) — berlaku kalau memang ada PO. Tujuannya mencegah: diterima kurang dari yang ditagih (dipesan 50 unit, datang cuma 48, tapi ditagih 50), harga beda dari kesepakatan (nego harga X, ditagih harga Y), dan ditagih tanpa barang pernah diterima sama sekali.
 - Idealnya, PO, GRN, dan Bill bisa terjadi di **waktu yang berbeda-beda** (barang datang duluan, tagihan resmi nyusul beberapa hari kemudian — butuh akun perantara semacam "Barang Diterima Belum Ditagih" buat menampung selisih waktu itu). Di skala yang lebih sederhana kayak sekarang, GRN dan Bill dianggap terjadi **bersamaan** (nota yang datang = bukti kirim + tagihan sekaligus) — ini menyederhanakan alur tanpa akun perantara, cocok kalau proses pembelian bisnisnya memang informal dan gak ada jeda berarti antara barang datang dan tagihan resmi. Akun perantara itu baru beneran dibutuhkan kalau nanti proses pembeliannya berkembang sampai butuh jeda waktu — belum ada tekanan nyata buat itu sekarang.
 
 **Aturan Bisnis**
 - Purchase Order tidak boleh dianggap kejadian akuntansi — gak ada jurnal apa pun sampai barangnya beneran diterima.
-- Penerimaan barang tidak boleh melebihi jumlah yang masih tersisa dari yang dipesan di Purchase Order-nya (per barang).
+- Penerimaan barang yang berasal dari Purchase Order tidak boleh melebihi jumlah yang masih tersisa dari yang dipesan (per barang). Penerimaan langsung tanpa PO gak punya batas pembanding ini sama sekali.
 - Pembelian bahan baku selalu masuk Persediaan (aset), tidak pernah langsung jadi Beban.
-- Penerimaan barang harus tertelusur ke Purchase Order dan tagihan (Bill) yang menyertainya.
+- Penerimaan barang langsung (tanpa PO) wajib menyebutkan supplier secara manual — gak ada jalan lain buat tahu siapa yang ditagih.
 - Purchase Order boleh **dibatalkan** selama belum ada penerimaan barang sama sekali terhadapnya — begitu sudah ada 1 GRN, PO itu gak bisa dibatalkan lagi (koreksi cukup bikin PO baru). Karena PO memang tidak pernah punya jurnal, membatalkannya juga tidak memunculkan jurnal pembalik apa pun — murni status akhir yang gak bisa diubah lagi.
 
 **Skenario**
 - Pesan bahan baku lewat PO, barang datang persis sesuai pesanan — Persediaan naik, harga rata-rata diperbarui (atau jadi harga awal kalau ini penerimaan pertama barang itu), Utang Usaha muncul dari tagihan yang menyertai.
 - Pesan bahan baku lagi, tapi harga saat diterima ternyata beda dari yang disepakati di PO — dicatat apa adanya (selisih harga informasional, gak diblokir), cuma qty yang dijaga ketat supaya gak melebihi pesanan.
+- Belanja bahan baku dadakan di toko, gak sempat/gak perlu bikin PO dulu — langsung catat penerimaan barang, pilih supplier manual, item/qty/harga diketik langsung. Persediaan naik dan Utang Usaha muncul persis sama seperti jalur PO.
 
 **Common Mistakes**
 - Menganggap Purchase Order sebagai kejadian akuntansi (bikin jurnal) — PO cuma komitmen, jurnal baru muncul pas barang diterima (GRN+Bill).
 - Mencatat pembelian bahan baku langsung sebagai Beban/HPP — padahal itu masih aset sampai barangnya terjual.
+- Menganggap Purchase Order masih wajib buat semua penerimaan barang — sekarang opsional, penerimaan langsung tanpa PO valid buat kasus beli dadakan.
 
 ### Produksi (Bill of Materials & Production Order)
 
@@ -116,7 +120,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 
 **Cara Kerja**
 - **Sales Order (SO)** adalah cerminan Purchase Order di sisi jual — tahap komitmen sebelum barang keluar: apa yang dipesan customer, berapa qty, harga berapa. Sama kayak PO, SO **belum mengubah apapun di General Ledger** — belum ada piutang, belum ada pendapatan yang diakui, karena barangnya belum pindah tangan sama sekali (prinsip pengakuan pendapatan: kewajiban baru dianggap terpenuhi pas kendali barang beneran berpindah ke customer, bukan pas dokumen dicetak).
-- **Beda penting dari PO: Sales Order sifatnya OPSIONAL, bukan wajib.** Pembelian selalu keputusan terencana (masuk akal dipaksa lewat PO tiap kali), tapi penjualan bisnis ini punya 2 pola: **spontan** (customer kios dateng, ambil barang yang ada, langsung dicatat — jalur "Penjualan & Pengakuan HPP" di atas, gak berubah) dan **terencana** (customer pesan qty besar buat kebutuhan tertentu, stok belum tentu cukup pas dipesan, butuh waktu buat disiapkan/diproduksi dulu). SO cuma relevan buat pola kedua.
+- **Sales Order sifatnya OPSIONAL, bukan wajib** — sama seperti Purchase Order sekarang (lihat submodule "Purchase Order & Penerimaan Barang" di atas). Penjualan bisnis ini punya 2 pola: **spontan** (customer kios dateng, ambil barang yang ada, langsung dicatat — jalur "Penjualan & Pengakuan HPP" di atas, gak berubah) dan **terencana** (customer pesan qty besar buat kebutuhan tertentu, stok belum tentu cukup pas dipesan, butuh waktu buat disiapkan/diproduksi dulu). SO cuma relevan buat pola kedua.
 - **Pemenuhan Sales Order bisa dicicil** — tiap kali sebagian barang dikirim, itu jadi 1 Goods Issue + 1 invoice tersendiri (bukan nunggu semua qty di SO terkirim baru invoice terbit sekali). Kalau SO isinya 200 unit dan baru bisa kirim 120 hari ini, invoice yang terbit HARI INI cuma senilai 120 unit — piutang & pendapatan diakui persis sebesar barang yang beneran udah berpindah, gak lebih, gak kurang. Sisa 80 unit nyusul jadi invoice kedua begitu benar-benar dikirim.
 - Status SO (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`) **diturunkan** dari perbandingan total qty yang sudah dikirim (lewat Goods Issue yang nunjuk balik ke SO) terhadap qty yang dipesan — bukan kolom yang di-set manual, pola sama status PO.
 
@@ -132,7 +136,7 @@ Kedua metode di atas sempat sama-sama diimplementasikan di sistem ini (per baran
 
 **Common Mistakes**
 - Menunda invoice sampai seluruh Sales Order terpenuhi — seharusnya tiap pengiriman langsung memunculkan invoice sendiri, sesuai barang yang benar-benar sudah berpindah saat itu.
-- Memaksa semua penjualan melalui Sales Order dulu (meniru pola wajib PO di pembelian) — Sales Order hanya relevan untuk pesanan yang direncanakan, bukan transaksi spontan.
+- Memaksa semua penjualan melalui Sales Order dulu — Sales Order hanya relevan untuk pesanan yang direncanakan, bukan transaksi spontan.
 
 ### Kategori & Brand Barang
 

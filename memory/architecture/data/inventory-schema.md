@@ -122,7 +122,7 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 ### Keputusan Desain
 
 - **Goods Receipt Note (GRN) dan Bill dibuat bersamaan** (1 RPC, 1 langkah) — asumsi proses pembelian informal (nota = bukti kirim + tagihan sekaligus, gak ada jeda waktu antara barang datang dan tagihan resmi). Ini menghindari kebutuhan akun perantara "Barang Diterima Belum Ditagih" (GR/IR clearing) yang dipakai ERP besar buat kasus barang datang duluan tagihan nyusul — dicatat sebagai catatan terbuka (bukan scope-debt formal, belum ada file tracking-nya) kalau nanti proses pembeliannya berkembang butuh jeda waktu.
-- **3-way matching di sisi pembelian (PO → GRN → Bill) WAJIB, padanannya di sisi jual (Sales Order → Goods Issue → Invoice) OPSIONAL.** Sisi jual sekarang punya 2 jalur: langsung (Invoice + Goods Issue dibuat bersamaan, gak ada tahap komitmen — submodule "Penjualan & Pengakuan HPP") dan lewat Sales Order (komitmen duluan, pemenuhan bertahap — submodule "Sales Order & Pemenuhan Bertahap", migration `0024`). Beda dari PO yang `not null`, `goods_issue_lines.so_line_id` nullable — alasan asimetri: pembelian selalu keputusan terencana, penjualan ada yang spontan (kios) dan ada yang terencana (pesanan qty besar).
+- **3-way matching di sisi pembelian (PO → GRN → Bill) SEKARANG OPSIONAL** (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03, keputusan owner — Fase 2 `memory/scope-debt/order-generalization.md`), mirror padanannya di sisi jual (Sales Order → Goods Issue → Invoice) yang udah opsional dari awal. Dulu PO wajib (`goods_receipt_notes.purchase_order_id not null`) karena "pembelian selalu keputusan terencana" — asumsi itu dibalik: sekarang Goods Receipt juga bisa dibuat langsung tanpa PO (beli dadakan), sama kayak Goods Issue tanpa Sales Order (jual spontan). Kedua sisi (beli & jual) sekarang simetris penuh soal opsionalitas.
 - **Purchase Order gak bikin journal entry.** PO murni komitmen/rencana, belum ada pertukaran aset/liability — journal entry baru muncul pas GRN+Bill dibuat.
 
 ### `purchase_orders` + `purchase_order_lines`
@@ -164,14 +164,14 @@ create trigger purchase_order_lines_block_edit_delete
 
 ### `goods_receipt_notes` + `goods_receipt_lines`
 
-Bukti penerimaan fisik — **wajib nunjuk `po_id` (3-way matching) dan `bill_id` (dibuat bersamaan)**. Kolom `delivery_note_ref` (nomor Surat Jalan dari supplier) murni referensi teks, gak jadi entity/ledger tersendiri — Surat Jalan itu dokumen fisik, bukan kejadian akuntansi yang butuh tracking state sendiri. Lines mencatat `qty_received` & `unit_cost` **riil** (bisa beda dari `unit_cost_expected` di PO line — selisih ini informasional/reporting, gak diblokir keras, cuma qty yang dijaga trigger anti-over-receipt terhadap `purchase_order_lines.qty_ordered`). Immutable (reuse `block_edit_delete`), sama pola `ar_invoices`/`ap_bills`.
+Bukti penerimaan fisik — **`bill_id` selalu wajib** (dibuat bersamaan, tiap GRN pasti punya tagihan), **`purchase_order_id` opsional sejak `0058`** (nullable — GRN boleh berdiri sendiri tanpa PO, kasus beli dadakan). Kolom `delivery_note_ref` (nomor Surat Jalan dari supplier) murni referensi teks, gak jadi entity/ledger tersendiri — Surat Jalan itu dokumen fisik, bukan kejadian akuntansi yang butuh tracking state sendiri. Lines mencatat `qty_received` & `unit_cost` **riil** — kalau baris nunjuk PO line (`po_line_id` keisi), bisa beda dari `unit_cost_expected` di PO line (selisih ini informasional/reporting, gak diblokir keras, cuma qty yang dijaga trigger anti-over-receipt terhadap `purchase_order_lines.qty_ordered`); kalau `po_line_id` NULL (jalur langsung), gak ada pembanding sama sekali, item/qty/harga input manual sepenuhnya. Immutable (reuse `block_edit_delete`), sama pola `ar_invoices`/`ap_bills`.
 
-Insert `goods_receipt_lines` inilah yang **memicu** penambahan Persediaan: update `inventory_balances` (avg_cost dihitung ulang, weighted).
+Insert `goods_receipt_lines` inilah yang **memicu** penambahan Persediaan: update `inventory_balances` (avg_cost dihitung ulang, weighted) — mekanisme ini identik di kedua jalur (dari PO/langsung).
 
 ```sql
 create table goods_receipt_notes (
   id uuid primary key default gen_random_uuid(),
-  purchase_order_id uuid not null references purchase_orders(id),
+  purchase_order_id uuid references purchase_orders(id), -- nullable sejak 0058
   bill_id uuid not null references ap_bills(id),
   delivery_note_ref text,
   receipt_date date not null,
@@ -186,7 +186,7 @@ create trigger goods_receipt_notes_block_edit_delete
 create table goods_receipt_lines (
   id uuid primary key default gen_random_uuid(),
   grn_id uuid not null references goods_receipt_notes(id) on delete cascade,
-  po_line_id uuid not null references purchase_order_lines(id),
+  po_line_id uuid references purchase_order_lines(id), -- nullable sejak 0058
   item_id uuid not null references items(id),
   qty_received numeric(14,3) not null check (qty_received > 0),
   unit_cost numeric(14,2) not null check (unit_cost > 0)
@@ -197,9 +197,9 @@ create trigger goods_receipt_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### Trigger `goods_receipt_lines_no_over_receipt`
+### Trigger `goods_receipt_lines_no_over_receipt` (ditulis ulang `0058`)
 
-Menolak `qty_received` yang bikin total penerimaan per PO line ngelewatin `qty_ordered`:
+Menolak `qty_received` yang bikin total penerimaan per PO line ngelewatin `qty_ordered` — **skip total kalau `po_line_id` NULL** (jalur langsung tanpa PO gak punya apa pun buat dibandingkan), mirror persis pola `goods_issue_lines_no_over_issue` yang udah skip kalau `so_line_id` null:
 
 ```sql
 create function goods_receipt_lines_no_over_receipt() returns trigger as $$
@@ -207,6 +207,10 @@ declare
   v_qty_ordered numeric;
   v_qty_received numeric;
 begin
+  if new.po_line_id is null then
+    return new;
+  end if;
+
   select qty_ordered into v_qty_ordered from purchase_order_lines where id = new.po_line_id;
   select coalesce(sum(qty_received), 0) into v_qty_received
     from goods_receipt_lines where po_line_id = new.po_line_id;
@@ -251,24 +255,28 @@ Full body: `supabase/migrations/0024_purchase_order_sales_order_cancel.sql`.
 
 ### RPC `create_goods_receipt` — GRN + Bill + update Persediaan sekaligus
 
-Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) hitung total amount dari lines (baris Persediaan dasar) + gabung sama `p_extra_debit_lines` kalau ada, (2) panggil `create_ap_bill` (reuse) buat bikin bill+jurnal utang, ikut kirim `p_apply_tax`, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO) jalan otomatis pas langkah (3).
+Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) resolve `v_supplier_id` (dari PO kalau `p_purchase_order_id` diisi, dari `p_supplier_id` manual kalau enggak — lihat "PO opsional" di bawah), hitung total amount dari lines (baris Persediaan dasar) + gabung sama `p_extra_debit_lines` kalau ada, (2) panggil `create_ap_bill` (reuse) buat bikin bill+jurnal utang, ikut kirim `p_apply_tax`, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO, skip kalau gak ada PO) jalan otomatis pas langkah (3).
 
 **Kategori Campur & PPN (migration `0012_grn_compound_ppn.sql`, closes `memory/scope-debt/grn-kategori-campur-ppn.md`)** — dulu signature ini cuma terima 1 `p_debit_account_id` tunggal dan gak pernah kirim `p_apply_tax` ke `create_ap_bill`, beda dari `create_ap_bill` yang dipanggil manual lewat `/ap-bills` (sudah kategori campur+PPN sejak `0025_compound_transactional_entries_schema.sql`). Sekarang disamakan: 2 param baru **di akhir** signature (`p_extra_debit_lines` default `null`, `p_apply_tax` default `false`) — additive, `create or replace function` gak butuh drop dulu, caller lama yang belum kirim param baru tetap jalan (default null/false = perilaku identik sebelum `0012`).
 
 **Guard cancel (migration `0024`)** — `cancel_purchase_order` cuma jaga satu arah (PO yang UDAH punya realisasi gak bisa dibatalkan). Arah sebaliknya dijaga di sini: awal body nambah `if exists (... purchase_orders where id = p_purchase_order_id and cancelled_at is not null) then raise exception ...` — PO yang UDAH dibatalkan gak bisa lagi jadi dasar GRN baru. Signature gak berubah (`create or replace` langsung, gak perlu drop).
 
+**PO opsional (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03)** — `p_purchase_order_id` sekarang boleh NULL. Param baru **di akhir** signature: `p_supplier_id uuid default null`, WAJIB diisi kalau `p_purchase_order_id` NULL (`raise exception` kalau dua-duanya kosong, `raise exception` juga kalau `p_supplier_id` yang dikasih gak ketemu di tabel `suppliers` — pesan readable, bukan biarin FK constraint di `ap_bills` yang nolak belakangan dengan pesan Postgres mentah). Beda dari signature `0012` (2 param baru di akhir, additive, `create or replace` langsung) — perubahan ini WAJIB `drop function if exists` dulu, karena daftar parameter berubah (bukan cuma nambah default di signature yang identik), kalau enggak Postgres bikin overload ambigu (pelajaran dari bug `0011`/`0012` `create_ap_bill`, sudah pernah kejadian persis di project ini, dan lagi di `0057`). Insert `goods_receipt_lines.po_line_id` pakai `nullif(v_line->>'po_line_id', '')::uuid` (aman kalau UI kirim string kosong buat baris tanpa PO, bukan cuma key yang beneran hilang dari JSON).
+
 ```sql
-create or replace function create_goods_receipt(
-  p_purchase_order_id uuid, p_receipt_date date, p_delivery_note_ref text,
-  p_lines jsonb, -- array of {"po_line_id":uuid,"item_id":uuid,"qty_received":numeric,"unit_cost":numeric}
+create function create_goods_receipt(
+  p_purchase_order_id uuid, -- nullable sejak 0058
+  p_receipt_date date, p_delivery_note_ref text,
+  p_lines jsonb, -- array of {"po_line_id":uuid|null,"item_id":uuid,"qty_received":numeric,"unit_cost":numeric}
   p_bill_description text, p_bill_source_ref text,
   p_debit_account_id uuid, p_payable_account_id uuid,
   p_extra_debit_lines jsonb default null, -- array of {"account_id":uuid,"amount":numeric} -- Beban tambahan (ongkir, dst), BUKAN kategori Persediaan
-  p_apply_tax boolean default false
+  p_apply_tax boolean default false,
+  p_supplier_id uuid default null -- 0058, wajib diisi kalau p_purchase_order_id NULL
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) + `supabase/migrations/0012_grn_compound_ppn.sql` (perluasan kategori campur & PPN).
+Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) → `supabase/migrations/0012_grn_compound_ppn.sql` (kategori campur & PPN) → `supabase/migrations/0058_purchase_order_not_mandatory.sql` (PO opsional, bentuk final saat ini).
 
 ### RLS & Grant (Purchase Order & Penerimaan Barang)
 

@@ -10,6 +10,8 @@ import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsReceipts } from "@/lib/go
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
+import type { Item } from "@/lib/items/schema";
+import type { Supplier } from "@/lib/suppliers/schema";
 import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
 import { resolveChargeLines, resolveChargeLineLegs, type ChargeLineInput } from "@/lib/charge-lines/schema";
 import { Label } from "@/components/ui/label";
@@ -26,13 +28,17 @@ import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-c
 import { Pagination } from "@/components/ui/pagination";
 
 type LineInput = {
-  po_line_id: string;
+  po_line_id?: string;
   item_id: string;
   item_label: string;
   uom: string;
   qty_received: string;
   unit_cost: string;
 };
+
+function emptyDirectLine(): LineInput {
+  return { po_line_id: undefined, item_id: "", item_label: "", uom: "", qty_received: "", unit_cost: "" };
+}
 
 // Input kecil buat baris filter di header tabel -- pola sama kayak journal-entries/page.tsx.
 const compactFilterInputClass =
@@ -44,6 +50,8 @@ export default function GoodsReceiptsPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
+  const [items, setItems] = useState<Item[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [dateFrom, setDateFrom] = useState("");
@@ -52,7 +60,9 @@ export default function GoodsReceiptsPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
+  const [receiptMode, setReceiptMode] = useState<"FROM_PO" | "DIRECT">("FROM_PO");
   const [purchaseOrderId, setPurchaseOrderId] = useState("");
+  const [directSupplierId, setDirectSupplierId] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
   const [deliveryNoteRef, setDeliveryNoteRef] = useState("");
   const [billDescription, setBillDescription] = useState("");
@@ -106,6 +116,22 @@ export default function GoodsReceiptsPage() {
     setItemUnits((data ?? []) as ItemUnit[]);
   }, []);
 
+  const loadItems = useCallback(async () => {
+    const { data } = await supabase
+      .from("items")
+      .select("id, name, item_type, uom, inventory_account_id, archived_at")
+      .order("name");
+    setItems((data ?? []) as Item[]);
+  }, []);
+
+  const loadSuppliers = useCallback(async () => {
+    const { data } = await supabase
+      .from("suppliers")
+      .select("id, name, contact, payment_term_days, archived_at")
+      .order("name");
+    setSuppliers((data ?? []) as Supplier[]);
+  }, []);
+
   const loadDefaultAccounts = useCallback(async () => {
     setDefaultAccounts(await fetchDefaultAccounts());
   }, []);
@@ -138,6 +164,8 @@ export default function GoodsReceiptsPage() {
       await Promise.all([
         loadPurchaseOrders(),
         loadItemUnits(),
+        loadItems(),
+        loadSuppliers(),
         loadDefaultAccounts(),
         loadExpenseCategories(),
         loadTaxSettings(),
@@ -151,6 +179,8 @@ export default function GoodsReceiptsPage() {
     router,
     loadPurchaseOrders,
     loadItemUnits,
+    loadItems,
+    loadSuppliers,
     loadDefaultAccounts,
     loadExpenseCategories,
     loadTaxSettings,
@@ -177,6 +207,23 @@ export default function GoodsReceiptsPage() {
     );
   }
 
+  // Fase 2 order-generalization: PO opsional -- mode "DIRECT" gak prefill dari PO lines
+  // sama sekali, item dipilih manual sendiri-sendiri (pola sama purchase-orders/page.tsx).
+  function switchMode(mode: "FROM_PO" | "DIRECT") {
+    setReceiptMode(mode);
+    setPurchaseOrderId("");
+    setDirectSupplierId("");
+    setLines(mode === "DIRECT" ? [emptyDirectLine()] : []);
+  }
+
+  function addDirectLine() {
+    setLines((prev) => [...prev, emptyDirectLine()]);
+  }
+
+  function removeDirectLine(index: number) {
+    setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  }
+
   function updateLine(index: number, patch: Partial<LineInput>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
@@ -192,7 +239,7 @@ export default function GoodsReceiptsPage() {
     mutationFn: async (input: CreateGoodsReceiptInput) => {
       const billSourceRef = await generateDocumentNumber("ap_bills");
       const { error } = await supabase.rpc("create_goods_receipt", {
-        p_purchase_order_id: input.purchase_order_id,
+        p_purchase_order_id: input.purchase_order_id ?? null,
         p_receipt_date: input.receipt_date,
         p_delivery_note_ref: input.delivery_note_ref || null,
         p_lines: input.lines,
@@ -202,11 +249,14 @@ export default function GoodsReceiptsPage() {
         p_payable_account_id: input.payable_account_id,
         p_extra_debit_lines: input.extra_debit_lines,
         p_apply_tax: input.apply_tax,
+        p_supplier_id: input.supplier_id ?? null,
       });
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {
+      setReceiptMode("FROM_PO");
       setPurchaseOrderId("");
+      setDirectSupplierId("");
       setReceiptDate("");
       setDeliveryNoteRef("");
       setBillDescription("");
@@ -229,14 +279,15 @@ export default function GoodsReceiptsPage() {
     const activeLines = lines.filter((l) => parseFloat(l.qty_received) > 0);
 
     const parsed = createGoodsReceiptSchema.safeParse({
-      purchase_order_id: purchaseOrderId,
+      purchase_order_id: receiptMode === "FROM_PO" ? purchaseOrderId : undefined,
+      supplier_id: receiptMode === "DIRECT" ? directSupplierId : undefined,
       receipt_date: receiptDate,
       delivery_note_ref: deliveryNoteRef || undefined,
       bill_description: billDescription || undefined,
       debit_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
       payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
       lines: activeLines.map((l) => ({
-        po_line_id: l.po_line_id,
+        po_line_id: l.po_line_id || undefined,
         item_id: l.item_id,
         qty_received: l.qty_received,
         unit_cost: l.unit_cost,
@@ -348,8 +399,16 @@ export default function GoodsReceiptsPage() {
                 className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
                 onClick={() => router.push(`/goods-receipts/${grn.id}`)}
               >
-                <td className="px-4 py-2 font-medium text-black">{grn.purchase_orders.suppliers.name}</td>
-                <td className="px-4 py-2">{grn.purchase_orders.source_ref}</td>
+                <td className="px-4 py-2 font-medium text-black">
+                  {grn.purchase_orders?.suppliers.name ?? grn.ap_bills.suppliers.name}
+                </td>
+                <td className="px-4 py-2">
+                  {grn.purchase_orders ? (
+                    grn.purchase_orders.source_ref
+                  ) : (
+                    <span className="text-slate-400">— (langsung)</span>
+                  )}
+                </td>
                 <td className="whitespace-nowrap px-4 py-2">{grn.receipt_date}</td>
                 <td className="px-4 py-2">
                   <ul className="space-y-0.5">
@@ -397,6 +456,22 @@ export default function GoodsReceiptsPage() {
             ketolak RLS.
           </p>
         )}
+        <div className="mb-4 flex gap-2">
+          <Button
+            type="button"
+            variant={receiptMode === "FROM_PO" ? "toolbar-primary" : "secondary"}
+            onClick={() => switchMode("FROM_PO")}
+          >
+            Dari Purchase Order
+          </Button>
+          <Button
+            type="button"
+            variant={receiptMode === "DIRECT" ? "toolbar-primary" : "secondary"}
+            onClick={() => switchMode("DIRECT")}
+          >
+            Langsung Tanpa PO
+          </Button>
+        </div>
         <JournalPreviewPanel
           groups={[
             [
@@ -417,17 +492,35 @@ export default function GoodsReceiptsPage() {
         />
         <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="po">Purchase Order</Label>
-                <Select id="po" value={purchaseOrderId} onChange={(e) => selectPurchaseOrder(e.target.value)}>
-                  <option value="">Pilih PO...</option>
-                  {receivablePOs.map((po) => (
-                    <option key={po.id} value={po.id}>
-                      {po.source_ref} — {po.suppliers.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+              {receiptMode === "FROM_PO" ? (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="po">Purchase Order</Label>
+                  <Select id="po" value={purchaseOrderId} onChange={(e) => selectPurchaseOrder(e.target.value)}>
+                    <option value="">Pilih PO...</option>
+                    {receivablePOs.map((po) => (
+                      <option key={po.id} value={po.id}>
+                        {po.source_ref} — {po.suppliers.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="direct_supplier">Supplier</Label>
+                  <Select
+                    id="direct_supplier"
+                    value={directSupplierId}
+                    onChange={(e) => setDirectSupplierId(e.target.value)}
+                  >
+                    <option value="">Pilih supplier...</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="receipt_date">Tanggal Terima</Label>
                 <Input
@@ -467,7 +560,7 @@ export default function GoodsReceiptsPage() {
               />
             </div>
 
-            {purchaseOrderId && (
+            {receiptMode === "FROM_PO" && purchaseOrderId && (
               <div className="flex flex-col gap-2">
                 <div className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2 text-sm font-medium text-slate-500">
                   <span>Item (sisa PO)</span>
@@ -488,6 +581,59 @@ export default function GoodsReceiptsPage() {
                     />
                   </div>
                 ))}
+              </div>
+            )}
+
+            {receiptMode === "DIRECT" && (
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
+                  <span>Item</span>
+                  <span>Qty, Satuan & Harga Beli</span>
+                  <span />
+                </div>
+                {lines.map((line, i) => {
+                  const selectedItem = items.find((it) => it.id === line.item_id);
+                  const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
+                  return (
+                    <div key={i} className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2">
+                      <Select
+                        value={line.item_id}
+                        onChange={(e) =>
+                          updateLine(i, { item_id: e.target.value, qty_received: "", unit_cost: "" })
+                        }
+                      >
+                        <option value="">Pilih item...</option>
+                        {items.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name} ({item.uom})
+                          </option>
+                        ))}
+                      </Select>
+                      {line.item_id ? (
+                        <UnitCostQtyInput
+                          key={line.item_id}
+                          units={unitsForItem}
+                          baseUom={selectedItem?.uom ?? ""}
+                          onChange={(change) => updateLineQtyCost(i, change)}
+                        />
+                      ) : (
+                        <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeDirectLine(i)}
+                        disabled={lines.length <= 1}
+                        className="text-slate-400 hover:text-red-600 disabled:opacity-30"
+                        aria-label="Hapus baris"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
+                <Button type="button" variant="secondary" onClick={addDirectLine} className="w-fit">
+                  + Tambah item
+                </Button>
               </div>
             )}
 

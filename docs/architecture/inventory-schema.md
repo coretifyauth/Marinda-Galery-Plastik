@@ -102,36 +102,39 @@ erDiagram
 
 ## Purchase Order & Penerimaan Barang (3-Way Matching)
 
+**Purchase Order sekarang opsional (2026-09-03)** — penerimaan barang bisa dicatat langsung tanpa Purchase Order (kasus beli dadakan), mirror pola Sales Order yang sudah opsional dari awal.
+
 **Peta Data (ERD)**
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok. Belum ada transaksi jurnal — ini baru rencana, belum ada pertukaran aset | `suppliers`, `items` |
-| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima. Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `purchase_orders`, `ap_bills`, `items`, `inventory_balances` |
+| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok, opsional. Belum ada transaksi jurnal — ini baru rencana, belum ada pertukaran aset | `suppliers`, `items` |
+| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima — boleh berasal dari Purchase Order, boleh juga berdiri sendiri (langsung, tanpa PO). Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `purchase_orders` (opsional), `suppliers` (wajib kalau gak lewat PO), `ap_bills`, `items`, `inventory_balances` |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Buat Purchase Order | `create_purchase_order` | Insert header + baris pesanan. Tidak ada dampak keuangan atau stok sama sekali — baru komitmen | — |
-| Catat penerimaan barang | `create_goods_receipt` | Sekaligus: (1) hitung total tagihan dari baris penerimaan, (2) buat tagihan pemasok (bill) sepadan + jurnal Debit Persediaan, Kredit Utang Usaha, (3) insert baris penerimaan, (4) update posisi stok tiap barang (harga rata-rata dihitung ulang) | Menolak penerimaan yang jumlahnya melebihi sisa yang masih dipesan di Purchase Order |
+| Catat penerimaan barang | `create_goods_receipt` | Sekaligus: (1) tentukan pemasok (dari Purchase Order kalau ada, dari pilihan manual kalau tidak), (2) hitung total tagihan dari baris penerimaan, (3) buat tagihan pemasok (bill) sepadan + jurnal Debit Persediaan, Kredit Utang Usaha, (4) insert baris penerimaan, (5) update posisi stok tiap barang (harga rata-rata dihitung ulang) | Menolak penerimaan yang jumlahnya melebihi sisa yang masih dipesan di Purchase Order (cuma berlaku kalau memang ada PO); menolak kalau gak ada PO maupun pemasok manual yang dipilih |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Purchase Order tidak bikin jurnal | `create_purchase_order` cuma insert data, tidak memicu transaksi jurnal apa pun |
-| Penerimaan barang tidak boleh melebihi sisa qty yang dipesan | Pengaman otomatis pada baris penerimaan barang, dicek per barang terhadap Purchase Order-nya |
+| Penerimaan barang tidak boleh melebihi sisa qty yang dipesan (kalau ada PO) | Pengaman otomatis pada baris penerimaan barang, dicek per barang terhadap Purchase Order-nya — dilewati kalau baris itu gak menunjuk PO |
+| Penerimaan barang langsung (tanpa PO) wajib menyebutkan pemasok manual | `create_goods_receipt` menolak kalau Purchase Order dan pemasok manual dua-duanya kosong, serta menolak kalau pemasok yang dipilih gak ditemukan |
 | Pembelian bahan baku selalu masuk Persediaan, tidak pernah ke Beban | `create_goods_receipt` selalu mendebit akun Persediaan barang itu (bukan akun Beban) saat membuat tagihan |
 | Penerimaan barang dari 1 PO boleh punya kategori Persediaan campur (mis. + Beban Ongkir) dan PPN Masukan | `create_goods_receipt` diperluas kategori tambahan & PPN (`docs/architecture/ap-schema.md` bagian "Kategori Campur & PPN"), mirror alur jual (Goods Issue) yang sudah lebih dulu expose kategori campur ke UI-nya |
-| Penerimaan barang tertelusur ke Purchase Order + tagihan yang menyertainya | `goods_receipt_notes` wajib menunjuk baik Purchase Order maupun tagihan (bill) yang dibuat bersamaan |
+| Penerimaan barang tertelusur ke tagihan yang menyertainya, dan ke Purchase Order kalau memang ada | `goods_receipt_notes` wajib menunjuk tagihan (bill) yang dibuat bersamaan; menunjuk Purchase Order cuma kalau jalurnya dari PO |
 
 **Interaksi Antar Tabel**
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `purchase_order_lines` | banyak-ke-satu | `purchase_orders` |
-| `goods_receipt_lines` | banyak-ke-satu, dicocokkan ke | `purchase_order_lines` |
+| `goods_receipt_lines` | banyak-ke-satu, dicocokkan ke (opsional) | `purchase_order_lines` |
 | `goods_receipt_notes` | satu-ke-satu | tagihan pemasok (`ap_bills`) |
 | `goods_receipt_lines` | tiap baris memicu update | `inventory_balances` |
 

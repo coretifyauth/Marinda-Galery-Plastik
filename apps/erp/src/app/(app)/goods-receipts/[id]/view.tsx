@@ -29,7 +29,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     const { data: grnData, error: grnErr } = await supabase
       .from("goods_receipt_notes")
       .select(
-        "id, purchase_order_id, bill_id, delivery_note_ref, receipt_date, created_at, purchase_orders(source_ref, suppliers(name)), ap_bills(source_ref, amount, journal_entry_id), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
+        "id, purchase_order_id, bill_id, delivery_note_ref, receipt_date, created_at, purchase_orders(source_ref, suppliers(name)), ap_bills(source_ref, amount, journal_entry_id, suppliers(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
       )
       .eq("id", id)
       .single();
@@ -82,7 +82,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         { label: "No. Surat Jalan", value: grn.delivery_note_ref ?? "-" },
         {
           label: "Purchase Order",
-          value: (
+          value: grn.purchase_orders ? (
             <button
               type="button"
               className="text-blue-600 hover:underline"
@@ -90,7 +90,13 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
             >
               {grn.purchase_orders.source_ref}
             </button>
+          ) : (
+            <span className="text-slate-400">— (langsung tanpa PO)</span>
           ),
+        },
+        {
+          label: "Supplier",
+          value: grn.purchase_orders?.suppliers.name ?? grn.ap_bills.suppliers.name,
         },
         {
           label: "Bill",
