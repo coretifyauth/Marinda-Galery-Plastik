@@ -62,8 +62,6 @@ export default function PurchaseOrdersPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
 
-  const rawMaterials = items.filter((i) => i.item_type === "RAW_MATERIAL");
-
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
   // lihat journal-entries/page.tsx).
   const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${supplierFilter}|${statusFilter}|${pageSize}`;
@@ -399,7 +397,7 @@ export default function PurchaseOrdersPage() {
                       }
                     >
                       <option value="">Pilih item...</option>
-                      {rawMaterials.map((item) => (
+                      {items.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.name} ({item.uom})
                         </option>

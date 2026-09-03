@@ -18,7 +18,7 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 #### `suppliers` — master data pihak yang CV Barokah berutang
 
-Struktur identik `customers` (`ar-schema.md`), cuma beda makna `payment_term_days` (lihat "Keputusan" di atas — syarat yang diterima, bukan ditetapkan).
+Struktur identik `customers` (`ar-schema.md`), cuma beda makna `payment_term_days` (lihat "Keputusan" di atas — syarat yang diterima, bukan ditetapkan). Kemiripan struktur ini (6 dari 8 kolom identik) yang jadi dasar usulan owner buat gabung `customers`+`suppliers` jadi 1 tabel `counterparties` — belum digarap, lihat `memory/scope-debt/order-generalization.md` (Fase 1).
 
 ```sql
 create table suppliers (

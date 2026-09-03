@@ -83,9 +83,9 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
   Debit Piutang Usaha
     Kredit Saldo Kredit Retur Customer
   ```
-- **Cuma DUA cara nyelesaiin saldo ini** — TIDAK BOLEH "dititip"/dipakai motong invoice lain:
+- **Cuma SATU cara aktif nyelesaiin saldo ini ke depan** — TIDAK BOLEH "dititip"/dipakai motong invoice lain:
   1. **Direfund tunai** — Debit Saldo Kredit Retur Customer, Kredit Kas/Bank.
-  2. **Diselesaikan lewat ganti barang** — kalau retur ini nanti diselesaikan lewat penukaran barang pasca-retur (lihat submodule "Penukaran Barang Pasca-Retur"), sebagian/seluruh saldo ini otomatis ikut "terbayar" pakai barang, bukan kas.
+  2. *(Peninggalan data lama, gak berlaku transaksi baru)* — sebagian retur lama pernah otomatis "terbayar" pakai barang pengganti kalau retur itu diselesaikan lewat penukaran barang pasca-retur. Sejak keputusan penyeragaman dengan alur pembelian (lihat submodule "Penukaran Barang Pasca-Retur"), penukaran barang gak lagi berhubungan sama saldo kredit retur sama sekali — customer harus pilih SATU dari awal: retur (dapat kredit/diskon) atau ganti barang, gak bisa dua-duanya buat barang yang sama.
 - Kenapa opsi "dipakai motong invoice lain" gak dibolehkan: sama alasan larangan overpay jadi saldo mengambang di Konsep Inti — gak mau ada saldo yang "ngambang" bisa dipakai kapan aja ke invoice mana aja.
 - Sengaja gak ada batas waktu retur (umur invoice vs tanggal retur) — pernah ada, dicabut karena angkanya gak pernah punya dasar/justifikasi kuat. Retur diterima/ditolak sekarang murni keputusan manual staf di luar sistem.
 - Batasan yang tetap dijaga otomatis: retur gak boleh dicatat ke periode akuntansi yang udah ditutup — ini soal integritas pembukuan umum (semua transaksi tunduk aturan ini), bukan aturan khusus retur.
@@ -102,8 +102,7 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
 **Skenario**
 - Retur barang, invoice financial-only, belum lunas — sisa tagihan turun langsung dari nominal retur.
 - Retur barang, invoice yang stoknya dilacak, udah lunas — 2 jurnal (kontra-revenue + reversal HPP), stok masuk lagi, sisa tagihan jadi negatif (jadi saldo kredit).
-- Saldo kredit dari retur, direfund tunai — retur setelah invoice lunas bikin sisa tagihan negatif, excess-nya otomatis dicairkan jadi saldo resmi, lalu direfund tunai.
-- Saldo kredit dari retur, diselesaikan lewat ganti barang — retur yang bikin saldo kredit retur ternyata diselesaikan lewat penukaran barang, bukan refund tunai — sebagian/seluruh saldo otomatis nyettle, dibatasi sisa saldo yang ada.
+- Saldo kredit dari retur, direfund tunai — retur setelah invoice lunas bikin sisa tagihan negatif, excess-nya otomatis dicairkan jadi saldo resmi, lalu direfund tunai (satu-satunya cara aktif menyelesaikan saldo ini sekarang).
 - Retur barang rusak, jalur full — kontra-revenue tetap jalan seperti retur biasa (piutang berkurang), tapi cost-nya diakui Beban Kerugian Barang Rusak, TIDAK balik masuk stok.
 - Retur campuran dalam 1 credit note — sebagian baris item masih layak jual (balik stok), sebagian baris rusak (jadi beban), masing-masing baris diproses sesuai kondisinya sendiri-sendiri.
 
@@ -114,50 +113,39 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
 - Bikin aturan baru "gak boleh retur ke periode tertutup" secara khusus — itu udah otomatis berlaku dari aturan umum integritas pembukuan, gak perlu aturan duplikat.
 - Excess dari retur negatif dicatat ke akun saldo kredit yang sama dengan kelebihan bayar biasa — harus akun terpisah, beda asal jurnal.
 - Excess dari retur dihitung dari seluruh nominal retur (bukan cuma bagian yang ngelebihin sisa tagihan) — bikin dobel hitung kalau sisa tagihannya masih ada sebagian.
-- Kasih jalan lagi buat saldo kredit retur "dititip"/dipakai motong invoice lain — keputusan bisnis udah eksplisit cuma 2 cara (refund tunai, ganti barang).
+- Kasih jalan lagi buat saldo kredit retur "dititip"/dipakai motong invoice lain — keputusan bisnis udah eksplisit cuma refund tunai.
 - Barang rusak yang diretur ikut direstock ke stok aktif seolah masih layak jual — harus diakui sebagai Beban Kerugian Barang Rusak, bukan nambah Persediaan Barang Jadi. Kontra-revenue-nya (piutang berkurang) tetap jalan seperti biasa — yang beda cuma sisi cost/stoknya.
 
 ### Penukaran Barang Pasca-Retur (Garansi)
 
+**Restrukturisasi (2026-09-03, keputusan owner)**: dulu penukaran barang harus menempel ke retur yang sudah tercatat, lalu membalikkan sebagian diskon retur biar customer gak dapat kompensasi dobel. Sekarang diseragamkan dengan cara pembelian menangani kasus serupa (tukar barang ke supplier) — customer harus pilih SATU jalan sejak awal: **retur (dapat kredit/diskon) ATAU ganti barang**, gak bisa dua-duanya buat barang yang sama. Karena pilihannya sudah dipisah sejak awal, penukaran barang sekarang gak perlu lagi "mengoreksi" apa pun — jadi lebih sederhana.
+
 **Cara Kerja**
-- Customer balikin barang rusak (garansi kualitas) DAN minta barang pengganti — bukan hadiah, customer memang berhak dapat barang layak jual sebagai ganti barang cacat. Bedanya sama retur biasa: retur murni "barang balik, tagihan berkurang"; ini "barang cacat ditukar barang baik" — secara net customer tetap bayar penuh nilai barang yang akhirnya dia terima, cuma gak ada penerbitan tagihan baru buat barang pengganti itu.
+- Customer punya barang bermasalah (garansi kualitas) DAN minta barang pengganti — bukan hadiah, customer memang berhak dapat barang layak jual sebagai ganti barang cacat. Bedanya sama retur biasa: retur murni "barang balik, tagihan berkurang"; ini "barang cacat ditukar barang baik" — secara net customer tetap bayar penuh nilai barang yang akhirnya dia terima, cuma gak ada penerbitan tagihan baru buat barang pengganti itu.
 - Kenapa gak lewat proses pengeluaran barang/penjualan biasa: proses itu selalu bikin tagihan baru (Debit Piutang Usaha, Kredit Pendapatan). Barang pengganti bukan penjualan baru, jadi kalau dipaksa lewat situ, piutang customer numpuk palsu dan Pendapatan Penjualan kegedean padahal bukan penjualan beneran.
-- Jurnal cost barang pengganti:
+- Jurnal cost barang pengganti — **satu-satunya jurnal** yang tercipta, gak ada jurnal lain:
   ```
   Debit Harga Pokok Penjualan
     Kredit Persediaan Barang Jadi
   ```
-- **Wajib membalikkan diskon retur yang udah diberikan** — retur sebelumnya udah kasih diskon (Debit Retur & Potongan Penjualan, Kredit Piutang Usaha) buat barang yang sama. Kalau penukaran dibiarin nempel di atas diskon itu tanpa dibalik, customer dapat kompensasi dobel (diskon DAN barang pengganti) buat 1 kejadian cacat yang sama — perusahaan rugi ekstra. Jadi tiap penukaran juga bikin jurnal kedua yang membalikkan diskon **secara proporsional** ke qty yang ditukar (bukan seluruh nilai retur — bisa ditukar bertahap):
-  ```
-  Debit Piutang Usaha
-    Kredit Retur & Potongan Penjualan
-  ```
-  Net-nya: customer yang akhirnya ditukar barangnya bayar penuh (gak dapat diskon lagi) — piutang perusahaan ke customer itu gak berkurang gara-gara penukaran ini.
-- **Kalau retur sumbernya juga punya saldo kredit retur aktif** (lihat submodule "Saldo Kredit dari Retur") — otomatis ikut diselesaikan pakai barang, bukan cuma diskon yang dibalik. Ini kasus khusus: invoice udah lunas SEBELUM retur terjadi, jadi diskon yang dibalik di atas gak ada lagi piutang buat "nampung" — kelebihannya udah kadung dicairkan jadi saldo kredit resmi milik customer. Begitu barang pengganti keluar, saldo itu ikut disettle sejumlah persis porsi diskon yang dibalik, jurnal ketiga:
-  ```
-  Debit Saldo Kredit Retur Customer
-    Kredit Piutang Usaha
-  ```
-  Jurnal ini sengaja pasangan kebalikan dari pembalikan diskon di atas — net efeknya ke Piutang Usaha invoice itu jadi nol (invoice tetap keliatan lunas, gak muncul jadi berutang lagi), sementara saldo kreditnya berkurang beneran.
-- **Kalau porsi diskon yang mau dibalik ternyata lebih besar dari sisa saldo kredit retur — transaksi ditolak, bukan diam-diam dipotong.** Ini bisa kejadian kalau sebagian saldo kredit retur itu udah kadung direfund tunai duluan sebelum penukaran ini diajukan. Ditolak keras karena kalau dibiarkan lolos dengan porsi yang dipotong diam-diam, sisa reversal yang gak ketampung bakal jadi piutang yang "menggantung" tanpa invoice manapun yang bisa nampungnya.
-- **Wajib referensi ke retur yang udah ada** (retur fisik, bukti barang emang balik ke gudang) — gak bisa berdiri sendiri tanpa retur formal duluan. Alasan bisnis: audit trail (tanpa bukti retur, penukaran gampang disalahgunakan), traceability (pengeluaran stok harus nunjuk dokumen sumber jelas), dan matching principle (biaya penukaran itu beban garansi dari penjualan yang udah diakui sebelumnya, harus terhubung ke transaksi asalnya).
-- **Batas kuantitas** — total qty yang ditukar (akumulasi, bisa lebih dari 1 kali penukaran per retur) gak boleh ngelebihin qty yang beneran diretur (per item). Barang pengganti diambil dari stok aktif yang sama dengan stok jualan biasa — ini aman karena retur yang **rusak** (submodule "Retur Barang" di atas) TIDAK PERNAH masuk ke stok aktif sama sekali (langsung jadi Beban Kerugian Barang Rusak, gak direstock), jadi gak ada resiko barang cacat yang balik ikut kepakai lagi buat penukaran. Retur yang **masih layak jual** memang sengaja campur ke stok aktif — itu bukan gap, barangnya beneran gak cacat.
+  Piutang Usaha customer sama sekali gak disentuh oleh penukaran barang — beda dari versi lama yang wajib bikin jurnal tambahan buat membalikkan diskon retur.
+- **Satu barang, satu jalan kompensasi.** Begitu qty tertentu dari satu invoice udah "dipakai" lewat retur (dapat kredit/diskon), qty yang sama gak bisa lagi diajukan buat ganti barang — dan sebaliknya, qty yang udah dipakai ganti barang gak bisa lagi diretur. Sisa yang masih bisa diproses (baik lewat retur maupun ganti barang) selalu dihitung dari total qty terjual dikurangi SEMUA yang udah "diklaim" lewat jalur manapun — jadi gak peduli customer mau retur duluan atau ganti barang duluan, hasil akhirnya tetap konsisten: gak ada barang yang dikompensasi dua kali.
+- **Ganti barang gak bisa diajukan buat tagihan yang gak pernah ada barang fisiknya** (misal tagihan jasa) — cuma berlaku buat tagihan yang beneran mengeluarkan barang dari gudang.
+- Barang pengganti diambil dari stok aktif yang sama dengan stok jualan biasa — aman karena retur yang **rusak** (submodule "Retur Barang" di atas) TIDAK PERNAH masuk ke stok aktif sama sekali (langsung jadi Beban Kerugian Barang Rusak, gak direstock), jadi gak ada resiko barang cacat yang balik ikut kepakai lagi buat penukaran.
 
 **Aturan Bisnis**
-- Penukaran barang gak boleh berdiri sendiri — wajib menunjuk retur fisik yang sudah tercatat.
-- Total qty yang ditukar gak boleh melebihi qty yang beneran diretur untuk item itu.
-- Total reversal diskon gak boleh melebihi diskon retur aslinya.
-- Total penyelesaian saldo kredit retur gak boleh melebihi sisa saldo yang ada — kalau lebih, transaksi ditolak sepenuhnya, bukan dipotong diam-diam.
+- Satu barang yang terjual cuma bisa dikompensasi lewat SATU jalan — retur atau ganti barang, gak bisa dua-duanya, berlaku dari sisi mana pun duluan diajukan.
+- Ganti barang wajib menunjuk tagihan yang beneran punya barang fisik keluar — gak berlaku buat tagihan jasa/financial-only.
+- Total qty yang ditukar (dikurangi yang udah diretur) gak boleh melebihi qty yang beneran terjual.
 
 **Skenario**
-- Penukaran barang pasca-retur/garansi (jalur full) — 2 jurnal (HPP/Persediaan Barang Jadi + pembalikan diskon retur proporsional ke Piutang Usaha), gak nyentuh Pendapatan, referensi ke retur yang udah ada.
+- Penukaran barang pasca-retur/garansi — 1 jurnal (HPP/Persediaan Barang Jadi), gak nyentuh Piutang Usaha/Pendapatan sama sekali, dibatasi sisa qty yang belum "diklaim" lewat retur maupun ganti barang sebelumnya.
 
 **Common Mistakes**
 - Penukaran barang lewat proses pengeluaran barang biasa (bikin tagihan lagi) — piutang & pendapatan numpuk palsu padahal gak ada penjualan baru.
-- Penukaran barang tanpa referensi ke retur yang udah ada — kehilangan audit trail, pengeluaran stok buat penukaran jadi gak bisa dipertanggungjawabkan.
 - Barang pengganti diambil dari stok bekas retur (barang rusak yang baru balik) — harusnya dari stok fresh/layak jual, barang rusak gak dipakai ganti lagi.
-- Penukaran gak nyentuh saldo kredit retur sama sekali walau returnya punya saldo aktif — laporan piutang jadi salah, keliatan masih berutang padahal udah lunas via barang.
-- Porsi diskon yang dibalik ngelebihin sisa saldo kredit retur tapi tetap diloloskan dengan nilai yang dipotong diam-diam — sisa yang gak ketampung jadi piutang menggantung tanpa invoice. Harus ditolak sepenuhnya, bukan dipotong diam-diam.
+- Nganggep proteksi "gak boleh dikompensasi dobel" cukup dicek dari 1 arah aja (misal cuma pas mau ganti barang) — customer yang retur dulu BARU ganti barang buat barang yang sama juga harus tetap dicegah, bukan cuma arah sebaliknya.
+- Mengira penukaran barang masih perlu menunjuk retur yang sudah ada — itu perilaku lama, sekarang keduanya berdiri sendiri-sendiri.
 
 ### Uang Muka / DP (Deposit)
 

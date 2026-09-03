@@ -591,22 +591,25 @@ Sempat ada 2 lapis (window per item `items.return_window_days` dari `0021`, wind
 
 ## Penukaran Barang Pasca-Retur (Garansi)
 
-Customer retur barang rusak (AR Credit Note jalur full, sudah ada `inventory_returns`) DAN minta barang pengganti — BUKAN gratis/cuma-cuma, TANPA invoice baru tapi piutang kami ke customer gak berkurang gara-gara penukaran ini (lihat pembalikan diskon di bawah). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)". Migration: `0026_ar_warranty_replacements.sql` + `0037_ar_warranty_replacement_discount_reversal.sql` + `0041_ar_return_credit_resolution.sql` (penyelesaian saldo kredit retur).
+Customer minta barang pengganti buat item yang udah terjual (lewat `goods_issue`) — BUKAN gratis/cuma-cuma (dijurnal HPP/Persediaan), TANPA invoice baru, dan (sejak `0057`) **gak nyentuh Piutang Usaha sama sekali**. Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)". Migration: `0026_ar_warranty_replacements.sql` (versi awal) → `0037_ar_warranty_replacement_discount_reversal.sql` (pembalikan diskon) → `0041_ar_return_credit_resolution.sql` (penyelesaian saldo kredit retur) → **`0057_ar_warranty_replacement_independent.sql`** (restrukturisasi jadi independen, keputusan owner 2026-09-03).
+
+**Restrukturisasi `0057` — kenapa & apa yang berubah:** dulu warranty replacement WAJIB nunjuk `credit_note_id` yang sudah lebih dulu mencatat retur fisik+diskon (`ar_credit_notes.amount`, SELALU > 0 — gak ada jalur "amount = 0"). Kalau replacement dipanggil buat qty yang sama, sistem MENGIZINKAN lalu mewajibkan pembalikan proporsional diskon (`0037`) biar gak dobel kompensasi — strategi "izinkan lalu koreksi". Sekarang direstrukturisasi jadi INDEPENDEN — mirror `create_purchase_replacement` (AP, `ap-schema.md`) yang independen dari awal, nunjuk `bill_id` langsung, gak pernah butuh credit note ada duluan. Fungsi baru `sales_returned_qty(invoice_id, item_id)` (mirror `purchase_returned_qty`) menjumlah qty yang udah diklaim LINTAS SEMUA jalur (retur kredit + ganti barang) buat 1 item di 1 invoice, dipakai jaga qty fisik yang sama gak diklaim dobel — mencegah kompensasi ganda dari akarnya (dicegah dari awal), gantiin mekanisme reversal yang cuma mengoreksi belakangan.
 
 ### `warranty_replacements` + `warranty_replacement_lines`
 
-Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per credit note, retur bertahap). `journal_entry_id` nunjuk jurnal Debit HPP / Kredit Persediaan Barang Jadi (`create_journal_entry`, reuse). `discount_reversal_journal_entry_id` (**fix `0037`**, nullable) nunjuk jurnal kedua yang membalikkan diskon retur — Debit Piutang Usaha / Kredit Retur & Potongan Penjualan, cuma dibuat kalau `discount_reversed_amount > 0`. `return_credit_settlement_journal_entry_id` (**`0041`**, nullable) nunjuk jurnal ketiga yang menyelesaikan saldo kredit retur — Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha, cuma dibuat kalau `return_credit_settled_amount > 0` (lihat submodule "Retur Barang" bagian AR Return Credit). Immutable, pola sama `ar_credit_notes`/`inventory_returns`.
+Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per invoice). `journal_entry_id` nunjuk jurnal Debit HPP / Kredit Persediaan Barang Jadi (`create_journal_entry`, reuse) — **satu-satunya jurnal** yang dibuat RPC ini sejak `0057`. `invoice_id` (**baru, `0057`**) rujukan utama, independen dari credit note. `credit_note_id` (**jadi nullable, `0057`**) TETAP ada buat baris HISTORIS (data lama) yang masih nunjuk situ — baris BARU selalu NULL. Kolom reversal (`discount_reversed_amount`, `discount_reversal_journal_entry_id`, `return_credit_settled_amount`, `return_credit_settlement_journal_entry_id`) juga TETAP ada buat histori — RPC baru gak pernah ngisi (selalu default `0`/`NULL`), gak ada backfill mundur. Immutable, pola sama `ar_credit_notes`/`inventory_returns`.
 
 ```sql
 create table warranty_replacements (
   id uuid primary key default gen_random_uuid(),
-  credit_note_id uuid not null references ar_credit_notes(id),
+  invoice_id uuid not null references ar_invoices(id),           -- 0057, rujukan utama
+  credit_note_id uuid references ar_credit_notes(id),             -- 0057: jadi nullable, cuma histori
   replacement_date date not null,
   source_ref text not null,
   journal_entry_id uuid not null references journal_entries(id),
-  discount_reversed_amount numeric(14,2) not null default 0 check (discount_reversed_amount >= 0),
+  discount_reversed_amount numeric(14,2) not null default 0 check (discount_reversed_amount >= 0),  -- histori doang sejak 0057
   discount_reversal_journal_entry_id uuid references journal_entries(id),
-  return_credit_settled_amount numeric(14,2) not null default 0 check (return_credit_settled_amount >= 0),
+  return_credit_settled_amount numeric(14,2) not null default 0 check (return_credit_settled_amount >= 0),  -- histori doang sejak 0057
   return_credit_settlement_journal_entry_id uuid references journal_entries(id),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
@@ -621,31 +624,49 @@ create table warranty_replacement_lines (
 );
 ```
 
-### Trigger `warranty_replacement_lines_no_over_replace`
+### `sales_returned_qty(invoice_id, item_id)` — mirror `purchase_returned_qty` (`0057`)
 
-Pola sama `inventory_return_lines_guard` (no-over-return) — total `qty_replaced` (akumulasi per item per credit note) gak boleh ngelebihin `SUM(qty_returned)` item itu di `inventory_return_lines` (join lewat `inventory_returns.credit_note_id`). Kalau item itu gak ketemu sama sekali di retur credit note itu, `raise exception` duluan (bukan lolos dengan batas 0).
+```sql
+create function sales_returned_qty(p_invoice_id uuid, p_item_id uuid) returns numeric as $$
+  select
+    coalesce((select sum(irl.qty_returned) from inventory_return_lines irl
+      join inventory_returns ir on ir.id = irl.inventory_return_id
+      join ar_credit_notes acn on acn.id = ir.credit_note_id
+      where acn.invoice_id = p_invoice_id and irl.item_id = p_item_id), 0)
+    + coalesce((select sum(wrl.qty_replaced) from warranty_replacement_lines wrl
+      join warranty_replacements wr on wr.id = wrl.warranty_replacement_id
+      where wr.invoice_id = p_invoice_id and wrl.item_id = p_item_id), 0);
+$$ language sql stable;
+```
 
-### Trigger `warranty_replacements_no_over_reverse` (fix `0037`)
+Gabungan qty yang udah "diklaim" dari 1 item di 1 invoice, lintas retur kredit (`inventory_return_lines` via `ar_credit_notes`) + ganti barang (`warranty_replacement_lines` via `invoice_id` langsung). **Ini yang beneran menegakkan mutual exclusivity** — begitu qty suatu item abis diklaim lewat retur kredit, sisa yang bisa diganti otomatis 0 tanpa butuh cek "diskon > 0" eksplisit (yang gak akan pernah kerja karena `ar_credit_notes.amount` emang selalu > 0).
 
-Total `discount_reversed_amount` (akumulasi lintas semua `warranty_replacements` per `credit_note_id`) gak boleh ngelebihin `ar_credit_notes.amount` credit note itu. Pola sama no-over-replace tapi di level header, bukan line — karena reversal dihitung per pemanggilan RPC (1 angka), bukan per baris item.
+### Trigger `warranty_replacement_lines_no_over_replace` (ditulis ulang `0057`)
 
-### Trigger `warranty_replacements_no_over_settle_return_credit` (`0041`)
+Dulu: cap ke `SUM(qty_returned)` di `inventory_return_lines` 1 credit note doang. Sekarang: cap ke `goods_issue_lines.qty_issued` (invoice asli, via `goods_issues.invoice_id`) **dikurangi** `sales_returned_qty()` — mirror persis `purchase_replacement_lines_no_over_return` (AP). Item yang gak ketemu di `goods_issue_lines` invoice itu `raise exception` duluan (invoice financial-only gak punya barang fisik buat diganti).
 
-Pola sama `no_over_reverse` di atas, tapi buat kolom `return_credit_settled_amount`: kalau `new.return_credit_settled_amount = 0`, langsung lolos (`return new`, gak perlu lookup apa pun — kasus paling umum, credit note tanpa `ar_return_credits`). Kalau > 0, cari `ar_return_credits` yang `credit_note_id`-nya match — `raise exception` kalau gak ketemu (gak masuk akal isi kolom ini kalau gak ada saldo buat disettle), lalu `raise exception` juga kalau `new.return_credit_settled_amount > ar_return_credit_remaining(credit_id)` (dipanggil saat itu, sebelum row baru ini masuk — jadi "sisa SEBELUM settlement ini").
+### Trigger `warranty_replacements_no_over_reverse` (fix `0037`) dan `warranty_replacements_no_over_settle_return_credit` (`0041`) — TETAP ADA, gak diubah `0057`
 
-### RPC `create_warranty_replacement`
+Dua-duanya baca `new.credit_note_id`/`new.discount_reversed_amount`/`new.return_credit_settled_amount` — aman dijalankan buat baris baru (`credit_note_id` NULL, kedua kolom amount selalu `0`): `no_over_settle_return_credit` short-circuit di awal kalau `return_credit_settled_amount = 0`; `no_over_reverse` gak short-circuit eksplisit tapi `select amount from ar_credit_notes where id = NULL` balikin NULL, bikin perbandingan `... > NULL` evaluasi NULL (bukan TRUE) di PL/pgSQL — `raise exception` gak pernah kepicu. Dipertahankan aktif buat baris HISTORIS yang credit_note_id-nya masih terisi, walau RPC baru gak akan pernah nyentuh kolom-kolom yang dijaga trigger ini lagi.
 
-`security invoker`, reuse `create_journal_entry` + `consume_weighted_average` (fungsi generik konsumsi stok dari `0012`, sama yang dipakai `create_goods_issue`/`create_production_order`; `consume_fifo` yang dulu jadi pasangannya sudah di-drop total di migration `0038`) — 0 fungsi baru buat logic konsumsi stok.
+### RPC `create_warranty_replacement` (signature baru, jauh lebih sederhana — `0057`)
 
-- Guard "credit note jalur full" dicek eksplisit di awal RPC (`exists (select 1 from inventory_returns where credit_note_id = ...)`), bukan cuma ngandelin trigger belakangan — kalau credit note-nya financial-only, `raise exception` duluan sebelum sempat konsumsi stok.
-- Guard `p_lines` kosong/null juga dicek eksplisit — tanpa ini RPC bisa "sukses" bikin jurnal 0/0 dan header tanpa baris sama sekali (ketauan pas review).
-- Konsumsi stok ambil dari pool `inventory_balances` (Weighted Average) via `consume_weighted_average`. Sebelum migration `0038`: konsumsi pakai `consumption_type = 'WARRANTY_REPLACEMENT'` (value baru, `inventory_lot_consumptions.consumption_type` check constraint diperluas — pola sama 0021 extend `inventory_lots.source_type` nambah `SALES_RETURN`) — **selalu** ambil dari lot aktif (FIFO urut tanggal), bukan dari lot `SALES_RETURN` yang baru masuk dari retur (barang rusak gak dipakai ganti lagi). Sekarang tabel lot sudah gak ada, tapi segregasi logisnya tetap terjaga sejak `0015`: baris `inventory_return_lines.condition = 'DAMAGED'` gak pernah nambah `inventory_balances` sama sekali, jadi pool ini murni stok fresh + retur `RESALABLE` yang beneran gak cacat — gak ada resiko barang cacat ikut kepakai jadi pengganti.
-- **Pembalikan diskon (fix `0037`, param `p_contra_revenue_account_id`/`p_receivable_account_id`)**: sebelum fix ini, jurnal HPP/Persediaan di atas adalah SATU-SATUNYA efek RPC — additive di atas diskon `create_ar_credit_note` yang udah jalan duluan, bikin kompensasi ganda (`memory/scope-debt/ar-warranty-replacement-kompensasi-ganda.md`, sekarang dihapus karena sudah diperbaiki). Sekarang RPC hitung `v_reversal_share_cost` = jumlah (qty diganti × unit cost asli dari `inventory_return_lines`) tiap baris, lalu `v_reversal_amount = round(ar_credit_notes.amount * v_reversal_share_cost / total_cost_retur_credit_note, 2)` — proxy proporsi nilai pakai rasio cost, karena `ar_credit_notes` cuma nyimpen 1 `amount` total, gak per baris item. Kalau `v_reversal_amount > 0`, bikin jurnal kedua (Debit Piutang Usaha / Kredit Retur & Potongan Penjualan — kebalikan `create_ar_credit_note`) lewat `create_journal_entry` lagi, disimpan ke `discount_reversed_amount`+`discount_reversal_journal_entry_id`.
-- **Penyelesaian saldo kredit retur (`0041`, param baru `p_return_credit_liability_account_id` default `null`)**: cuma jalan kalau `v_reversal_amount > 0` DAN credit note-nya punya baris `ar_return_credits` (lookup by `credit_note_id`). Kalau ketemu: (1) `raise exception` **SEBELUM bikin jurnal apa pun** kalau `v_reversal_amount > ar_return_credit_remaining(id)` — lihat catatan bug di bawah; (2) `raise exception` juga kalau `p_return_credit_liability_account_id is null` (pola sama `create_ar_credit_note` buat parameter serupa); (3) baru kalau lolos dua cek itu, `v_settlement_amount := v_reversal_amount` (persis sama, gak perlu `least()` lagi karena udah divalidasi duluan), bikin jurnal ketiga (Debit Saldo Kredit Retur Customer / Kredit Piutang Usaha) lewat `create_journal_entry`, disimpan ke `return_credit_settled_amount`+`return_credit_settlement_journal_entry_id`. **Kenapa kredit Piutang Usaha (bukan Persediaan/HPP lagi)**: jurnal ini sengaja pasangan kebalikan dari pembalikan diskon di poin sebelumnya (yang men-debit Piutang Usaha) — net efek ke Piutang Usaha invoice jadi 0 (invoice tetap "lunas"), sementara liability-nya beneran berkurang. Fisik barangnya sendiri udah kejurnal di HPP/Persediaan di awal RPC, gak perlu disentuh lagi di sini.
-- **Bug ketauan schema-reviewer, bukan disengaja dari awal**: draft pertama nge-`least(v_reversal_amount, ar_return_credit_remaining())` cuma di sisi settlement, sementara jurnal reversal-nya (poin sebelumnya) tetap jalan penuh gak ke-cap. Kalau sebagian saldo `ar_return_credits` udah kadung direfund tunai duluan (`refund_ar_return_credit`) sebelum penukaran barang ini, selisih antara reversal penuh dan settlement yang ke-cap jadi debit Piutang Usaha yang nambah TANPA invoice manapun yang nyerap — gak ada baris `ar_invoices` baru, gak ada `ar_invoice_remaining()` manapun yang ngitung ini, dan (gara-gara `0040`) bahkan gak bisa dilunasin lewat `record_ar_payment` biasa karena itu sekarang wajib exact-match ke 1 invoice. Fix: cek dulu `v_reversal_amount > remaining` SEBELUM bikin jurnal reversal maupun settlement, `raise exception` kalau iya — bukan lolosin dengan angka yang dipotong diam-diam.
-- **Diketahui, gak diperbaiki (konsisten sama trigger guard lain di modul ini)**: `warranty_replacements_no_over_reverse`/`no_over_settle_return_credit` gak pakai `pg_advisory_xact_lock` (beda dari `close_period` di `0016`) — 2 pemanggilan konkuren ke credit note yang sama secara teori bisa race lolos guard individual. Rounding `round(...,2)` per pemanggilan independen (gak liat sisa) bisa juga bikin retur bertahap terakhir kena reject padahal proporsinya sah. Bukan blocker (bukan kompensasi ganda beneran, cuma false-rejection edge case) — sama level risiko kayak `inventory_return_lines_guard`/`warranty_replacement_lines_no_over_replace` yang juga gak pakai lock.
+```sql
+create_warranty_replacement(
+  p_invoice_id uuid, p_replacement_date date, p_source_ref text,
+  p_lines jsonb, -- {"item_id":uuid,"qty":numeric}
+  p_hpp_account_id uuid, p_finished_good_account_id uuid
+) returns uuid
+```
 
-Full body (bentuk final): `supabase/migrations/0041_ar_return_credit_resolution.sql` — riwayat sebelumnya: `0026_ar_warranty_replacements.sql` (versi awal), `0037_ar_warranty_replacement_discount_reversal.sql` (pembalikan diskon), `0038_remove_fifo_costing.sql` (costing disederhanakan).
+Turun dari 9 parameter ke 6 — `p_credit_note_id`/`p_contra_revenue_account_id`/`p_receivable_account_id`/`p_return_credit_liability_account_id` semua dicabut, karena RPC baru gak pernah bikin jurnal reversal/settlement sama sekali. **Wajib `drop function if exists create_warranty_replacement(uuid, date, text, jsonb, uuid, uuid, uuid, uuid, uuid)` sebelum `create function`** — signature-nya berubah total (bukan cuma nambah param opsional di akhir), kalau enggak Postgres bikin overload ambigu (pelajaran dari bug `0011`/`0012` `create_ap_bill`, sudah didokumentasikan sebagai konvensi wajib project ini).
+
+- `security invoker`, reuse `create_journal_entry` + `consume_weighted_average` — 0 fungsi baru buat logic konsumsi stok.
+- Guard `p_lines` kosong/null tetap dicek eksplisit (pola lama dipertahankan).
+- **Gak ada lagi guard "credit note jalur full"** — RPC ini sekarang gak butuh credit note apa pun, langsung konsumsi stok + bikin 1 jurnal HPP/Persediaan, insert header+lines+`inventory_movements`. Mutual exclusivity ditegakkan trigger `warranty_replacement_lines_no_over_replace` di atas, bukan guard eksplisit di RPC.
+- **Konsumsi stok**: gak berubah dari versi sebelumnya — tetap pool `inventory_balances` (Weighted Average) via `consume_weighted_average`, tetap otomatis gak kepakai barang `DAMAGED` (baris itu emang gak pernah nambah `inventory_balances` sejak `0015`).
+
+Migration/riwayat: `0026` (versi awal) → `0037` (pembalikan diskon) → `0038` (costing disederhanakan) → `0041` (penyelesaian saldo kredit retur) → **`0057`** (restrukturisasi independen, bentuk final saat ini).
 
 ### RLS & Grant (Penukaran Barang)
 

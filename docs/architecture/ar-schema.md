@@ -13,7 +13,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 | `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
 | `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — bagian dari alur Retur Barang | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
 | `ar_return_credit_refunds` | Saldo kredit retur dikembalikan tunai ke pelanggan | `ar_return_credits`, dan ke transaksi jurnal |
-| `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — wajib membalikkan diskon retur proporsional, opsional menyelesaikan saldo kredit retur | `ar_credit_notes` (wajib retur fisik dulu), `ar_return_credits` (via `ar_credit_notes`, kalau ada), sampai 3 transaksi jurnal |
+| `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — independen dari retur, gak nyentuh Piutang Usaha sama sekali | `ar_invoices` langsung, dan ke 1 transaksi jurnal (HPP/Persediaan) |
 | `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `customers`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) |
 | `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
 | `ar_deposit_refunds` | DP dicairkan tunai kembali — tidak berdampak Laba Rugi | `ar_deposits`, dan ke transaksi jurnal |
@@ -109,7 +109,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 | `ar_credit_notes` | Retur barang — kejadian nyata barang balik | `ar_invoices` (banyak retur per invoice), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
 | `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
 | `ar_return_credits` | Saldo kredit yang lahir otomatis kalau retur bikin invoice yang sudah lunas jadi minus | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
-| `ar_return_credit_refunds` | Saldo kredit retur di atas dicairkan tunai — satu dari dua satu-satunya cara nyelesaiin saldo itu (yang lain: settle via barang, lihat submodule "Penukaran Barang Pasca-Retur") | `ar_return_credits`, dan ke transaksi jurnal |
+| `ar_return_credit_refunds` | Saldo kredit retur di atas dicairkan tunai — satu-satunya cara aktif nyelesaiin saldo itu ke depan (jalur "settle via barang" cuma berlaku data historis, lihat submodule "Penukaran Barang Pasca-Retur") | `ar_return_credits`, dan ke transaksi jurnal |
 
 **Alur Teknis (RPC)**
 
@@ -128,8 +128,8 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 | Retur gak boleh masuk periode tertutup | Trigger block-retroactive-period (reuse dari `create_journal_entry`, sama seperti seluruh modul GL) |
 | Reversal HPP pakai harga snapshot, bukan harga sekarang | `inventory_return_lines.total_cost` dihitung dari `goods_issue_lines.total_cost` asli, bukan dihitung ulang |
 | Excess retur (bikin outstanding negatif) otomatis jadi saldo kredit resmi, bukan cuma angka minus | `create_ar_credit_note` — `v_excess` dihitung dari bagian yang melebihi `v_remaining_before`, bukan seluruh nominal retur |
-| Saldo kredit retur cuma bisa refund tunai atau ganti barang, gak bisa dipakai motong invoice lain | Cuma 2 RPC yang bisa mengurangi saldo: `refund_ar_return_credit` dan `create_warranty_replacement` (submodule "Penukaran Barang Pasca-Retur") — tidak ada RPC "terapkan ke invoice lain" |
-| Total yang dicairkan/disettle dari saldo kredit retur ≤ sisa saldo | Fungsi `ar_return_credit_remaining(credit_id) = amount − SUM(warranty_replacements.return_credit_settled_amount) − SUM(refunds)` |
+| Saldo kredit retur cuma bisa refund tunai, gak bisa dipakai motong invoice lain | RPC `refund_ar_return_credit` — satu-satunya jalur aktif ke depan (jalur "settle via ganti barang" cuma peninggalan data lama, `create_warranty_replacement` sekarang gak pernah nyentuh `ar_return_credits` lagi) |
+| Total yang dicairkan dari saldo kredit retur ≤ sisa saldo | Fungsi `ar_return_credit_remaining(credit_id) = amount − SUM(warranty_replacements.return_credit_settled_amount, histori doang) − SUM(refunds)` |
 | Gak ada batas waktu retur (umur invoice vs tanggal retur) | Sengaja dicabut total — validasi ini sempat ada (per item & per customer), sekarang murni keputusan manual staf di luar sistem |
 | Barang Rusak gak boleh balik jadi stok bernilai — kompensasi ke customer tetap jalan, cost-nya jadi kerugian | Kolom `inventory_return_lines.condition` — baris `DAMAGED` skip update `inventory_balances`, cost masuk Debit Beban Kerugian Barang Rusak; kontra-revenue tidak terpengaruh `condition` |
 
@@ -144,39 +144,40 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 | `ar_return_credits` | satu-ke-satu | `ar_credit_notes` (sumbernya) |
 | `ar_return_credits` | banyak-ke-satu | `customers` |
 | `ar_return_credit_refunds` | banyak-ke-satu | `ar_return_credits` |
-| `warranty_replacements.return_credit_settled_amount` (submodule lain) | akumulasi terhadap | `ar_return_credits` (via `ar_credit_notes.credit_note_id`) |
+| `warranty_replacements.return_credit_settled_amount` (submodule lain, HISTORIS doang) | akumulasi terhadap | `ar_return_credits` (via `ar_credit_notes.credit_note_id`, baris lama) |
 
 ## Penukaran Barang Pasca-Retur (Garansi)
+
+**Restrukturisasi (2026-09-03, keputusan owner)**: dulu wajib menunjuk retur (`ar_credit_notes`) yang sudah ada, lalu membalikkan sebagian diskon retur biar gak dobel kompensasi. Sekarang independen — langsung menunjuk invoice, gak pernah nyentuh retur/Piutang Usaha sama sekali. 1 unit barang yang sama cuma bisa diklaim SATU jalur (retur ATAU ganti barang), dicegah dari awal lewat fungsi gabungan yang dicek dari kedua arah — bukan lagi "izinkan dua jalur lalu koreksi belakangan".
 
 **Peta Data (ERD)**
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur — bukan gratis, tanpa invoice baru, wajib membalikkan diskon retur yang sudah diberikan (proporsional), DAN kalau retur sumbernya punya saldo kredit retur aktif, ikut menyelesaikan saldo itu | `ar_credit_notes` (wajib retur fisik yang sudah ada dulu), `ar_return_credits` (via `ar_credit_notes`, kalau ada), dan ke sampai 3 transaksi jurnal |
+| `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — bukan gratis, tanpa invoice baru, gak nyentuh Piutang Usaha sama sekali | `ar_invoices` langsung, dan ke 1 transaksi jurnal (HPP/Persediaan Barang Jadi) |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Catat penukaran | `create_warranty_replacement` | Jurnal 1 (selalu): Debit HPP, Kredit Persediaan Barang Jadi, ambil stok dari `inventory_balances`. Jurnal 2 (kalau `v_reversal_amount > 0`): Debit Piutang Usaha, Kredit Retur & Potongan Penjualan, proporsional ke `discount_reversed_amount`. Jurnal 3 (kondisional, kalau credit note punya `ar_return_credits`): Debit Saldo Kredit Retur Customer, Kredit Piutang Usaha, ke `return_credit_settled_amount` | Wajib `credit_note_id` (retur fisik, `inventory_returns` harus ada); trigger `warranty_replacement_lines_no_over_replace` (qty ≤ qty retur); trigger `warranty_replacements_no_over_reverse` (reversal ≤ diskon asli); trigger `warranty_replacements_no_over_settle_return_credit` (settlement ≤ sisa saldo, `raise exception` sebelum jurnal apa pun kalau lebih) |
+| Catat penukaran | `create_warranty_replacement` | 1 jurnal: Debit HPP, Kredit Persediaan Barang Jadi, ambil stok dari `inventory_balances` | Qty diganti (akumulasi per item per invoice) ≤ qty terjual dikurangi total yang udah diklaim lintas SEMUA jalur (retur-kredit + ganti-barang sebelumnya) |
 
 **Aturan Bisnis → RPC**
 
 | Aturan | Dijaga oleh |
 |---|---|
-| Wajib menunjuk retur yang sudah ada (retur fisik) | `create_warranty_replacement` — parameter `credit_note_id` wajib, cek eksplisit `exists (select 1 from inventory_returns where credit_note_id = ...)` |
-| Reversal diskon gak boleh melebihi diskon asli | Trigger `warranty_replacements_no_over_reverse` (akumulasi per `credit_note_id` ≤ `ar_credit_notes.amount`) |
-| Settlement saldo kredit retur gak boleh melebihi sisa saldo | Trigger `warranty_replacements_no_over_settle_return_credit` — `raise exception`, bukan `least()` dipotong diam-diam |
-| Barang pengganti dari stok aktif, bukan barang bekas retur | Konsumsi via `inventory_balances` (Weighted Average) — segregasi dijaga logis lewat `condition` di AR Credit Note (baris `DAMAGED` gak pernah masuk pool ini) |
+| 1 unit barang yang terjual cuma bisa diklaim SATU jalur — retur (dapat kredit/diskon) ATAU ganti barang, gak bisa dua-duanya | Fungsi gabungan "qty sudah diklaim" (jumlah retur + ganti-barang), dicek di KEDUA arah — mau retur maupun mau ganti barang, keduanya baca angka yang sama, jadi urutan mana pun duluan tetap konsisten dicegah |
+| Invoice financial-only (gak ada barang fisik terjual) gak bisa jadi dasar ganti barang | Invoice wajib punya pengeluaran barang (Goods Issue) sebelum bisa diajukan ganti barang |
+| Barang pengganti dari stok aktif, bukan barang bekas retur yang rusak | Konsumsi via `inventory_balances` (Weighted Average) — segregasi dijaga logis lewat `condition` di AR Credit Note (baris Rusak gak pernah masuk pool ini) |
 
 **Interaksi Antar Tabel**
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `warranty_replacements` | wajib FK | `ar_credit_notes` |
-| `warranty_replacements` | opsional, via `ar_credit_notes.credit_note_id` | `ar_return_credits` |
-| `warranty_replacements.discount_reversal_journal_entry_id` | nullable, terisi kalau `discount_reversed_amount > 0` | `journal_entries` |
-| `warranty_replacements.return_credit_settlement_journal_entry_id` | nullable, terisi kalau `return_credit_settled_amount > 0` | `journal_entries` |
+| `warranty_replacements` | wajib FK | `ar_invoices` |
+| `warranty_replacements` | opsional, cuma keisi di data historis (sebelum restrukturisasi) | `ar_credit_notes` |
+
+**Catatan histori**: kolom-kolom lama (pembalikan diskon, penyelesaian saldo kredit retur) masih ada di tabel buat data sebelum restrukturisasi — transaksi baru gak pernah mengisinya lagi.
 
 ## Uang Muka / DP (Deposit)
 

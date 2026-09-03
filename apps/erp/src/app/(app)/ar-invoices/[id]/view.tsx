@@ -171,7 +171,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [writeoffSubmitting, setWriteoffSubmitting] = useState(false);
 
   const [replacements, setReplacements] = useState<WarrantyReplacement[]>([]);
-  const [replaceCreditNoteId, setReplaceCreditNoteId] = useState<string | null>(null);
+  const [showReplaceForm, setShowReplaceForm] = useState(false);
   const [replaceDate, setReplaceDate] = useState("");
   const [replaceLines, setReplaceLines] = useState<ReplacementLineInput[]>([]);
   const [replaceError, setReplaceError] = useState<string | null>(null);
@@ -253,9 +253,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("warranty_replacements")
         .select(
-          "id, credit_note_id, replacement_date, source_ref, created_at, discount_reversed_amount, return_credit_settled_amount, warranty_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom)), ar_credit_notes!inner(invoice_id)"
+          "id, invoice_id, replacement_date, source_ref, created_at, warranty_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
         )
-        .eq("ar_credit_notes.invoice_id", id)
+        .eq("invoice_id", id)
         .order("replacement_date"),
       supabase
         .from("goods_issues")
@@ -434,32 +434,41 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     await load();
   }
 
-  function openReplaceForm(creditNote: CreditNoteDetail) {
-    const invReturn = creditNote.inventory_returns[0];
-    if (!invReturn) return;
+  // Ganti Barang sekarang aksi top-level di invoice (bukan per-baris credit note lagi) --
+  // sisa yang bisa diganti per item = qty_issued dikurangi SEMUA yang udah diklaim lintas
+  // jalur (retur kredit + ganti barang sebelumnya), mirror sales_returned_qty() server-side
+  // (memory/scope-debt/ar-retur-mutually-exclusive.md).
+  function openReplaceForm() {
+    if (!goodsIssue) return;
 
-    const alreadyReplaced = new Map<string, number>();
+    const alreadyClaimed = new Map<string, number>();
+    for (const cn of creditNotes) {
+      for (const ret of cn.inventory_returns) {
+        for (const l of ret.inventory_return_lines) {
+          alreadyClaimed.set(l.item_id, (alreadyClaimed.get(l.item_id) ?? 0) + l.qty_returned);
+        }
+      }
+    }
     for (const r of replacements) {
-      if (r.credit_note_id !== creditNote.id) continue;
       for (const l of r.warranty_replacement_lines) {
-        alreadyReplaced.set(l.item_id, (alreadyReplaced.get(l.item_id) ?? 0) + l.qty_replaced);
+        alreadyClaimed.set(l.item_id, (alreadyClaimed.get(l.item_id) ?? 0) + l.qty_replaced);
       }
     }
 
     setReplaceError(null);
-    setReplaceCreditNoteId(creditNote.id);
     setReplaceDate("");
     setReplaceLines(
-      invReturn.inventory_return_lines
+      goodsIssue.goods_issue_lines
         .map((l) => ({
           item_id: l.item_id,
           name: l.items.name,
           uom: l.items.uom,
-          qty_remaining: l.qty_returned - (alreadyReplaced.get(l.item_id) ?? 0),
+          qty_remaining: l.qty_issued - (alreadyClaimed.get(l.item_id) ?? 0),
           qty: "",
         }))
         .filter((l) => l.qty_remaining > 0)
     );
+    setShowReplaceForm(true);
   }
 
   function updateReplaceLine(itemId: string, qty: string) {
@@ -468,7 +477,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
   async function handleReplaceSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!replaceCreditNoteId) return;
+    if (!invoice) return;
     setReplaceError(null);
 
     const activeLines = replaceLines
@@ -476,14 +485,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       .map((l) => ({ item_id: l.item_id, qty: l.qty }));
 
     const parsed = createWarrantyReplacementSchema.safeParse({
-      credit_note_id: replaceCreditNoteId,
+      invoice_id: invoice.id,
       replacement_date: replaceDate,
       lines: activeLines,
       hpp_account_id: defaultAccounts["inventory.hpp"]?.id ?? "",
       finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id ?? "",
-      contra_revenue_account_id: defaultAccounts["ar.contra_revenue"]?.id ?? "",
-      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
-      return_credit_liability_account_id: defaultAccounts["ar.return_credit_liability"]?.id || undefined,
     });
     if (!parsed.success) {
       setReplaceError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -500,15 +506,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       return;
     }
     const { error } = await supabase.rpc("create_warranty_replacement", {
-      p_credit_note_id: parsed.data.credit_note_id,
+      p_invoice_id: parsed.data.invoice_id,
       p_replacement_date: parsed.data.replacement_date,
       p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
       p_hpp_account_id: parsed.data.hpp_account_id,
       p_finished_good_account_id: parsed.data.finished_good_account_id,
-      p_contra_revenue_account_id: parsed.data.contra_revenue_account_id,
-      p_receivable_account_id: parsed.data.receivable_account_id,
-      p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id ?? null,
     });
     setReplaceSubmitting(false);
     if (error) {
@@ -516,7 +519,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       return;
     }
 
-    setReplaceCreditNoteId(null);
+    setShowReplaceForm(false);
     await load();
   }
 
@@ -787,14 +790,10 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const canApplyDeposit = canWrite && !isCancelled && outstanding > 0 && availableDeposits.length > 0;
   const selectedDeposit = availableDeposits.find((dep) => dep.id === applyDepositId) ?? null;
   const selectedDepositRemaining = selectedDeposit ? depositStatus(selectedDeposit, reversedEntryIds).remaining : 0;
-  const replaceReturnCredit = replaceCreditNoteId
-    ? customerReturnCredits.find((c) => c.credit_note_id === replaceCreditNoteId)
-    : undefined;
-  const replaceReturnCreditActive =
-    !!replaceReturnCredit && returnCreditRemaining(replaceReturnCredit).remaining > 0.005;
-  // Reversal diskon retur (create_warranty_replacement) cuma kejadian kalau qty yang ditukar
-  // > 0 -- proporsional ke qty asli, jadi kalau semua baris masih 0 gak ada jurnal reversal
-  // sama sekali (nolnya nol).
+  // Ganti Barang independen dari credit note sekarang (mirror create_purchase_replacement AP) --
+  // cuma butuh goods_issue ada (invoice financial-only gak punya barang fisik buat ditukar).
+  const canReplace = canWrite && !isCancelled && !!goodsIssue;
+  // Jurnal HPP/Persediaan cuma kejadian kalau ada qty yang beneran diisi.
   const replaceAnyQty = replaceLines.some((l) => (Number(l.qty) || 0) > 0);
 
   // Sama pola kayak returExcess di ap-bills/[id]/view.tsx -- excess cuma kejadian kalau
@@ -1138,11 +1137,18 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
       {activeTab === "retur" && (
         <div className="flex flex-col gap-3">
-          {canRetur && (
-            <div className="flex justify-end">
-              <Button variant="toolbar" onClick={openReturForm}>
-                Retur
-              </Button>
+          {(canRetur || canReplace) && (
+            <div className="flex justify-end gap-2">
+              {canReplace && (
+                <Button variant="toolbar" onClick={openReplaceForm}>
+                  Ganti Barang
+                </Button>
+              )}
+              {canRetur && (
+                <Button variant="toolbar" onClick={openReturForm}>
+                  Retur
+                </Button>
+              )}
             </div>
           )}
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -1154,7 +1160,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                   <th className="px-4 py-2">Jalur</th>
                   <th className="px-4 py-2">Item Diretur</th>
                   <th className="px-4 py-2 text-right">Nominal</th>
-                  <th className="px-4 py-2"></th>
                 </tr>
               </thead>
               <tbody>
@@ -1193,19 +1198,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                         )}
                       </td>
                       <td className="px-4 py-2 text-right font-mono">{cn.amount.toLocaleString("id-ID")}</td>
-                      <td className="px-4 py-2">
-                        {canWrite && invReturn && (
-                          <Button variant="toolbar" onClick={() => openReplaceForm(cn)}>
-                            Ganti Barang
-                          </Button>
-                        )}
-                      </td>
                     </tr>
                   );
                 })}
                 {creditNotes.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                    <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
                       Belum ada retur.
                     </td>
                   </tr>
@@ -1305,8 +1303,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                 <th className="px-4 py-2">Source Ref</th>
                 <th className="px-4 py-2">Item Diganti</th>
                 <th className="px-4 py-2 text-right">Cost</th>
-                <th className="px-4 py-2 text-right">Diskon Retur Dibalik</th>
-                <th className="px-4 py-2 text-right">Saldo Kredit Retur Diselesaikan</th>
               </tr>
             </thead>
             <tbody>
@@ -1328,17 +1324,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                       .reduce((sum, l) => sum + l.total_cost, 0)
                       .toLocaleString("id-ID")}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono">
-                    {r.discount_reversed_amount.toLocaleString("id-ID")}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono">
-                    {r.return_credit_settled_amount.toLocaleString("id-ID")}
-                  </td>
                 </tr>
               ))}
               {replacements.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
                     Belum ada penggantian barang.
                   </td>
                 </tr>
@@ -1349,16 +1339,16 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       )}
 
       <Modal
-        open={!!replaceCreditNoteId}
-        onClose={() => setReplaceCreditNoteId(null)}
+        open={showReplaceForm}
+        onClose={() => setShowReplaceForm(false)}
         title="Tukar Barang (Garansi)"
         maxWidth="max-w-2xl"
       >
         <p className="mb-4 text-sm text-slate-600">
-          Bukan gratis — barang pengganti keluar dari stok (dijurnal HPP/Persediaan Barang
-          Jadi), dan diskon retur yang sudah diberikan untuk item ini otomatis dibalik
-          proporsional (Piutang Usaha naik lagi) — supaya piutang kami ke customer gak berkurang
-          gara-gara penukaran ini. Qty dibatasi sisa yang belum ditukar dari retur ini.
+          Barang pengganti keluar dari stok (dijurnal HPP/Persediaan Barang Jadi) — gak nyentuh
+          Piutang Usaha sama sekali, murni tukar barang. Qty yang sama cuma boleh diklaim SATU
+          jalur: kalau item ini udah diretur pakai diskon (tab Retur), sisa yang bisa diganti di
+          sini otomatis berkurang segitu — gak bisa dua-duanya.
         </p>
         <JournalPreviewPanel
           groups={[
@@ -1369,26 +1359,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                 resolved: defaultAccounts["inventory.finished_good"],
                 side: "credit",
               },
-            ],
-            replaceAnyQty && [
-              {
-                label: "Akun Piutang Usaha (debit) — pembalikan diskon retur",
-                resolved: defaultAccounts["ar.receivable"],
-                side: "debit",
-              },
-              {
-                label: "Akun Retur & Potongan Penjualan (kredit) — pembalikan diskon retur",
-                resolved: defaultAccounts["ar.contra_revenue"],
-                side: "credit",
-              },
-            ],
-            replaceAnyQty && replaceReturnCreditActive && [
-              {
-                label: "Akun Saldo Kredit Retur Customer (debit) — retur ini punya saldo kredit aktif",
-                resolved: defaultAccounts["ar.return_credit_liability"],
-                side: "debit",
-              },
-              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
             ],
           ]}
         />
@@ -1413,23 +1383,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               htmlFor="replace_finished_good_account"
               resolved={defaultAccounts["inventory.finished_good"]}
             />
-            <LockedAccountField
-              label="Akun Piutang Usaha (debit, pembalikan diskon)"
-              htmlFor="replace_receivable_account"
-              resolved={defaultAccounts["ar.receivable"]}
-            />
-            <LockedAccountField
-              label="Akun Retur & Potongan Penjualan (kredit, pembalikan diskon)"
-              htmlFor="replace_contra_revenue_account"
-              resolved={defaultAccounts["ar.contra_revenue"]}
-            />
-            {replaceReturnCreditActive && (
-              <LockedAccountField
-                label="Akun Saldo Kredit Retur Customer (debit, retur ini punya saldo kredit aktif)"
-                htmlFor="replace_return_credit_account"
-                resolved={defaultAccounts["ar.return_credit_liability"]}
-              />
-            )}
           </div>
 
           <div className="flex flex-col gap-2">
@@ -1453,14 +1406,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               </div>
             ))}
             {replaceLines.length === 0 && (
-              <p className="text-sm text-slate-400">Semua item di retur ini udah diganti penuh.</p>
+              <p className="text-sm text-slate-400">Semua item terjual di invoice ini udah diretur/diganti penuh.</p>
             )}
           </div>
 
           {replaceError && <FormError>{replaceError}</FormError>}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setReplaceCreditNoteId(null)}>
+            <Button type="button" variant="secondary" onClick={() => setShowReplaceForm(false)}>
               Batal
             </Button>
             <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0}>

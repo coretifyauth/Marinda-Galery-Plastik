@@ -6,26 +6,21 @@ export const warrantyReplacementLineSchema = z.object({
 });
 
 export const createWarrantyReplacementSchema = z.object({
-  credit_note_id: z.string().uuid("Pilih credit note"),
+  invoice_id: z.string().uuid("Pilih invoice"),
   replacement_date: z.string().min(1, "Tanggal wajib diisi"),
   lines: z.array(warrantyReplacementLineSchema).min(1, "Isi minimal 1 baris item"),
   hpp_account_id: z.string().uuid("Pilih akun HPP"),
   finished_good_account_id: z.string().uuid("Pilih akun Persediaan Barang Jadi"),
-  contra_revenue_account_id: z.string().uuid("Pilih akun Retur & Potongan Penjualan"),
-  receivable_account_id: z.string().uuid("Pilih akun Piutang Usaha"),
-  return_credit_liability_account_id: z.string().uuid("Pilih akun Saldo Kredit Retur Customer").optional(),
 });
 
 export type CreateWarrantyReplacementInput = z.infer<typeof createWarrantyReplacementSchema>;
 
 export type WarrantyReplacement = {
   id: string;
-  credit_note_id: string;
+  invoice_id: string;
   replacement_date: string;
   source_ref: string;
   created_at: string;
-  discount_reversed_amount: number;
-  return_credit_settled_amount: number;
   warranty_replacement_lines: {
     item_id: string;
     qty_replaced: number;
