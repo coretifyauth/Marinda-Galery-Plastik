@@ -88,10 +88,11 @@ export default function SalesOrdersPage() {
 
   const loadCustomers = useCallback(async () => {
     const { data } = await supabase
-      .from("customers")
-      .select("id, name, contact, payment_term_days, archived_at")
+      .from("counterparties")
+      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
+      .eq("counterparty_type_mapping.role", "customer")
       .order("name");
-    setCustomers((data ?? []) as Customer[]);
+    setCustomers((data ?? []) as unknown as Customer[]);
   }, []);
 
   const loadItems = useCallback(async () => {
@@ -319,7 +320,7 @@ export default function SalesOrdersPage() {
                 className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
                 onClick={() => router.push(`/sales-orders/${so.id}`)}
               >
-                <td className="px-4 py-2 font-medium text-black">{so.customers.name}</td>
+                <td className="px-4 py-2 font-medium text-black">{so.counterparties.name}</td>
                 <td className="whitespace-nowrap px-4 py-2">{so.so_date}</td>
                 <td className="px-4 py-2">{so.source_ref}</td>
                 <td className="px-4 py-2">

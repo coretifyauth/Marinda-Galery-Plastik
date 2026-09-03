@@ -195,7 +195,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("ar_invoices")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
       )
       .eq("id", id)
       .single();
@@ -277,14 +277,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("ar_deposits")
         .select(
-          "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+          "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
         .eq("customer_id", loadedInvoice.customer_id)
         .order("deposit_date"),
       supabase
         .from("ar_return_credits")
         .select(
-          "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, customers(name), ar_credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+          "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, counterparties(name), ar_credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
         )
         .eq("customer_id", loadedInvoice.customer_id)
         .order("created_at"),
@@ -891,7 +891,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       ${watermark}
       <table>
         <tbody>
-          <tr><td class="meta">Customer</td><td>${escapeHtml(invoice.customers.name)}</td></tr>
+          <tr><td class="meta">Customer</td><td>${escapeHtml(invoice.counterparties.name)}</td></tr>
           <tr><td class="meta">Tanggal Invoice</td><td>${escapeHtml(invoice.invoice_date)}</td></tr>
           <tr><td class="meta">Jatuh Tempo</td><td>${escapeHtml(invoice.due_date)}</td></tr>
           ${invoice.description ? `<tr><td class="meta">Deskripsi</td><td>${escapeHtml(invoice.description)}</td></tr>` : ""}
@@ -917,7 +917,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     {
       title: "Informasi Invoice",
       rows: [
-        { label: "Customer", value: invoice.customers.name },
+        { label: "Customer", value: invoice.counterparties.name },
         { label: "Rujukan Dokumen", value: invoice.source_ref },
         { label: "Tanggal Invoice", value: invoice.invoice_date },
         {

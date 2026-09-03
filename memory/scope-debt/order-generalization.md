@@ -18,16 +18,29 @@ Begitu ketiganya tercabut, gak ada lagi alasan struktural PO dan SO tetap 2 tabe
 ## Urutan pengerjaan (wajib, ada dependency)
 
 ```
-Fase 1: Counterparty   (customers+suppliers -> counterparties + counterparty_type_mapping) -- Ditunda
+Fase 1: Counterparty   (customers+suppliers -> counterparties + counterparty_type_mapping) -- SELESAI (0059, 2026-09-03)
 Fase 2: PO Not Mandatory (PO jadi opsional, biar simetris sama SO) -- SELESAI (0058, 2026-09-03)
-Fase 3: Orders          (purchase_orders+sales_orders -> orders+order_lines) -- Ditunda, butuh Fase 1
+Fase 3: Orders          (purchase_orders+sales_orders -> orders+order_lines) -- Ditunda, prasyaratnya (Fase 1+2) udah lengkap
 ```
 
-Fase 3 **gak bisa jalan tanpa Fase 1 beres** — `orders.counterparty_id` butuh tabel `counterparties` sudah ada. Fase 2 independen dari Fase 1 (bisa duluan/bareng), tapi harus beres SEBELUM Fase 3 biar `orders` gak mewarisi asimetri wajib/opsional dari `purchase_orders` lama.
+Fase 3 sekarang **udah gak punya penghalang prasyarat** — Fase 1 (`counterparties` ada) dan Fase 2 (PO opsional) dua-duanya selesai. Tinggal Fase 3 sendiri yang belum digarap (belum ada tekanan/bukti kebutuhan konkret buat gabung `purchase_orders`+`sales_orders`).
 
 ---
 
-## Fase 1 — Counterparty
+## Fase 1 — Counterparty — **SELESAI** (migration `0059_counterparty_schema.sql`, 2026-09-03)
+
+Diapply ke project live-linked, dikonfirmasi `supabase migration list` (local==remote 0059). Direview `schema-reviewer` 3 ronde total (0 blocker di ronde manapun; 2 tambahan setelah ronde 1 — pre-flight ID-collision check + RPC `create_counterparty` — masing-masing lolos review tambahan). Detail teknis lengkap (DDL final, trigger, RPC): `memory/architecture/data/counterparty-schema.md`.
+
+**Keputusan yang diambil** (menjawab 2 pertanyaan terbuka di bawah):
+1. **Type-safety: Opsi (a) — trigger di tabel transaksional**, BUKAN RPC-only `security definer`. Fungsi generik `counterparty_role_guard()` (pakai `TG_ARGV`, 1 fungsi buat 11 tabel) — filosofi akses PO/SO/AR/AP TETAP insert-langsung-lewat-RLS kayak sebelumnya, gak diubah jadi RPC-only.
+2. **Strategi migrasi data**: backfill `counterparties` PAKAI ID ASLI dari `customers`/`suppliers` (bukan ID baru) — insight yang gak kepikiran pas nulis rencana awal ini, ternyata bikin 11 tabel FK GAK PERLU backfill data sama sekali (cukup `DROP`+`ADD CONSTRAINT` DDL murni, bukan row-level `UPDATE`). Jauh lebih sederhana dari urutan "buat tabel -> backfill -> alih FK -> drop tabel lama" yang dibayangkan di awal.
+
+**Yang diimplementasikan** (lengkap, termasuk seluruh Lapis 1-3 yang diaudit di bawah — bukan cuma schema):
+- Skema: `counterparties`+`counterparty_type_mapping`, 11 FK direpoint, 11 trigger guard, `create_ar_invoice`/`create_ap_bill` lookup pindah tabel, `delete_customer`/`delete_supplier` digabung `delete_counterparty`, RPC baru `create_counterparty`.
+- Frontend: **42 file** (`apps/erp`+`apps/pos`) disapu — nested-select `customers(...)`/`suppliers(...)` jadi `counterparties(...)`, dropdown pemilih difilter role, halaman `/customers`+`/suppliers` dipindah penuh ke `counterparties`.
+- `customers`/`suppliers` (tabel lama) SENGAJA belum di-drop — jeda observasi dulu, drop-nya migration terpisah nanti.
+
+## Fase 1 (rencana awal, dipertahankan sebagai referensi historis)
 
 Dicek langsung strukturnya — 6 dari 8 kolom `customers`/`suppliers` identik:
 

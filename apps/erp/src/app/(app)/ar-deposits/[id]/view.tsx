@@ -67,7 +67,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
     const { data: dep, error: depErr } = await supabase
       .from("ar_deposits")
       .select(
-        "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, customers(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+        "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
       )
       .eq("id", id)
       .single();
@@ -247,7 +247,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
     {
       title: "Informasi Deposit",
       rows: [
-        { label: "Customer", value: deposit.customers.name },
+        { label: "Customer", value: deposit.counterparties.name },
         { label: "Rujukan Dokumen", value: deposit.source_ref },
         { label: "Tanggal Deposit", value: deposit.deposit_date },
         {

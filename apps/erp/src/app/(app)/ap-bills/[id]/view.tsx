@@ -197,7 +197,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("ap_bills")
       .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+        "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
       )
       .eq("id", id)
       .single();
@@ -278,7 +278,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       supabase
         .from("ap_deposits")
         .select(
-          "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+          "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
         .eq("supplier_id", loadedBill.supplier_id)
         .order("deposit_date"),
@@ -867,7 +867,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     {
       title: "Informasi Bill",
       rows: [
-        { label: "Supplier", value: bill.suppliers.name },
+        { label: "Supplier", value: bill.counterparties.name },
         { label: "Rujukan Dokumen", value: bill.source_ref },
         { label: "Nomor Nota Supplier", value: bill.supplier_document_ref || "-" },
         { label: "Tanggal Bill", value: bill.bill_date },

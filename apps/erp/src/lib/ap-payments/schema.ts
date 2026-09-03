@@ -20,6 +20,6 @@ export type ApPayment = {
   source_ref: string;
   journal_entry_id: string;
   created_at: string;
-  suppliers: { name: string };
+  counterparties: { name: string };
   ap_bills: { source_ref: string };
 };

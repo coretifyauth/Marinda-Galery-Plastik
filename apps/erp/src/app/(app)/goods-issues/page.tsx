@@ -87,10 +87,11 @@ export default function GoodsIssuesPage() {
 
   const loadCustomers = useCallback(async () => {
     const { data } = await supabase
-      .from("customers")
-      .select("id, name, contact, payment_term_days, archived_at")
+      .from("counterparties")
+      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
+      .eq("counterparty_type_mapping.role", "customer")
       .order("name");
-    setCustomers((data ?? []) as Customer[]);
+    setCustomers((data ?? []) as unknown as Customer[]);
   }, []);
 
   const loadItems = useCallback(async () => {
@@ -343,7 +344,7 @@ export default function GoodsIssuesPage() {
                   className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
                   onClick={() => router.push(`/goods-issues/${gi.id}`)}
                 >
-                  <td className="px-4 py-2 font-medium text-black">{gi.ar_invoices.customers.name}</td>
+                  <td className="px-4 py-2 font-medium text-black">{gi.ar_invoices.counterparties.name}</td>
                   <td className="px-4 py-2">{gi.ar_invoices.source_ref}</td>
                   <td className="whitespace-nowrap px-4 py-2">{gi.issue_date}</td>
                   <td className="px-4 py-2">

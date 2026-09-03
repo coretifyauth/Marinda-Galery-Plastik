@@ -22,7 +22,7 @@ erDiagram
 
   STOCK_OPNAMES ||--|{ STOCK_OPNAME_LINES : ""
 
-  SUPPLIERS ||--o{ PURCHASE_ORDERS : ""
+  COUNTERPARTIES ||--o{ PURCHASE_ORDERS : ""
 
   PURCHASE_ORDERS ||--|{ PURCHASE_ORDER_LINES : ""
   PURCHASE_ORDERS ||--o{ GOODS_RECEIPT_NOTES : ""
@@ -38,7 +38,7 @@ erDiagram
   AR_INVOICES ||--|| GOODS_ISSUES : "dibuat bersamaan"
   GOODS_ISSUES ||--|{ GOODS_ISSUE_LINES : ""
 
-  CUSTOMERS ||--o{ SALES_ORDERS : ""
+  COUNTERPARTIES ||--o{ SALES_ORDERS : ""
   SALES_ORDERS ||--|{ SALES_ORDER_LINES : ""
   SALES_ORDER_LINES ||--o{ GOODS_ISSUE_LINES : "dipenuhi bertahap (opsional)"
 ```
@@ -49,12 +49,12 @@ erDiagram
 | `item_categories` / `item_brands` | Katalog terkontrol opsional buat pengelompokan barang (mis. "Alat Makan", "Lion Star") — murni metadata deskriptif, gak nyentuh perhitungan stok/HPP | `items` (1 kategori/brand : banyak barang) |
 | `item_units` | Satuan jual per barang (boleh lebih dari 1, misal per pieces atau per pack) — masing-masing punya faktor konversi ke satuan dasar & harga sendiri | `items` |
 | `inventory_balances` | Posisi stok tersimpan per barang — qty tersedia + harga rata-rata berjalan, satu-satunya state costing yang hidup di modul ini | `items` (1:1) |
-| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok — belum ada transaksi jurnal | `suppliers`, `items` |
+| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok — belum ada transaksi jurnal | `counterparties`, `items` |
 | `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima — dibuat bersamaan dengan bill (tagihan) pemasok, memicu penambahan Persediaan | `purchase_orders`, tagihan pemasok (`ap_bills`), `items`, `inventory_balances` |
 | `bom_headers` + `bom_lines` | Resep produksi: 1 barang jadi butuh bahan baku apa saja, berapa takarannya per 1 batch. Boleh direvisi kapan saja tanpa mengubah histori produksi yang sudah terjadi | `items` |
 | `production_orders` + `production_order_lines` | Satu kejadian produksi nyata: mengonsumsi bahan baku sesuai resep, menghasilkan barang jadi, dan ke transaksi jurnal yang otomatis dibuat | `bom_headers`, `items`, `inventory_balances`, transaksi jurnal |
 | `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`ar_invoices`), `items`, `inventory_balances`, transaksi jurnal |
-| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan Purchase Order di sisi jual, belum ada transaksi jurnal. **Opsional**, bukan wajib | `customers`, `items` |
+| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan Purchase Order di sisi jual, belum ada transaksi jurnal. **Opsional**, bukan wajib | `counterparties`, `items` |
 | `stock_opnames` + `stock_opname_lines` | Sesi hitung fisik gudang — posisi stok disesuaikan langsung ke hasil hitung, selisih diakui sebagai beban/pendapatan | `items`, `inventory_balances`, transaksi jurnal (1 per baris yang ada selisih) |
 | `inventory_movements` | Kartu Stok — riwayat mutasi kronologis per barang (kapan masuk/keluar, dari mana, berapa). Lapisan riwayat di atas `inventory_balances`, bukan pengganti — kalau ada beda, `inventory_balances` yang benar | `items`, dan SATU dari 11 kemungkinan dokumen sumber tiap barisnya (lihat submodule "Kartu Stok / Riwayat Mutasi per Item") |
 
@@ -108,8 +108,8 @@ erDiagram
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok, opsional. Belum ada transaksi jurnal — ini baru rencana, belum ada pertukaran aset | `suppliers`, `items` |
-| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima — boleh berasal dari Purchase Order, boleh juga berdiri sendiri (langsung, tanpa PO). Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `purchase_orders` (opsional), `suppliers` (wajib kalau gak lewat PO), `ap_bills`, `items`, `inventory_balances` |
+| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok, opsional. Belum ada transaksi jurnal — ini baru rencana, belum ada pertukaran aset | `counterparties`, `items` |
+| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima — boleh berasal dari Purchase Order, boleh juga berdiri sendiri (langsung, tanpa PO). Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `purchase_orders` (opsional), `counterparties` (wajib kalau gak lewat PO), `ap_bills`, `items`, `inventory_balances` |
 
 **Alur Teknis (RPC)**
 
@@ -207,7 +207,7 @@ erDiagram
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan `purchase_orders` di sisi jual. Belum ada transaksi jurnal — ini baru rencana, belum ada barang berpindah tangan | `customers`, `items` |
+| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan `purchase_orders` di sisi jual. Belum ada transaksi jurnal — ini baru rencana, belum ada barang berpindah tangan | `counterparties`, `items` |
 
 **Alur Teknis (RPC)**
 

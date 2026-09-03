@@ -29,7 +29,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     const { data: grnData, error: grnErr } = await supabase
       .from("goods_receipt_notes")
       .select(
-        "id, purchase_order_id, bill_id, delivery_note_ref, receipt_date, created_at, purchase_orders(source_ref, suppliers(name)), ap_bills(source_ref, amount, journal_entry_id, suppliers(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
+        "id, purchase_order_id, bill_id, delivery_note_ref, receipt_date, created_at, purchase_orders(source_ref, counterparties(name)), ap_bills(source_ref, amount, journal_entry_id, counterparties(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
       )
       .eq("id", id)
       .single();
@@ -96,7 +96,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         },
         {
           label: "Supplier",
-          value: grn.purchase_orders?.suppliers.name ?? grn.ap_bills.suppliers.name,
+          value: grn.purchase_orders?.counterparties.name ?? grn.ap_bills.counterparties.name,
         },
         {
           label: "Bill",

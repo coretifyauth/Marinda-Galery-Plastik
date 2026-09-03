@@ -6,16 +6,16 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Detail teknis
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `suppliers` | Master data pemasok (nama, kontak, termin pembayaran) | — |
-| `ap_bills` | Tagihan yang diterima dari pemasok | `suppliers`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ap_payments` | Pembayaran yang dikirim ke pemasok — selalu menunjuk 1 bill spesifik, boleh cicil, gak boleh kelebihan bayar | `suppliers`, `ap_bills` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
+| `counterparties` | Master data pemasok (nama, kontak, termin pembayaran) | — |
+| `ap_bills` | Tagihan yang diterima dari pemasok | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
+| `ap_payments` | Pembayaran yang dikirim ke pemasok — selalu menunjuk 1 bill spesifik, boleh cicil, gak boleh kelebihan bayar | `counterparties`, `ap_bills` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
 | `ap_credit_notes` | Retur barang ke pemasok, jalur "kurangi utang" (Opsi A) | `ap_bills`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian barang yang diretur per item (cuma kalau bill-nya diterima lewat penerimaan barang bertahap) | `ap_credit_notes` |
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — berdiri sendiri, tidak menyambung ke `ap_credit_notes` | `ap_bills` |
 | `purchase_writeoffs` + `purchase_writeoff_lines` | Barang rusak yang pemasok tolak kompensasi sama sekali, jalur "tulis-jadi-beban" (Opsi C) — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `ap_bills` |
 | `ap_return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `ap_credit_notes` |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" sudah dicabut, bukan fondasi AP) | `ap_return_credits` |
-| `ap_deposits` | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) | `suppliers`, dan ke transaksi jurnal yang otomatis dibuat |
+| `ap_deposits` | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
 | `ap_deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan | `ap_deposits`, `ap_bills` |
 | `ap_deposit_refunds` | DP dicairkan tunai kembali (pemasok yang mutuskan, bukan kita) — tidak berdampak Laba Rugi | `ap_deposits` |
 | `ap_deposit_forfeitures` | DP dianggap hangus (pemasok tidak mau/tidak bisa balikin) — jadi Beban Kerugian Uang Muka | `ap_deposits` |
@@ -31,9 +31,9 @@ Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik 
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `suppliers` | Master data pemasok | — |
-| `ap_bills` | Utang timbul | `suppliers`, transaksi jurnal |
-| `ap_payments` | Utang berkurang | `suppliers`, `ap_bills`, transaksi jurnal |
+| `counterparties` | Master data pemasok | — |
+| `ap_bills` | Utang timbul | `counterparties`, transaksi jurnal |
+| `ap_payments` | Utang berkurang | `counterparties`, `ap_bills`, transaksi jurnal |
 
 **Struktur `ap_bills`**
 
@@ -70,7 +70,7 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ap_bills` | banyak-ke-satu | `suppliers` |
+| `ap_bills` | banyak-ke-satu | `counterparties` |
 | `ap_payments` | banyak-ke-satu | `ap_bills` |
 | `ap_bills` / `ap_payments` | satu-ke-satu (`journal_entry_id`, `not null`) | `journal_entries` |
 
@@ -84,7 +84,7 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 | `purchase_return_lines` | Rincian item retur, cuma jalur full (bill lewat penerimaan barang) | `ap_credit_notes` |
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang, Opsi B — berdiri sendiri, gak menyambung ke `ap_credit_notes` | `ap_bills` |
 | `purchase_writeoffs` + `purchase_writeoff_lines` | Tulis-jadi-beban, Opsi C — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `ap_bills` |
-| `ap_return_credits` | Saldo "Piutang Retur Supplier" — lahir otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `suppliers`, `ap_credit_notes` (sumbernya) |
+| `ap_return_credits` | Saldo "Piutang Retur Supplier" — lahir otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `counterparties`, `ap_credit_notes` (sumbernya) |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai — satu-satunya disposisi | `ap_return_credits` |
 
 Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-satunya metode yang ada sekarang, FIFO sudah dihapus total). Sengaja gak ada batas waktu retur (umur bill vs tanggal retur) — keputusan final, mirror AR yang juga sudah mencabut validasi serupa total. Barang rusak yang sama sekali gak dapat kompensasi dari supplier (gak dikurangin utang, gak diganti barang) ditangani Opsi C (`purchase_writeoffs`) — kerugian murni (Beban Kerugian Barang Rusak), bukan retur.
@@ -121,7 +121,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | `purchase_replacements` | banyak-ke-satu | `ap_bills` (langsung, tanpa lewat `ap_credit_notes`) |
 | `purchase_writeoffs` | banyak-ke-satu | `ap_bills` (langsung, tanpa lewat `ap_credit_notes`) |
 | `ap_return_credits` | satu-ke-satu | `ap_credit_notes` (sumbernya) |
-| `ap_return_credits` | banyak-ke-satu | `suppliers` |
+| `ap_return_credits` | banyak-ke-satu | `counterparties` |
 | `ap_return_credit_refunds` | banyak-ke-satu | `ap_return_credits` |
 
 ## Uang Muka / DP ke Supplier
@@ -130,7 +130,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `ap_deposits` | Uang muka dibayar ke pemasok sebelum ada bill | `suppliers`, dan ke transaksi jurnal (Uang Muka Pembelian → Kas) |
+| `ap_deposits` | Uang muka dibayar ke pemasok sebelum ada bill | `counterparties`, dan ke transaksi jurnal (Uang Muka Pembelian → Kas) |
 | `ap_deposit_applications` | DP diterapkan ke bill yang sudah diterbitkan | Menghubungkan `ap_deposits` ↔ `ap_bills` |
 | `ap_deposit_refunds` | DP dicairkan tunai kembali — pemasok yang mutuskan, tidak berdampak Laba Rugi | `ap_deposits` |
 | `ap_deposit_forfeitures` | DP dianggap hangus — jadi Beban Kerugian Uang Muka | `ap_deposits` |
@@ -157,7 +157,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ap_deposits` | banyak-ke-satu | `suppliers` |
+| `ap_deposits` | banyak-ke-satu | `counterparties` |
 | `ap_deposit_applications` | menghubungkan | `ap_deposits` ↔ `ap_bills` |
 | `ap_deposit_refunds` / `ap_deposit_forfeitures` | banyak-ke-satu | `ap_deposits` |
 

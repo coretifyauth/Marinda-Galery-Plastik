@@ -57,7 +57,11 @@ export default function PosSalesPage() {
   // customers: query terpisah, orthogonal ke pagination -- murah dan cuma jalan sekali (bukan
   // React Query, gak perlu ikut invalidate/refetch tabel pos_sales).
   const loadAux = useCallback(async () => {
-    const { data: custData, error: custError } = await supabase.from("customers").select("id, name").order("name");
+    const { data: custData, error: custError } = await supabase
+      .from("counterparties")
+      .select("id, name, counterparty_type_mapping!inner(role)")
+      .eq("counterparty_type_mapping.role", "customer")
+      .order("name");
     if (custError) {
       setLoadError(custError.message);
       return;
@@ -188,7 +192,7 @@ export default function PosSalesPage() {
               >
                 <td className="whitespace-nowrap px-4 py-2">{s.sale_date}</td>
                 <td className="px-4 py-2">{s.source_ref}</td>
-                <td className="px-4 py-2">{s.customers?.name ?? "Walk-in"}</td>
+                <td className="px-4 py-2">{s.counterparties?.name ?? "Walk-in"}</td>
                 <td className="px-4 py-2">{s.cash_account?.name ?? "—"}</td>
                 <td className="px-4 py-2 text-right font-mono">{s.total.toLocaleString("id-ID")}</td>
                 <td className="px-4 py-2">

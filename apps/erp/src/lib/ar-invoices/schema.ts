@@ -22,7 +22,7 @@ export type ArInvoice = {
   amount: number;
   journal_entry_id: string;
   created_at: string;
-  customers: { name: string };
+  counterparties: { name: string };
   ar_payments: { amount: number }[];
   ar_credit_notes?: {
     amount: number;
@@ -59,7 +59,7 @@ export type ArInvoiceListRow = {
   returned: number;
   status: ArInvoiceStatus;
   origin: ArInvoiceOrigin;
-  customers: { name: string };
+  counterparties: { name: string };
 };
 
 export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "dihapusbukukan";

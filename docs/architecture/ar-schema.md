@@ -6,15 +6,15 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `customers` | Master data pelanggan (nama, kontak, termin pembayaran, batas kredit, toleransi telat) | — |
-| `ar_invoices` | Tagihan yang diterbitkan ke pelanggan | `customers`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ar_payments` | Pembayaran yang diterima dari pelanggan — selalu menunjuk 1 invoice spesifik, boleh cicil, gak boleh kelebihan bayar | `customers`, `ar_invoices` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
+| `counterparties` | Master data pelanggan (nama, kontak, termin pembayaran, batas kredit, toleransi telat) | — |
+| `ar_invoices` | Tagihan yang diterbitkan ke pelanggan | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
+| `ar_payments` | Pembayaran yang diterima dari pelanggan — selalu menunjuk 1 invoice spesifik, boleh cicil, gak boleh kelebihan bayar | `counterparties`, `ar_invoices` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
 | `ar_credit_notes` | Retur barang — kejadian nyata barang balik, bukan koreksi salah input | `ar_invoices` (1 invoice bisa punya banyak retur), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
 | `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
-| `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — bagian dari alur Retur Barang | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
+| `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — bagian dari alur Retur Barang | `counterparties`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
 | `ar_return_credit_refunds` | Saldo kredit retur dikembalikan tunai ke pelanggan | `ar_return_credits`, dan ke transaksi jurnal |
 | `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — independen dari retur, gak nyentuh Piutang Usaha sama sekali | `ar_invoices` langsung, dan ke 1 transaksi jurnal (HPP/Persediaan) |
-| `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `customers`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) |
+| `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `counterparties`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) |
 | `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
 | `ar_deposit_refunds` | DP dicairkan tunai kembali — tidak berdampak Laba Rugi | `ar_deposits`, dan ke transaksi jurnal |
 | `ar_deposit_forfeitures` | DP dianggap hangus, partial-capable | `ar_deposits`, dan ke transaksi jurnal |
@@ -29,9 +29,9 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `customers` | Master data pelanggan | — |
-| `ar_invoices` | Piutang timbul | `customers`, transaksi jurnal |
-| `ar_payments` | Piutang berkurang | `customers`, `ar_invoices`, transaksi jurnal |
+| `counterparties` | Master data pelanggan | — |
+| `ar_invoices` | Piutang timbul | `counterparties`, transaksi jurnal |
+| `ar_payments` | Piutang berkurang | `counterparties`, `ar_invoices`, transaksi jurnal |
 
 **Struktur `ar_invoices`**
 
@@ -59,14 +59,14 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 | Pembayaran boleh kurang dari sisa tagihan, gak boleh lebih | `record_ar_payment` — cek `p_amount > ar_invoice_remaining(invoice_id)` |
 | Data invoice asli (pelanggan/tanggal/jumlah) gak boleh diedit/dihapus | RLS tanpa policy `update`/`delete` + trigger selektif — cuma kolom status/sisa tagihan yang boleh berubah, sisanya tetap terkunci total |
 | Invoice cuma bisa dibatalkan kalau belum ada pembayaran | `cancel_ar_invoice` — `count(*) from ar_payments where invoice_id = ...` > 0 → `raise exception` |
-| `due_date` snapshot, gak retroaktif ikut perubahan termin | `create_ar_invoice` — dihitung sekali dari `customers.payment_term_days` saat insert, disimpan sebagai kolom biasa |
+| `due_date` snapshot, gak retroaktif ikut perubahan termin | `create_ar_invoice` — dihitung sekali dari `counterparties.payment_term_days` saat insert, disimpan sebagai kolom biasa |
 | Status invoice gak bisa nyimpang dari kenyataan pembayaran | Diupdate otomatis sistem tiap ada baris baru di pembayaran/DP/retur/writeoff/pembatalan — bukan dientri manual, dan gak bisa ketinggalan karena nempel di titik transaksi terjadi, bukan dihitung belakangan |
 
 **Interaksi Antar Tabel**
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ar_invoices` | banyak-ke-satu | `customers` |
+| `ar_invoices` | banyak-ke-satu | `counterparties` |
 | `ar_payments` | banyak-ke-satu | `ar_invoices` |
 | `ar_invoices` / `ar_payments` | satu-ke-satu (`journal_entry_id`, `not null`) | `journal_entries` |
 
@@ -76,9 +76,9 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `customers` (kolom `credit_limit`, `overdue_threshold_days`) | Batas kredit & toleransi telat per customer, nullable = tidak ada batas | — |
+| `counterparties` (kolom `credit_limit`, `overdue_threshold_days`) | Batas kredit & toleransi telat per customer, nullable = tidak ada batas | — |
 
-Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outstanding `ar_invoices`, tidak ada kolom status hold yang disimpan.
+Tidak ada tabel baru — hold dihitung dari kolom di `counterparties` + agregat outstanding `ar_invoices`, tidak ada kolom status hold yang disimpan.
 
 **Alur Teknis (RPC)**
 
@@ -98,7 +98,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `customers.credit_limit` / `overdue_threshold_days` | dibandingkan terhadap agregat `ar_invoice_remaining()` | `ar_invoices` (invoice open milik customer, exclude yang punya reversal) |
+| `counterparties.credit_limit` / `overdue_threshold_days` | dibandingkan terhadap agregat `ar_invoice_remaining()` | `ar_invoices` (invoice open milik customer, exclude yang punya reversal) |
 
 ## Retur Barang (Credit Note)
 
@@ -108,7 +108,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 |---|---|---|
 | `ar_credit_notes` | Retur barang — kejadian nyata barang balik | `ar_invoices` (banyak retur per invoice), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
 | `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
-| `ar_return_credits` | Saldo kredit yang lahir otomatis kalau retur bikin invoice yang sudah lunas jadi minus | `customers`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
+| `ar_return_credits` | Saldo kredit yang lahir otomatis kalau retur bikin invoice yang sudah lunas jadi minus | `counterparties`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
 | `ar_return_credit_refunds` | Saldo kredit retur di atas dicairkan tunai — satu-satunya cara aktif nyelesaiin saldo itu ke depan (jalur "settle via barang" cuma berlaku data historis, lihat submodule "Penukaran Barang Pasca-Retur") | `ar_return_credits`, dan ke transaksi jurnal |
 
 **Alur Teknis (RPC)**
@@ -142,7 +142,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 | `inventory_returns` | banyak-ke-satu | `goods_issues` |
 | `inventory_return_lines.total_cost` | snapshot dari | `goods_issue_lines.total_cost` |
 | `ar_return_credits` | satu-ke-satu | `ar_credit_notes` (sumbernya) |
-| `ar_return_credits` | banyak-ke-satu | `customers` |
+| `ar_return_credits` | banyak-ke-satu | `counterparties` |
 | `ar_return_credit_refunds` | banyak-ke-satu | `ar_return_credits` |
 | `warranty_replacements.return_credit_settled_amount` (submodule lain, HISTORIS doang) | akumulasi terhadap | `ar_return_credits` (via `ar_credit_notes.credit_note_id`, baris lama) |
 
@@ -185,7 +185,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `customers`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) yang otomatis dibuat |
+| `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `counterparties`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) yang otomatis dibuat |
 | `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `ar_invoices`, dan ke transaksi jurnal reklasifikasi |
 | `ar_deposit_refunds` | DP dicairkan tunai kembali ke pelanggan — tidak berdampak Laba Rugi | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Kas) |
 | `ar_deposit_forfeitures` | DP dianggap hangus, partial-capable | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Pendapatan Lain-lain) |
@@ -212,7 +212,7 @@ Tidak ada tabel baru — hold dihitung dari kolom di `customers` + agregat outst
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ar_deposits` | banyak-ke-satu | `customers` |
+| `ar_deposits` | banyak-ke-satu | `counterparties` |
 | `ar_deposit_applications` | menghubungkan | `ar_deposits` ↔ `ar_invoices` |
 | `ar_deposit_refunds` / `ar_deposit_forfeitures` | banyak-ke-satu | `ar_deposits` |
 

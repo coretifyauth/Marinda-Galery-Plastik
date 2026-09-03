@@ -16,7 +16,7 @@ export type ArReturnCredit = {
   amount: number;
   journal_entry_id: string;
   created_at: string;
-  customers: { name: string };
+  counterparties: { name: string };
   ar_credit_notes: {
     source_ref: string;
     credit_note_date: string;

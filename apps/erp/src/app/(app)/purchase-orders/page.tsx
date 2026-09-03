@@ -86,8 +86,9 @@ export default function PurchaseOrdersPage() {
 
   const loadSuppliers = useCallback(async () => {
     const { data } = await supabase
-      .from("suppliers")
-      .select("id, name, contact, payment_term_days, archived_at")
+      .from("counterparties")
+      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
+      .eq("counterparty_type_mapping.role", "supplier")
       .order("name");
     setSuppliers((data ?? []) as Supplier[]);
   }, []);
@@ -306,7 +307,7 @@ export default function PurchaseOrdersPage() {
                 className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
                 onClick={() => router.push(`/purchase-orders/${po.id}`)}
               >
-                <td className="px-4 py-2 font-medium text-black">{po.suppliers.name}</td>
+                <td className="px-4 py-2 font-medium text-black">{po.counterparties.name}</td>
                 <td className="whitespace-nowrap px-4 py-2">{po.po_date}</td>
                 <td className="px-4 py-2">{po.source_ref}</td>
                 <td className="px-4 py-2">

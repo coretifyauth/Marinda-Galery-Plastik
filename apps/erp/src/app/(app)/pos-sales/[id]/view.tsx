@@ -16,7 +16,7 @@ type PosSaleDetail = {
   source_ref: string;
   revenue_journal_entry_id: string;
   cogs_journal_entry_id: string;
-  customers: { name: string } | null;
+  counterparties: { name: string } | null;
   cash_account: { code: string; name: string } | null;
   revenue_account: { code: string; name: string } | null;
   pos_sale_lines: {
@@ -53,7 +53,7 @@ export function PosSaleDetailView({ id }: { id: string }) {
     const { data: s, error: sErr } = await supabase
       .from("pos_sales")
       .select(
-        "id, sale_date, source_ref, revenue_journal_entry_id, cogs_journal_entry_id, customers(name), cash_account:accounts!cash_account_id(code, name), revenue_account:accounts!revenue_account_id(code, name), pos_sale_lines(id, qty_sold, unit_price, line_amount, total_cost, items(name, uom))"
+        "id, sale_date, source_ref, revenue_journal_entry_id, cogs_journal_entry_id, counterparties(name), cash_account:accounts!cash_account_id(code, name), revenue_account:accounts!revenue_account_id(code, name), pos_sale_lines(id, qty_sold, unit_price, line_amount, total_cost, items(name, uom))"
       )
       .eq("id", id)
       .single();
@@ -145,7 +145,7 @@ export function PosSaleDetailView({ id }: { id: string }) {
     {
       title: "Informasi Transaksi",
       rows: [
-        { label: "Pelanggan", value: sale.customers?.name ?? "Walk-in (anonim)" },
+        { label: "Pelanggan", value: sale.counterparties?.name ?? "Walk-in (anonim)" },
         { label: "Rujukan Dokumen", value: sale.source_ref },
         { label: "Tanggal", value: sale.sale_date },
         { label: "Bayar via", value: sale.cash_account?.name ?? "—" },

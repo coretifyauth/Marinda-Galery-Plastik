@@ -38,8 +38,8 @@ export type GoodsReceiptNote = {
   delivery_note_ref: string | null;
   receipt_date: string;
   created_at: string;
-  purchase_orders: { source_ref: string; suppliers: { name: string } } | null;
-  ap_bills: { source_ref: string; amount: number; suppliers: { name: string } };
+  purchase_orders: { source_ref: string; counterparties: { name: string } } | null;
+  ap_bills: { source_ref: string; amount: number; counterparties: { name: string } };
   goods_receipt_lines: {
     id: string;
     item_id: string;

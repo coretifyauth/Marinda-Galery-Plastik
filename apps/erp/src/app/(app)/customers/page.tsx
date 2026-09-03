@@ -83,7 +83,17 @@ export default function CustomersPage() {
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateCustomerInput) => {
-      const { error } = await supabase.from("customers").insert(input);
+      // customers -> counterparties (Fase 1 order-generalization) -- create_counterparty
+      // bikin baris counterparties + counterparty_type_mapping(role='customer') dalam 1
+      // transaksi, gak ada window baris "yatim" tanpa role.
+      const { error } = await supabase.rpc("create_counterparty", {
+        p_name: input.name,
+        p_role: "customer",
+        p_contact: input.contact ?? null,
+        p_payment_term_days: input.payment_term_days,
+        p_credit_limit: input.credit_limit ?? null,
+        p_overdue_threshold_days: input.overdue_threshold_days ?? null,
+      });
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {

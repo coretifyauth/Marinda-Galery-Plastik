@@ -36,7 +36,7 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 **Constraints**
 - Goods Receipt yang dari PO gak boleh melebihi qty yang dipesan di PO line-nya (anti over-receipt) — trigger `goods_receipt_lines_no_over_receipt` skip pengecekan sama sekali kalau baris GRN gak nunjuk PO line (`po_line_id` null), mirror pola `goods_issue_lines_no_over_issue` yang udah skip kalau `so_line_id` null.
 - Pembelian bahan baku selalu ke Persediaan (aset), gak pernah langsung ke Beban.
-- Jalur langsung (tanpa PO) WAJIB isi supplier manual — RPC nolak (`raise exception`) kalau `purchase_order_id` dan `supplier_id` dua-duanya kosong, dan nolak juga kalau `supplier_id` yang dikasih gak ketemu di tabel `suppliers`.
+- Jalur langsung (tanpa PO) WAJIB isi supplier manual — RPC nolak (`raise exception`) kalau `purchase_order_id` dan `supplier_id` dua-duanya kosong, dan nolak juga kalau `supplier_id` yang dikasih gak ketemu terdaftar berperan supplier di `counterparties` (dulu tabel `suppliers` terpisah, digabung migration `0059` — lihat `memory/architecture/data/counterparty-schema.md`).
 - PO (kalau dipakai) bisa dibatalkan (`cancel_purchase_order`, migration `0024`) SELAMA belum ada GRN sama sekali — beda dari `cancel_ar_invoice`/`cancel_ap_bill` yang bikin reversing journal entry, PO emang gak pernah punya jurnal buat dibalik, jadi cancel di sini murni stempel status final. PO yang udah punya GRN gak bisa dibatalkan lagi (udah "kepakai" sebagai dasar transaksi lain).
 
 **Common Mistakes**

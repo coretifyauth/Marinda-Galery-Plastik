@@ -45,7 +45,7 @@ export type ApDeposit = {
   amount: number;
   journal_entry_id: string;
   created_at: string;
-  suppliers: { name: string };
+  counterparties: { name: string };
   ap_deposit_applications: {
     id: string;
     amount: number;
@@ -81,7 +81,7 @@ export type ApDepositListRow = {
   created_at: string;
   remaining: number;
   status: ApDepositStatus;
-  suppliers: { name: string };
+  counterparties: { name: string };
 };
 
 /**

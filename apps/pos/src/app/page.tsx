@@ -138,8 +138,9 @@ async function fetchAccountIds(): Promise<Record<string, string>> {
 
 async function fetchCustomers(): Promise<Customer[]> {
   const { data, error } = await supabase
-    .from("customers")
-    .select("id, name, contact")
+    .from("counterparties")
+    .select("id, name, contact, counterparty_type_mapping!inner(role)")
+    .eq("counterparty_type_mapping.role", "customer")
     .is("archived_at", null)
     .order("name");
   if (error) throw new Error(error.message);
@@ -172,7 +173,7 @@ async function fetchRecentSales(date: string): Promise<SaleHistoryItem[]> {
   const { data, error } = await supabase
     .from("pos_sales")
     .select(
-      "id, source_ref, created_at, cash_account_id, customers(name, contact), pos_sale_lines(qty_sold, unit_price, line_amount, items(name, uom)), pos_sale_extra_credit_lines(amount, is_tax)"
+      "id, source_ref, created_at, cash_account_id, counterparties(name, contact), pos_sale_lines(qty_sold, unit_price, line_amount, items(name, uom)), pos_sale_extra_credit_lines(amount, is_tax)"
     )
     .eq("sale_date", date)
     .order("created_at", { ascending: false });
@@ -183,7 +184,7 @@ async function fetchRecentSales(date: string): Promise<SaleHistoryItem[]> {
     source_ref: string;
     created_at: string;
     cash_account_id: string;
-    customers: { name: string; contact: string | null } | null;
+    counterparties: { name: string; contact: string | null } | null;
     pos_sale_lines: {
       qty_sold: number;
       unit_price: number;
@@ -197,8 +198,8 @@ async function fetchRecentSales(date: string): Promise<SaleHistoryItem[]> {
     id: row.id,
     sourceRef: row.source_ref,
     createdAt: row.created_at,
-    customerName: row.customers?.name ?? null,
-    customerContact: row.customers?.contact ?? null,
+    customerName: row.counterparties?.name ?? null,
+    customerContact: row.counterparties?.contact ?? null,
     cashAccountId: row.cash_account_id,
     lines: row.pos_sale_lines.map((l) => ({
       name: l.items?.name ?? "-",

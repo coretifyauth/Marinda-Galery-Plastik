@@ -19,7 +19,7 @@ export type ArDepositFilters = {
 // terhitung server-side, jadi list gak perlu lagi fetch nested applications/refunds/forfeitures
 // cuma buat dihitung ulang di client (itu tetap dipakai di halaman detail [id]/view.tsx).
 const SELECT_COLUMNS =
-  "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, remaining, status, customers(name)";
+  "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, remaining, status, counterparties(name)";
 
 export async function fetchArDeposits(
   filters: ArDepositFilters

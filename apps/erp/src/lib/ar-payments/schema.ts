@@ -20,6 +20,6 @@ export type ArPayment = {
   source_ref: string;
   journal_entry_id: string;
   created_at: string;
-  customers: { name: string };
+  counterparties: { name: string };
   ar_invoices: { source_ref: string };
 };

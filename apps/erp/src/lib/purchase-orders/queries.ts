@@ -20,7 +20,7 @@ export type PurchaseOrderFilters = {
 // cuma buat dihitung ulang di client (halaman create Goods Receipt fetch PO-nya sendiri terpisah
 // buat itu, lihat apps/erp/src/app/(app)/goods-receipts/page.tsx).
 const SELECT_COLUMNS =
-  "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, status, suppliers(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom))";
+  "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, status, counterparties(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom))";
 
 export async function fetchPurchaseOrders(
   filters: PurchaseOrderFilters

@@ -15,7 +15,7 @@ type GoodsIssueDetail = {
   issue_date: string;
   source_ref: string;
   created_at: string;
-  ar_invoices: { source_ref: string; amount: number; customers: { name: string } };
+  ar_invoices: { source_ref: string; amount: number; counterparties: { name: string } };
   goods_issue_lines: {
     id: string;
     qty_issued: number;
@@ -44,7 +44,7 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
     const { data: gi, error: giErr } = await supabase
       .from("goods_issues")
       .select(
-        "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices(source_ref, amount, customers(name)), goods_issue_lines(id, qty_issued, total_cost, items(name, uom))"
+        "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices(source_ref, amount, counterparties(name)), goods_issue_lines(id, qty_issued, total_cost, items(name, uom))"
       )
       .eq("id", id)
       .single();
@@ -95,7 +95,7 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
     {
       title: "Informasi Goods Issue",
       rows: [
-        { label: "Customer", value: issue.ar_invoices.customers.name },
+        { label: "Customer", value: issue.ar_invoices.counterparties.name },
         { label: "Rujukan Dokumen", value: issue.source_ref },
         { label: "Tanggal", value: issue.issue_date },
         {

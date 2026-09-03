@@ -13,8 +13,11 @@ export type CustomerFilters = {
   pageSize: number;
 };
 
+// customers -> counterparties (memory/scope-debt/order-generalization.md Fase 1, migration
+// 0059) -- filter role via inner join ke counterparty_type_mapping, biar supplier-only gak
+// ikut nongol di sini.
 const SELECT_COLUMNS =
-  "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at";
+  "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at, counterparty_type_mapping!inner(role)";
 
 export async function fetchCustomers(
   filters: CustomerFilters
@@ -23,8 +26,9 @@ export async function fetchCustomers(
   const to = from + filters.pageSize - 1;
 
   let query = supabase
-    .from("customers")
+    .from("counterparties")
     .select(SELECT_COLUMNS, { count: "exact" })
+    .eq("counterparty_type_mapping.role", "customer")
     .order("name")
     .range(from, to);
 

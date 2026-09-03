@@ -45,7 +45,7 @@ export type ArDeposit = {
   amount: number;
   journal_entry_id: string;
   created_at: string;
-  customers: { name: string };
+  counterparties: { name: string };
   ar_deposit_applications: {
     id: string;
     amount: number;
@@ -81,7 +81,7 @@ export type ArDepositListRow = {
   created_at: string;
   remaining: number;
   status: ArDepositStatus;
-  customers: { name: string };
+  counterparties: { name: string };
 };
 
 /**

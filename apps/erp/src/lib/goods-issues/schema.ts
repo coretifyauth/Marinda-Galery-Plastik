@@ -28,7 +28,7 @@ export type GoodsIssue = {
   issue_date: string;
   source_ref: string;
   created_at: string;
-  ar_invoices: { source_ref: string; amount: number; customers: { name: string } };
+  ar_invoices: { source_ref: string; amount: number; counterparties: { name: string } };
   goods_issue_lines: {
     id: string;
     item_id: string;

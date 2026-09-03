@@ -80,7 +80,15 @@ export default function SuppliersPage() {
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateSupplierInput) => {
-      const { error } = await supabase.from("suppliers").insert(input);
+      // suppliers -> counterparties (Fase 1 order-generalization) -- create_counterparty
+      // bikin baris counterparties + counterparty_type_mapping(role='supplier') dalam 1
+      // transaksi, gak ada window baris "yatim" tanpa role.
+      const { error } = await supabase.rpc("create_counterparty", {
+        p_name: input.name,
+        p_role: "supplier",
+        p_contact: input.contact ?? null,
+        p_payment_term_days: input.payment_term_days,
+      });
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {

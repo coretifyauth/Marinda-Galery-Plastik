@@ -69,7 +69,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     const { data: soData, error: soErr } = await supabase
       .from("sales_orders")
       .select(
-        "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, customers(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
+        "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
       )
       .eq("id", id)
       .single();
@@ -260,7 +260,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     {
       title: "Informasi Sales Order",
       rows: [
-        { label: "Customer", value: so.customers.name },
+        { label: "Customer", value: so.counterparties.name },
         { label: "Rujukan Dokumen", value: so.source_ref },
         { label: "Tanggal Pesan", value: so.so_date },
         { label: "Butuh Tanggal", value: so.expected_date ?? "-" },

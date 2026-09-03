@@ -53,7 +53,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       { data: reversed },
     ] = await Promise.all([
       supabase
-        .from("customers")
+        .from("counterparties")
         .select(
           "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at"
         )
@@ -62,14 +62,14 @@ export function CustomerDetailView({ id }: { id: string }) {
       supabase
         .from("ar_invoices")
         .select(
-          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, customers(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+          "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
         )
         .eq("customer_id", id)
         .order("invoice_date", { ascending: false }),
       supabase
         .from("ar_payments")
         .select(
-          "id, customer_id, invoice_id, payment_date, amount, source_ref, journal_entry_id, created_at, customers(name), ar_invoices(source_ref)"
+          "id, customer_id, invoice_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ar_invoices(source_ref)"
         )
         .eq("customer_id", id)
         .order("payment_date", { ascending: false }),
@@ -131,7 +131,7 @@ export function CustomerDetailView({ id }: { id: string }) {
     }
     setSaving(true);
     const { error } = await supabase
-      .from("customers")
+      .from("counterparties")
       .update({
         name: parsed.data.name,
         contact: parsed.data.contact ?? null,
@@ -154,7 +154,7 @@ export function CustomerDetailView({ id }: { id: string }) {
     if (!window.confirm(`Hapus customer "${customer.name}"?`)) return;
     setDeleteError(null);
     setDeleting(true);
-    const { data, error } = await supabase.rpc("delete_customer", { p_customer_id: customer.id });
+    const { data, error } = await supabase.rpc("delete_counterparty", { p_counterparty_id: customer.id });
     setDeleting(false);
     if (error) {
       setDeleteError(error.message);
@@ -172,7 +172,7 @@ export function CustomerDetailView({ id }: { id: string }) {
     if (!customer) return;
     setDeleteError(null);
     setDeleting(true);
-    const { error } = await supabase.from("customers").update({ archived_at: null }).eq("id", customer.id);
+    const { error } = await supabase.from("counterparties").update({ archived_at: null }).eq("id", customer.id);
     setDeleting(false);
     if (error) {
       setDeleteError(error.message);

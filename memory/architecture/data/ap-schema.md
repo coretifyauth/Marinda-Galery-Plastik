@@ -16,23 +16,25 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 ### DDL
 
-#### `suppliers` — master data pihak yang CV Barokah berutang
+#### `counterparties` (dulu `suppliers`) — master data pihak yang CV Barokah berutang
 
-Struktur identik `customers` (`ar-schema.md`), cuma beda makna `payment_term_days` (lihat "Keputusan" di atas — syarat yang diterima, bukan ditetapkan). Kemiripan struktur ini (6 dari 8 kolom identik) yang jadi dasar usulan owner buat gabung `customers`+`suppliers` jadi 1 tabel `counterparties` — belum digarap, lihat `memory/scope-debt/order-generalization.md` (Fase 1).
+**Migration `0059_counterparty_schema.sql` (2026-09-03)**: `suppliers` digabung dengan `customers` (AR) jadi 1 tabel `counterparties` — Fase 1 `memory/scope-debt/order-generalization.md`, terealisasi dari usulan yang tadinya cuma dicatat di sini. Detail lengkap DDL, trigger type-safety (`counterparty_role_guard`), dan dampak lintas modul: `memory/architecture/data/counterparty-schema.md`. `ap_bills.supplier_id`/`ap_payments.supplier_id`/dst FK-nya sekarang nunjuk `counterparties(id)` — kolom & nama tetap `supplier_id`, cuma target FK yang berubah. Makna `payment_term_days` tetap kebalik dari sisi AR (syarat yang KITA TERIMA dari supplier, bukan yang kita tetapkan) — cuma sumber tabelnya sekarang gabungan, bukan berarti maknanya ikut gabung.
 
 ```sql
-create table suppliers (
+create table counterparties (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   contact text,
-  payment_term_days int not null default 14 check (payment_term_days > 0),
+  payment_term_days int not null check (payment_term_days > 0),
+  credit_limit numeric(14,2),           -- kolom AR, gak dipakai sisi supplier
+  overdue_threshold_days int,           -- kolom AR, gak dipakai sisi supplier
   archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-create trigger suppliers_set_updated_at
-  before update on suppliers
+create trigger counterparties_set_updated_at
+  before update on counterparties
   for each row execute function set_updated_at();
 ```
 
@@ -45,7 +47,7 @@ Struktur identik `ar_invoices`, satu bedanya: **gak ada kolom akun tetap yang di
 ```sql
 create table ap_bills (
   id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references suppliers(id),
+  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
   bill_date date not null,
   due_date date not null,
   description text,
@@ -67,7 +69,7 @@ Identik `ar_payments` pasca-`0010` (`bill_id` FK langsung, bukan lewat tabel jem
 ```sql
 create table ap_payments (
   id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references suppliers(id),
+  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
   bill_id uuid not null references ap_bills(id),
   payment_date date not null,
   amount numeric(14,2) not null check (amount > 0),
@@ -126,7 +128,7 @@ declare
   v_total_amount numeric;
   v_journal_lines jsonb := '[]'::jsonb;
 begin
-  select payment_term_days into v_term_days from suppliers where id = p_supplier_id;
+  select payment_term_days into v_term_days from counterparties where id = p_supplier_id; -- dulu "from suppliers", pindah migration 0059
   v_due_date := p_bill_date + v_term_days;
 
   -- loop p_debit_lines -> v_subtotal + v_journal_lines (1 baris debit per elemen),
@@ -252,27 +254,9 @@ $$;
 
 ### RLS Policy
 
-Pola identik AR — `select` terbuka buat semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `update`/`delete` di 3 tabel transaksional (immutability), `suppliers` boleh `update` (master data), gak ada `delete` policy langsung tapi ada jalur terkontrol lewat RPC `delete_supplier()` sejak `0013_master_data_smart_delete.sql` (submodule "Smart Delete Master Data" di `memory/architecture/data/coa-schema.md`).
+Pola identik AR — `select` terbuka buat semua `authenticated`, `insert` cuma `admin`/`accountant`, gak ada `update`/`delete` di 3 tabel transaksional (immutability). RLS `counterparties`/`counterparty_type_mapping` (dulu `suppliers`) sekarang di `memory/architecture/data/counterparty-schema.md` — polanya sama (boleh `update`, delete lewat RPC `delete_counterparty()` gantiin `delete_supplier()`).
 
 ```sql
-alter table suppliers enable row level security;
-
-create policy suppliers_select on suppliers
-  for select using (auth.role() = 'authenticated');
-
-create policy suppliers_insert on suppliers
-  for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
-  );
-
-create policy suppliers_update on suppliers
-  for update using (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
-  );
--- sengaja gak ada policy DELETE -> arsip lewat archived_at, hard delete tertutup total
-
 alter table ap_bills enable row level security;
 
 create policy ap_bills_select on ap_bills
@@ -300,7 +284,6 @@ create policy ap_payments_insert on ap_payments
 ### Grant
 
 ```sql
-grant select, insert, update on suppliers to authenticated;
 grant select, insert on ap_bills to authenticated;
 grant select, insert on ap_payments to authenticated;
 ```
@@ -457,7 +440,7 @@ Mirror `ar_return_credits` (0031) persis, arah asset kebalik (di AR liability ki
 ```sql
 create table ap_return_credits (
   id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references suppliers(id),
+  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
   credit_note_id uuid not null references ap_credit_notes(id),
   amount numeric(14,2) not null check (amount > 0),
   journal_entry_id uuid not null references journal_entries(id),
@@ -568,7 +551,7 @@ Satu baris = satu kejadian bayar uang muka ke supplier. `journal_entry_id` nunju
 ```sql
 create table ap_deposits (
   id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references suppliers(id),
+  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
   deposit_date date not null,
   source_ref text not null,
   amount numeric(14,2) not null check (amount > 0),

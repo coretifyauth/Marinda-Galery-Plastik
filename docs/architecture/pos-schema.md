@@ -6,7 +6,7 @@ Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger):
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `pos_sales` | 1 transaksi kasir tunai di kios — header, gak pernah nyentuh Piutang Usaha | `customers` (opsional), `accounts` (akun kas & pendapatan), 2 transaksi jurnal (Kas/Pendapatan dan HPP/Persediaan) |
+| `pos_sales` | 1 transaksi kasir tunai di kios — header, gak pernah nyentuh Piutang Usaha | `counterparties` (opsional), `accounts` (akun kas & pendapatan), 2 transaksi jurnal (Kas/Pendapatan dan HPP/Persediaan) |
 | `pos_sale_lines` | Baris item per transaksi (barang, qty, harga, biaya pokok) | `pos_sales`, `items` |
 | `pos_sale_extra_credit_lines` | Rincian baris kredit tambahan (biaya packing/ongkir + PPN) 1 transaksi, kalau ada | `pos_sales` (banyak-ke-satu) |
 | `pos_charge_types` | Katalog jenis biaya tambahan yang bisa dipilih kasir saat checkout — master data, disiapkan admin | `accounts` |
@@ -18,7 +18,7 @@ Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger):
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `pos_sales` | Penjualan tunai kios | `customers` (opsional), `accounts`, transaksi jurnal |
+| `pos_sales` | Penjualan tunai kios | `counterparties` (opsional), `accounts`, transaksi jurnal |
 | `pos_sale_lines` | Rincian barang per transaksi | `pos_sales`, `items` |
 
 **Struktur `pos_sales`**
@@ -56,7 +56,7 @@ Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger):
 
 **Interaksi Antar Tabel**
 
-- `pos_sales` opsional menunjuk `customers` — kalau diisi, murni riwayat/traceability, gak pernah memicu pengecekan Tahan Kredit (itu cuma berlaku buat `ar_invoices`).
+- `pos_sales` opsional menunjuk `counterparties` — kalau diisi, murni riwayat/traceability, gak pernah memicu pengecekan Tahan Kredit (itu cuma berlaku buat `ar_invoices`).
 - `pos_sale_lines` menunjuk `items`, pakai fungsi konsumsi stok yang sama dengan modul Inventory (Produksi, Penjualan via invoice) — 1 sumber kebenaran stok buat semua jalur keluar barang.
 - Role baru "kasir" ditambahkan khusus buat modul ini — cuma bisa bikin transaksi lewat jalur resmi (`create_pos_sale`), gak punya akses langsung ke pencatatan jurnal umum.
 

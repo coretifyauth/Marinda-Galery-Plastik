@@ -22,7 +22,7 @@ export type ApBillFilters = {
 // ap_payments/ap_credit_notes/ap_deposit_applications/goods_receipt_notes cuma buat dihitung
 // ulang di client (itu tetap dipakai di halaman detail [id]/view.tsx).
 const SELECT_COLUMNS =
-  "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, outstanding, status, origin, suppliers(name)";
+  "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, outstanding, status, origin, counterparties(name)";
 
 export async function fetchApBills(
   filters: ApBillFilters

@@ -40,21 +40,21 @@ export function SupplierDetailView({ id }: { id: string }) {
       { data: reversed },
     ] = await Promise.all([
       supabase
-        .from("suppliers")
+        .from("counterparties")
         .select("id, name, contact, payment_term_days, archived_at")
         .eq("id", id)
         .single(),
       supabase
         .from("ap_bills")
         .select(
-          "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, suppliers(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+          "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
         )
         .eq("supplier_id", id)
         .order("bill_date", { ascending: false }),
       supabase
         .from("ap_payments")
         .select(
-          "id, supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_at, suppliers(name), ap_bills(source_ref)"
+          "id, supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ap_bills(source_ref)"
         )
         .eq("supplier_id", id)
         .order("payment_date", { ascending: false }),
@@ -99,7 +99,7 @@ export function SupplierDetailView({ id }: { id: string }) {
     if (!window.confirm(`Hapus supplier "${supplier.name}"?`)) return;
     setDeleteError(null);
     setDeleting(true);
-    const { data, error } = await supabase.rpc("delete_supplier", { p_supplier_id: supplier.id });
+    const { data, error } = await supabase.rpc("delete_counterparty", { p_counterparty_id: supplier.id });
     setDeleting(false);
     if (error) {
       setDeleteError(error.message);
@@ -117,7 +117,7 @@ export function SupplierDetailView({ id }: { id: string }) {
     if (!supplier) return;
     setDeleteError(null);
     setDeleting(true);
-    const { error } = await supabase.from("suppliers").update({ archived_at: null }).eq("id", supplier.id);
+    const { error } = await supabase.from("counterparties").update({ archived_at: null }).eq("id", supplier.id);
     setDeleting(false);
     if (error) {
       setDeleteError(error.message);

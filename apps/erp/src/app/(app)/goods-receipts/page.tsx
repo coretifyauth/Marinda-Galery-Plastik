@@ -103,7 +103,7 @@ export default function GoodsReceiptsPage() {
     const { data } = await supabase
       .from("purchase_orders")
       .select(
-        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, suppliers(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
       )
       .order("po_date", { ascending: false });
     setPurchaseOrders((data ?? []) as unknown as PurchaseOrder[]);
@@ -126,8 +126,9 @@ export default function GoodsReceiptsPage() {
 
   const loadSuppliers = useCallback(async () => {
     const { data } = await supabase
-      .from("suppliers")
-      .select("id, name, contact, payment_term_days, archived_at")
+      .from("counterparties")
+      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
+      .eq("counterparty_type_mapping.role", "supplier")
       .order("name");
     setSuppliers((data ?? []) as Supplier[]);
   }, []);
@@ -400,7 +401,7 @@ export default function GoodsReceiptsPage() {
                 onClick={() => router.push(`/goods-receipts/${grn.id}`)}
               >
                 <td className="px-4 py-2 font-medium text-black">
-                  {grn.purchase_orders?.suppliers.name ?? grn.ap_bills.suppliers.name}
+                  {grn.purchase_orders?.counterparties.name ?? grn.ap_bills.counterparties.name}
                 </td>
                 <td className="px-4 py-2">
                   {grn.purchase_orders ? (
@@ -499,7 +500,7 @@ export default function GoodsReceiptsPage() {
                     <option value="">Pilih PO...</option>
                     {receivablePOs.map((po) => (
                       <option key={po.id} value={po.id}>
-                        {po.source_ref} — {po.suppliers.name}
+                        {po.source_ref} — {po.counterparties.name}
                       </option>
                     ))}
                   </Select>

@@ -134,7 +134,7 @@ Komitmen pesan ke supplier — **belum ada journal entry**. Header (`supplier_id
 ```sql
 create table purchase_orders (
   id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references suppliers(id),
+  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
   po_date date not null,
   expected_date date,
   source_ref text not null,
@@ -484,7 +484,7 @@ Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `pur
 ```sql
 create table sales_orders (
   id uuid primary key default gen_random_uuid(),
-  customer_id uuid not null references customers(id),
+  customer_id uuid not null references counterparties(id), -- dulu references customers(id), repoint migration 0059
   so_date date not null,
   expected_date date,
   source_ref text not null,

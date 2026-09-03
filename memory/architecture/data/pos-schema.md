@@ -24,7 +24,7 @@ Konsep: `memory/domain/pos.md`. Naratif: `docs/architecture/pos-schema.md`. Migr
 ```sql
 create table pos_sales (
   id uuid primary key default gen_random_uuid(),
-  customer_id uuid references customers(id),
+  customer_id uuid references counterparties(id), -- dulu references customers(id), repoint migration 0059
   sale_date date not null,
   cash_account_id uuid not null references accounts(id),
   revenue_account_id uuid not null references accounts(id),

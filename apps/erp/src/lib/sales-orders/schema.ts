@@ -32,7 +32,7 @@ export type SalesOrder = {
   source_ref: string;
   created_at: string;
   cancelled_at: string | null;
-  customers: { name: string };
+  counterparties: { name: string };
   sales_order_lines: SalesOrderLine[];
 };
 
@@ -47,7 +47,7 @@ export type SalesOrderListRow = {
   created_at: string;
   cancelled_at: string | null;
   status: SoStatus;
-  customers: { name: string };
+  counterparties: { name: string };
   sales_order_lines: {
     id: string;
     item_id: string;

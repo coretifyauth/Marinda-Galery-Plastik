@@ -3,7 +3,7 @@ export type PosSale = {
   sale_date: string;
   source_ref: string;
   revenue_journal_entry_id: string;
-  customers: { name: string } | null;
+  counterparties: { name: string } | null;
   cash_account: { code: string; name: string } | null;
   pos_sale_lines: { line_amount: number }[];
 };
@@ -20,6 +20,6 @@ export type PosSaleListRow = {
   created_at: string;
   total: number;
   status: PosSaleStatus;
-  customers: { name: string } | null;
+  counterparties: { name: string } | null;
   cash_account: { code: string; name: string } | null;
 };

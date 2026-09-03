@@ -19,7 +19,7 @@ export type SalesOrderFilters = {
 // goods_issue_lines vs qty_ordered, jadi list gak perlu lagi fetch goods_issue_lines nested cuma
 // buat dihitung ulang di client.
 const SELECT_COLUMNS =
-  "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, status, customers(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom))";
+  "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, status, counterparties(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom))";
 
 export async function fetchSalesOrders(
   filters: SalesOrderFilters

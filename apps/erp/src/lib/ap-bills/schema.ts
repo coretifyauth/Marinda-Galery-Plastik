@@ -24,7 +24,7 @@ export type ApBill = {
   amount: number;
   journal_entry_id: string;
   created_at: string;
-  suppliers: { name: string };
+  counterparties: { name: string };
   ap_payments: { amount: number }[];
   ap_credit_notes?: { amount: number; ap_return_credits?: { amount: number }[] }[];
   ap_deposit_applications?: { amount: number }[];
@@ -52,7 +52,7 @@ export type ApBillListRow = {
   outstanding: number;
   status: ApBillStatus;
   origin: ApBillOrigin;
-  suppliers: { name: string };
+  counterparties: { name: string };
 };
 
 export type ApBillStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";

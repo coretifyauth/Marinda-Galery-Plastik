@@ -16,7 +16,7 @@ export type ApReturnCredit = {
   amount: number;
   journal_entry_id: string;
   created_at: string;
-  suppliers: { name: string };
+  counterparties: { name: string };
   ap_credit_notes: { source_ref: string; credit_note_date: string };
   ap_return_credit_refunds: {
     id: string;

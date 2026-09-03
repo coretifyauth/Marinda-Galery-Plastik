@@ -39,7 +39,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     const { data: poData, error: poErr } = await supabase
       .from("purchase_orders")
       .select(
-        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, suppliers(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
       )
       .eq("id", id)
       .single();
@@ -138,7 +138,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
       </div>
       <table>
         <tbody>
-          <tr><td class="meta">Supplier</td><td>${escapeHtml(po.suppliers.name)}</td></tr>
+          <tr><td class="meta">Supplier</td><td>${escapeHtml(po.counterparties.name)}</td></tr>
           <tr><td class="meta">Tanggal PO</td><td>${escapeHtml(po.po_date)}</td></tr>
           <tr><td class="meta">Estimasi Tiba</td><td>${escapeHtml(po.expected_date ?? "-")}</td></tr>
         </tbody>
@@ -162,7 +162,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     {
       title: "Informasi PO",
       rows: [
-        { label: "Supplier", value: po.suppliers.name },
+        { label: "Supplier", value: po.counterparties.name },
         { label: "Tanggal PO", value: po.po_date },
         { label: "Estimasi Tiba", value: po.expected_date ?? "-" },
         { label: "Rujukan Dokumen", value: po.source_ref },

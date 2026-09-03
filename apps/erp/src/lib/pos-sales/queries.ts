@@ -19,7 +19,7 @@ export type PosSaleFilters = {
 // gak perlu lagi fetch nested pos_sale_lines atau query journal_entries.reverses_entry_id
 // terpisah cuma buat dihitung ulang di client.
 const SELECT_COLUMNS =
-  "id, sale_date, source_ref, revenue_journal_entry_id, total, status, customers(name), cash_account:accounts!cash_account_id(code, name)";
+  "id, sale_date, source_ref, revenue_journal_entry_id, total, status, counterparties(name), cash_account:accounts!cash_account_id(code, name)";
 
 export async function fetchPosSales(
   filters: PosSaleFilters

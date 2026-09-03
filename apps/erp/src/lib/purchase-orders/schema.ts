@@ -32,7 +32,7 @@ export type PurchaseOrder = {
   source_ref: string;
   created_at: string;
   cancelled_at: string | null;
-  suppliers: { name: string };
+  counterparties: { name: string };
   purchase_order_lines: PurchaseOrderLine[];
 };
 
@@ -47,7 +47,7 @@ export type PurchaseOrderListRow = {
   created_at: string;
   cancelled_at: string | null;
   status: PoStatus;
-  suppliers: { name: string };
+  counterparties: { name: string };
   purchase_order_lines: {
     id: string;
     item_id: string;

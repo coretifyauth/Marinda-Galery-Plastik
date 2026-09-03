@@ -13,7 +13,9 @@ export type SupplierFilters = {
   pageSize: number;
 };
 
-const SELECT_COLUMNS = "id, name, contact, payment_term_days, archived_at";
+// suppliers -> counterparties (memory/scope-debt/order-generalization.md Fase 1, migration
+// 0059) -- filter role via inner join ke counterparty_type_mapping.
+const SELECT_COLUMNS = "id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)";
 
 export async function fetchSuppliers(
   filters: SupplierFilters
@@ -22,8 +24,9 @@ export async function fetchSuppliers(
   const to = from + filters.pageSize - 1;
 
   let query = supabase
-    .from("suppliers")
+    .from("counterparties")
     .select(SELECT_COLUMNS, { count: "exact" })
+    .eq("counterparty_type_mapping.role", "supplier")
     .order("name")
     .range(from, to);
 
