@@ -362,10 +362,10 @@ Saldo berjalan (angka "sisa stok setelah baris ini") **tidak disimpan** sebagai 
 
 ## Aturan Otomatis yang Dijaga Sistem (ringkasan)
 
-1. Penerimaan barang tidak boleh melebihi jumlah yang dipesan di Purchase Order.
+1. Penerimaan barang tidak boleh melebihi jumlah yang dipesan di order (arah beli), kalau ada.
 2. Pemakaian/pengurangan stok tidak boleh melebihi jumlah yang tersedia.
-3. Pengiriman terhadap Sales Order (kalau dipakai) tidak boleh melebihi jumlah yang dipesan.
-4. Purchase Order, Sales Order, penerimaan barang, produksi, dan penjualan barang tidak pernah bisa diedit atau dihapus setelah tercatat — koreksi harus lewat pencatatan baru. **Satu pengecualian**: Purchase Order dan Sales Order boleh **dibatalkan** (bukan diedit — status akhir yang gak bisa diubah lagi) selama belum ada realisasi fisik apa pun (belum ada penerimaan barang untuk PO, belum ada pengiriman barang untuk SO).
+3. Pengiriman terhadap order (arah jual, kalau dipakai) tidak boleh melebihi jumlah yang dipesan.
+4. Order (beli maupun jual), penerimaan barang, produksi, dan penjualan barang tidak pernah bisa diedit atau dihapus setelah tercatat — koreksi harus lewat pencatatan baru. **Satu pengecualian**: order boleh **dibatalkan** (bukan diedit — status akhir yang gak bisa diubah lagi) selama belum ada realisasi fisik apa pun (belum ada penerimaan barang untuk order arah beli, belum ada pengiriman barang untuk order arah jual).
 5. Data master (daftar barang, resep) tetap boleh diubah kapan saja — hanya catatan transaksi yang bersifat permanen.
 
 ## Siapa Boleh Apa
@@ -374,6 +374,6 @@ Saldo berjalan (angka "sisa stok setelah baris ini") **tidak disimpan** sebagai 
 |---|---|
 | Melihat semua data (barang, resep, pesanan, penerimaan, produksi, penjualan) | Semua user yang sudah login |
 | Mengubah data barang & resep | Role `admin` atau `accountant` |
-| Membuat Purchase Order, Sales Order, mencatat penerimaan, mencatat produksi, mencatat penjualan, mencatat opname | Role `admin` atau `accountant` |
-| Membatalkan Purchase Order/Sales Order (hanya kalau belum ada realisasi fisik) | Role `admin` atau `accountant` |
+| Membuat order (beli maupun jual), mencatat penerimaan, mencatat produksi, mencatat penjualan, mencatat opname | Role `admin` atau `accountant` |
+| Membatalkan order (hanya kalau belum ada realisasi fisik) | Role `admin` atau `accountant` |
 | Mengedit/menghapus transaksi yang sudah tercatat | **Tidak ada seorang pun** |

@@ -68,7 +68,7 @@ end;
 $$ language plpgsql;
 ```
 
-**11 tabel terpasang** (`before insert`, cukup insert-only karena semua kolom `customer_id`/`supplier_id` di 11 tabel ini immutable write-once — dijaga trigger selective-lock lain yang udah ada, dikonfirmasi lewat `schema-reviewer` nyisir tuple immutable check di `0053_denormalize_transactional_status.sql`+`0024_purchase_order_sales_order_cancel.sql`):
+**Awalnya 11 tabel terpasang** (migration `0059`, `before insert`, cukup insert-only karena semua kolom `customer_id`/`supplier_id` di tabel-tabel ini immutable write-once — dijaga trigger selective-lock lain yang udah ada, dikonfirmasi lewat `schema-reviewer` nyisir tuple immutable check di `0053_denormalize_transactional_status.sql`+`0024_purchase_order_sales_order_cancel.sql`). **Sejak migration `0060` (Fase 3 order-generalization), `sales_orders`/`purchase_orders` di-drop** — diganti 1 tabel `orders` (kolom `counterparty_id` tunggal, bukan `customer_id`/`supplier_id` terpisah) dengan trigger validasi SENDIRI, `orders_counterparty_direction_guard` (niru konsep yang sama tapi role wajibnya ditentukan dari kolom `direction` di baris yang sama, bukan hardcode per tabel via `TG_ARGV` — detail: `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Sales Order"). Sisa **9 tabel** di bawah ini tetap dijaga `counterparty_role_guard()` generik:
 
 | Sisi customer (`role='customer'`) | Sisi supplier (`role='supplier'`) |
 |---|---|
@@ -76,7 +76,6 @@ $$ language plpgsql;
 | `ar_payments.customer_id` | `ap_payments.supplier_id` |
 | `ar_deposits.customer_id` | `ap_deposits.supplier_id` |
 | `ar_return_credits.customer_id` | `ap_return_credits.supplier_id` |
-| `sales_orders.customer_id` | `purchase_orders.supplier_id` |
 | `pos_sales.customer_id` (nullable) | — |
 
 ## Repoint 11 FK constraint — fungsi introspeksi, bukan tebak nama

@@ -1176,7 +1176,7 @@ Pola identik tabel transaksional lain (`goods_issues`, `stock_opname_lines`, dst
 grant select, insert on inventory_movements to authenticated;
 ```
 
-### Rencana Bertahap — RPC & Backfill (belum diapply)
+### Rencana Bertahap — RPC & Backfill (Selesai)
 
 Migration `0042` cuma schema dasar. RPC yang ditambah 1 blok `INSERT INTO inventory_movements` (additive, `create or replace`, gak ubah signature) menyusul bertahap, migration terpisah per RPC (atau kelompok kecil yang berkaitan), direview `schema-reviewer` satu-satu, urutan dari risiko paling rendah ke paling tinggi:
 
