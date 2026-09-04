@@ -18,7 +18,7 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 #### `counterparties` (dulu `suppliers`) — master data pihak yang CV Barokah berutang
 
-**Migration `0059_counterparty_schema.sql` (2026-09-03)**: `suppliers` digabung dengan `customers` (AR) jadi 1 tabel `counterparties` — Fase 1 `memory/scope-debt/order-generalization.md`, terealisasi dari usulan yang tadinya cuma dicatat di sini. Detail lengkap DDL, trigger type-safety (`counterparty_role_guard`), dan dampak lintas modul: `memory/architecture/data/counterparty-schema.md`. `ap_bills.supplier_id`/`ap_payments.supplier_id`/dst FK-nya sekarang nunjuk `counterparties(id)` — kolom & nama tetap `supplier_id`, cuma target FK yang berubah. Makna `payment_term_days` tetap kebalik dari sisi AR (syarat yang KITA TERIMA dari supplier, bukan yang kita tetapkan) — cuma sumber tabelnya sekarang gabungan, bukan berarti maknanya ikut gabung.
+**Migration `0059_counterparty_schema.sql` (2026-09-03)**: `suppliers` digabung dengan `customers` (AR) jadi 1 tabel `counterparties` — Fase 1 order-generalization (keputusan owner, closed 2026-09-04). Detail lengkap DDL, trigger type-safety (`counterparty_role_guard`), dan dampak lintas modul: `memory/architecture/data/counterparty-schema.md`. `ap_bills.supplier_id`/`ap_payments.supplier_id`/dst FK-nya sekarang nunjuk `counterparties(id)` — kolom & nama tetap `supplier_id`, cuma target FK yang berubah. Makna `payment_term_days` tetap kebalik dari sisi AR (syarat yang KITA TERIMA dari supplier, bukan yang kita tetapkan) — cuma sumber tabelnya sekarang gabungan, bukan berarti maknanya ikut gabung.
 
 ```sql
 create table counterparties (

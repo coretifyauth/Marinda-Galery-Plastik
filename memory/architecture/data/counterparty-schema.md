@@ -1,6 +1,6 @@
 # Counterparty — Schema (Finalized)
 
-Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng AR, AP, Inventory (PO/SO), dan POS. Fase 1 dari `memory/scope-debt/order-generalization.md` (keputusan owner, 2026-09-03). Migration: `0059_counterparty_schema.sql`.
+Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng AR, AP, Inventory (PO/SO), dan POS. Fase 1 dari order-generalization (keputusan owner, 2026-09-03, ketiga fase closed 2026-09-04). Migration: `0059_counterparty_schema.sql`.
 
 ## Keputusan
 
