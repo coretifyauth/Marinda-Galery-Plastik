@@ -79,13 +79,14 @@ export function printReceipt(sourceRef: string, bodyHtml: string): boolean {
 <head>
 <title>Struk — ${escapeHtml(sourceRef)}</title>
 <style>
-  body { font-family: "Courier New", monospace; padding: 16px; color: #111; font-size: 12px; width: 280px; }
-  hr { border: none; border-top: 1px dashed #94a3b8; margin: 6px 0; }
+  @page { size: 58mm auto; margin: 0; }
+  body { font-family: "Courier New", monospace; padding: 2mm; color: #000; font-weight: 700; font-size: 11px; width: 54mm; }
+  hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
   .row { display: flex; justify-content: space-between; gap: 8px; }
-  .row.sub { color: #475569; font-size: 11px; margin-bottom: 3px; }
+  .row.sub { color: #000; font-size: 11px; margin-bottom: 3px; }
   .center { text-align: center; }
   .bold { font-weight: 700; }
-  .meta { color: #475569; font-size: 11px; }
+  .meta { color: #000; font-size: 11px; }
   .total { font-size: 13px; }
 </style>
 </head>

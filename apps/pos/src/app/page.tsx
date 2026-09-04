@@ -788,6 +788,32 @@ export default function CheckoutPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [filteredCatalog, showCameraScanner, showHistory, showPaymentModal, openPaymentModal, addToCart]);
 
+  // Bug ketemu (kode barcode contoh "SKU-2026-00015"): klik apa pun di halaman (kartu
+  // katalog, tombol qty +/-, dst) mindahin fokus browser ke elemen yang diklik itu.
+  // Kalau abis itu kasir scan barcode fisik TANPA klik balik ke scanInputRef dulu,
+  // keystroke scanner-nya (digit-nya kena shortcut "1"-"9" nambah barang, "-" kena
+  // shortcut kurangin qty, dan Enter di ujungnya kena shortcut checkout di onKeyDown
+  // atas) leak ke listener keydown global, bukan masuk ke input scan-nya sebagai teks
+  // biasa -- ujung-ujungnya modal pembayaran kebuka sendiri padahal kasir belum niat
+  // checkout. Fix: abis klik di mana pun, balikin fokus ke scanInputRef -- KECUALI
+  // yang diklik emang input teks lain yang butuh diketik manual (search/qty/dst) atau
+  // ada modal/overlay lain lagi kebuka.
+  useEffect(() => {
+    function refocusScanInput() {
+      if (showCameraScanner || showHistory || showPaymentModal) return;
+      const active = document.activeElement;
+      const isTextInput =
+        active instanceof HTMLElement &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT");
+      if (!isTextInput) scanInputRef.current?.focus();
+    }
+    function onClick() {
+      setTimeout(refocusScanInput, 0);
+    }
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [showCameraScanner, showHistory, showPaymentModal]);
+
   const lastCompletedSale = recentSales.find((s) => s.sourceRef === lastCompletedRef) ?? null;
 
   if (checkingSession || itemsQuery.isLoading || accountsQuery.isLoading) {
