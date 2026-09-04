@@ -45,11 +45,11 @@ export type GoodsIssueForInvoice = {
     qty_issued: number;
     items: { name: string; uom: string };
     // Cuma keisi kalau line ini fulfillment dari Sales Order -- itu satu-satunya tempat harga
-    // jual per item ketracking (sales_order_lines.unit_price). Jalur jual langsung (walk-in,
-    // so_line_id null) gak punya harga per item di mana pun, invoice-nya cuma nyimpen total
+    // jual per item ketracking (order_lines.unit_price). Jalur jual langsung (walk-in,
+    // order_line_id null) gak punya harga per item di mana pun, invoice-nya cuma nyimpen total
     // lump-sum per kategori (ar_invoice_credit_lines) -- lihat docs/domain/print-templates.md
     // submodule "Harga Per Item".
-    so_line_id?: string | null;
-    sales_order_lines?: { unit_price: number } | null;
+    order_line_id?: string | null;
+    order_lines?: { unit_price: number } | null;
   }[];
 };

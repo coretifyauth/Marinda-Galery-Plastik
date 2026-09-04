@@ -15,12 +15,13 @@ export type PurchaseOrderFilters = {
   pageSize: number;
 };
 
-// purchase_orders_with_status (migration 0034) -- status udah terhitung server-side dari
-// goods_receipt_lines vs qty_ordered, jadi list gak perlu lagi fetch goods_receipt_lines nested
-// cuma buat dihitung ulang di client (halaman create Goods Receipt fetch PO-nya sendiri terpisah
-// buat itu, lihat apps/erp/src/app/(app)/goods-receipts/page.tsx).
+// purchase_orders_with_status (migration 0060 -- view terfilter direction='PURCHASE' di atas
+// tabel orders) -- status udah terhitung server-side dari goods_receipt_lines vs qty_ordered,
+// jadi list gak perlu lagi fetch goods_receipt_lines nested cuma buat dihitung ulang di client
+// (halaman create Goods Receipt fetch PO-nya sendiri terpisah buat itu, lihat
+// apps/erp/src/app/(app)/goods-receipts/page.tsx).
 const SELECT_COLUMNS =
-  "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, status, counterparties(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom))";
+  "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, status, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom))";
 
 export async function fetchPurchaseOrders(
   filters: PurchaseOrderFilters
@@ -31,16 +32,16 @@ export async function fetchPurchaseOrders(
   let query = supabase
     .from("purchase_orders_with_status")
     .select(SELECT_COLUMNS, { count: "exact" })
-    .order("po_date", { ascending: false })
+    .order("order_date", { ascending: false })
     .range(from, to);
 
-  if (filters.dateFrom) query = query.gte("po_date", filters.dateFrom);
-  if (filters.dateTo) query = query.lte("po_date", filters.dateTo);
+  if (filters.dateFrom) query = query.gte("order_date", filters.dateFrom);
+  if (filters.dateTo) query = query.lte("order_date", filters.dateTo);
 
   const sourceRefTerm = filters.sourceRefSearch.trim();
   if (sourceRefTerm) query = query.ilike("source_ref", `%${sourceRefTerm}%`);
 
-  if (filters.supplierId) query = query.eq("supplier_id", filters.supplierId);
+  if (filters.supplierId) query = query.eq("counterparty_id", filters.supplierId);
   if (filters.status) query = query.eq("status", filters.status);
 
   const { data, error, count } = await query;

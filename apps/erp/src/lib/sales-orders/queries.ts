@@ -15,11 +15,11 @@ export type SalesOrderFilters = {
   pageSize: number;
 };
 
-// sales_orders_with_status (migration 0035) -- status udah terhitung server-side dari
-// goods_issue_lines vs qty_ordered, jadi list gak perlu lagi fetch goods_issue_lines nested cuma
-// buat dihitung ulang di client.
+// sales_orders_with_status (migration 0060 -- view terfilter direction='SALE' di atas tabel
+// orders) -- status udah terhitung server-side dari goods_issue_lines vs qty_ordered, jadi
+// list gak perlu lagi fetch goods_issue_lines nested cuma buat dihitung ulang di client.
 const SELECT_COLUMNS =
-  "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, status, counterparties(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom))";
+  "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, status, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom))";
 
 export async function fetchSalesOrders(
   filters: SalesOrderFilters
@@ -30,16 +30,16 @@ export async function fetchSalesOrders(
   let query = supabase
     .from("sales_orders_with_status")
     .select(SELECT_COLUMNS, { count: "exact" })
-    .order("so_date", { ascending: false })
+    .order("order_date", { ascending: false })
     .range(from, to);
 
-  if (filters.dateFrom) query = query.gte("so_date", filters.dateFrom);
-  if (filters.dateTo) query = query.lte("so_date", filters.dateTo);
+  if (filters.dateFrom) query = query.gte("order_date", filters.dateFrom);
+  if (filters.dateTo) query = query.lte("order_date", filters.dateTo);
 
   const sourceRefTerm = filters.sourceRefSearch.trim();
   if (sourceRefTerm) query = query.ilike("source_ref", `%${sourceRefTerm}%`);
 
-  if (filters.customerId) query = query.eq("customer_id", filters.customerId);
+  if (filters.customerId) query = query.eq("counterparty_id", filters.customerId);
   if (filters.status) query = query.eq("status", filters.status);
 
   const { data, error, count } = await query;

@@ -26,29 +26,29 @@ export type SalesOrderLine = {
 
 export type SalesOrder = {
   id: string;
-  customer_id: string;
-  so_date: string;
+  counterparty_id: string;
+  order_date: string;
   expected_date: string | null;
   source_ref: string;
   created_at: string;
   cancelled_at: string | null;
   counterparties: { name: string };
-  sales_order_lines: SalesOrderLine[];
+  order_lines: SalesOrderLine[];
 };
 
 export type SoStatus = "OPEN" | "PARTIALLY_FULFILLED" | "FULLY_FULFILLED" | "CANCELLED";
 
 export type SalesOrderListRow = {
   id: string;
-  customer_id: string;
-  so_date: string;
+  counterparty_id: string;
+  order_date: string;
   expected_date: string | null;
   source_ref: string;
   created_at: string;
   cancelled_at: string | null;
   status: SoStatus;
   counterparties: { name: string };
-  sales_order_lines: {
+  order_lines: {
     id: string;
     item_id: string;
     qty_ordered: number;
@@ -59,12 +59,12 @@ export type SalesOrderListRow = {
 
 /**
  * Status derived: `cancelled_at` menang duluan (state terminal, lihat
- * cancel_sales_order di inventory-schema.md), baru dihitung dari
+ * cancel_order di inventory-schema.md), baru dihitung dari
  * SUM(goods_issue_lines.qty_issued) per line vs qty_ordered.
  */
-export function soStatus(so: Pick<SalesOrder, "sales_order_lines" | "cancelled_at">): SoStatus {
+export function soStatus(so: Pick<SalesOrder, "order_lines" | "cancelled_at">): SoStatus {
   if (so.cancelled_at) return "CANCELLED";
-  const totals = so.sales_order_lines.map((line) => ({
+  const totals = so.order_lines.map((line) => ({
     ordered: line.qty_ordered,
     issued: line.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0),
   }));

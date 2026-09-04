@@ -28,12 +28,12 @@ type FulfillmentRow = {
   item_id: string;
   qty_issued: number;
   total_cost: number;
-  so_line_id: string | null;
+  order_line_id: string | null;
   items: { name: string; uom: string };
   goods_issues: { id: string; invoice_id: string; issue_date: string; ar_invoices: { source_ref: string; amount: number } };
 };
 
-type FulfillLineInput = { so_line_id: string; item_id: string; item_label: string; qty_issued: string; unit_price: number };
+type FulfillLineInput = { order_line_id: string; item_id: string; item_label: string; qty_issued: string; unit_price: number };
 
 const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
@@ -67,11 +67,12 @@ export function SalesOrderDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: soData, error: soErr } = await supabase
-      .from("sales_orders")
+      .from("orders")
       .select(
-        "id, customer_id, so_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), sales_order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
       )
       .eq("id", id)
+      .eq("direction", "SALE")
       .single();
     if (soErr || !soData) {
       setLoadError(soErr?.message ?? "Sales order gak ditemukan.");
@@ -80,14 +81,14 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     const typedSo = soData as unknown as SalesOrder;
     setSo(typedSo);
 
-    const soLineIds = typedSo.sales_order_lines.map((l) => l.id);
-    if (soLineIds.length > 0) {
+    const orderLineIds = typedSo.order_lines.map((l) => l.id);
+    if (orderLineIds.length > 0) {
       const { data: fulfillData } = await supabase
         .from("goods_issue_lines")
         .select(
-          "id, item_id, qty_issued, total_cost, so_line_id, items(name, uom), goods_issues(id, invoice_id, issue_date, ar_invoices(source_ref, amount))"
+          "id, item_id, qty_issued, total_cost, order_line_id, items(name, uom), goods_issues(id, invoice_id, issue_date, ar_invoices(source_ref, amount))"
         )
-        .in("so_line_id", soLineIds)
+        .in("order_line_id", orderLineIds)
         .order("id");
       setFulfillments((fulfillData ?? []) as unknown as FulfillmentRow[]);
     }
@@ -134,10 +135,10 @@ export function SalesOrderDetailView({ id }: { id: string }) {
   function openFulfillForm() {
     if (!so) return;
     setFulfillLines(
-      so.sales_order_lines
+      so.order_lines
         .filter((l) => lineRemaining(l) > 0)
         .map((l) => ({
-          so_line_id: l.id,
+          order_line_id: l.id,
           item_id: l.item_id,
           item_label: `${l.items.name} (sisa ${lineRemaining(l)} ${l.items.uom})`,
           qty_issued: String(lineRemaining(l)),
@@ -171,7 +172,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     ];
 
     const parsed = createGoodsIssueSchema.safeParse({
-      customer_id: so.customer_id,
+      customer_id: so.counterparty_id,
       invoice_date: invoiceDate,
       description,
       credit_lines: creditLines,
@@ -181,7 +182,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
       lines: activeLines.map((l) => ({
         item_id: l.item_id,
         qty_issued: l.qty_issued,
-        so_line_id: l.so_line_id,
+        order_line_id: l.order_line_id,
       })),
       apply_tax: applyTax,
     });
@@ -232,8 +233,8 @@ export function SalesOrderDetailView({ id }: { id: string }) {
 
     setCancelError(null);
     setCancelling(true);
-    const { error } = await supabase.rpc("cancel_sales_order", {
-      p_sales_order_id: so.id,
+    const { error } = await supabase.rpc("cancel_order", {
+      p_order_id: so.id,
     });
     setCancelling(false);
     if (error) {
@@ -262,7 +263,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
       rows: [
         { label: "Customer", value: so.counterparties.name },
         { label: "Rujukan Dokumen", value: so.source_ref },
-        { label: "Tanggal Pesan", value: so.so_date },
+        { label: "Tanggal Pesan", value: so.order_date },
         { label: "Butuh Tanggal", value: so.expected_date ?? "-" },
         {
           label: "Status",
@@ -273,7 +274,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
   ];
 
   const tabs: TabDef[] = [
-    { key: "lines", label: "Item Dipesan", badge: so.sales_order_lines.length },
+    { key: "lines", label: "Item Dipesan", badge: so.order_lines.length },
     { key: "fulfillments", label: "Pengiriman (Goods Issue + Invoice)", badge: fulfillments.length },
   ];
 
@@ -313,7 +314,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
               </tr>
             </thead>
             <tbody>
-              {so.sales_order_lines.map((l) => {
+              {so.order_lines.map((l) => {
                 const issued = l.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0);
                 return (
                   <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -477,7 +478,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
                 <p className="text-sm text-slate-400">Sales order ini sudah terkirim penuh.</p>
               )}
               {fulfillLines.map((line, i) => (
-                <div key={line.so_line_id} className="grid grid-cols-[1fr_8rem] gap-2">
+                <div key={line.order_line_id} className="grid grid-cols-[1fr_8rem] gap-2">
                   <span className="flex items-center text-sm text-slate-700">{line.item_label}</span>
                   <Input
                     type="number"

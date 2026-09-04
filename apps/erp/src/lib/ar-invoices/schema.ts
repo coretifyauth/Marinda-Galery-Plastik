@@ -37,8 +37,8 @@ export type ArInvoiceOrigin = "sales_order" | "goods_issue" | "financial_only";
 
 /** Invoice lahir dari 3 jalur beda (`memory/domain/inventory.md` submodule "Sales Order &
  * Pemenuhan Bertahap"): (1) pemenuhan Sales Order — ada `goods_issues` yang salah satu
- * baris-nya nunjuk balik ke `sales_order_lines` (`so_line_id` keisi); (2) Goods Issue langsung
- * (jual spontan, kios walk-in) — ada `goods_issues` tapi `so_line_id` semua baris-nya kosong;
+ * baris-nya nunjuk balik ke `order_lines` (`order_line_id` keisi); (2) Goods Issue langsung
+ * (jual spontan, kios walk-in) — ada `goods_issues` tapi `order_line_id` semua baris-nya kosong;
  * (3) financial-only — invoice dicatat manual lewat /ar-invoices, gak ada `goods_issues` sama
  * sekali (gak ada stok/HPP yang kesentuh, mis. pendapatan jasa). 0 vs 1 baris `goods_issues`
  * per invoice, gak pernah lebih dari 1 -- tiap `create_goods_issue` call bikin invoice barunya

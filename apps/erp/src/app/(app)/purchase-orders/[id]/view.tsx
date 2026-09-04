@@ -37,11 +37,12 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: poData, error: poErr } = await supabase
-      .from("purchase_orders")
+      .from("orders")
       .select(
-        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_receipt_lines(qty_received))"
       )
       .eq("id", id)
+      .eq("direction", "PURCHASE")
       .single();
     if (poErr || !poData) {
       setLoadError(poErr?.message ?? "Purchase order gak ditemukan.");
@@ -52,7 +53,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     const { data: grnData } = await supabase
       .from("goods_receipt_notes")
       .select("id, receipt_date, delivery_note_ref")
-      .eq("purchase_order_id", id)
+      .eq("order_id", id)
       .order("receipt_date");
     setGrns((grnData ?? []) as GrnRef[]);
     setLoadError(null);
@@ -89,8 +90,8 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
 
     setCancelError(null);
     setCancelling(true);
-    const { error } = await supabase.rpc("cancel_purchase_order", {
-      p_purchase_order_id: po.id,
+    const { error } = await supabase.rpc("cancel_order", {
+      p_order_id: po.id,
     });
     setCancelling(false);
     if (error) {
@@ -117,18 +118,18 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   // + blok tanda tangan (document_signatories) dibaca live sama kayak data PO-nya sendiri.
   function handlePrint() {
     if (!po) return;
-    const lineRows = po.purchase_order_lines
+    const lineRows = po.order_lines
       .map((l) => {
-        const subtotal = l.qty_ordered * l.unit_cost_expected;
+        const subtotal = l.qty_ordered * l.unit_price;
         return `<tr>
           <td>${escapeHtml(l.items.name)}</td>
           <td class="num">${l.qty_ordered} ${escapeHtml(l.items.uom)}</td>
-          <td class="num">Rp${l.unit_cost_expected.toLocaleString("id-ID")}</td>
+          <td class="num">Rp${l.unit_price.toLocaleString("id-ID")}</td>
           <td class="num">Rp${subtotal.toLocaleString("id-ID")}</td>
         </tr>`;
       })
       .join("");
-    const total = po.purchase_order_lines.reduce((sum, l) => sum + l.qty_ordered * l.unit_cost_expected, 0);
+    const total = po.order_lines.reduce((sum, l) => sum + l.qty_ordered * l.unit_price, 0);
 
     const body = `
       ${buildLetterheadHtml(companySettings)}
@@ -139,7 +140,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
       <table>
         <tbody>
           <tr><td class="meta">Supplier</td><td>${escapeHtml(po.counterparties.name)}</td></tr>
-          <tr><td class="meta">Tanggal PO</td><td>${escapeHtml(po.po_date)}</td></tr>
+          <tr><td class="meta">Tanggal PO</td><td>${escapeHtml(po.order_date)}</td></tr>
           <tr><td class="meta">Estimasi Tiba</td><td>${escapeHtml(po.expected_date ?? "-")}</td></tr>
         </tbody>
       </table>
@@ -163,7 +164,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
       title: "Informasi PO",
       rows: [
         { label: "Supplier", value: po.counterparties.name },
-        { label: "Tanggal PO", value: po.po_date },
+        { label: "Tanggal PO", value: po.order_date },
         { label: "Estimasi Tiba", value: po.expected_date ?? "-" },
         { label: "Rujukan Dokumen", value: po.source_ref },
         {
@@ -175,7 +176,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   ];
 
   const tabs: TabDef[] = [
-    { key: "lines", label: "Item Dipesan", badge: po.purchase_order_lines.length },
+    { key: "lines", label: "Item Dipesan", badge: po.order_lines.length },
     { key: "grns", label: "Goods Receipts", badge: grns.length },
   ];
 
@@ -220,7 +221,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
               </tr>
             </thead>
             <tbody>
-              {po.purchase_order_lines.map((l) => {
+              {po.order_lines.map((l) => {
                 const received = l.goods_receipt_lines.reduce((sum, r) => sum + r.qty_received, 0);
                 return (
                   <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -230,12 +231,12 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
                     <td className="px-4 py-2 text-right font-mono">{l.qty_ordered}</td>
                     <td className="px-4 py-2 text-right font-mono">{received}</td>
                     <td className="px-4 py-2 text-right font-mono">
-                      {l.unit_cost_expected.toLocaleString("id-ID")}
+                      {l.unit_price.toLocaleString("id-ID")}
                     </td>
                   </tr>
                 );
               })}
-              {po.purchase_order_lines.length === 0 && (
+              {po.order_lines.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
                     Belum ada baris item.

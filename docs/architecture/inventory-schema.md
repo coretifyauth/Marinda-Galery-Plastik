@@ -9,7 +9,7 @@ Fase 5. Konsep bisnisnya ada di `docs/domain/inventory.md`. Detail teknis penuh 
 ```mermaid
 erDiagram
   ITEMS ||--o| INVENTORY_BALANCES : ""
-  ITEMS ||--o{ PURCHASE_ORDER_LINES : dipesan
+  ITEMS ||--o{ ORDER_LINES : dipesan
   ITEMS ||--o{ GOODS_RECEIPT_LINES : diterima
   ITEMS ||--o{ BOM_LINES : "jadi bahan resep"
   ITEMS ||--o| BOM_HEADERS : "jadi hasil resep"
@@ -22,11 +22,11 @@ erDiagram
 
   STOCK_OPNAMES ||--|{ STOCK_OPNAME_LINES : ""
 
-  COUNTERPARTIES ||--o{ PURCHASE_ORDERS : ""
+  COUNTERPARTIES ||--o{ ORDERS : "arah beli/jual"
 
-  PURCHASE_ORDERS ||--|{ PURCHASE_ORDER_LINES : ""
-  PURCHASE_ORDERS ||--o{ GOODS_RECEIPT_NOTES : ""
-  PURCHASE_ORDER_LINES ||--o{ GOODS_RECEIPT_LINES : "dicocokkan ke"
+  ORDERS ||--|{ ORDER_LINES : ""
+  ORDERS ||--o{ GOODS_RECEIPT_NOTES : "arah beli"
+  ORDER_LINES ||--o{ GOODS_RECEIPT_LINES : "dicocokkan ke (arah beli)"
 
   AP_BILLS ||--|| GOODS_RECEIPT_NOTES : "dibuat bersamaan"
   GOODS_RECEIPT_NOTES ||--|{ GOODS_RECEIPT_LINES : ""
@@ -38,10 +38,10 @@ erDiagram
   AR_INVOICES ||--|| GOODS_ISSUES : "dibuat bersamaan"
   GOODS_ISSUES ||--|{ GOODS_ISSUE_LINES : ""
 
-  COUNTERPARTIES ||--o{ SALES_ORDERS : ""
-  SALES_ORDERS ||--|{ SALES_ORDER_LINES : ""
-  SALES_ORDER_LINES ||--o{ GOODS_ISSUE_LINES : "dipenuhi bertahap (opsional)"
+  ORDER_LINES ||--o{ GOODS_ISSUE_LINES : "dipenuhi bertahap, opsional (arah jual)"
 ```
+
+`orders`+`order_lines` menyatukan Purchase Order (komitmen beli) dan Sales Order (komitmen jual) jadi 1 struktur, dibedakan kolom arah (`direction`) — lihat submodule "Purchase Order & Sales Order (Orders) + Penerimaan Barang" di bawah.
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
@@ -49,12 +49,11 @@ erDiagram
 | `item_categories` / `item_brands` | Katalog terkontrol opsional buat pengelompokan barang (mis. "Alat Makan", "Lion Star") — murni metadata deskriptif, gak nyentuh perhitungan stok/HPP | `items` (1 kategori/brand : banyak barang) |
 | `item_units` | Satuan jual per barang (boleh lebih dari 1, misal per pieces atau per pack) — masing-masing punya faktor konversi ke satuan dasar & harga sendiri | `items` |
 | `inventory_balances` | Posisi stok tersimpan per barang — qty tersedia + harga rata-rata berjalan, satu-satunya state costing yang hidup di modul ini | `items` (1:1) |
-| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok — belum ada transaksi jurnal | `counterparties`, `items` |
-| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima — dibuat bersamaan dengan bill (tagihan) pemasok, memicu penambahan Persediaan | `purchase_orders`, tagihan pemasok (`ap_bills`), `items`, `inventory_balances` |
+| `orders` + `order_lines` | Komitmen pesan — belum ada transaksi jurnal. 1 struktur buat 2 arah (dibedakan kolom arah): pesan ke pemasok (dulu "Purchase Order", **opsional**) atau pesan dari customer (dulu "Sales Order", **opsional** dari awal) | `counterparties`, `items` |
+| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima (arah beli) — dibuat bersamaan dengan bill (tagihan) pemasok, memicu penambahan Persediaan | `orders` (arah beli), tagihan pemasok (`ap_bills`), `items`, `inventory_balances` |
 | `bom_headers` + `bom_lines` | Resep produksi: 1 barang jadi butuh bahan baku apa saja, berapa takarannya per 1 batch. Boleh direvisi kapan saja tanpa mengubah histori produksi yang sudah terjadi | `items` |
 | `production_orders` + `production_order_lines` | Satu kejadian produksi nyata: mengonsumsi bahan baku sesuai resep, menghasilkan barang jadi, dan ke transaksi jurnal yang otomatis dibuat | `bom_headers`, `items`, `inventory_balances`, transaksi jurnal |
-| `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`ar_invoices`), `items`, `inventory_balances`, transaksi jurnal |
-| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan Purchase Order di sisi jual, belum ada transaksi jurnal. **Opsional**, bukan wajib | `counterparties`, `items` |
+| `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual (arah jual) — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`ar_invoices`), `orders` (arah jual, opsional), `items`, `inventory_balances`, transaksi jurnal |
 | `stock_opnames` + `stock_opname_lines` | Sesi hitung fisik gudang — posisi stok disesuaikan langsung ke hasil hitung, selisih diakui sebagai beban/pendapatan | `items`, `inventory_balances`, transaksi jurnal (1 per baris yang ada selisih) |
 | `inventory_movements` | Kartu Stok — riwayat mutasi kronologis per barang (kapan masuk/keluar, dari mana, berapa). Lapisan riwayat di atas `inventory_balances`, bukan pengganti — kalau ada beda, `inventory_balances` yang benar | `items`, dan SATU dari 11 kemungkinan dokumen sumber tiap barisnya (lihat submodule "Kartu Stok / Riwayat Mutasi per Item") |
 
@@ -100,41 +99,50 @@ erDiagram
 | `inventory_balances` | satu-ke-satu | `items` |
 | `items` | dirujuk oleh semua submodule (Purchase Order, Produksi, Penjualan) | — |
 
-## Purchase Order & Penerimaan Barang (3-Way Matching)
+## Purchase Order & Sales Order (Orders) + Penerimaan Barang (3-Way Matching)
 
-**Purchase Order sekarang opsional (2026-09-03)** — penerimaan barang bisa dicatat langsung tanpa Purchase Order (kasus beli dadakan), mirror pola Sales Order yang sudah opsional dari awal.
+**Purchase Order dan Sales Order sekarang 1 struktur data yang sama: `orders` + `order_lines`, dibedakan kolom arah (`direction` beli/jual) — migration `0060_orders_schema.sql`, 2026-09-04.** Dulu 2 tabel terpisah (`purchase_orders`/`sales_orders`), digabung begitu 2 pembedanya sama-sama hilang: pemasok & customer udah 1 tabel yang sama (`counterparties`), dan keduanya sama-sama opsional (Purchase Order gak lagi wajib sejak 2026-09-03, mirror Sales Order yang emang opsional dari awal). Yang TETAP terpisah: lapisan realisasi fisik di bawahnya — penerimaan barang (arah beli) vs pengiriman barang/Goods Issue (arah jual) — karena efek jurnalnya beneran beda (lihat "Kenapa penerimaan & pengiriman barang tetap 2 alur" di bawah).
 
 **Peta Data (ERD)**
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `purchase_orders` + `purchase_order_lines` | Komitmen pesan ke pemasok, opsional. Belum ada transaksi jurnal — ini baru rencana, belum ada pertukaran aset | `counterparties`, `items` |
-| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima — boleh berasal dari Purchase Order, boleh juga berdiri sendiri (langsung, tanpa PO). Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `purchase_orders` (opsional), `counterparties` (wajib kalau gak lewat PO), `ap_bills`, `items`, `inventory_balances` |
+| `orders` + `order_lines` | Komitmen pesan, opsional. Belum ada transaksi jurnal — ini baru rencana, belum ada pertukaran aset. 1 struktur buat 2 arah: pesan ke pemasok (dulu "Purchase Order") atau pesan dari customer (dulu "Sales Order") | `counterparties`, `items` |
+| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima (arah beli) — boleh berasal dari order, boleh juga berdiri sendiri (langsung, tanpa order). Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `orders` (arah beli, opsional), `counterparties` (wajib kalau gak lewat order), `ap_bills`, `items`, `inventory_balances` |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Buat Purchase Order | `create_purchase_order` | Insert header + baris pesanan. Tidak ada dampak keuangan atau stok sama sekali — baru komitmen | — |
-| Catat penerimaan barang | `create_goods_receipt` | Sekaligus: (1) tentukan pemasok (dari Purchase Order kalau ada, dari pilihan manual kalau tidak), (2) hitung total tagihan dari baris penerimaan, (3) buat tagihan pemasok (bill) sepadan + jurnal Debit Persediaan, Kredit Utang Usaha, (4) insert baris penerimaan, (5) update posisi stok tiap barang (harga rata-rata dihitung ulang) | Menolak penerimaan yang jumlahnya melebihi sisa yang masih dipesan di Purchase Order (cuma berlaku kalau memang ada PO); menolak kalau gak ada PO maupun pemasok manual yang dipilih |
+| Buat order (beli atau jual) | `create_order` (satu RPC buat 2 arah, parameter arah menentukan validasi pihak lawan — gantiin `create_purchase_order`/`create_sales_order` yang dulu terpisah) | Insert header + baris pesanan. Tidak ada dampak keuangan atau stok sama sekali — baru komitmen | Pihak lawan yang dipilih harus terdaftar berperan sesuai arah order (pemasok buat arah beli, customer buat arah jual) |
+| Batalkan order | `cancel_order` (gantiin `cancel_purchase_order`/`cancel_sales_order`) | Stempel status final, tidak ada jurnal yang dibalik (order emang gak pernah punya jurnal) | Menolak kalau order itu udah punya realisasi fisik (penerimaan barang buat arah beli, pengiriman barang buat arah jual) |
+| Catat penerimaan barang (arah beli) | `create_goods_receipt` | Sekaligus: (1) tentukan pemasok (dari order kalau ada, dari pilihan manual kalau tidak), (2) hitung total tagihan dari baris penerimaan, (3) buat tagihan pemasok (bill) sepadan + jurnal Debit Persediaan, Kredit Utang Usaha, (4) insert baris penerimaan, (5) update posisi stok tiap barang (harga rata-rata dihitung ulang) | Menolak penerimaan yang jumlahnya melebihi sisa yang masih dipesan di order (cuma berlaku kalau memang ada order); menolak kalau gak ada order maupun pemasok manual yang dipilih; menolak kalau order yang dituju bukan order arah beli |
+| Penuhi order jual (sebagian atau seluruhnya) | `create_goods_issue` | Baris pengiriman boleh menunjuk balik ke baris order jual. Tiap pemanggilan = 1 invoice + 1 pengurangan stok tersendiri — bisa dipanggil berkali-kali sampai seluruh qty pesanan terkirim | Menolak pengiriman yang total-nya melebihi qty yang dipesan di baris order itu; menolak kalau baris order yang dituju bukan order arah jual |
+
+**Kenapa penerimaan & pengiriman barang tetap 2 alur** — walau komitmennya (`orders`) sekarang 1 struktur, `create_goods_receipt` dan `create_goods_issue` tetap 2 RPC yang beda total: sisi beli cuma nambah Persediaan + Utang Usaha (1 transaksi jurnal), sisi jual bikin 2 transaksi jurnal sekaligus (Piutang/Pendapatan DAN HPP/Persediaan). Konsekuensi akuntansinya beneran beda, jadi bukan sekadar ganti nama/label — ini kenapa penggabungan cuma sampai di layer komitmen, bukan seluruh alur beli-jual.
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Purchase Order tidak bikin jurnal | `create_purchase_order` cuma insert data, tidak memicu transaksi jurnal apa pun |
-| Penerimaan barang tidak boleh melebihi sisa qty yang dipesan (kalau ada PO) | Pengaman otomatis pada baris penerimaan barang, dicek per barang terhadap Purchase Order-nya — dilewati kalau baris itu gak menunjuk PO |
-| Penerimaan barang langsung (tanpa PO) wajib menyebutkan pemasok manual | `create_goods_receipt` menolak kalau Purchase Order dan pemasok manual dua-duanya kosong, serta menolak kalau pemasok yang dipilih gak ditemukan |
+| Order (baik arah beli maupun jual) tidak bikin jurnal | `create_order` cuma insert data, tidak memicu transaksi jurnal apa pun |
+| Penerimaan barang tidak boleh melebihi sisa qty yang dipesan (kalau ada order) | Pengaman otomatis pada baris penerimaan barang, dicek per barang terhadap order-nya — dilewati kalau baris itu gak menunjuk order |
+| Pengiriman terhadap satu baris order jual tidak boleh melebihi qty yang dipesan | Pengaman otomatis pada baris pengiriman, dicek per baris terhadap order-nya |
+| Penerimaan barang langsung (tanpa order) wajib menyebutkan pemasok manual | `create_goods_receipt` menolak kalau order dan pemasok manual dua-duanya kosong, serta menolak kalau pemasok yang dipilih gak ditemukan |
 | Pembelian bahan baku selalu masuk Persediaan, tidak pernah ke Beban | `create_goods_receipt` selalu mendebit akun Persediaan barang itu (bukan akun Beban) saat membuat tagihan |
-| Penerimaan barang dari 1 PO boleh punya kategori Persediaan campur (mis. + Beban Ongkir) dan PPN Masukan | `create_goods_receipt` diperluas kategori tambahan & PPN (`docs/architecture/ap-schema.md` bagian "Kategori Campur & PPN"), mirror alur jual (Goods Issue) yang sudah lebih dulu expose kategori campur ke UI-nya |
-| Penerimaan barang tertelusur ke tagihan yang menyertainya, dan ke Purchase Order kalau memang ada | `goods_receipt_notes` wajib menunjuk tagihan (bill) yang dibuat bersamaan; menunjuk Purchase Order cuma kalau jalurnya dari PO |
+| Penerimaan barang dari 1 order boleh punya kategori Persediaan campur (mis. + Beban Ongkir) dan PPN Masukan | `create_goods_receipt` diperluas kategori tambahan & PPN (`docs/architecture/ap-schema.md` bagian "Kategori Campur & PPN"), mirror alur jual (Goods Issue) yang sudah lebih dulu expose kategori campur ke UI-nya |
+| Penerimaan barang tertelusur ke tagihan yang menyertainya, dan ke order kalau memang ada | `goods_receipt_notes` wajib menunjuk tagihan (bill) yang dibuat bersamaan; menunjuk order cuma kalau jalurnya dari order |
+| Baris penerimaan/pengiriman cuma boleh menunjuk order dengan arah yang sesuai | Dijaga otomatis di level database (bukan cuma disiplin form) — penerimaan barang cuma bisa menunjuk order arah beli, pengiriman barang cuma bisa menunjuk order arah jual |
+| Order sama sekali tidak wajib (baik arah beli maupun jual) | Kolom penghubung di baris penerimaan/pengiriman barang bersifat opsional — transaksi langsung tanpa order tetap berjalan seperti biasa |
+| Tiap pengiriman sebagian mengakui piutang & pendapatan sebesar yang benar-benar dikirim saat itu | `create_goods_issue` tetap menerbitkan 1 invoice tiap kali dipanggil, bukan menunggu order jual terpenuhi penuh |
 
 **Interaksi Antar Tabel**
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `purchase_order_lines` | banyak-ke-satu | `purchase_orders` |
-| `goods_receipt_lines` | banyak-ke-satu, dicocokkan ke (opsional) | `purchase_order_lines` |
+| `order_lines` | banyak-ke-satu | `orders` |
+| `goods_receipt_lines` | banyak-ke-satu, dicocokkan ke (opsional) | `order_lines` (order arah beli) |
+| `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `order_lines` (order arah jual) |
 | `goods_receipt_notes` | satu-ke-satu | tagihan pemasok (`ap_bills`) |
 | `goods_receipt_lines` | tiap baris memicu update | `inventory_balances` |
 
@@ -190,7 +198,7 @@ erDiagram
 |---|---|
 | Pengurangan stok barang jadi tidak boleh melebihi yang tersedia | Pengaman konsumsi stok terpusat, sama mekanisme dengan submodule Produksi |
 | Goods Issue tertelusur ke invoice penjualan yang dibuat bersamaan | `goods_issues` wajib menunjuk invoice-nya, keduanya dibuat dalam 1 aksi yang sama |
-| Sisi jual juga punya tahap komitmen (Sales Order), tapi sifatnya opsional | Lihat submodule "Sales Order & Pemenuhan Bertahap" di bawah |
+| Sisi jual juga punya tahap komitmen (dulu disebut "Sales Order"), tapi sifatnya opsional | Sekarang 1 struktur yang sama dengan Purchase Order (`orders`, arah jual) — lihat submodule "Purchase Order & Sales Order (Orders) + Penerimaan Barang" di atas |
 
 **Interaksi Antar Tabel**
 
@@ -198,39 +206,8 @@ erDiagram
 |---|---|---|
 | `goods_issues` | satu-ke-satu | invoice penjualan (`ar_invoices`) |
 | `goods_issue_lines` | tiap baris didahului konsumsi dari | `inventory_balances` |
-| `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `sales_order_lines` |
+| `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `order_lines` (order arah jual) |
 | Retur barang (modul Piutang Usaha) | banyak-ke-satu, kebalikan pemakaian | `goods_issues` — detail penuh: `docs/architecture/ar-schema.md` |
-
-## Sales Order & Pemenuhan Bertahap
-
-**Peta Data (ERD)**
-
-| Tabel | Fungsi | Terhubung ke |
-|---|---|---|
-| `sales_orders` + `sales_order_lines` | Komitmen pesan dari customer — cerminan `purchase_orders` di sisi jual. Belum ada transaksi jurnal — ini baru rencana, belum ada barang berpindah tangan | `counterparties`, `items` |
-
-**Alur Teknis (RPC)**
-
-| Aksi | RPC | Efek | Guard |
-|---|---|---|---|
-| Buat Sales Order | `create_sales_order` | Insert header + baris pesanan. Tidak ada dampak keuangan atau stok sama sekali — baru komitmen | — |
-| Penuhi Sales Order (sebagian atau seluruhnya) | `create_goods_issue` (**signature-nya sendiri belakangan berubah karena alasan lain sama sekali — lihat "Kategori Campur & PPN" di `docs/architecture/ar-schema.md` — tapi bagian `so_line_id` yang dibahas di sini gak kesentuh**) | Baris `p_lines` sekarang boleh menunjuk balik ke baris Sales Order. Tiap pemanggilan = 1 invoice + 1 pengurangan stok tersendiri — bisa dipanggil berkali-kali sampai seluruh qty pesanan terkirim | Menolak pengiriman yang total-nya melebihi qty yang dipesan di baris Sales Order itu |
-
-**Aturan Bisnis → RPC**
-
-| Aturan (dari docs/domain) | Dijaga oleh |
-|---|---|
-| Sales Order tidak bikin jurnal | `create_sales_order` cuma insert data, tidak memicu transaksi jurnal apa pun |
-| Pengiriman terhadap satu baris Sales Order tidak boleh melebihi qty yang dipesan | Pengaman otomatis pada baris pengiriman, dicek per baris terhadap Sales Order-nya |
-| Sales Order sama sekali tidak wajib | Kolom penghubung di baris Goods Issue bersifat opsional — penjualan tanpa Sales Order tetap berjalan seperti biasa |
-| Tiap pengiriman sebagian mengakui piutang & pendapatan sebesar yang benar-benar dikirim saat itu | `create_goods_issue` tetap menerbitkan 1 invoice tiap kali dipanggil, bukan menunggu Sales Order terpenuhi penuh |
-
-**Interaksi Antar Tabel**
-
-| Tabel A | Relasi | Tabel B |
-|---|---|---|
-| `sales_order_lines` | banyak-ke-satu | `sales_orders` |
-| `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `sales_order_lines` |
 
 ## Kategori & Brand Barang
 
@@ -281,7 +258,7 @@ Gak ada RPC baru — `item_units` murni data master, CRUD langsung lewat tabel (
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Satuan dasar (dipakai stok/HPP) tetap 1 per barang, gak berubah oleh satuan jual tambahan | `items.uom` tidak disentuh sama sekali — satuan jual cuma lapisan tambahan di `item_units` |
-| Qty yang dikonsumsi/ditambah ke stok selalu di satuan dasar, gak peduli kombinasi satuan yang dipakai user pas input | Konversi terjadi di UI sebelum RPC dipanggil — tabel transaksional manapun (`purchase_order_lines`, `goods_receipt_lines`, `sales_order_lines`, `goods_issue_lines`, `production_order_lines`, `stock_opname_lines`) cuma pernah menyimpan qty satuan dasar |
+| Qty yang dikonsumsi/ditambah ke stok selalu di satuan dasar, gak peduli kombinasi satuan yang dipakai user pas input | Konversi terjadi di UI sebelum RPC dipanggil — tabel transaksional manapun (`order_lines`, `goods_receipt_lines`, `goods_issue_lines`, `production_order_lines`, `stock_opname_lines`) cuma pernah menyimpan qty satuan dasar |
 | Harga per satuan jual independen, tidak wajib proporsional ke harga satuan dasar | `item_units.price` diisi manual per baris, gak ada perhitungan otomatis dari harga satuan lain |
 | Harga cuma saran, gak retroaktif ngubah invoice yang udah terbit | Sama prinsip snapshot seperti sebelumnya — `item_units` cuma dibaca UI pas invoice BARU dibuat |
 | Faktor konversi antar satuan 1 barang harus kelipatan bulat rapi (biar tampilan stok gabungan box/pack/pcs presisi) | Trigger `item_units_nested_conversion_guard` (`0025_item_units_nested_conversion_guard.sql`) — tolak insert/update kalau kombinasi faktor gak nested, berlaku di level DB (bukan cuma validasi UI) |

@@ -29,7 +29,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     const { data: grnData, error: grnErr } = await supabase
       .from("goods_receipt_notes")
       .select(
-        "id, purchase_order_id, bill_id, delivery_note_ref, receipt_date, created_at, purchase_orders(source_ref, counterparties(name)), ap_bills(source_ref, amount, journal_entry_id, counterparties(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
+        "id, order_id, bill_id, delivery_note_ref, receipt_date, created_at, orders(source_ref, counterparties(name)), ap_bills(source_ref, amount, journal_entry_id, counterparties(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
       )
       .eq("id", id)
       .single();
@@ -82,13 +82,13 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         { label: "No. Surat Jalan", value: grn.delivery_note_ref ?? "-" },
         {
           label: "Purchase Order",
-          value: grn.purchase_orders ? (
+          value: grn.orders ? (
             <button
               type="button"
               className="text-blue-600 hover:underline"
-              onClick={() => router.push(`/purchase-orders/${grn.purchase_order_id}`)}
+              onClick={() => router.push(`/purchase-orders/${grn.order_id}`)}
             >
-              {grn.purchase_orders.source_ref}
+              {grn.orders.source_ref}
             </button>
           ) : (
             <span className="text-slate-400">— (langsung tanpa PO)</span>
@@ -96,7 +96,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         },
         {
           label: "Supplier",
-          value: grn.purchase_orders?.counterparties.name ?? grn.ap_bills.counterparties.name,
+          value: grn.orders?.counterparties.name ?? grn.ap_bills.counterparties.name,
         },
         {
           label: "Bill",

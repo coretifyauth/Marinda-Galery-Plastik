@@ -11,7 +11,7 @@ export type UomQtyChange = {
   qty: number;
   /** qty x conversion_factor -- ini yang dikirim ke RPC transaksi (qty_issued/qty_ordered). */
   baseQty: number;
-  /** unit.price / conversion_factor -- harga per satuan dasar, buat RPC yang minta unit_price base (mis. create_sales_order). */
+  /** unit.price / conversion_factor -- harga per satuan dasar, buat RPC yang minta unit_price base (mis. create_order). */
   basePrice: number;
   /** qty x unit.price -- nominal baris ini di satuan yang dipilih. */
   amount: number;

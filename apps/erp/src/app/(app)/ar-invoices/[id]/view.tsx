@@ -152,7 +152,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
-  // Nominal retur otomatis dihitung dari qty x harga jual per item (sales_order_lines.unit_price),
+  // Nominal retur otomatis dihitung dari qty x harga jual per item (order_lines.unit_price),
   // cuma valid kalau SEMUA baris yang qty-nya diisi punya harga itu -- item dari jalur jual
   // langsung (walk-in, gak lewat Sales Order) gak punya harga per item di mana pun (lihat
   // docs/domain/print-templates.md "Harga Per Item"), jadi baris kayak gitu tetap wajib input manual.
@@ -260,7 +260,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("goods_issues")
         .select(
-          "id, goods_issue_lines(item_id, qty_issued, so_line_id, items(name, uom), sales_order_lines(unit_price))"
+          "id, goods_issue_lines(item_id, qty_issued, order_line_id, items(name, uom), order_lines(unit_price))"
         )
         .eq("invoice_id", id)
         .maybeSingle(),
@@ -357,7 +357,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             qty_available: l.qty_issued,
             qty_returned: "",
             condition: "RESALABLE" as const,
-            unit_price: l.sales_order_lines?.unit_price ?? null,
+            unit_price: l.order_lines?.unit_price ?? null,
           }))
         : []
     );
@@ -817,11 +817,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     // unit_price ketracking) -- jalur jual langsung gak punya harga per item di mana pun,
     // invoice-nya cuma nyimpen total lump-sum per kategori. Kalau gak ada satu pun line yang
     // punya harga, tabel item cukup qty (jangan pura-pura ada kolom harga kosong).
-    const hasItemPrice = !!goodsIssue?.goods_issue_lines.some((l) => l.sales_order_lines);
+    const hasItemPrice = !!goodsIssue?.goods_issue_lines.some((l) => l.order_lines);
     const itemRows = goodsIssue
       ? goodsIssue.goods_issue_lines
           .map((l) => {
-            const unitPrice = l.sales_order_lines?.unit_price;
+            const unitPrice = l.order_lines?.unit_price;
             const subtotal = unitPrice != null ? unitPrice * l.qty_issued : null;
             return hasItemPrice
               ? `<tr>

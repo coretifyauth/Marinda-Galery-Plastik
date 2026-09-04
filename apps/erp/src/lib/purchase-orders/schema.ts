@@ -3,7 +3,7 @@ import { z } from "zod";
 export const poLineSchema = z.object({
   item_id: z.string().uuid("Pilih item"),
   qty_ordered: z.coerce.number().positive("Qty harus lebih dari 0"),
-  unit_cost_expected: z.coerce.number().positive("Harga harus lebih dari 0"),
+  unit_price: z.coerce.number().positive("Harga harus lebih dari 0"),
 });
 
 export const createPurchaseOrderSchema = z.object({
@@ -19,52 +19,52 @@ export type PurchaseOrderLine = {
   id: string;
   item_id: string;
   qty_ordered: number;
-  unit_cost_expected: number;
+  unit_price: number;
   items: { name: string; uom: string };
   goods_receipt_lines: { qty_received: number }[];
 };
 
 export type PurchaseOrder = {
   id: string;
-  supplier_id: string;
-  po_date: string;
+  counterparty_id: string;
+  order_date: string;
   expected_date: string | null;
   source_ref: string;
   created_at: string;
   cancelled_at: string | null;
   counterparties: { name: string };
-  purchase_order_lines: PurchaseOrderLine[];
+  order_lines: PurchaseOrderLine[];
 };
 
 export type PoStatus = "OPEN" | "PARTIALLY_RECEIVED" | "FULLY_RECEIVED" | "CANCELLED";
 
 export type PurchaseOrderListRow = {
   id: string;
-  supplier_id: string;
-  po_date: string;
+  counterparty_id: string;
+  order_date: string;
   expected_date: string | null;
   source_ref: string;
   created_at: string;
   cancelled_at: string | null;
   status: PoStatus;
   counterparties: { name: string };
-  purchase_order_lines: {
+  order_lines: {
     id: string;
     item_id: string;
     qty_ordered: number;
-    unit_cost_expected: number;
+    unit_price: number;
     items: { name: string; uom: string };
   }[];
 };
 
 /**
  * Status derived: `cancelled_at` menang duluan (state terminal, lihat
- * cancel_purchase_order di inventory-schema.md), baru dihitung dari
+ * cancel_order di inventory-schema.md), baru dihitung dari
  * SUM(goods_receipt_lines.qty_received) per line vs qty_ordered.
  */
-export function poStatus(po: Pick<PurchaseOrder, "purchase_order_lines" | "cancelled_at">): PoStatus {
+export function poStatus(po: Pick<PurchaseOrder, "order_lines" | "cancelled_at">): PoStatus {
   if (po.cancelled_at) return "CANCELLED";
-  const totals = po.purchase_order_lines.map((line) => ({
+  const totals = po.order_lines.map((line) => ({
     ordered: line.qty_ordered,
     received: line.goods_receipt_lines.reduce((sum, r) => sum + r.qty_received, 0),
   }));

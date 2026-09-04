@@ -14,7 +14,7 @@ export type GoodsReceiptFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, purchase_order_id, bill_id, delivery_note_ref, receipt_date, created_at, purchase_orders(source_ref, counterparties(name)), ap_bills(source_ref, amount, counterparties(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))";
+  "id, order_id, bill_id, delivery_note_ref, receipt_date, created_at, orders(source_ref, counterparties(name)), ap_bills(source_ref, amount, counterparties(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))";
 
 export async function fetchGoodsReceipts(
   filters: GoodsReceiptFilters
@@ -31,7 +31,7 @@ export async function fetchGoodsReceipts(
   if (filters.dateFrom) query = query.gte("receipt_date", filters.dateFrom);
   if (filters.dateTo) query = query.lte("receipt_date", filters.dateTo);
 
-  if (filters.purchaseOrderId) query = query.eq("purchase_order_id", filters.purchaseOrderId);
+  if (filters.purchaseOrderId) query = query.eq("order_id", filters.purchaseOrderId);
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);

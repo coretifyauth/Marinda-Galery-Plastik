@@ -1,6 +1,6 @@
 # Generalisasi Purchase + Sales -> Order (+ Counterparty)
 
-**Modul asal:** cross-cutting (Inventory: Purchase Order/Sales Order + AR/AP: Customer/Supplier) — hasil diskusi arsitektur dengan owner, bukan gap yang ketemu pas bangun fitur. **Status:** Ditunda. Gabungan dari 3 keputusan yang tadinya dicatat terpisah (`counterparty-generalization.md` + `purchase-order-not-mandatory.md`, keduanya digabung ke sini dan dihapus 2026-09-03).
+**Modul asal:** cross-cutting (Inventory: Purchase Order/Sales Order + AR/AP: Customer/Supplier) — hasil diskusi arsitektur dengan owner, bukan gap yang ketemu pas bangun fitur. **Status:** Ketiga fase SELESAI (Fase 3 migration ditulis & direview `schema-reviewer` 2026-09-04, **belum diapply ke database live** — menunggu konfirmasi user push, beda dari Fase 1/Fase 2 di bawah yang statusnya udah dikonfirmasi lewat `supabase migration list`). Gabungan dari 3 keputusan yang tadinya dicatat terpisah (`counterparty-generalization.md` + `purchase-order-not-mandatory.md`, keduanya digabung ke sini dan dihapus 2026-09-03).
 
 ## Kasus
 
@@ -20,10 +20,10 @@ Begitu ketiganya tercabut, gak ada lagi alasan struktural PO dan SO tetap 2 tabe
 ```
 Fase 1: Counterparty   (customers+suppliers -> counterparties + counterparty_type_mapping) -- SELESAI (0059, 2026-09-03)
 Fase 2: PO Not Mandatory (PO jadi opsional, biar simetris sama SO) -- SELESAI (0058, 2026-09-03)
-Fase 3: Orders          (purchase_orders+sales_orders -> orders+order_lines) -- Ditunda, prasyaratnya (Fase 1+2) udah lengkap
+Fase 3: Orders          (purchase_orders+sales_orders -> orders+order_lines) -- SELESAI, migration ditulis (0060, 2026-09-04), belum diapply
 ```
 
-Fase 3 sekarang **udah gak punya penghalang prasyarat** — Fase 1 (`counterparties` ada) dan Fase 2 (PO opsional) dua-duanya selesai. Tinggal Fase 3 sendiri yang belum digarap (belum ada tekanan/bukti kebutuhan konkret buat gabung `purchase_orders`+`sales_orders`).
+Fase 3 sudah digarap — migration `0060_orders_schema.sql` ditulis 2026-09-04, direview `schema-reviewer` (0 blocker), **belum diapply** ke project live-linked (menunggu konfirmasi user sebelum `supabase db push`). Detail lengkap: subheading "Fase 3 — Orders — SELESAI" di bawah.
 
 ---
 
@@ -116,7 +116,24 @@ Detail teknis lengkap: `memory/architecture/data/inventory-schema.md` submodule 
 
 ---
 
-## Fase 3 — Orders
+## Fase 3 — Orders — **SELESAI** (migration `0060_orders_schema.sql`, ditulis & direview `schema-reviewer` 2026-09-04, diapply ke project live-linked 2026-09-04 — 2 percobaan push pertama gagal karena `CREATE OR REPLACE FUNCTION` gak bisa rename nama parameter (`p_purchase_order_id`→`p_order_id`, SQLSTATE 42P13) dan urutan drop tabel/fungsi standalone yang salah, keduanya diperbaiki di migration sebelum percobaan ketiga sukses — lihat komentar di dalam file migration)
+
+**Yang diimplementasikan** (persis rencana awal di bawah, dengan 1 deviasi disengaja — lihat poin terakhir):
+- Skema: `orders`+`order_lines` (gabungan `purchase_orders`+`purchase_order_lines`/`sales_orders`+`sales_order_lines`, dibedakan kolom `direction` `'PURCHASE'`/`'SALE'`), trigger `orders_counterparty_direction_guard` (type-safety, niru `counterparty_role_guard` 0059), trigger `orders_block_edit_delete_or_cancel`+`orders_sync_status_on_cancel` (gabungan versi PO/SO dari `0024`), RPC `create_order`/`cancel_order` gantiin `create_purchase_order`/`create_sales_order`/`cancel_purchase_order`/`cancel_sales_order`, fungsi `recompute_order_status` gabungan `recompute_purchase_order_status`/`recompute_sales_order_status` (`0053`).
+- Rename kolom pada tabel fulfillment yang TETAP terpisah: `goods_receipt_notes.purchase_order_id` → `order_id`, `goods_receipt_lines.po_line_id` → `order_line_id`, `goods_issue_lines.so_line_id` → `order_line_id`. `create_goods_receipt` (param `p_purchase_order_id` → `p_order_id`) dan `create_goods_issue` (key `so_line_id` → `order_line_id` di `p_lines`) di-`create or replace` isinya, signature level fungsi gak berubah struktural.
+- Trigger direction-match baru (gak ada padanannya sebelum ini, karena dulu FK udah cukup mastiin arah lewat 2 tabel terpisah): `goods_receipt_notes_order_direction_guard` (GRN cuma boleh nunjuk order `direction='PURCHASE'`) dan `goods_issue_lines_order_direction_guard` (Goods Issue cuma boleh nunjuk baris order `direction='SALE'`) — gak bisa dijamin FK biasa.
+- Backfill: `orders`/`order_lines` diisi dari `purchase_orders`+`sales_orders`/`purchase_order_lines`+`sales_order_lines` **PAKAI ID ASLI** (pola sama Fase 1/`0059`) — `goods_receipt_lines`/`goods_issue_lines` yang FK ke baris lama cukup di-repoint constraint-nya (fungsi `_repoint_fk`, generalisasi `_repoint_fk_to_counterparties` dari `0059` biar bisa retarget ke tabel apa pun bukan cuma `counterparties`), gak perlu backfill data per-baris. `purchase_orders`/`sales_orders`/`purchase_order_lines`/`sales_order_lines` di-`drop` di akhir migration.
+- Frontend, **17 file** (`apps/erp`) disapu — grep memastikan 0 sisa referensi `purchase_order_id`/`po_line_id`/`so_line_id`/`purchase_order_lines`/`sales_order_lines`:
+  - `purchase-orders`: `page.tsx`, `[id]/view.tsx`, `lib/purchase-orders/schema.ts`, `lib/purchase-orders/queries.ts`
+  - `sales-orders`: `page.tsx`, `[id]/view.tsx`, `lib/sales-orders/schema.ts`, `lib/sales-orders/queries.ts`
+  - `goods-receipts`: `page.tsx`, `[id]/view.tsx`, `lib/goods-receipts/schema.ts`, `lib/goods-receipts/queries.ts`
+  - `goods-issues`: `lib/goods-issues/schema.ts` (`page.tsx`/`[id]/view.tsx`/`queries.ts` gak nyentuh kolom yang di-rename, gak perlu diubah)
+  - Cross-module: `ar-invoices/[id]/view.tsx` + `lib/ar-invoices/schema.ts` (embed `order_lines` gantiin `sales_order_lines`), `lib/ar-credit-notes/schema.ts` (idem), `components/ui/uom-price-qty-input.tsx`
+- **Deviasi disengaja dari rencana awal di bawah**: view status TETAP 2 (`purchase_orders_with_status`/`sales_orders_with_status`, sama-sama `select ... from orders where direction = ...`), BUKAN digabung jadi 1 `orders_with_status` — biar `queries.ts` existing tetap query `FROM` nama view yang sama (cuma nama kolom yang berubah) dan biar list page `/purchase-orders`/`/sales-orders` tetap 2 halaman terpisah (keputusan UI yang dipertahankan sengaja, bukan keharusan DB).
+
+Detail teknis lengkap (DDL final, trigger, RPC): `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang (3-Way Matching)". Dokumentasi konsep bisnis: `memory/domain/inventory.md` submodule dengan judul yang sama. Dokumentasi naratif (`docs/domain/inventory.md`, `docs/architecture/inventory-schema.md`) ikut diupdate.
+
+## Fase 3 (rencana awal, dipertahankan sebagai referensi historis)
 
 ```sql
 create table orders (
@@ -178,6 +195,6 @@ create function orders_counterparty_direction_guard() returns trigger as $$ ... 
 
 - `memory/architecture/data/ar-schema.md` — DDL `customers`, submodule "Credit Hold"
 - `memory/architecture/data/ap-schema.md` — DDL `suppliers`
-- `memory/architecture/data/inventory-schema.md` — DDL `purchase_orders`/`sales_orders`, pola `item_units_nested_conversion_guard` sebagai rujukan trigger type-safety
-- `memory/domain/inventory.md` — submodule "Purchase Order & Penerimaan Barang" dan "Sales Order & Pemenuhan Bertahap"
+- `memory/architecture/data/inventory-schema.md` — submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang (3-Way Matching)" (DDL final `orders`/`order_lines`, gantiin `purchase_orders`/`sales_orders`), pola `item_units_nested_conversion_guard` sebagai rujukan trigger type-safety awal
+- `memory/domain/inventory.md` — submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang (3-Way Matching)" (gantiin 2 submodule terpisah "Purchase Order & Penerimaan Barang" dan "Sales Order & Pemenuhan Bertahap")
 - `memory/architecture/data/ar-schema.md` submodule "Penukaran Barang Pasca-Retur (Garansi)" — kasus generalisasi TERPISAH (AR/AP retur, sudah selesai lewat migration `0057`), bukan bagian dari file ini

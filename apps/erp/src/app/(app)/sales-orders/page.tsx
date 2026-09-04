@@ -131,9 +131,10 @@ export default function SalesOrdersPage() {
   const createMutation = useMutation({
     mutationFn: async (input: CreateSalesOrderInput) => {
       const sourceRef = await generateDocumentNumber("sales_orders");
-      const { error } = await supabase.rpc("create_sales_order", {
-        p_customer_id: input.customer_id,
-        p_so_date: input.so_date,
+      const { error } = await supabase.rpc("create_order", {
+        p_direction: "SALE",
+        p_counterparty_id: input.customer_id,
+        p_order_date: input.so_date,
         p_expected_date: input.expected_date || null,
         p_source_ref: sourceRef,
         p_lines: input.lines,
@@ -321,11 +322,11 @@ export default function SalesOrdersPage() {
                 onClick={() => router.push(`/sales-orders/${so.id}`)}
               >
                 <td className="px-4 py-2 font-medium text-black">{so.counterparties.name}</td>
-                <td className="whitespace-nowrap px-4 py-2">{so.so_date}</td>
+                <td className="whitespace-nowrap px-4 py-2">{so.order_date}</td>
                 <td className="px-4 py-2">{so.source_ref}</td>
                 <td className="px-4 py-2">
                   <ul className="space-y-0.5">
-                    {so.sales_order_lines.map((l) => (
+                    {so.order_lines.map((l) => (
                       <li key={l.id}>
                         {l.items.name} — {l.qty_ordered} {l.items.uom} @ {l.unit_price.toLocaleString("id-ID")}
                       </li>

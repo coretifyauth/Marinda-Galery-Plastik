@@ -129,9 +129,10 @@ export default function PurchaseOrdersPage() {
   const createMutation = useMutation({
     mutationFn: async (input: CreatePurchaseOrderInput) => {
       const sourceRef = await generateDocumentNumber("purchase_orders");
-      const { error } = await supabase.rpc("create_purchase_order", {
-        p_supplier_id: input.supplier_id,
-        p_po_date: input.po_date,
+      const { error } = await supabase.rpc("create_order", {
+        p_direction: "PURCHASE",
+        p_counterparty_id: input.supplier_id,
+        p_order_date: input.po_date,
         p_expected_date: input.expected_date || null,
         p_source_ref: sourceRef,
         p_lines: input.lines,
@@ -181,7 +182,7 @@ export default function PurchaseOrdersPage() {
       lines: lines.map((l) => ({
         item_id: l.item_id,
         qty_ordered: l.qty_ordered,
-        unit_cost_expected: l.unit_cost_expected,
+        unit_price: l.unit_cost_expected,
       })),
     });
     if (!parsed.success) {
@@ -308,13 +309,13 @@ export default function PurchaseOrdersPage() {
                 onClick={() => router.push(`/purchase-orders/${po.id}`)}
               >
                 <td className="px-4 py-2 font-medium text-black">{po.counterparties.name}</td>
-                <td className="whitespace-nowrap px-4 py-2">{po.po_date}</td>
+                <td className="whitespace-nowrap px-4 py-2">{po.order_date}</td>
                 <td className="px-4 py-2">{po.source_ref}</td>
                 <td className="px-4 py-2">
                   <ul className="space-y-0.5">
-                    {po.purchase_order_lines.map((l) => (
+                    {po.order_lines.map((l) => (
                       <li key={l.id}>
-                        {l.items.name} — {l.qty_ordered} {l.items.uom} @ {l.unit_cost_expected.toLocaleString("id-ID")}
+                        {l.items.name} — {l.qty_ordered} {l.items.uom} @ {l.unit_price.toLocaleString("id-ID")}
                       </li>
                     ))}
                   </ul>

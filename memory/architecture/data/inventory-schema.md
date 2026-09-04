@@ -22,7 +22,7 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 ```mermaid
 erDiagram
   ITEMS ||--o| INVENTORY_BALANCES : ""
-  ITEMS ||--o{ PURCHASE_ORDER_LINES : dipesan
+  ITEMS ||--o{ ORDER_LINES : dipesan
   ITEMS ||--o{ GOODS_RECEIPT_LINES : diterima
   ITEMS ||--o{ BOM_LINES : "jadi komponen"
   ITEMS ||--o| BOM_HEADERS : "jadi hasil resep"
@@ -33,11 +33,11 @@ erDiagram
 
   STOCK_OPNAMES ||--|{ STOCK_OPNAME_LINES : ""
 
-  SUPPLIERS ||--o{ PURCHASE_ORDERS : ""
+  COUNTERPARTIES ||--o{ ORDERS : "direction PURCHASE (supplier) / SALE (customer)"
 
-  PURCHASE_ORDERS ||--|{ PURCHASE_ORDER_LINES : ""
-  PURCHASE_ORDERS ||--o{ GOODS_RECEIPT_NOTES : ""
-  PURCHASE_ORDER_LINES ||--o{ GOODS_RECEIPT_LINES : "dicocokkan ke"
+  ORDERS ||--|{ ORDER_LINES : ""
+  ORDERS ||--o{ GOODS_RECEIPT_NOTES : "direction PURCHASE"
+  ORDER_LINES ||--o{ GOODS_RECEIPT_LINES : "dicocokkan ke (direction PURCHASE)"
 
   AP_BILLS ||--|| GOODS_RECEIPT_NOTES : "dibuat bersamaan"
   GOODS_RECEIPT_NOTES ||--|{ GOODS_RECEIPT_LINES : ""
@@ -49,10 +49,10 @@ erDiagram
   AR_INVOICES ||--|| GOODS_ISSUES : "dibuat bersamaan"
   GOODS_ISSUES ||--|{ GOODS_ISSUE_LINES : ""
 
-  CUSTOMERS ||--o{ SALES_ORDERS : ""
-  SALES_ORDERS ||--|{ SALES_ORDER_LINES : ""
-  SALES_ORDER_LINES ||--o{ GOODS_ISSUE_LINES : "dipenuhi bertahap (opsional)"
+  ORDER_LINES ||--o{ GOODS_ISSUE_LINES : "dipenuhi bertahap, opsional (direction SALE)"
 ```
+
+`ORDERS`/`ORDER_LINES` gabungan `purchase_orders`+`sales_orders`/`purchase_order_lines`+`sales_order_lines` sejak migration `0060_orders_schema.sql` (Fase 3 `memory/scope-debt/order-generalization.md`) — dibedakan kolom `direction` (`'PURCHASE'`/`'SALE'`), lihat submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang" di bawah. `COUNTERPARTIES` gabungan `customers`+`suppliers` sejak migration `0059_counterparty_schema.sql` (Fase 1), lihat `memory/architecture/data/counterparty-schema.md`.
 
 ### `items`
 
@@ -117,61 +117,147 @@ grant select, insert, update on inventory_balances to authenticated;
 
 Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
-## Purchase Order & Penerimaan Barang (3-Way Matching)
+## Purchase Order & Sales Order (`orders`) + Penerimaan Barang (3-Way Matching) — migration `0060_orders_schema.sql`
 
 ### Keputusan Desain
 
+- **`purchase_orders`+`sales_orders` digabung jadi `orders`+`order_lines` (Fase 3 `memory/scope-debt/order-generalization.md`, 2026-09-04, keputusan owner).** Dibedakan kolom `direction` (`'PURCHASE'`/`'SALE'`), bukan lagi 2 tabel + 2 RPC terpisah. Baru bisa dikerjakan sekarang karena 2 prasyaratnya udah selesai: Fase 1 (`0059_counterparty_schema.sql`) bikin `orders.counterparty_id` punya 1 tabel rujukan buat kedua arah, Fase 2 (`0058_purchase_order_not_mandatory.sql`) bikin PO dan SO beneran simetris (dua-duanya opsional, dua-duanya bebas tipe item) — begitu ketiga alasan historis PO/SO dipisah (wajib/opsional, tipe item, tabel counterparty beda) tercabut semua, gak ada lagi alasan struktural buat 2 tabel terpisah.
+- **Yang TETAP terpisah (gak ikut digabung): layer fulfillment + finansial di bawahnya** — `create_goods_receipt` (direction `PURCHASE`) dan `create_goods_issue` (direction `SALE`) tetap 2 RPC beda total, karena efek jurnalnya beneran beda (1 sisi cuma update Persediaan lewat `create_ap_bill`, sisi lain bikin 2 jurnal sekaligus — Piutang/Pendapatan DAN HPP/Persediaan lewat `create_ar_invoice`). Ini crux kenapa Fase 3 BUKAN generalisasi penuh seluruh alur beli/jual — cuma layer komitmen (`orders`) yang digabung, layer realisasi fisik (GRN vs Goods Issue) tetap 2 tabel/2 RPC berbeda, masing-masing dijaga trigger direction-match sendiri (submodule ini + submodule "Penjualan & Pengakuan HPP") karena gak bisa dijamin FK biasa.
 - **Goods Receipt Note (GRN) dan Bill dibuat bersamaan** (1 RPC, 1 langkah) — asumsi proses pembelian informal (nota = bukti kirim + tagihan sekaligus, gak ada jeda waktu antara barang datang dan tagihan resmi). Ini menghindari kebutuhan akun perantara "Barang Diterima Belum Ditagih" (GR/IR clearing) yang dipakai ERP besar buat kasus barang datang duluan tagihan nyusul — dicatat sebagai catatan terbuka (bukan scope-debt formal, belum ada file tracking-nya) kalau nanti proses pembeliannya berkembang butuh jeda waktu.
-- **3-way matching di sisi pembelian (PO → GRN → Bill) SEKARANG OPSIONAL** (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03, keputusan owner — Fase 2 `memory/scope-debt/order-generalization.md`), mirror padanannya di sisi jual (Sales Order → Goods Issue → Invoice) yang udah opsional dari awal. Dulu PO wajib (`goods_receipt_notes.purchase_order_id not null`) karena "pembelian selalu keputusan terencana" — asumsi itu dibalik: sekarang Goods Receipt juga bisa dibuat langsung tanpa PO (beli dadakan), sama kayak Goods Issue tanpa Sales Order (jual spontan). Kedua sisi (beli & jual) sekarang simetris penuh soal opsionalitas.
-- **Purchase Order gak bikin journal entry.** PO murni komitmen/rencana, belum ada pertukaran aset/liability — journal entry baru muncul pas GRN+Bill dibuat.
+- **3-way matching di sisi pembelian (Purchase Order → GRN → Bill) OPSIONAL** (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03), mirror padanannya di sisi jual (Sales Order → Goods Issue → Invoice) yang udah opsional dari awal. Goods Receipt/Goods Issue boleh dibuat langsung tanpa order sama sekali (beli/jual dadakan) — kedua sisi simetris penuh soal opsionalitas.
+- **`orders` gak bikin journal entry**, kedua arah. Order murni komitmen/rencana, belum ada pertukaran aset/liability — journal entry baru muncul pas GRN+Bill (`direction='PURCHASE'`) atau Goods Issue+Invoice (`direction='SALE'`) dibuat.
 
-### `purchase_orders` + `purchase_order_lines`
+### `orders` + `order_lines`
 
-Komitmen pesan ke supplier — **belum ada journal entry**. Header (`supplier_id`, `po_date`, `expected_date`, `source_ref`, `cancelled_at`) + lines (`item_id`, `qty_ordered`, `unit_cost_expected`). ~~Status (`OPEN`/`PARTIALLY_RECEIVED`/`FULLY_RECEIVED`/`CANCELLED`) derived~~ — **UPDATE migration `0053`** (lihat submodule view di bawah): sekarang kolom asli `purchase_orders.status`, gak lagi dihitung ulang tiap query — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_receipt_lines.qty_received)` per line vs `qty_ordered`.
-
-**Cancel (`cancelled_at`, migration `0024_purchase_order_sales_order_cancel.sql`)** — koreksi salah input SEBELUM ada realisasi fisik apa pun cukup lewat `cancel_purchase_order`, gak perlu PO baru. Header PO gak lagi pakai `block_edit_delete` generik (yang blanket-block SEMUA update) — diganti trigger bespoke `purchase_orders_block_edit_delete_or_cancel()` niru pola selective-lock `accounts_published_lock` (`coa-schema.md`): bandingin tuple SEMUA kolom selain `id`/`cancelled_at`, tolak kalau ada yang berubah ATAU kalau `cancelled_at` udah keisi (sekali dibatalkan, gak bisa diapa-apain lagi termasuk dibatalkan ulang). `purchase_order_lines` TETAP full-immutable (`block_edit_delete` generik gak disentuh) — baris gak pernah berubah pas header dibatalkan.
+Komitmen pesan ke supplier (`direction='PURCHASE'`) atau dari customer (`direction='SALE'`) — **belum ada journal entry**. Header (`counterparty_id`, `direction`, `order_date`, `expected_date`, `source_ref`, `cancelled_at`, `status`) + lines (`item_id`, `qty_ordered`, `unit_price`) — 1 struktur buat kedua arah, gantiin `purchase_orders`/`purchase_order_lines` (kolom `unit_cost_expected` dulu, sekarang `unit_price`) dan `sales_orders`/`sales_order_lines`. `status` (`OPEN`/`PARTIALLY_RECEIVED`|`PARTIALLY_FULFILLED`/`FULLY_RECEIVED`|`FULLY_FULFILLED`/`CANCELLED`, tergantung `direction`) kolom asli sejak awal tabel ini ada — Fase 3 dibangun setelah `0053_denormalize_transactional_status.sql`, jadi gak pernah lewat fase "derived view" kayak `purchase_orders`/`sales_orders` dulu. Lihat submodule "Status sync" di bawah.
 
 ```sql
-create table purchase_orders (
+create table orders (
   id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
-  po_date date not null,
+  counterparty_id uuid not null references counterparties(id),
+  direction text not null check (direction in ('PURCHASE','SALE')),
+  order_date date not null,
   expected_date date,
   source_ref text not null,
+  cancelled_at timestamptz,
+  status text not null default 'OPEN',
   created_by uuid references auth.users(id),
-  created_at timestamptz not null default now(),
-  cancelled_at timestamptz -- migration 0024, nullable, state terminal
+  created_at timestamptz not null default now()
 );
 
--- migration 0024 — ganti block_edit_delete generik, izinkan SATU-SATUNYA transisi:
--- cancelled_at null -> now(), kolom lain (termasuk cancelled_at kalau udah keisi) terkunci.
-create trigger purchase_orders_block_edit_delete
-  before update or delete on purchase_orders
-  for each row execute function purchase_orders_block_edit_delete_or_cancel();
+create index orders_counterparty_id_idx on orders(counterparty_id);
+create index orders_direction_idx on orders(direction);
+create index orders_order_date_idx on orders(order_date desc);
+create index orders_status_idx on orders(status);
 
-create table purchase_order_lines (
+create table order_lines (
   id uuid primary key default gen_random_uuid(),
-  purchase_order_id uuid not null references purchase_orders(id) on delete cascade,
+  order_id uuid not null references orders(id) on delete cascade,
   item_id uuid not null references items(id),
   qty_ordered numeric(14,3) not null check (qty_ordered > 0),
-  unit_cost_expected numeric(14,2) not null check (unit_cost_expected > 0)
+  unit_price numeric(14,2) not null check (unit_price > 0)
 );
 
-create trigger purchase_order_lines_block_edit_delete
-  before update or delete on purchase_order_lines
+create index order_lines_order_id_idx on order_lines(order_id);
+create index order_lines_item_id_idx on order_lines(item_id);
+```
+
+**Type-safety: trigger `orders_counterparty_direction_guard`** — `direction='PURCHASE'` cuma boleh nunjuk `counterparty_id` yang terdaftar role `supplier` di `counterparty_type_mapping`, `direction='SALE'` cuma boleh role `customer`. Konsepnya niru `counterparty_role_guard()` (`0059`, `memory/architecture/data/counterparty-schema.md`) tapi ditulis sebagai trigger BEFORE INSERT khusus tabel ini (bukan fungsi generik `TG_ARGV` lintas banyak tabel), karena role yang divalidasi ditentukan dari kolom `direction` di baris yang sama, bukan hardcode per tabel:
+
+```sql
+create function orders_counterparty_direction_guard() returns trigger as $$
+declare
+  v_required_role text;
+begin
+  v_required_role := case new.direction when 'PURCHASE' then 'supplier' when 'SALE' then 'customer' end;
+
+  if not exists (
+    select 1 from counterparty_type_mapping
+    where counterparty_id = new.counterparty_id and role = v_required_role
+  ) then
+    raise exception 'Pihak % bukan % terdaftar -- gak bisa dipakai di order direction %',
+      new.counterparty_id, v_required_role, new.direction;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger orders_counterparty_direction_guard_trigger
+  before insert on orders
+  for each row execute function orders_counterparty_direction_guard();
+```
+
+**Immutability + Cancel (`cancelled_at`)** — `orders_block_edit_delete_or_cancel()` gabungan `purchase_orders_block_edit_delete_or_cancel`+`sales_orders_block_edit_delete_or_cancel` (`0024`, aturan freeze-nya sama persis, cuma nama kolom beda) jadi 1 fungsi niru pola selective-lock `accounts_published_lock` (`coa-schema.md`): bandingin tuple SEMUA kolom selain `id`/`cancelled_at`/`status`, tolak kalau ada yang berubah ATAU kalau `cancelled_at` udah keisi (sekali dibatalkan, gak bisa diapa-apain lagi termasuk dibatalkan ulang). Trigger terpisah `orders_sync_status_on_cancel` (BEFORE UPDATE) set `status='CANCELLED'` langsung begitu `cancelled_at` baru keisi — gak lewat `recompute_order_status()` (submodule "Status sync" di bawah), karena trigger immutability di atas bakal nolak update susulan apa pun begitu `cancelled_at` udah kepasang. `order_lines` TETAP full-immutable (`block_edit_delete` generik) — baris gak pernah berubah pas header dibatalkan.
+
+```sql
+create function orders_block_edit_delete_or_cancel() returns trigger as $$
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'Order gak pernah bisa dihapus';
+  end if;
+
+  if old.cancelled_at is not null then
+    raise exception 'Order % udah dibatalkan, gak bisa diubah lagi', old.id;
+  end if;
+
+  if (old.counterparty_id, old.direction, old.order_date, old.expected_date, old.source_ref,
+      old.created_by, old.created_at)
+     is distinct from
+     (new.counterparty_id, new.direction, new.order_date, new.expected_date, new.source_ref,
+      new.created_by, new.created_at) then
+    raise exception 'orders immutable kecuali cancelled_at/status';
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger orders_block_edit_delete
+  before update or delete on orders
+  for each row execute function orders_block_edit_delete_or_cancel();
+
+create trigger orders_sync_status_on_cancel_trigger
+  before update on orders
+  for each row execute function orders_sync_status_on_cancel();
+
+create trigger order_lines_block_edit_delete
+  before update or delete on order_lines
   for each row execute function block_edit_delete();
 ```
 
+### RPC `create_order` / `cancel_order` — gantiin `create_purchase_order`+`create_sales_order`, `cancel_purchase_order`+`cancel_sales_order`
+
+`create_order` terima `p_direction` eksplisit (`raise exception` kalau bukan `'PURCHASE'`/`'SALE'`), insert header + lines sekaligus. Murni insert, **gak ada journal entry** (order cuma komitmen — lihat "Keputusan Desain"). `cancel_order` baca `direction` lebih dulu, baru branch guard-nya: `PURCHASE` cek `goods_receipt_lines` (via `order_lines`) udah ada realisasi apa belum, `SALE` cek `goods_issue_lines` — mirror persis `cancel_purchase_order`/`cancel_sales_order` (`0024`), cuma sekarang 1 fungsi. `security invoker`, murni stempel status — **gak bikin/balikin jurnal apa pun** (order emang gak pernah punya jurnal, beda dari `cancel_ar_invoice`/`cancel_ap_bill` yang bikin reversing entry).
+
+```sql
+create function create_order(
+  p_direction text,
+  p_counterparty_id uuid,
+  p_order_date date,
+  p_expected_date date,
+  p_source_ref text,
+  p_lines jsonb -- array of {"item_id":uuid,"qty_ordered":numeric,"unit_price":numeric}
+) returns uuid language plpgsql security invoker as $$ ... $$;
+
+create function cancel_order(p_order_id uuid) returns void
+  language plpgsql security invoker as $$ ... $$;
+```
+
+Full body: `supabase/migrations/0060_orders_schema.sql`.
+
 ### `goods_receipt_notes` + `goods_receipt_lines`
 
-Bukti penerimaan fisik — **`bill_id` selalu wajib** (dibuat bersamaan, tiap GRN pasti punya tagihan), **`purchase_order_id` opsional sejak `0058`** (nullable — GRN boleh berdiri sendiri tanpa PO, kasus beli dadakan). Kolom `delivery_note_ref` (nomor Surat Jalan dari supplier) murni referensi teks, gak jadi entity/ledger tersendiri — Surat Jalan itu dokumen fisik, bukan kejadian akuntansi yang butuh tracking state sendiri. Lines mencatat `qty_received` & `unit_cost` **riil** — kalau baris nunjuk PO line (`po_line_id` keisi), bisa beda dari `unit_cost_expected` di PO line (selisih ini informasional/reporting, gak diblokir keras, cuma qty yang dijaga trigger anti-over-receipt terhadap `purchase_order_lines.qty_ordered`); kalau `po_line_id` NULL (jalur langsung), gak ada pembanding sama sekali, item/qty/harga input manual sepenuhnya. Immutable (reuse `block_edit_delete`), sama pola `ar_invoices`/`ap_bills`.
+Bukti penerimaan fisik — **`bill_id` selalu wajib** (dibuat bersamaan, tiap GRN pasti punya tagihan), **`order_id` opsional sejak `0058`** (nullable, kolom di-rename dari `purchase_order_id` di migration `0060` — GRN boleh berdiri sendiri tanpa order, kasus beli dadakan). Kolom `delivery_note_ref` (nomor Surat Jalan dari supplier) murni referensi teks, gak jadi entity/ledger tersendiri. Lines mencatat `qty_received` & `unit_cost` **riil** — kalau baris nunjuk order line (`order_line_id`, di-rename dari `po_line_id` di `0060`, keisi), bisa beda dari `unit_price` di order line (selisih ini informasional/reporting, gak diblokir keras, cuma qty yang dijaga trigger anti-over-receipt terhadap `order_lines.qty_ordered`); kalau `order_line_id` NULL (jalur langsung), gak ada pembanding sama sekali, item/qty/harga input manual sepenuhnya. Immutable (reuse `block_edit_delete`), sama pola `ar_invoices`/`ap_bills`.
 
-Insert `goods_receipt_lines` inilah yang **memicu** penambahan Persediaan: update `inventory_balances` (avg_cost dihitung ulang, weighted) — mekanisme ini identik di kedua jalur (dari PO/langsung).
+**Trigger `goods_receipt_notes_order_direction_guard` (baru, migration `0060`)** — `goods_receipt_notes.order_id`, kalau diisi, cuma boleh nunjuk `orders` dengan `direction='PURCHASE'`. Gak bisa dijamin FK biasa (FK cuma jamin ID-nya ada, gak jamin kolom lain di baris yang ditunjuk sesuai), butuh trigger sendiri — pola sama proteksi type-safety Fase 1 (`counterparty_role_guard`). `NULL` tetap lolos (jalur langsung tanpa order).
+
+Insert `goods_receipt_lines` inilah yang **memicu** penambahan Persediaan: update `inventory_balances` (avg_cost dihitung ulang, weighted) — mekanisme ini identik di kedua jalur (dari order/langsung).
 
 ```sql
 create table goods_receipt_notes (
   id uuid primary key default gen_random_uuid(),
-  purchase_order_id uuid references purchase_orders(id), -- nullable sejak 0058
+  order_id uuid references orders(id), -- dulu purchase_order_id -> purchase_orders(id), rename migration 0060
   bill_id uuid not null references ap_bills(id),
   delivery_note_ref text,
   receipt_date date not null,
@@ -183,10 +269,28 @@ create trigger goods_receipt_notes_block_edit_delete
   before update or delete on goods_receipt_notes
   for each row execute function block_edit_delete();
 
+create function goods_receipt_notes_order_direction_guard() returns trigger as $$
+begin
+  if new.order_id is null then
+    return new;
+  end if;
+
+  if not exists (select 1 from orders where id = new.order_id and direction = 'PURCHASE') then
+    raise exception 'Order % bukan Purchase Order -- gak bisa dipakai di goods receipt', new.order_id;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger goods_receipt_notes_order_direction_guard_trigger
+  before insert on goods_receipt_notes
+  for each row execute function goods_receipt_notes_order_direction_guard();
+
 create table goods_receipt_lines (
   id uuid primary key default gen_random_uuid(),
   grn_id uuid not null references goods_receipt_notes(id) on delete cascade,
-  po_line_id uuid references purchase_order_lines(id), -- nullable sejak 0058
+  order_line_id uuid references order_lines(id), -- dulu po_line_id -> purchase_order_lines(id), rename migration 0060
   item_id uuid not null references items(id),
   qty_received numeric(14,3) not null check (qty_received > 0),
   unit_cost numeric(14,2) not null check (unit_cost > 0)
@@ -197,27 +301,29 @@ create trigger goods_receipt_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### Trigger `goods_receipt_lines_no_over_receipt` (ditulis ulang `0058`)
+### Trigger `goods_receipt_lines_no_over_receipt` (ditulis ulang `0058`, kolom disesuaikan `0060`)
 
-Menolak `qty_received` yang bikin total penerimaan per PO line ngelewatin `qty_ordered` — **skip total kalau `po_line_id` NULL** (jalur langsung tanpa PO gak punya apa pun buat dibandingkan), mirror persis pola `goods_issue_lines_no_over_issue` yang udah skip kalau `so_line_id` null:
+Menolak `qty_received` yang bikin total penerimaan per order line ngelewatin `qty_ordered` — **skip total kalau `order_line_id` NULL** (jalur langsung tanpa order gak punya apa pun buat dibandingkan), mirror persis pola `goods_issue_lines_no_over_issue` (submodule "Penjualan & Pengakuan HPP" di bawah) yang udah skip kalau `order_line_id` null. Signature trigger function gak berubah dari `0058` — `0060` cuma `create or replace` isi body-nya (ganti referensi `purchase_order_lines`/`po_line_id` jadi `order_lines`/`order_line_id`), aman tanpa `drop function`:
 
 ```sql
 create function goods_receipt_lines_no_over_receipt() returns trigger as $$
 declare
   v_qty_ordered numeric;
   v_qty_received numeric;
+  v_item_name text;
 begin
-  if new.po_line_id is null then
+  if new.order_line_id is null then
     return new;
   end if;
 
-  select qty_ordered into v_qty_ordered from purchase_order_lines where id = new.po_line_id;
+  select qty_ordered into v_qty_ordered from order_lines where id = new.order_line_id;
   select coalesce(sum(qty_received), 0) into v_qty_received
-    from goods_receipt_lines where po_line_id = new.po_line_id;
+    from goods_receipt_lines where order_line_id = new.order_line_id;
 
   if v_qty_received + new.qty_received > v_qty_ordered then
-    raise exception 'Penerimaan line % melebihi qty_ordered (sisa %, coba terima %)',
-      new.po_line_id, v_qty_ordered - v_qty_received, new.qty_received;
+    select name into v_item_name from items where id = new.item_id;
+    raise exception 'Penerimaan item "%" melebihi qty dipesan (sisa %, coba terima %)',
+      v_item_name, v_qty_ordered - v_qty_received, new.qty_received;
   end if;
 
   return new;
@@ -229,74 +335,135 @@ create trigger goods_receipt_lines_no_over_receipt_trigger
   for each row execute function goods_receipt_lines_no_over_receipt();
 ```
 
-### RPC `create_purchase_order` — bikin PO + lines sekaligus
-
-Murni insert, **gak ada journal entry** (PO cuma komitmen — lihat "Keputusan Desain").
-
-```sql
-create function create_purchase_order(
-  p_supplier_id uuid, p_po_date date, p_expected_date date, p_source_ref text,
-  p_lines jsonb -- array of {"item_id":uuid,"qty_ordered":numeric,"unit_cost_expected":numeric}
-) returns uuid language plpgsql security invoker as $$ ... $$;
-```
-
-Full body: `supabase/migrations/0004_inventory_schema.sql`.
-
-### RPC `cancel_purchase_order` — batalkan PO (migration `0024`)
-
-`security invoker`, murni stempel status — **gak bikin/balikin jurnal apa pun** (PO emang gak pernah punya jurnal, beda dari `cancel_ar_invoice`/`cancel_ap_bill` yang bikin reversing entry). Guard: raise exception kalau ada `goods_receipt_lines` yang udah nunjuk ke `purchase_order_lines` PO ini (artinya udah ada realisasi fisik — PO itu "kepakai", gak boleh dibatalkan lagi, prinsip sama smart-delete master data). Kalau lolos: `update purchase_orders set cancelled_at = now() where id = ... and cancelled_at is null`.
-
-```sql
-create function cancel_purchase_order(p_purchase_order_id uuid) returns void
-  language plpgsql security invoker as $$ ... $$;
-```
-
-Full body: `supabase/migrations/0024_purchase_order_sales_order_cancel.sql`.
-
 ### RPC `create_goods_receipt` — GRN + Bill + update Persediaan sekaligus
 
-Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) resolve `v_supplier_id` (dari PO kalau `p_purchase_order_id` diisi, dari `p_supplier_id` manual kalau enggak — lihat "PO opsional" di bawah), hitung total amount dari lines (baris Persediaan dasar) + gabung sama `p_extra_debit_lines` kalau ada, (2) panggil `create_ap_bill` (reuse) buat bikin bill+jurnal utang, ikut kirim `p_apply_tax`, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` (anti-over-receipt qty vs PO, skip kalau gak ada PO) jalan otomatis pas langkah (3).
+Titik paling padat di modul ini — 1 pemanggilan RPC memicu 4 hal atomik: (1) resolve `v_supplier_id` (dari order kalau `p_order_id` diisi — WAJIB `direction='PURCHASE'`, dicek langsung di body RPC ini juga selain trigger `goods_receipt_notes_order_direction_guard` — dari `p_supplier_id` manual kalau enggak), hitung total amount dari lines + gabung sama `p_extra_debit_lines` kalau ada, (2) panggil `create_ap_bill` (reuse) buat bikin bill+jurnal utang, ikut kirim `p_apply_tax`, (3) insert `goods_receipt_notes`+`goods_receipt_lines`, (4) per line: hitung ulang `avg_cost` (weighted) & update `inventory_balances`. Trigger `goods_receipt_lines_no_over_receipt` jalan otomatis pas langkah (3).
 
-**Kategori Campur & PPN (migration `0012_grn_compound_ppn.sql`, closes `memory/scope-debt/grn-kategori-campur-ppn.md`)** — dulu signature ini cuma terima 1 `p_debit_account_id` tunggal dan gak pernah kirim `p_apply_tax` ke `create_ap_bill`, beda dari `create_ap_bill` yang dipanggil manual lewat `/ap-bills` (sudah kategori campur+PPN sejak `0025_compound_transactional_entries_schema.sql`). Sekarang disamakan: 2 param baru **di akhir** signature (`p_extra_debit_lines` default `null`, `p_apply_tax` default `false`) — additive, `create or replace function` gak butuh drop dulu, caller lama yang belum kirim param baru tetap jalan (default null/false = perilaku identik sebelum `0012`).
+**Kategori Campur & PPN (migration `0012_grn_compound_ppn.sql`)** — 2 param di akhir signature (`p_extra_debit_lines` default `null`, `p_apply_tax` default `false`), additive, gak berubah lagi sejak itu.
 
-**Guard cancel (migration `0024`)** — `cancel_purchase_order` cuma jaga satu arah (PO yang UDAH punya realisasi gak bisa dibatalkan). Arah sebaliknya dijaga di sini: awal body nambah `if exists (... purchase_orders where id = p_purchase_order_id and cancelled_at is not null) then raise exception ...` — PO yang UDAH dibatalkan gak bisa lagi jadi dasar GRN baru. Signature gak berubah (`create or replace` langsung, gak perlu drop).
+**Guard cancel (migration `0024`, sekarang `cancel_order`)** — order yang UDAH dibatalkan gak bisa lagi jadi dasar GRN baru, dicek awal body (`if exists (... orders where id = p_order_id and cancelled_at is not null) then raise exception ...`).
 
-**PO opsional (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03)** — `p_purchase_order_id` sekarang boleh NULL. Param baru **di akhir** signature: `p_supplier_id uuid default null`, WAJIB diisi kalau `p_purchase_order_id` NULL (`raise exception` kalau dua-duanya kosong, `raise exception` juga kalau `p_supplier_id` yang dikasih gak ketemu di tabel `suppliers` — pesan readable, bukan biarin FK constraint di `ap_bills` yang nolak belakangan dengan pesan Postgres mentah). Beda dari signature `0012` (2 param baru di akhir, additive, `create or replace` langsung) — perubahan ini WAJIB `drop function if exists` dulu, karena daftar parameter berubah (bukan cuma nambah default di signature yang identik), kalau enggak Postgres bikin overload ambigu (pelajaran dari bug `0011`/`0012` `create_ap_bill`, sudah pernah kejadian persis di project ini, dan lagi di `0057`). Insert `goods_receipt_lines.po_line_id` pakai `nullif(v_line->>'po_line_id', '')::uuid` (aman kalau UI kirim string kosong buat baris tanpa PO, bukan cuma key yang beneran hilang dari JSON).
+**Param rename `0060`, BUKAN perubahan signature struktural** — `p_purchase_order_id` jadi `p_order_id` (tipe/urutan param lain gak berubah), `p_lines` isinya `order_line_id` gantiin `po_line_id`. `create or replace` langsung, gak perlu `drop function` (beda dari perubahan `0058` yang nambah/ubah daftar parameter beneran, WAJIB `drop function if exists` dulu — pelajaran dari bug `0011`/`0012` `create_ap_bill` yang udah pernah kejadian persis di project ini).
+
+**Catatan validasi supplier jalur langsung (gak berubah dari `0058`)** — body ini masih cek `not exists (select 1 from suppliers where id = p_supplier_id)`, nunjuk ke tabel `suppliers` LEGACY yang belum di-drop (`0059`, lihat `memory/architecture/data/counterparty-schema.md`), BUKAN `counterparties`. Perilaku ini gak disentuh migration `0060` (bukan bagian dari Fase 3 — warisan langsung dari `0058`), dicatat di sini biar gak dikira kelupaan pas baca ulang.
 
 ```sql
 create function create_goods_receipt(
-  p_purchase_order_id uuid, -- nullable sejak 0058
+  p_order_id uuid, -- dulu p_purchase_order_id, rename migration 0060, nullable sejak 0058
   p_receipt_date date, p_delivery_note_ref text,
-  p_lines jsonb, -- array of {"po_line_id":uuid|null,"item_id":uuid,"qty_received":numeric,"unit_cost":numeric}
+  p_lines jsonb, -- array of {"order_line_id":uuid|null,"item_id":uuid,"qty_received":numeric,"unit_cost":numeric}
   p_bill_description text, p_bill_source_ref text,
   p_debit_account_id uuid, p_payable_account_id uuid,
   p_extra_debit_lines jsonb default null, -- array of {"account_id":uuid,"amount":numeric} -- Beban tambahan (ongkir, dst), BUKAN kategori Persediaan
   p_apply_tax boolean default false,
-  p_supplier_id uuid default null -- 0058, wajib diisi kalau p_purchase_order_id NULL
+  p_supplier_id uuid default null -- wajib diisi kalau p_order_id NULL
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) → `supabase/migrations/0012_grn_compound_ppn.sql` (kategori campur & PPN) → `supabase/migrations/0058_purchase_order_not_mandatory.sql` (PO opsional, bentuk final saat ini).
+Full body: `supabase/migrations/0004_inventory_schema.sql` (definisi awal) → `supabase/migrations/0012_grn_compound_ppn.sql` (kategori campur & PPN) → `supabase/migrations/0058_purchase_order_not_mandatory.sql` (PO opsional) → `supabase/migrations/0060_orders_schema.sql` (rename ke `orders`/`order_lines`, bentuk final saat ini).
 
-### RLS & Grant (Purchase Order & Penerimaan Barang)
+### RLS & Grant (Purchase Order & Sales Order + Penerimaan Barang)
 
-Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. `purchase_order_lines`/`goods_receipt_notes`/`goods_receipt_lines` tetap **gak ada policy `update`/`delete`** (immutable total, 2 lapis proteksi — RLS default-deny + trigger `block_edit_delete`). `purchase_orders` beda sejak migration `0024`: dapat 1 policy `update` baru (role gate sama pola `insert` — admin/accountant), tapi kolom mana yang boleh berubah dijaga trigger `purchase_orders_block_edit_delete_or_cancel()`, BUKAN `WITH CHECK` per-kolom (pola sama `accounts_update`/`accounts_published_lock` di `coa-schema.md`).
+Pola identik AR/AP: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. `order_lines`/`goods_receipt_notes`/`goods_receipt_lines` tetap **gak ada policy `update`/`delete`** (immutable total, 2 lapis proteksi — RLS default-deny + trigger `block_edit_delete`). `orders` dapat 1 policy `update` (role gate sama pola `insert`), tapi kolom mana yang boleh berubah dijaga trigger `orders_block_edit_delete_or_cancel()`, BUKAN `WITH CHECK` per-kolom (pola sama `accounts_update`/`accounts_published_lock` di `coa-schema.md`).
 
 ```sql
-grant select, insert on purchase_orders to authenticated;
-grant update on purchase_orders to authenticated; -- migration 0024, cuma buat cancelled_at (dijaga trigger)
-grant select, insert on purchase_order_lines to authenticated;
+grant select, insert, update on orders to authenticated; -- update cuma buat cancelled_at/status (dijaga trigger)
+grant select, insert on order_lines to authenticated;
 grant select, insert on goods_receipt_notes to authenticated;
 grant select, insert on goods_receipt_lines to authenticated;
 ```
 
-### `purchase_orders_with_status` view — migration `0034_purchase_order_status_view.sql`
+### `purchase_orders_with_status` / `sales_orders_with_status` — TETAP 2 view, terfilter `direction`, di atas 1 tabel `orders` (migration `0060`, deviasi sengaja dari rencana awal)
 
-Nutup scope-debt filter status di list `/purchase-orders`. Beda dari AP/AR (status dari uang) — status PO dari QTY per baris, mirror `poStatus()` (`apps/erp/src/lib/purchase-orders/schema.ts`) persis: `cancelled_at` menang duluan (state terminal), baru `bool_and()` per baris (`goods_receipt_lines.qty_received` vs `purchase_order_lines.qty_ordered`) — dipilih ketimbang bandingin `SUM` total biar semantiknya sama persis `Array.prototype.every()` di client, termasuk vacuous-truth kalau PO gak punya baris (gak pernah kejadian karena schema wajib minimal 1 baris, tapi tetap dijaga biar match 1:1).
+Rencana awal `memory/scope-debt/order-generalization.md` Fase 3 nyebut 1 view gabungan `orders_with_status`. Migration `0060` sengaja PAKAI 2 view terfilter `direction` di atas 1 tabel `orders`, bukan 1 view gabungan — biar `queries.ts` existing (`apps/erp/src/lib/purchase-orders/queries.ts` + `.../sales-orders/queries.ts`) tetap query `FROM` nama view yang sama, cuma nama kolom yang berubah, DAN biar list page `/purchase-orders`/`/sales-orders` tetap 2 halaman terpisah — keputusan UI yang dipertahankan sengaja, bukan keharusan DB (lihat `memory/domain/inventory.md` submodule ini kenapa).
 
-Detail lengkap: `supabase/migrations/0004_inventory_schema.sql`.
+```sql
+create view purchase_orders_with_status
+  with (security_invoker = true) as
+select id, counterparty_id, direction, order_date, expected_date, source_ref, created_at,
+       cancelled_at, status
+from orders
+where direction = 'PURCHASE';
 
-**Denormalisasi ke kolom asli — migration `0053_denormalize_transactional_status.sql`** (mekanisme lengkap & rationale di `ar-schema.md` submodule AR Invoice, ini mirror-nya): `status` sekarang KOLOM ASLI di `purchase_orders`, dijaga `recompute_purchase_order_status()` (`security definer`, hitung ulang `bool_and()` yang sama persis) lewat trigger `AFTER INSERT` di `purchase_order_lines`/`goods_receipt_lines`. Pembatalan (`cancel_purchase_order`) di-set langsung lewat trigger terpisah `purchase_orders_sync_status_on_cancel` (BEFORE UPDATE, gak lewat fungsi recompute) karena `purchase_orders_block_edit_delete_or_cancel` (`0024`) nolak SEMUA update lanjutan begitu `cancelled_at` kepasang — `recompute_purchase_order_status()` sendiri sengaja `return` lebih awal kalau PO udah `cancelled_at is not null`, biar gak nabrak trigger itu (misal pas backfill data lama). View `purchase_orders_with_status` sekarang `select` polos.
+create view sales_orders_with_status
+  with (security_invoker = true) as
+select id, counterparty_id, direction, order_date, expected_date, source_ref, created_at,
+       cancelled_at, status
+from orders
+where direction = 'SALE';
+
+grant select on purchase_orders_with_status to authenticated;
+grant select on sales_orders_with_status to authenticated;
+```
+
+View status LAMA (`0034_purchase_order_status_view.sql`/`0035_sales_order_status_view.sql`, sempat `select` polos di atas kolom `status` yang didenormalisasi `0053`) di-`drop` eksplisit di migration `0060` sebelum tabel lama ikut di-`drop`, digantikan versi di atas — nama & bentuk kolom identik, cuma sumbernya sekarang `orders` terfilter, bukan `purchase_orders`/`sales_orders` polos.
+
+### Status sync — `recompute_order_status` gabungan `recompute_purchase_order_status`+`recompute_sales_order_status`
+
+1 fungsi, branch di dalam berdasar `direction` (karena "sumber realisasi" beda — `goods_receipt_lines` vs `goods_issue_lines` — walau formula `CASE`-nya identik): `cancelled_at` menang duluan (langsung `return`, karena `orders_block_edit_delete_or_cancel` nolak SEMUA update lanjutan begitu `cancelled_at` kepasang, termasuk dari fungsi ini kalau gak di-skip), baru `bool_and()` per baris `order_lines` dibandingkan realisasinya. `PURCHASE` → `OPEN`/`PARTIALLY_RECEIVED`/`FULLY_RECEIVED`; `SALE` → `OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`. Dipicu trigger `AFTER INSERT` di 3 tabel: `order_lines` (`order_lines_sync_order_status_trigger`), `goods_receipt_lines` (`goods_receipt_lines_sync_order_status_trigger`, skip kalau `order_line_id` null), `goods_issue_lines` (`goods_issue_lines_sync_order_status_trigger`, skip kalau `order_line_id` null) — trigger lama `goods_receipt_lines_sync_po_status_trigger`/`goods_issue_lines_sync_so_status_trigger` (`0053`) di-drop & diganti (nempel di tabel yang TETAP ADA, bodinya masih nunjuk tabel lama yang bakal hilang).
+
+```sql
+create function recompute_order_status(p_order_id uuid) returns void as $$
+declare
+  v_direction text;
+  v_cancelled_at timestamptz;
+  v_all_done boolean;
+  v_none_done boolean;
+  v_status text;
+begin
+  select direction, cancelled_at into v_direction, v_cancelled_at from orders where id = p_order_id;
+  if not found then
+    return;
+  end if;
+
+  if v_cancelled_at is not null then
+    return;
+  end if;
+
+  if v_direction = 'PURCHASE' then
+    select
+      coalesce(bool_and(coalesce(gr.received, 0) >= ol.qty_ordered - 0.0005), true),
+      coalesce(bool_and(coalesce(gr.received, 0) <= 0.0005), true)
+      into v_all_done, v_none_done
+    from order_lines ol
+    left join lateral (
+      select sum(grl.qty_received) as received
+      from goods_receipt_lines grl
+      where grl.order_line_id = ol.id
+    ) gr on true
+    where ol.order_id = p_order_id;
+
+    v_status := case
+      when v_all_done then 'FULLY_RECEIVED'
+      when v_none_done then 'OPEN'
+      else 'PARTIALLY_RECEIVED'
+    end;
+  else
+    select
+      coalesce(bool_and(coalesce(gi.issued, 0) >= ol.qty_ordered - 0.0005), true),
+      coalesce(bool_and(coalesce(gi.issued, 0) <= 0.0005), true)
+      into v_all_done, v_none_done
+    from order_lines ol
+    left join lateral (
+      select sum(gil.qty_issued) as issued
+      from goods_issue_lines gil
+      where gil.order_line_id = ol.id
+    ) gi on true
+    where ol.order_id = p_order_id;
+
+    v_status := case
+      when v_all_done then 'FULLY_FULFILLED'
+      when v_none_done then 'OPEN'
+      else 'PARTIALLY_FULFILLED'
+    end;
+  end if;
+
+  update orders set status = v_status where id = p_order_id;
+end;
+$$ language plpgsql security definer set search_path = public;
+```
+
+Full body (backfill data lama dari `purchase_orders`/`sales_orders`, DDL, RPC lengkap): `supabase/migrations/0060_orders_schema.sql`.
 
 ## Produksi (Bill of Materials & Production Order)
 
@@ -418,7 +585,7 @@ create table goods_issue_lines (
   item_id uuid not null references items(id),
   qty_issued numeric(14,3) not null check (qty_issued > 0),
   total_cost numeric(14,2) not null check (total_cost > 0),
-  so_line_id uuid references sales_order_lines(id) -- nullable, migration 0024, lihat submodule "Sales Order & Pemenuhan Bertahap"
+  order_line_id uuid references order_lines(id) -- nullable, migration 0024 (so_line_id), rename dari `sales_order_lines(id)` migration 0060, lihat submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang"
 );
 
 create trigger goods_issue_lines_block_edit_delete
@@ -426,26 +593,87 @@ create trigger goods_issue_lines_block_edit_delete
   for each row execute function block_edit_delete();
 ```
 
-### RPC `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus (terakhir di-extend `0025`)
+### Trigger `goods_issue_lines_order_direction_guard` (baru, migration `0060`)
 
-Panggil `create_ar_invoice` (reuse) dulu buat jurnal Debit Piutang/Kredit Pendapatan, lalu konsumsi tiap barang jadi yang terjual (Weighted Average), total biayanya jadi jurnal **kedua** (Debit HPP, Kredit Persediaan Barang Jadi — titik HPP diakui, `inventory.md` submodule "Penjualan & Pengakuan HPP"). Trik `id`-digenerate-duluan yang sama kayak `create_production_order`.
+Mirror `goods_receipt_notes_order_direction_guard` (submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang" di atas), arah kebalik: `goods_issue_lines.order_line_id`, kalau diisi, cuma boleh nunjuk baris `order_lines` dari order dengan `direction='SALE'`. `NULL` tetap lolos (jalur jual langsung tanpa Sales Order).
 
-**Signature TETAP SAMA sejak `0024`** (nambah key opsional `so_line_id` di `p_lines`, lihat submodule "Sales Order" di bawah) tapi **berubah lagi di `0025`** — beda kelasnya: bukan nambah key opsional dalam jsonb, tapi ganti parameter level fungsi (`p_amount`+`p_revenue_account_id` jadi `p_credit_lines jsonb`+`p_apply_tax`) karena `create_ar_invoice` yang dipanggilnya berubah signature (`memory/architecture/data/ar-schema.md` submodule "Compounding & PPN"). Ini breaking change yang sudah diantisipasi sejak submodule "Sales Order" ditulis (lihat catatan di situ) — `drop function` dulu baru `create function`, bukan `create or replace` biasa.
+```sql
+create function goods_issue_lines_order_direction_guard() returns trigger as $$
+begin
+  if new.order_line_id is null then
+    return new;
+  end if;
+
+  if not exists (
+    select 1 from order_lines ol join orders o on o.id = ol.order_id
+    where ol.id = new.order_line_id and o.direction = 'SALE'
+  ) then
+    raise exception 'Baris order % bukan dari Sales Order -- gak bisa dipakai di goods issue', new.order_line_id;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger goods_issue_lines_order_direction_guard_trigger
+  before insert on goods_issue_lines
+  for each row execute function goods_issue_lines_order_direction_guard();
+```
+
+### Trigger `goods_issue_lines_no_over_issue` (kolom disesuaikan `0060`)
+
+Mirror persis `goods_receipt_lines_no_over_receipt`, cuma **skip kalau `order_line_id` null** (jalur jual langsung gak kena guard ini sama sekali). Signature trigger function gak berubah dari sebelumnya — `0060` cuma `create or replace` isi body-nya (ganti referensi `sales_order_lines`/`so_line_id` jadi `order_lines`/`order_line_id`):
+
+```sql
+create function goods_issue_lines_no_over_issue() returns trigger as $$
+declare
+  v_qty_ordered numeric;
+  v_qty_issued numeric;
+  v_item_name text;
+begin
+  if new.order_line_id is null then
+    return new;
+  end if;
+
+  select qty_ordered into v_qty_ordered from order_lines where id = new.order_line_id;
+  select coalesce(sum(qty_issued), 0) into v_qty_issued
+    from goods_issue_lines where order_line_id = new.order_line_id;
+
+  if v_qty_issued + new.qty_issued > v_qty_ordered then
+    select name into v_item_name from items where id = new.item_id;
+    raise exception 'Pengiriman item "%" melebihi qty dipesan di Sales Order (sisa %, coba kirim %)',
+      v_item_name, v_qty_ordered - v_qty_issued, new.qty_issued;
+  end if;
+
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger goods_issue_lines_no_over_issue_trigger
+  before insert on goods_issue_lines
+  for each row execute function goods_issue_lines_no_over_issue();
+```
+
+### RPC `create_goods_issue` — invoice + konsumsi barang jadi + jurnal HPP sekaligus
+
+Panggil `create_ar_invoice` (reuse) dulu buat jurnal Debit Piutang/Kredit Pendapatan, lalu konsumsi tiap barang jadi yang terjual (Weighted Average), total biayanya jadi jurnal **kedua** (Debit HPP, Kredit Persediaan Barang Jadi — titik HPP diakui, `inventory.md` submodule "Penjualan & Pengakuan HPP"). Trik `id`-digenerate-duluan yang sama kayak `create_production_order`. Awal body sekarang juga cek langsung (selain trigger `goods_issue_lines_order_direction_guard`) — kalau ada baris `p_lines` yang nunjuk `order_line_id` dari order yang udah `cancelled_at`, `raise exception` sebelum lanjut.
+
+**Riwayat signature**: `p_lines` nambah key opsional `so_line_id` per baris (`0024`, gak ubah signature level fungsi) → parameter level fungsi berubah jadi `p_credit_lines`+`p_apply_tax` gantiin `p_amount`+`p_revenue_account_id` (`0025`, alasannya `create_ar_invoice` yang dipanggilnya berubah signature — `memory/architecture/data/ar-schema.md` submodule "Compounding & PPN", `drop function` dulu karena breaking) → key `so_line_id` di `p_lines` di-rename jadi `order_line_id` (`0060`, cuma rename isi jsonb, bukan parameter level fungsi, `create or replace` aman).
 
 ```sql
 create function create_goods_issue(
   p_customer_id uuid, p_invoice_date date, p_description text, p_source_ref text,
   p_credit_lines jsonb, -- array of {"account_id":uuid,"amount":numeric} -- diteruskan ke create_ar_invoice
   p_receivable_account_id uuid,
-  p_lines jsonb, -- array of {"item_id":uuid,"qty_issued":numeric,"so_line_id":uuid|null}
+  p_lines jsonb, -- array of {"item_id":uuid,"qty_issued":numeric,"order_line_id":uuid|null}
   p_hpp_account_id uuid, p_finished_good_account_id uuid,
   p_apply_tax boolean default false
 ) returns uuid language plpgsql security invoker as $$ ... $$;
 ```
 
-`p_lines` (item + `so_line_id`) dan seluruh logika konsumsi stok/jurnal HPP **TIDAK berubah** — cuma bagian yang manggil `create_ar_invoice` yang disesuaikan (`p_credit_lines`+`p_apply_tax` diteruskan apa adanya).
+`p_lines` (item + `order_line_id`) dan seluruh logika konsumsi stok/jurnal HPP **TIDAK berubah** oleh rename `0060` — cuma nama key jsonb yang berubah.
 
-Full body: `supabase/migrations/0004_inventory_schema.sql` — definisi terkini, sudah menyatukan riwayat evolusinya (base → nambah `so_line_id` → signature `p_credit_lines`; migration history 0001-0025 disquash jadi 9 file per modul 2026-08-10, riwayat evolusi lengkap tetap ada di git log).
+Full body: `supabase/migrations/0004_inventory_schema.sql` (base) → `0024_sales_orders_schema.sql` (nambah `so_line_id`) → `0025_compound_transactional_entries_schema.sql` (`p_credit_lines`) → `0060_orders_schema.sql` (rename `so_line_id` → `order_line_id`, bentuk final saat ini).
 
 ### RLS & Grant (Penjualan & Pengakuan HPP)
 
@@ -462,122 +690,7 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 `inventory_lots.source_type` sempat dapat value baru `'SALES_RETURN'` (check constraint) buat fitur retur AR, tapi tabel `inventory_lots` sudah dihapus total di migration `0038`; retur sekarang langsung nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur). **Ditutup migration `0015`**: kolom `inventory_return_lines.condition` (`RESALABLE`/`DAMAGED`) balikin segregasinya secara logis — baris `DAMAGED` gak pernah nambah `inventory_balances`, cost-nya diakui `Beban Kerugian Barang Rusak` bukan ditambahkan balik jadi stok. Tabel `inventory_returns`+`inventory_return_lines` (sisi stok retur) juga hidup di migration `0021`, bukan di sini. Sempat ada juga `items.return_window_days` (batas hari retur per item, nullable) — dicabut total lewat migration `0039_ar_remove_return_window.sql`. Detail lengkap: `memory/architecture/data/ar-schema.md` bagian "AR Credit Note".
 
-## Sales Order & Pemenuhan Bertahap — migration `0024_sales_orders_schema.sql`
-
-### Keputusan Desain
-
-- **Cerminan `purchase_orders` di sisi jual, tapi OPSIONAL (bukan wajib).** Beda dari PO yang `not null` di `goods_receipt_notes.purchase_order_id`, `goods_issue_lines.so_line_id` nullable — jalur `create_goods_issue` tanpa SO (jual langsung) tetap jalan 0 perubahan. Alasan asimetri: pembelian di bisnis ini selalu keputusan terencana (pemilik usaha yang inisiatif), wajar dipaksa PO tiap kali; penjualan punya 2 pola sekaligus — spontan (kios walk-in) dan terencana (pesanan customer qty besar) — maksa SO buat SEMUA penjualan nambah 1 tabel+1 RPC call ekstra buat transaksi spontan yang gak butuh komitmen apa pun.
-- **Gak ada journal entry di `create_sales_order`** — sama alasan PO: baru komitmen, belum ada barang berpindah tangan. Piutang & Pendapatan cuma boleh diakui pas barang beneran dikirim (revenue recognition), bukan pas SO dibuat — kalau dipaksa diakui di depan, invoice/piutang jadi overstated buat bagian yang belum tentu jadi dikirim.
-- **`create_goods_issue` di-extend TANPA ubah signature (waktu itu, `0024`)** — `p_lines` (jsonb array) cuma nambah key opsional `so_line_id` per objek baris, bukan parameter baru di level fungsi. Ini `create or replace function` yang aman buat project live-linked (gak ada breaking change ke caller lama), beda dari kalau nambah parameter baru di level tanda tangan fungsi (butuh default value atau bikin overload). **Update `0025`**: signature-nya JUSTRU berubah belakangan, tapi karena alasan lain sama sekali (compounding `p_credit_lines`, lihat submodule "RPC `create_goods_issue`" di atas) — bukan gara-gara SO. Mekanisme `so_line_id` di `p_lines` sendiri gak kesentuh sama sekali oleh perubahan itu.
-- **Fulfillment per pengiriman = per invoice, gak nunggu SO lunas.** Tiap kali `create_goods_issue` dipanggil dengan `so_line_id` keisi, itu jadi 1 invoice tersendiri senilai qty yang dikirim SAAT ITU — bisa dipanggil berkali-kali sampai `SUM(qty_issued)` = `qty_ordered`. Ini konsisten sama prinsip pengakuan pendapatan (diakui sebesar kewajiban yang udah terpenuhi), dan konsisten sama pola PO/GRN yang juga bisa dicicil (`0/N` penerimaan per PO line).
-
-### `sales_orders` + `sales_order_lines`
-
-Komitmen pesan dari customer — **belum ada journal entry**, mirror persis `purchase_orders`/`purchase_order_lines` (`customer_id` gantiin `supplier_id`, `unit_price` gantiin `unit_cost_expected`, `cancelled_at` juga mirror). ~~Status (`OPEN`/`PARTIALLY_FULFILLED`/`FULLY_FULFILLED`/`CANCELLED`) derived~~ — **UPDATE migration `0053`** (lihat submodule view di bawah): sekarang kolom asli `sales_orders.status` — `cancelled_at` menang duluan, baru dihitung dari `SUM(goods_issue_lines.qty_issued)` per `so_line_id` vs `qty_ordered`.
-
-**Cancel (`cancelled_at`, migration `0024_purchase_order_sales_order_cancel.sql`)** — mirror persis mekanisme PO (lihat submodule "Purchase Order & Penerimaan Barang" di atas): trigger bespoke `sales_orders_block_edit_delete_or_cancel()` gantiin `block_edit_delete` generik, `cancel_sales_order` RPC guard terhadap `goods_issue_lines` (bukan `goods_receipt_lines`), `create_goods_issue` dapat guard balik (tolak kalau `so_line_id` nunjuk SO yang udah `cancelled_at`). `sales_order_lines` TETAP full-immutable.
-
-**`sales_orders_with_status` view — migration `0035_sales_order_status_view.sql`**: nutup scope-debt filter status di list `/sales-orders`. Mirror persis `purchase_orders_with_status` (0034) — `bool_and()` per baris (`goods_issue_lines.qty_issued` vs `sales_order_lines.qty_ordered`), `cancelled_at` menang duluan.
-
-**Denormalisasi ke kolom asli — migration `0053_denormalize_transactional_status.sql`** (mirror persis mekanisme PO di atas): `status` sekarang KOLOM ASLI, dijaga `recompute_sales_order_status()` lewat trigger `AFTER INSERT` di `sales_order_lines`/`goods_issue_lines` + trigger `sales_orders_sync_status_on_cancel` (BEFORE UPDATE) buat kasus pembatalan — alasan & guard `cancelled_at is not null then return` sama persis PO. View sekarang `select` polos.
-
-```sql
-create table sales_orders (
-  id uuid primary key default gen_random_uuid(),
-  customer_id uuid not null references counterparties(id), -- dulu references customers(id), repoint migration 0059
-  so_date date not null,
-  expected_date date,
-  source_ref text not null,
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now(),
-  cancelled_at timestamptz -- migration 0024, nullable, state terminal
-);
-
--- migration 0024 — mirror purchase_orders_block_edit_delete_or_cancel()
-create trigger sales_orders_block_edit_delete
-  before update or delete on sales_orders
-  for each row execute function sales_orders_block_edit_delete_or_cancel();
-
-create table sales_order_lines (
-  id uuid primary key default gen_random_uuid(),
-  sales_order_id uuid not null references sales_orders(id) on delete cascade,
-  item_id uuid not null references items(id),
-  qty_ordered numeric(14,3) not null check (qty_ordered > 0),
-  unit_price numeric(14,2) not null check (unit_price > 0)
-);
-
-create trigger sales_order_lines_block_edit_delete
-  before update or delete on sales_order_lines
-  for each row execute function block_edit_delete();
-```
-
-### Trigger `goods_issue_lines_no_over_issue`
-
-Mirror persis `goods_receipt_lines_no_over_receipt`, cuma **skip kalau `so_line_id` null** (jalur jual langsung gak kena guard ini sama sekali):
-
-```sql
-create function goods_issue_lines_no_over_issue() returns trigger as $$
-declare
-  v_qty_ordered numeric;
-  v_qty_issued numeric;
-begin
-  if new.so_line_id is null then
-    return new;
-  end if;
-
-  select qty_ordered into v_qty_ordered from sales_order_lines where id = new.so_line_id;
-  select coalesce(sum(qty_issued), 0) into v_qty_issued
-    from goods_issue_lines where so_line_id = new.so_line_id;
-
-  if v_qty_issued + new.qty_issued > v_qty_ordered then
-    raise exception 'Pengiriman line % melebihi qty_ordered (sisa %, coba kirim %)',
-      new.so_line_id, v_qty_ordered - v_qty_issued, new.qty_issued;
-  end if;
-
-  return new;
-end;
-$$ language plpgsql;
-
-create trigger goods_issue_lines_no_over_issue_trigger
-  before insert on goods_issue_lines
-  for each row execute function goods_issue_lines_no_over_issue();
-```
-
-### RPC `create_sales_order` — bikin SO + lines sekaligus
-
-Murni insert, **gak ada journal entry** (SO cuma komitmen — lihat "Keputusan Desain").
-
-```sql
-create function create_sales_order(
-  p_customer_id uuid, p_so_date date, p_expected_date date, p_source_ref text,
-  p_lines jsonb -- array of {"item_id":uuid,"qty_ordered":numeric,"unit_price":numeric}
-) returns uuid language plpgsql security invoker as $$ ... $$;
-```
-
-Full body: `supabase/migrations/0004_inventory_schema.sql`.
-
-### RPC `cancel_sales_order` — batalkan SO (migration `0024`)
-
-Mirror persis `cancel_purchase_order`: `security invoker`, gak bikin jurnal, guard terhadap `goods_issue_lines` (via `sales_order_lines`) sebelum stempel `cancelled_at = now()`.
-
-```sql
-create function cancel_sales_order(p_sales_order_id uuid) returns void
-  language plpgsql security invoker as $$ ... $$;
-```
-
-Full body: `supabase/migrations/0024_purchase_order_sales_order_cancel.sql`.
-
-### RLS & Grant (Sales Order & Pemenuhan Bertahap)
-
-Pola identik `purchase_orders`/`purchase_order_lines`: `select` terbuka semua `authenticated`, `insert` cuma `admin`/`accountant`. `sales_order_lines` tetap immutable — **gak ada policy `update`/`delete`**. `sales_orders` dapat policy `update` baru sejak migration `0024` (role gate sama, kolom dijaga trigger — mirror `purchase_orders`).
-
-```sql
-grant select, insert on sales_orders to authenticated;
-grant update on sales_orders to authenticated; -- migration 0024, cuma buat cancelled_at (dijaga trigger)
-grant select, insert on sales_order_lines to authenticated;
-```
-
-Detail lengkap: `supabase/migrations/0004_inventory_schema.sql` + `supabase/migrations/0024_purchase_order_sales_order_cancel.sql`.
+**Sales Order** — tahap komitmen sebelum Goods Issue ini, sudah digabung jadi `orders`/`order_lines` (`direction='SALE'`) sejak migration `0060`. Detail lengkap (DDL, RPC `create_order`/`cancel_order`, view `sales_orders_with_status`): submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang (3-Way Matching)" di atas.
 
 ## Kategori & Brand Barang — migration `0023_item_categories_brands.sql`
 

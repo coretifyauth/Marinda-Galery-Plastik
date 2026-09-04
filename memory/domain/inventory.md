@@ -23,26 +23,38 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 - Konsumsi/pengurangan qty gak boleh melebihi yang tersedia (anti over-consumption, pola sama anti-over-allocation AR/AP) — dijaga fungsi generik terpusat `consume_weighted_average`, dipakai dari 2 arah (input produksi & sales issue), satu-satunya tempat logika konsumsi stok ditulis biar gak duplikat.
 - Semua pergerakan stok tertelusur ke dokumen sumber (PO+Bill buat masuk, Invoice buat keluar, BOM buat produksi).
 
-## Purchase Order & Penerimaan Barang (3-Way Matching)
+## Purchase Order & Sales Order (`orders`) + Penerimaan Barang (3-Way Matching)
 
-**PO gak lagi wajib (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03, keputusan owner)** — mirror Sales Order yang udah opsional dari awal (Fase 2 `memory/scope-debt/order-generalization.md`). Goods Receipt sekarang bisa dibuat 2 jalur: **dari PO** (alur asli, prefill dari `purchase_order_lines`) atau **langsung tanpa PO** (beli dadakan, misal beli langsung di toko) — jalur langsung wajib pilih supplier manual (gak ada PO buat nurunin siapa yang ditagih).
+**Purchase Order dan Sales Order sekarang 1 konsep yang sama: `orders`, dibedakan `direction` (migration `0060_orders_schema.sql`, 2026-09-04, Fase 3 `memory/scope-debt/order-generalization.md`)** — dulu 2 tabel/2 RPC terpisah, digabung begitu 2 alasan pemisahnya sama-sama tercabut: Fase 1 nyatuin `customers`/`suppliers` jadi `counterparties` (1 tabel rujukan buat kedua arah), Fase 2 bikin PO gak lagi wajib (jadi simetris sama SO yang emang dari awal opsional). Ini CUMA generalisasi layer komitmen — layer realisasi fisik di bawahnya (GRN buat beli, Goods Issue buat jual) TETAP 2 konsep terpisah, lihat "Kenapa fulfillment gak ikut digabung" di bawah.
+
+**PO gak lagi wajib (migration `0058_purchase_order_not_mandatory.sql`, 2026-09-03, keputusan owner)** — Goods Receipt sekarang bisa dibuat 2 jalur: **dari order (arah PURCHASE)** (alur asli, prefill dari baris order) atau **langsung tanpa order** (beli dadakan, misal beli langsung di toko) — jalur langsung wajib pilih supplier manual (gak ada order buat nurunin siapa yang ditagih). Sales Order sudah opsional dari awal, sama alasan simetrisnya.
 
 **Entitas & Jurnal**
-- **Purchase Order (PO)** — komitmen pesan ke supplier (item, qty, harga disepakati), **opsional**. **Gak bikin jurnal** — belum kejadian akuntansi.
-- **Goods Receipt Note (GRN)** — bukti terima fisik (qty & harga riil, bisa beda dari PO). Kalau dari PO: dicocokkan ke `purchase_order_lines` (qty diterima gak boleh melebihi qty dipesan). Kalau langsung: gak ada PO line yang dicocokkan, item/qty/harga input manual sepenuhnya. GRN inilah yang nambah Persediaan (update avg cost, formula weighted-average-receive) — di kedua jalur, mekanismenya identik.
+- **Order arah PURCHASE (dulu disebut "Purchase Order/PO")** — komitmen pesan ke supplier (item, qty, harga disepakati), **opsional**. **Order arah SALE (dulu disebut "Sales Order/SO")** — komitmen pesan dari customer, juga opsional dari awal. Kedua arah **gak bikin jurnal** — belum kejadian akuntansi, belum ada barang pindah tangan (buat arah SALE: prinsip revenue recognition, piutang & pendapatan baru diakui pas barang beneran dikirim, bukan pas order dibuat).
+- **Goods Receipt Note (GRN)** (fulfillment arah PURCHASE) — bukti terima fisik (qty & harga riil, bisa beda dari order). Kalau dari order: dicocokkan ke baris order-nya (qty diterima gak boleh melebihi qty dipesan). Kalau langsung: gak ada baris order yang dicocokkan, item/qty/harga input manual sepenuhnya. GRN inilah yang nambah Persediaan (update avg cost, formula weighted-average-receive) — di kedua jalur, mekanismenya identik.
 - **Bill (AP)** — tagihan dari supplier. GRN & Bill dibuat **bersamaan** (asumsi proses pembelian informal, nota = bukti kirim + tagihan sekaligus) — menghindari kompleksitas akun perantara "Barang Diterima Belum Ditagih" (GR/IR clearing) yang dibutuhkan kalau GRN dan Bill terjadi di waktu berbeda. Belum ada tekanan nyata buat item ini — dibangun kalau nanti proses pembeliannya butuh jeda waktu.
-- Jurnal (via `create_ap_bill`, reuse, 0 perubahan): Debit Persediaan, Kredit Utang Usaha — sama persis di kedua jalur (dari PO/langsung), karena `create_goods_receipt` selalu resolve `v_supplier_id` dulu (dari PO kalau ada, dari parameter manual kalau enggak) sebelum manggil `create_ap_bill`.
+- Jurnal GRN (via `create_ap_bill`, reuse): Debit Persediaan, Kredit Utang Usaha — sama persis di kedua jalur (dari order/langsung), karena `create_goods_receipt` selalu resolve supplier dulu (dari order kalau ada, dari parameter manual kalau enggak) sebelum manggil `create_ap_bill`.
+- **Goods Issue** (fulfillment arah SALE) — pemenuhan order jual **bisa dicicil**, tiap cicilan = 1 Goods Issue + 1 invoice terpisah, bukan nunggu order lunas baru invoice terbit sekali. Piutang & Pendapatan diakui persis di titik barang dikirim, gak lebih cepat (itu yang mau dihindari — invoice full di depan sebelum barang jadi/dikirim = overstate piutang+pendapatan untuk bagian yang belum kepenuhi). Detail lengkap jurnalnya: submodule "Penjualan & Pengakuan HPP" di bawah.
+
+**Kenapa fulfillment (GRN vs Goods Issue) gak ikut digabung** — walau `orders` sekarang 1 tabel buat kedua arah, `create_goods_receipt` dan `create_goods_issue` TETAP 2 RPC beda total, karena efek jurnalnya beneran beda: sisi beli cuma nambah Persediaan + Utang Usaha (1 jurnal, via `create_ap_bill`), sisi jual bikin 2 jurnal sekaligus (Piutang/Pendapatan DAN HPP/Persediaan, via `create_ar_invoice`). Ini kenapa Fase 3 BUKAN generalisasi penuh seluruh alur beli/jual — cuma layer komitmen (order) yang digabung jadi 1 konsep, layer realisasi fisik tetap 2 konsep terpisah karena konsekuensi akuntansinya beneran berbeda, bukan cuma beda nama.
 
 **Constraints**
-- Goods Receipt yang dari PO gak boleh melebihi qty yang dipesan di PO line-nya (anti over-receipt) — trigger `goods_receipt_lines_no_over_receipt` skip pengecekan sama sekali kalau baris GRN gak nunjuk PO line (`po_line_id` null), mirror pola `goods_issue_lines_no_over_issue` yang udah skip kalau `so_line_id` null.
+- Goods Receipt yang dari order gak boleh melebihi qty yang dipesan di baris order-nya (anti over-receipt), Goods Issue yang nunjuk balik ke baris order jual gak boleh melebihi qty yang dipesan di baris itu (anti over-issue) — dua-duanya skip pengecekan total kalau baris fulfillment gak nunjuk baris order sama sekali (jalur langsung).
 - Pembelian bahan baku selalu ke Persediaan (aset), gak pernah langsung ke Beban.
-- Jalur langsung (tanpa PO) WAJIB isi supplier manual — RPC nolak (`raise exception`) kalau `purchase_order_id` dan `supplier_id` dua-duanya kosong, dan nolak juga kalau `supplier_id` yang dikasih gak ketemu terdaftar berperan supplier di `counterparties` (dulu tabel `suppliers` terpisah, digabung migration `0059` — lihat `memory/architecture/data/counterparty-schema.md`).
-- PO (kalau dipakai) bisa dibatalkan (`cancel_purchase_order`, migration `0024`) SELAMA belum ada GRN sama sekali — beda dari `cancel_ar_invoice`/`cancel_ap_bill` yang bikin reversing journal entry, PO emang gak pernah punya jurnal buat dibalik, jadi cancel di sini murni stempel status final. PO yang udah punya GRN gak bisa dibatalkan lagi (udah "kepakai" sebagai dasar transaksi lain).
+- Jalur langsung (tanpa order arah PURCHASE) WAJIB isi supplier manual — RPC nolak (`raise exception`) kalau order dan supplier manual dua-duanya kosong, dan nolak juga kalau supplier yang dikasih gak ketemu.
+- Baris fulfillment yang nunjuk balik ke order cuma boleh nunjuk order dengan arah yang sesuai — GRN cuma boleh nunjuk order arah PURCHASE, Goods Issue cuma boleh nunjuk order arah SALE. Dijaga otomatis di level database (bukan cuma disiplin form), gak bisa lolos walau ada yang insert langsung.
+- Order (kalau dipakai) bisa **dibatalkan** SELAMA belum ada realisasi fisik apa pun terhadapnya — belum ada GRN buat order arah PURCHASE, belum ada Goods Issue buat order arah SALE. Beda dari `cancel_ar_invoice`/`cancel_ap_bill` yang bikin reversing journal entry, order emang gak pernah punya jurnal buat dibalik, jadi cancel di sini murni stempel status final. Order yang udah punya realisasi gak bisa dibatalkan lagi (udah "kepakai" sebagai dasar transaksi lain).
+- Order immutable secara data (header/baris gak pernah bisa diedit) — koreksi isi pesanan tetap harus bikin order baru.
+
+**Skenario referensi**
+- Customer pesan qty gede buat acara, stok belum cukup saat dipesan → order arah SALE dibuat duluan (belum ada jurnal apa pun). Produksi nambah stok belakangan. Barang dikirim bertahap (2x pengiriman) → 2 invoice terpisah lahir, masing-masing dari Goods Issue yang nunjuk baris order yang sama, sampai total qty terkirim = qty dipesan (status order jadi `FULLY_FULFILLED`).
 
 **Common Mistakes**
 - Mencatat pembelian bahan baku sebagai Beban/HPP langsung.
-- PO dianggap bikin jurnal (harusnya GRN+Bill yang bikin).
-- Nganggep PO masih wajib buat semua penerimaan barang — sejak `0058`, jalur langsung tanpa PO valid buat kasus beli dadakan.
+- Order dianggap bikin jurnal (harusnya GRN+Bill, atau Goods Issue+Invoice, yang bikin).
+- Nganggep order arah PURCHASE masih wajib buat semua penerimaan barang — sejak `0058`, jalur langsung tanpa order valid buat kasus beli dadakan.
+- Mikir invoice harus nunggu order arah SALE terpenuhi penuh baru terbit — harusnya per pengiriman, bisa banyak invoice dari 1 order.
+- Nganggep Purchase Order dan Sales Order masih 2 hal yang beda secara struktural — sejak `0060`, keduanya 1 tabel `orders` yang sama, cuma beda `direction`; formulir/halaman `/purchase-orders` dan `/sales-orders` tetap 2 halaman terpisah, itu keputusan UI, bukan cerminan skema di baliknya.
 
 ## Produksi (Bill of Materials & Production Order)
 
@@ -69,7 +81,7 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
   ```
   Biaya pokok dihitung dari Weighted Average (qty × avg_cost saat itu, via `consume_weighted_average`) — titik ini HPP benar-benar diakui.
 - Dibuat **bersamaan** dengan invoice penjualan (`create_ar_invoice`, reuse, 0 perubahan) — sama pola GRN+Bill di sisi beli.
-- **Sales Order (opsional)** — tahap komitmen sebelum Goods Issue, lihat submodule "Sales Order & Pemenuhan Bertahap" di bawah. Jalur langsung (tanpa Sales Order) yang dijelaskan di atas tetap jalan apa adanya buat penjualan spontan (kios walk-in).
+- **Sales Order (opsional)** — tahap komitmen sebelum Goods Issue, sekarang 1 tabel yang sama dengan Purchase Order (`orders`, arah SALE, migration `0060`) — lihat submodule "Purchase Order & Sales Order (`orders`) + Penerimaan Barang" di atas. Jalur langsung (tanpa Sales Order) yang dijelaskan di atas tetap jalan apa adanya buat penjualan spontan (kios walk-in).
 - **Catatan lintas modul (retur):** kalau barang yang terjual lewat Goods Issue ini diretur (`ar_credit_notes` jalur full), barang balik masuk lagi nambah `inventory_balances` (pool tunggal, gak ada segregasi lot retur sejak FIFO dihapus — sebelum migration `0038`, item FIFO masih tersegregasi lewat lot `SALES_RETURN` biar barang rusak yang balik gak ketuker dipakai lagi buat penukaran garansi). Segregasi ini balik lagi secara logis sejak migration `0015`: tiap baris retur diklasifikasi `condition` (`RESALABLE`/`DAMAGED`), baris `DAMAGED` gak pernah nambah `inventory_balances` — cost-nya diakui `Beban Kerugian Barang Rusak` bukan ditambahkan balik jadi stok bernilai.
 
 **Constraints**
@@ -78,25 +90,6 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 
 **Common Mistakes**
 - HPP dihitung dari kapan utang dibayar (harusnya dari kapan barang terjual) — dua hal yang gak berhubungan sama sekali.
-
-## Sales Order & Pemenuhan Bertahap (migration `0024_sales_orders_schema.sql`)
-
-**Entitas & Jurnal**
-- **Sales Order (SO)** — cerminan Purchase Order di sisi jual: komitmen pesan dari customer (item, qty, harga disepakati). **Gak bikin jurnal** — belum kejadian akuntansi, sama alasannya kayak PO (belum ada barang pindah tangan, piutang belum boleh diakui — prinsip revenue recognition: kewajiban baru "terpenuhi" pas barang beneran dikirim).
-- **Beda dari PO: SO bersifat OPSIONAL, bukan wajib.** `goods_issue_lines.so_line_id` nullable — jalur jual langsung tanpa SO (submodule "Penjualan & Pengakuan HPP" di atas) tetap jalan gak berubah. Alasan asimetri: pembelian selalu keputusan terencana (wajar dipaksa PO), tapi penjualan ada 2 pola sekaligus — spontan (kios walk-in, gak natural dipaksa bikin SO dulu) dan terencana (pesanan customer buat acara, qty gede, stok belum tentu cukup pas dipesan).
-- **Pemenuhan (fulfillment) bisa dicicil, tiap cicilan = 1 Goods Issue + 1 invoice terpisah** — bukan nunggu SO lunas/`FULLY_FULFILLED` baru invoice terbit sekali. Piutang & Pendapatan diakui persis di titik barang dikirim, gak lebih cepat (itu yang mau dihindari — invoice full di depan sebelum barang jadi/dikirim = overstate piutang+pendapatan untuk bagian yang belum kepenuhi).
-- `create_goods_issue` **signature TETAP SAMA** (0 breaking change) — `p_lines` sekarang boleh punya key opsional `so_line_id` per baris. Caller lama yang gak nyertain key ini tetap jalan (`so_line_id` NULL, gak kena trigger anti-over-issue).
-
-**Constraints**
-- Pengiriman (Goods Issue) yang nunjuk `so_line_id` gak boleh melebihi `qty_ordered` SO line-nya (trigger `goods_issue_lines_no_over_issue`, mirror `goods_receipt_lines_no_over_receipt` — skip kalau `so_line_id` null).
-- SO immutable secara data (header/lines gak pernah bisa diedit) — koreksi isi pesanan tetap harus bikin SO baru. Tapi bisa **dibatalkan** (`cancel_sales_order`, migration `0024`) SELAMA belum ada Goods Issue sama sekali — mirror persis mekanisme cancel PO (submodule "Purchase Order & Penerimaan Barang"), murni stempel status, gak ada jurnal (SO emang gak pernah punya jurnal).
-
-**Skenario referensi**
-- Customer pesan qty gede buat acara, stok belum cukup saat dipesan → SO dibuat duluan (belum ada jurnal apa pun). Produksi nambah stok belakangan. Barang dikirim bertahap (2x pengiriman) → 2 invoice terpisah lahir, masing-masing dari `create_goods_issue` yang nunjuk `so_line_id` yang sama, sampai `SUM(qty_issued)` = `qty_ordered` (status SO jadi `FULLY_FULFILLED`, derived — bukan kolom).
-
-**Common Mistakes**
-- Mikir invoice harus nunggu SO terpenuhi penuh baru terbit — harusnya per pengiriman, bisa banyak invoice dari 1 SO.
-- Nganggep SO wajib buat semua penjualan (niru pola PO di AP) — SO cuma dipakai kalau emang ada tahap komitmen-duluan; penjualan spontan tetap boleh lewat Goods Issue langsung tanpa SO.
 
 ## Kategori & Brand Barang (migration `0023_item_categories_brands.sql`)
 
@@ -206,7 +199,7 @@ Schema->API->UI selesai (migration `0042`-`0052` + halaman `/items/[id]` kartu s
 
 - **Item**: master data barang (raw material atau finished good), costing-nya Weighted Average.
 - **BOM (Bill of Materials)**: resep — daftar bahan baku & qty yang dibutuhkan buat 1 batch produksi.
-- **Purchase Order (PO)**: pesanan ke supplier, belum kejadian akuntansi.
+- **Purchase Order (PO)**: pesanan ke supplier, belum kejadian akuntansi. **Sales Order (SO)**: cerminan PO di sisi jual, pesanan dari customer, juga belum kejadian akuntansi. Sejak migration `0060`, keduanya 1 tabel `orders` yang sama (`direction` `'PURCHASE'`/`'SALE'`) — dulu 2 tabel terpisah.
 - **Goods Receipt Note (GRN)**: bukti penerimaan fisik barang, dasar penambahan Persediaan.
 - **Goods Issue**: bukti pengeluaran fisik barang jadi karena terjual, dasar pengakuan HPP.
 - **HPP / COGS**: Harga Pokok Penjualan — biaya pokok barang yang terjual, diakui bersamaan dengan pendapatannya.

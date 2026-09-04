@@ -28,7 +28,7 @@ import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-c
 import { Pagination } from "@/components/ui/pagination";
 
 type LineInput = {
-  po_line_id?: string;
+  order_line_id?: string;
   item_id: string;
   item_label: string;
   uom: string;
@@ -37,7 +37,7 @@ type LineInput = {
 };
 
 function emptyDirectLine(): LineInput {
-  return { po_line_id: undefined, item_id: "", item_label: "", uom: "", qty_received: "", unit_cost: "" };
+  return { order_line_id: undefined, item_id: "", item_label: "", uom: "", qty_received: "", unit_cost: "" };
 }
 
 // Input kecil buat baris filter di header tabel -- pola sama kayak journal-entries/page.tsx.
@@ -101,11 +101,12 @@ export default function GoodsReceiptsPage() {
 
   const loadPurchaseOrders = useCallback(async () => {
     const { data } = await supabase
-      .from("purchase_orders")
+      .from("orders")
       .select(
-        "id, supplier_id, po_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), purchase_order_lines(id, item_id, qty_ordered, unit_cost_expected, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_receipt_lines(qty_received))"
       )
-      .order("po_date", { ascending: false });
+      .eq("direction", "PURCHASE")
+      .order("order_date", { ascending: false });
     setPurchaseOrders((data ?? []) as unknown as PurchaseOrder[]);
   }, []);
 
@@ -195,15 +196,15 @@ export default function GoodsReceiptsPage() {
       return;
     }
     setLines(
-      po.purchase_order_lines
+      po.order_lines
         .filter((l) => lineRemaining(l) > 0)
         .map((l) => ({
-          po_line_id: l.id,
+          order_line_id: l.id,
           item_id: l.item_id,
           item_label: `${l.items.name} (sisa ${lineRemaining(l)} ${l.items.uom})`,
           uom: l.items.uom,
           qty_received: String(lineRemaining(l)),
-          unit_cost: String(l.unit_cost_expected),
+          unit_cost: String(l.unit_price),
         }))
     );
   }
@@ -240,7 +241,7 @@ export default function GoodsReceiptsPage() {
     mutationFn: async (input: CreateGoodsReceiptInput) => {
       const billSourceRef = await generateDocumentNumber("ap_bills");
       const { error } = await supabase.rpc("create_goods_receipt", {
-        p_purchase_order_id: input.purchase_order_id ?? null,
+        p_order_id: input.order_id ?? null,
         p_receipt_date: input.receipt_date,
         p_delivery_note_ref: input.delivery_note_ref || null,
         p_lines: input.lines,
@@ -280,7 +281,7 @@ export default function GoodsReceiptsPage() {
     const activeLines = lines.filter((l) => parseFloat(l.qty_received) > 0);
 
     const parsed = createGoodsReceiptSchema.safeParse({
-      purchase_order_id: receiptMode === "FROM_PO" ? purchaseOrderId : undefined,
+      order_id: receiptMode === "FROM_PO" ? purchaseOrderId : undefined,
       supplier_id: receiptMode === "DIRECT" ? directSupplierId : undefined,
       receipt_date: receiptDate,
       delivery_note_ref: deliveryNoteRef || undefined,
@@ -288,7 +289,7 @@ export default function GoodsReceiptsPage() {
       debit_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
       payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
       lines: activeLines.map((l) => ({
-        po_line_id: l.po_line_id || undefined,
+        order_line_id: l.order_line_id || undefined,
         item_id: l.item_id,
         qty_received: l.qty_received,
         unit_cost: l.unit_cost,
@@ -401,11 +402,11 @@ export default function GoodsReceiptsPage() {
                 onClick={() => router.push(`/goods-receipts/${grn.id}`)}
               >
                 <td className="px-4 py-2 font-medium text-black">
-                  {grn.purchase_orders?.counterparties.name ?? grn.ap_bills.counterparties.name}
+                  {grn.orders?.counterparties.name ?? grn.ap_bills.counterparties.name}
                 </td>
                 <td className="px-4 py-2">
-                  {grn.purchase_orders ? (
-                    grn.purchase_orders.source_ref
+                  {grn.orders ? (
+                    grn.orders.source_ref
                   ) : (
                     <span className="text-slate-400">— (langsung)</span>
                   )}
@@ -571,7 +572,7 @@ export default function GoodsReceiptsPage() {
                   <p className="text-sm text-slate-400">PO ini sudah diterima penuh.</p>
                 )}
                 {lines.map((line, i) => (
-                  <div key={line.po_line_id} className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2">
+                  <div key={line.order_line_id} className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2">
                     <span className="flex items-center text-sm text-slate-700">{line.item_label}</span>
                     <UnitCostQtyInput
                       units={itemUnits.filter((u) => u.item_id === line.item_id)}
