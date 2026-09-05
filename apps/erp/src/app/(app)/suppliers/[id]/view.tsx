@@ -47,7 +47,7 @@ export function SupplierDetailView({ id }: { id: string }) {
       supabase
         .from("transactions")
         .select(
-          "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+          "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
         )
         .eq("type", "OUTBOUND")
         .eq("counterparty_id", id)

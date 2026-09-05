@@ -9,9 +9,9 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 | `counterparties` | Master data pelanggan (nama, kontak, termin pembayaran) | — |
 | `transactions` (baris `type='INBOUND'`) | Tagihan yang diterbitkan ke pelanggan — tabel yang sama juga dipakai Accounts Payable (baris `type='OUTBOUND'`, lihat `docs/architecture/ap-schema.md`) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
 | `payments` (baris `type='INBOUND'`) | Pembayaran yang diterima dari pelanggan — selalu menunjuk 1 invoice spesifik, boleh cicil, gak boleh kelebihan bayar — tabel yang sama juga dipakai Accounts Payable (baris `type='OUTBOUND'`) | `counterparties`, `transactions` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
-| `ar_credit_notes` | Retur barang — kejadian nyata barang balik, bukan koreksi salah input | `transactions` (1 invoice bisa punya banyak retur), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
-| `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
-| `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — bagian dari alur Retur Barang | `counterparties`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
+| `credit_notes` (baris `type='INBOUND'`) | Retur barang — kejadian nyata barang balik, bukan koreksi salah input — tabel yang sama juga dipakai Accounts Payable (baris `type='OUTBOUND'`) | `transactions` (1 invoice bisa punya banyak retur), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
+| `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
+| `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — bagian dari alur Retur Barang | `counterparties`, `credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
 | `ar_return_credit_refunds` | Saldo kredit retur dikembalikan tunai ke pelanggan | `ar_return_credits`, dan ke transaksi jurnal |
 | `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — independen dari retur, gak nyentuh Piutang Usaha sama sekali | `transactions` langsung, dan ke 1 transaksi jurnal (HPP/Persediaan) |
 | `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `counterparties`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) |
@@ -21,7 +21,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 | `ar_invoice_charge_types` | Katalog kategori pendapatan tambahan yang bisa dipilih staf saat bikin invoice — murni master data, disiapkan admin | `accounts` (akun tujuan tiap kategori) |
 | `tax_settings` | Pengaturan PPN (tarif, status aktif, akun Keluaran/Masukan) — 1 baris untuk seluruh sistem, dipakai bareng AP/AR/POS | `accounts` (akun PPN Keluaran/Masukan) |
 
-**Catatan (2026-09-05)**: `ar_invoices` (tabel invoice AR) dan `ar_invoice_credit_lines` (rincian baris kredit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Payable — lihat `docs/architecture/ap-schema.md`. Fitur **Credit Hold** (batas kredit customer) dan **Piutang Tak Tertagih** (write-off) yang dulu ada di modul ini sudah **dicabut total** (keputusan owner) — customer gak lagi punya batas kredit yang ditegakkan sistem, dan AR gak lagi punya jalur formal nyatet piutang macet jadi beban. `ar_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Payable) — RPC `record_ar_payment` diganti `record_payment`.
+**Catatan (2026-09-05)**: `ar_invoices` (tabel invoice AR) dan `ar_invoice_credit_lines` (rincian baris kredit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Payable — lihat `docs/architecture/ap-schema.md`. Fitur **Credit Hold** (batas kredit customer) dan **Piutang Tak Tertagih** (write-off) yang dulu ada di modul ini sudah **dicabut total** (keputusan owner) — customer gak lagi punya batas kredit yang ditegakkan sistem, dan AR gak lagi punya jalur formal nyatet piutang macet jadi beban. `ar_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Payable) — RPC `record_ar_payment` diganti `record_payment`. `ar_credit_notes` juga sudah digabung ke tabel generic `credit_notes` (dipakai bareng Accounts Payable) — RPC `create_ar_credit_note` TETAP ADA (gak digabung jadi 1 RPC, logic-nya beneran beda bentuk dari sisi AP), cuma tabel penyimpanannya yang digabung.
 
 ## Konsep Inti
 
@@ -76,16 +76,16 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `ar_credit_notes` | Retur barang — kejadian nyata barang balik | `transactions` (banyak retur per invoice), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
-| `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
-| `ar_return_credits` | Saldo kredit yang lahir otomatis kalau retur bikin invoice yang sudah lunas jadi minus | `counterparties`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
+| `credit_notes` (`type='INBOUND'`) | Retur barang — kejadian nyata barang balik — tabel generic yang sama juga dipakai Accounts Payable | `transactions` (banyak retur per invoice), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
+| `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
+| `ar_return_credits` | Saldo kredit yang lahir otomatis kalau retur bikin invoice yang sudah lunas jadi minus | `counterparties`, `credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
 | `ar_return_credit_refunds` | Saldo kredit retur di atas dicairkan tunai — satu-satunya cara aktif nyelesaiin saldo itu ke depan (jalur "settle via barang" cuma berlaku data historis, lihat submodule "Penukaran Barang Pasca-Retur") | `ar_return_credits`, dan ke transaksi jurnal |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Catat retur | `create_ar_credit_note` | Deteksi otomatis financial-only vs full (cek `goods_issues` terkait invoice); insert `ar_credit_notes` + jurnal kontra-revenue (Debit Retur & Potongan Penjualan, Kredit Piutang Usaha); kalau full, insert `inventory_return_lines` per baris (tiap baris punya `condition` — baris Layak Jual masuk lagi ke `inventory_balances`, baris Rusak TIDAK, cost-nya jadi Debit Beban Kerugian Barang Rusak) + jurnal reversal HPP | Trigger `ar_credit_notes_no_over_return` (total retur ≤ nilai invoice); trigger `inventory_return_lines_guard` (qty retur ≤ `goods_issue_lines.qty_issued`, jalur full) |
+| Catat retur | `create_ar_credit_note` | Deteksi otomatis financial-only vs full (cek `goods_issues` terkait invoice); insert `credit_notes` + jurnal kontra-revenue (Debit Retur & Potongan Penjualan, Kredit Piutang Usaha); kalau full, insert `inventory_return_lines` per baris (tiap baris punya `condition` — baris Layak Jual masuk lagi ke `inventory_balances`, baris Rusak TIDAK, cost-nya jadi Debit Beban Kerugian Barang Rusak) + jurnal reversal HPP | Trigger `credit_notes_no_over_return` (total retur ≤ nilai invoice); trigger `inventory_return_lines_guard` (qty retur ≤ `goods_issue_lines.qty_issued`, jalur full) |
 | Deteksi & cairkan excess jadi saldo kredit | `create_ar_credit_note` (lanjutan aksi di atas, 1 pemanggilan) | Hitung `v_remaining_before := ar_invoice_remaining(invoice_id)` sebelum retur masuk; `v_excess := greatest(0, amount − greatest(0, v_remaining_before))`; kalau `> 0`, jurnal tambahan Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer + insert `ar_return_credits` | Param akun liability wajib diisi kalau ada excess |
 | Refund tunai saldo kredit retur | `refund_ar_return_credit` | Jurnal Debit Saldo Kredit Retur Customer, Kredit Kas/Bank; insert `ar_return_credit_refunds` | `amount > ar_return_credit_remaining(credit_id)` → tolak |
 
@@ -93,7 +93,7 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 
 | Aturan | Dijaga oleh |
 |---|---|
-| Retur gak boleh melebihi nilai/qty invoice | Trigger `ar_credit_notes_no_over_return` + `inventory_return_lines_guard` |
+| Retur gak boleh melebihi nilai/qty invoice | Trigger `credit_notes_no_over_return` + `inventory_return_lines_guard` |
 | Retur boleh dibuat walau invoice sudah lunas | `create_ar_credit_note` tidak cek status lunas (beda dari `cancel_ar_invoice`) |
 | Retur gak boleh masuk periode tertutup | Trigger block-retroactive-period (reuse dari `create_journal_entry`, sama seperti seluruh modul GL) |
 | Reversal HPP pakai harga snapshot, bukan harga sekarang | `inventory_return_lines.total_cost` dihitung dari `goods_issue_lines.total_cost` asli, bukan dihitung ulang |
@@ -107,18 +107,18 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ar_credit_notes` | banyak-ke-satu | `transactions` |
-| `inventory_returns` | satu-ke-satu per retur fisik | `ar_credit_notes` |
+| `credit_notes` | banyak-ke-satu | `transactions` |
+| `inventory_returns` | satu-ke-satu per retur fisik | `credit_notes` |
 | `inventory_returns` | banyak-ke-satu | `goods_issues` |
 | `inventory_return_lines.total_cost` | snapshot dari | `goods_issue_lines.total_cost` |
-| `ar_return_credits` | satu-ke-satu | `ar_credit_notes` (sumbernya) |
+| `ar_return_credits` | satu-ke-satu | `credit_notes` (sumbernya) |
 | `ar_return_credits` | banyak-ke-satu | `counterparties` |
 | `ar_return_credit_refunds` | banyak-ke-satu | `ar_return_credits` |
-| `warranty_replacements.return_credit_settled_amount` (submodule lain, HISTORIS doang) | akumulasi terhadap | `ar_return_credits` (via `ar_credit_notes.credit_note_id`, baris lama) |
+| `warranty_replacements.return_credit_settled_amount` (submodule lain, HISTORIS doang) | akumulasi terhadap | `ar_return_credits` (via `credit_notes.credit_note_id`, baris lama) |
 
 ## Penukaran Barang Pasca-Retur (Garansi)
 
-**Restrukturisasi (2026-09-03, keputusan owner)**: dulu wajib menunjuk retur (`ar_credit_notes`) yang sudah ada, lalu membalikkan sebagian diskon retur biar gak dobel kompensasi. Sekarang independen — langsung menunjuk invoice, gak pernah nyentuh retur/Piutang Usaha sama sekali. 1 unit barang yang sama cuma bisa diklaim SATU jalur (retur ATAU ganti barang), dicegah dari awal lewat fungsi gabungan yang dicek dari kedua arah — bukan lagi "izinkan dua jalur lalu koreksi belakangan".
+**Restrukturisasi (2026-09-03, keputusan owner)**: dulu wajib menunjuk retur (`credit_notes`) yang sudah ada, lalu membalikkan sebagian diskon retur biar gak dobel kompensasi. Sekarang independen — langsung menunjuk invoice, gak pernah nyentuh retur/Piutang Usaha sama sekali. 1 unit barang yang sama cuma bisa diklaim SATU jalur (retur ATAU ganti barang), dicegah dari awal lewat fungsi gabungan yang dicek dari kedua arah — bukan lagi "izinkan dua jalur lalu koreksi belakangan".
 
 **Peta Data (ERD)**
 
@@ -145,7 +145,7 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `warranty_replacements` | wajib FK | `transactions` |
-| `warranty_replacements` | opsional, cuma keisi di data historis (sebelum restrukturisasi) | `ar_credit_notes` |
+| `warranty_replacements` | opsional, cuma keisi di data historis (sebelum restrukturisasi) | `credit_notes` |
 
 **Catatan histori**: kolom-kolom lama (pembalikan diskon, penyelesaian saldo kredit retur) masih ada di tabel buat data sebelum restrukturisasi — transaksi baru gak pernah mengisinya lagi.
 

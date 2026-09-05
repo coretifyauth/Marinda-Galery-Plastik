@@ -168,7 +168,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -217,11 +217,12 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("transaction_id", id)
         .order("payment_date"),
       supabase
-        .from("ap_credit_notes")
+        .from("credit_notes")
         .select(
           "id, credit_note_date, source_ref, amount, created_at, purchase_return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits(id, amount, ap_return_credit_refunds(amount))"
         )
-        .eq("bill_id", id)
+        .eq("transaction_id", id)
+        .eq("type", "OUTBOUND")
         .order("credit_note_date"),
       supabase
         .from("purchase_replacements")

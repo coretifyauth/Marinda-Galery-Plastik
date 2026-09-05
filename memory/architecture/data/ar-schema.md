@@ -157,32 +157,20 @@ Barang yang udah diinvoice beneran dibalikin customer (rusak/gak laku/salah kiri
 
 `0022` adalah bugfix (`create or replace function`) ke RPC `create_ar_credit_note` dari `0021` — insert ke `inventory_lots.source_ref` (kolom uuid, nunjuk id baris dokumen sumber, pola sama `create_goods_receipt`/`create_production_order`; tabel `inventory_lots` sendiri sudah dihapus total di migration `0038`, lihat catatan di bawah) salah pasang `p_source_ref` (parameter text) di `0021`, ketauan pas jalur FIFO retur dieksekusi (waktu itu FIFO masih ada di sistem). Fix pakai `v_credit_note_id`. Nomor migration `0022`/`0023` sengaja ditukar dari draft awal (`0022` seed / `0023` fix) supaya fix ke-apply sebelum seed yang butuh RPC-nya udah bener.
 
-### `ar_credit_notes` — retur, sisi AR (selalu dibuat)
+### `ar_credit_notes` DIGABUNG ke `credit_notes` (kolom `type='INBOUND'`), migration `0070` (2026-09-05)
 
-Satu baris = satu kejadian retur terhadap 1 invoice. Yang perlu diperhatiin:
-- `invoice_id` — bukan unique, 1 invoice bisa punya banyak credit note (retur bertahap).
-- `journal_entry_id` — nunjuk jurnal kontra-revenue (Debit `Retur & Potongan Penjualan` / Kredit Piutang Usaha), dibuat via `create_journal_entry` (reuse, 0 perubahan).
-- **Gak ada `updated_at`/`archived_at`** — immutable, pola sama `ar_invoices`/`ar_payments`.
-- Invoice asli (`ar_invoices.amount`) **gak diedit** — retur murni nambah baris baru, sama filosofi immutability journal entry.
+**Fase 2** dari unifikasi tabel anak AR/AP — mirror pola `payments` (`0069`), lihat
+`memory/architecture/data/credit-notes-schema.md` buat DDL/RPC/RLS lengkap, GAK DIULANG
+di sini. `invoice_id` sekarang `transaction_id`. RPC `create_ar_credit_note` **TETAP ADA**
+(gak digabung ke 1 RPC generic seperti `payments` — logic-nya beneran beda bentuk dari
+`create_ap_credit_note`, lihat "Keputusan" di `credit-notes-schema.md`), cuma insert
+target-nya yang berubah ke `credit_notes`.
 
-```sql
-create table ar_credit_notes (
-  id uuid primary key default gen_random_uuid(),
-  invoice_id uuid not null references transactions(id), -- dulu references ar_invoices(id), repoint migration 0064
-  credit_note_date date not null,
-  source_ref text not null,
-  amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-### Trigger `ar_credit_notes_no_over_return`
-
-Total `SUM(amount)` credit note per invoice gak boleh ngelebihin `ar_invoices.amount` — gak peduli status bayar invoice (bisa aja retur bikin outstanding jadi negatif kalau invoice-nya udah lunas — itu skenario sah, lihat domain doc).
-
-Full body trigger: lihat migration file.
+Ringkasan histori yang masih relevan: satu baris = satu kejadian retur terhadap 1
+invoice, gak unique (1 invoice boleh banyak credit note, retur bertahap). Total
+`SUM(amount)` credit note per invoice gak boleh ngelebihin `transactions.amount` — gak
+peduli status bayar invoice (bisa aja retur bikin outstanding jadi negatif kalau
+invoice-nya udah lunas — skenario sah, lihat domain doc).
 
 ### `inventory_returns` + `inventory_return_lines` — retur, sisi Inventory (cuma jalur full)
 
@@ -195,7 +183,7 @@ Dibuat **cuma kalau** invoice-nya lahir dari `create_goods_issue` (ada baris `go
 ```sql
 create table inventory_returns (
   id uuid primary key default gen_random_uuid(),
-  credit_note_id uuid not null references ar_credit_notes(id),
+  credit_note_id uuid not null references credit_notes(id), -- dulu references ar_credit_notes(id), repoint migration 0070
   goods_issue_id uuid not null references goods_issues(id),
   journal_entry_id uuid not null references journal_entries(id),
   return_date date not null,
@@ -254,7 +242,7 @@ Satu baris = satu kejadian excess dari 1 credit note. `credit_note_id` nunjuk `a
 create table ar_return_credits (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references counterparties(id), -- dulu references customers(id), repoint migration 0059
-  credit_note_id uuid not null references ar_credit_notes(id),
+  credit_note_id uuid not null references credit_notes(id), -- dulu references ar_credit_notes(id), repoint migration 0070
   amount numeric(14,2) not null check (amount > 0),
   journal_entry_id uuid not null references journal_entries(id),
   created_by uuid references auth.users(id),
@@ -316,7 +304,7 @@ Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per invoic
 create table warranty_replacements (
   id uuid primary key default gen_random_uuid(),
   invoice_id uuid not null references transactions(id),          -- 0057, rujukan utama; dulu ar_invoices(id), repoint 0064
-  credit_note_id uuid references ar_credit_notes(id),             -- 0057: jadi nullable, cuma histori
+  credit_note_id uuid references credit_notes(id),             -- 0057: jadi nullable, cuma histori; repoint migration 0070
   replacement_date date not null,
   source_ref text not null,
   journal_entry_id uuid not null references journal_entries(id),
@@ -344,13 +332,15 @@ create function sales_returned_qty(p_invoice_id uuid, p_item_id uuid) returns nu
   select
     coalesce((select sum(irl.qty_returned) from inventory_return_lines irl
       join inventory_returns ir on ir.id = irl.inventory_return_id
-      join ar_credit_notes acn on acn.id = ir.credit_note_id
-      where acn.invoice_id = p_invoice_id and irl.item_id = p_item_id), 0)
+      join credit_notes acn on acn.id = ir.credit_note_id
+      where acn.transaction_id = p_invoice_id and acn.type = 'INBOUND' and irl.item_id = p_item_id), 0)
     + coalesce((select sum(wrl.qty_replaced) from warranty_replacement_lines wrl
       join warranty_replacements wr on wr.id = wrl.warranty_replacement_id
       where wr.invoice_id = p_invoice_id and wrl.item_id = p_item_id), 0);
 $$ language sql stable;
 ```
+
+Join `credit_notes` (dulu `ar_credit_notes`) sejak migration `0070` — `credit_note_id` tetap nama kolom yang sama, cuma target FK-nya yang di-repoint.
 
 Gabungan qty yang udah "diklaim" dari 1 item di 1 invoice, lintas retur kredit (`inventory_return_lines` via `ar_credit_notes`) + ganti barang (`warranty_replacement_lines` via `invoice_id` langsung). **Ini yang beneran menegakkan mutual exclusivity** — begitu qty suatu item abis diklaim lewat retur kredit, sisa yang bisa diganti otomatis 0 tanpa butuh cek "diskon > 0" eksplisit (yang gak akan pernah kerja karena `ar_credit_notes.amount` emang selalu > 0).
 

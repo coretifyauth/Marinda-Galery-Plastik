@@ -58,7 +58,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       supabase
         .from("transactions")
         .select(
-          "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
+          "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes:credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
         )
         .eq("type", "INBOUND")
         .eq("counterparty_id", id)

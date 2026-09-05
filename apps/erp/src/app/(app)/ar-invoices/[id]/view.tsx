@@ -178,7 +178,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes:credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -222,11 +222,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("transaction_id", id)
         .order("payment_date"),
       supabase
-        .from("ar_credit_notes")
+        .from("credit_notes")
         .select(
           "id, credit_note_date, source_ref, amount, created_at, inventory_returns(id, return_date, inventory_return_lines(item_id, qty_returned, total_cost, condition, items(name, uom)))"
         )
-        .eq("invoice_id", id)
+        .eq("transaction_id", id)
+        .eq("type", "INBOUND")
         .order("credit_note_date"),
       supabase
         .from("warranty_replacements")
@@ -262,7 +263,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("ar_return_credits")
         .select(
-          "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, counterparties(name), ar_credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+          "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, counterparties(name), ar_credit_notes:credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
         )
         .eq("customer_id", loadedInvoice.customer_id)
         .order("created_at"),
