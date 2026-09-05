@@ -2,7 +2,9 @@
 
 ## Kapan Melakukan Ini
 
-Saat barang yang diterima dari supplier bermasalah (rusak/salah kirim/kualitas tidak sesuai). Ada **3 opsi berbeda** tergantung bagaimana penyelesaiannya disepakati dengan supplier — pilih salah satu, bukan campur ketiganya untuk item yang sama.
+Saat barang yang diterima dari supplier bermasalah (rusak/salah kirim/kualitas tidak sesuai). Ada **2 opsi berbeda** tergantung bagaimana penyelesaiannya disepakati dengan supplier — pilih salah satu, bukan campur keduanya untuk item yang sama.
+
+Kalau supplier **menolak kompensasi sama sekali** (tidak mau mengurangi tagihan, tidak mau kirim pengganti), barang rusak itu dicatat lewat **Stock Opname** (penyesuaian stok fisik), bukan lewat halaman ini — lihat panduan Stock Opname.
 
 ## Prasyarat
 
@@ -31,24 +33,15 @@ Dipakai kalau supplier mengganti barang rusak dengan barang baik, **tanpa mengub
 3. Isi **Tanggal**, lalu **Qty Tukar** per item.
 4. Klik **Simpan Tukar Barang**.
 
-### Opsi C — Tulis-jadi-Beban
-
-Dipakai kalau supplier **menolak kompensasi sama sekali** — barang rusak jadi kerugian yang ditanggung sendiri.
-
-1. Di detail bill, klik tombol **Write-off** (kerugian barang rusak).
-2. Baca catatan: **Utang Usaha bill ini tetap penuh** — tidak ada pengurangan tagihan maupun barang pengganti.
-3. Isi **Tanggal**, lalu **Qty Write-off** per item.
-4. Klik **Simpan Write-off**.
-
 ## Hasil Akhir
 
 - **Opsi A**: jurnal debit Utang Usaha, kredit Akun Persediaan/Beban terkait. Kalau nominal retur melebihi sisa outstanding bill (bill sudah lunas), kelebihannya otomatis jadi **Piutang Retur Supplier** (bisa direfund tunai lewat tombol **Refund Tunai Piutang Retur Supplier**).
 - **Opsi B**: jurnal murni reklasifikasi Akun Persediaan (debit barang masuk, kredit barang keluar) — tidak menyentuh Utang Usaha.
-- **Opsi C**: jurnal debit Akun Beban Kerugian Barang Rusak, kredit Akun Persediaan — tidak menyentuh Utang Usaha.
-- Ketiga opsi berbagi kuota qty yang sama per item (satu item yang sudah diklaim penuh lewat salah satu opsi tidak bisa diklaim lagi lewat opsi lain).
+- Kedua opsi berbagi kuota qty yang sama per item (satu item yang sudah diklaim penuh lewat salah satu opsi tidak bisa diklaim lagi lewat opsi lain).
 
 ## Kesalahan Umum
 
-- **Salah pilih opsi untuk kesepakatan yang sebenarnya terjadi** — cek dulu hasil negosiasi dengan supplier (uang kembali vs barang pengganti vs tidak ada kompensasi) sebelum memilih tombol; ketiganya punya efek jurnal yang sangat berbeda ke Utang Usaha.
-- **Mengira Opsi B/C mengurangi Utang Usaha** — tidak, cuma Opsi A yang menyentuh Utang Usaha; Opsi B dan C murni soal stok/kerugian.
-- **Mencoba klaim qty lebih dari sisa yang tersedia** — qty dibatasi gabungan dari ketiga opsi; kalau item sudah diklaim penuh lewat kombinasi opsi sebelumnya, form akan menampilkan "sudah diklaim penuh".
+- **Salah pilih opsi untuk kesepakatan yang sebenarnya terjadi** — cek dulu hasil negosiasi dengan supplier (uang kembali vs barang pengganti) sebelum memilih tombol; keduanya punya efek jurnal yang berbeda ke Utang Usaha.
+- **Mengira Opsi B mengurangi Utang Usaha** — tidak, cuma Opsi A yang menyentuh Utang Usaha; Opsi B murni soal stok.
+- **Mencoba klaim qty lebih dari sisa yang tersedia** — qty dibatasi gabungan dari kedua opsi; kalau item sudah diklaim penuh lewat kombinasi opsi sebelumnya, form akan menampilkan "sudah diklaim penuh".
+- **Mencari tombol Write-off/Tulis-jadi-Beban di halaman ini** — sudah tidak ada. Barang yang supplier tolak kompensasi sama sekali sekarang dicatat lewat Stock Opname, bukan dari halaman detail bill.

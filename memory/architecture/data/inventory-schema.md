@@ -1096,7 +1096,6 @@ create table inventory_movements (
   pos_sale_line_id uuid,
   production_order_line_id uuid,
   purchase_return_line_id uuid,
-  purchase_writeoff_line_id uuid,
   warranty_replacement_line_id uuid,
   purchase_replacement_line_id uuid, -- migration 0046, lihat "Gap ditemukan & ditutup" di atas
 
@@ -1108,7 +1107,6 @@ create table inventory_movements (
   foreign key (pos_sale_line_id, item_id) references pos_sale_lines(id, item_id),
   foreign key (production_order_line_id, item_id) references production_order_lines(id, item_id),
   foreign key (purchase_return_line_id, item_id) references purchase_return_lines(id, item_id),
-  foreign key (purchase_writeoff_line_id, item_id) references purchase_writeoff_lines(id, item_id),
   foreign key (warranty_replacement_line_id, item_id) references warranty_replacement_lines(id, item_id),
   foreign key (purchase_replacement_line_id, item_id) references purchase_replacement_lines(id, item_id),
 
@@ -1116,7 +1114,7 @@ create table inventory_movements (
     num_nonnulls(
       goods_receipt_line_id, production_order_id, inventory_return_line_id,
       stock_opname_line_id, goods_issue_line_id, pos_sale_line_id,
-      production_order_line_id, purchase_return_line_id, purchase_writeoff_line_id,
+      production_order_line_id, purchase_return_line_id,
       warranty_replacement_line_id, purchase_replacement_line_id
     ) = 1
   )
@@ -1147,7 +1145,6 @@ alter table goods_issue_lines add constraint goods_issue_lines_id_item_id_key un
 alter table pos_sale_lines add constraint pos_sale_lines_id_item_id_key unique (id, item_id);
 alter table production_order_lines add constraint production_order_lines_id_item_id_key unique (id, item_id);
 alter table purchase_return_lines add constraint purchase_return_lines_id_item_id_key unique (id, item_id);
-alter table purchase_writeoff_lines add constraint purchase_writeoff_lines_id_item_id_key unique (id, item_id);
 alter table warranty_replacement_lines add constraint warranty_replacement_lines_id_item_id_key unique (id, item_id);
 ```
 

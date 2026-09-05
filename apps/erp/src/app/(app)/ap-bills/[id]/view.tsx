@@ -9,7 +9,6 @@ import {
   type GoodsReceiptForBill,
 } from "@/lib/ap-credit-notes/schema";
 import { createPurchaseReplacementSchema } from "@/lib/purchase-replacements/schema";
-import { createPurchaseWriteoffSchema } from "@/lib/purchase-writeoffs/schema";
 import { applyApDepositSchema, depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
 import { recordApPaymentSchema } from "@/lib/ap-payments/schema";
 import { refundApReturnCreditSchema } from "@/lib/ap-return-credits/schema";
@@ -38,14 +37,6 @@ type ReturnLineInput = {
 };
 
 type ReplaceLineInput = {
-  item_id: string;
-  name: string;
-  uom: string;
-  qty_available: number;
-  qty: string;
-};
-
-type WriteoffLineInput = {
   item_id: string;
   name: string;
   uom: string;
@@ -101,19 +92,6 @@ type ReplacementDetail = {
   }[];
 };
 
-type WriteoffDetail = {
-  id: string;
-  writeoff_date: string;
-  source_ref: string;
-  created_at: string;
-  purchase_writeoff_lines: {
-    item_id: string;
-    qty_written_off: number;
-    total_cost: number;
-    items: { name: string; uom: string };
-  }[];
-};
-
 type DepositApplicationDetail = {
   id: string;
   amount: number;
@@ -141,7 +119,6 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [payments, setPayments] = useState<PaymentDetail[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
   const [replacements, setReplacements] = useState<ReplacementDetail[]>([]);
-  const [writeoffs, setWriteoffs] = useState<WriteoffDetail[]>([]);
   const [goodsReceipt, setGoodsReceipt] = useState<GoodsReceiptForBill | null>(null);
   const [depositApplications, setDepositApplications] = useState<DepositApplicationDetail[]>([]);
   const [supplierDeposits, setSupplierDeposits] = useState<ApDeposit[]>([]);
@@ -162,12 +139,6 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [replaceLines, setReplaceLines] = useState<ReplaceLineInput[]>([]);
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [replaceSubmitting, setReplaceSubmitting] = useState(false);
-
-  const [showWriteoffForm, setShowWriteoffForm] = useState(false);
-  const [writeoffDate, setWriteoffDate] = useState("");
-  const [writeoffLines, setWriteoffLines] = useState<WriteoffLineInput[]>([]);
-  const [writeoffError, setWriteoffError] = useState<string | null>(null);
-  const [writeoffSubmitting, setWriteoffSubmitting] = useState(false);
 
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -218,7 +189,6 @@ export function ApBillDetailView({ id }: { id: string }) {
       { data: pays, error: paysErr },
       { data: cns, error: cnErr },
       { data: reps, error: repErr },
-      { data: wos, error: woErr },
       { data: grn },
       { data: depApps, error: depAppErr },
       { data: supDeposits, error: supDepositsErr },
@@ -261,13 +231,6 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("bill_id", id)
         .order("replacement_date"),
       supabase
-        .from("purchase_writeoffs")
-        .select(
-          "id, writeoff_date, source_ref, created_at, purchase_writeoff_lines(item_id, qty_written_off, total_cost, items(name, uom))"
-        )
-        .eq("bill_id", id)
-        .order("writeoff_date"),
-      supabase
         .from("goods_receipt_notes")
         .select("id, goods_receipt_lines(item_id, qty_received, unit_cost, items(name, uom))")
         .eq("bill_id", id)
@@ -307,7 +270,6 @@ export function ApBillDetailView({ id }: { id: string }) {
     setPayments((pays ?? []) as unknown as PaymentDetail[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setReplacements((reps ?? []) as unknown as ReplacementDetail[]);
-    setWriteoffs((wos ?? []) as unknown as WriteoffDetail[]);
     setGoodsReceipt((grn ?? null) as unknown as GoodsReceiptForBill | null);
     setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
     setSupplierDeposits((supDeposits ?? []) as unknown as ApDeposit[]);
@@ -316,7 +278,6 @@ export function ApBillDetailView({ id }: { id: string }) {
         paysErr?.message ??
         cnErr?.message ??
         repErr?.message ??
-        woErr?.message ??
         depAppErr?.message ??
         supDepositsErr?.message ??
         null
@@ -346,10 +307,10 @@ export function ApBillDetailView({ id }: { id: string }) {
 
   /**
    * Qty per item yang udah "diklaim" dari bill ini, GABUNGAN Opsi A (purchase_return_lines)
-   * + Opsi B (purchase_replacement_lines) + Opsi C (purchase_writeoff_lines) — mirror
-   * purchase_returned_qty() di database (0035 + diperluas 0016). Fisiknya cuma ada 1 pool
+   * + Opsi B (purchase_replacement_lines) — mirror purchase_returned_qty() di database
+   * (0035, disederhanakan lagi setelah Opsi C dicabut). Fisiknya cuma ada 1 pool
    * qty_received per item yang bisa diklaim, mau lewat jalur mana pun. Dipakai buat cap qty
-   * input di ketiga form biar gak nembus batas sebelum kena guard server.
+   * input di kedua form biar gak nembus batas sebelum kena guard server.
    */
   function claimedQtyByItem(): Map<string, number> {
     const map = new Map<string, number>();
@@ -361,11 +322,6 @@ export function ApBillDetailView({ id }: { id: string }) {
     for (const r of replacements) {
       for (const l of r.purchase_replacement_lines) {
         map.set(l.item_id, (map.get(l.item_id) ?? 0) + l.qty_replaced);
-      }
-    }
-    for (const w of writeoffs) {
-      for (const l of w.purchase_writeoff_lines) {
-        map.set(l.item_id, (map.get(l.item_id) ?? 0) + l.qty_written_off);
       }
     }
     return map;
@@ -544,83 +500,6 @@ export function ApBillDetailView({ id }: { id: string }) {
     }
 
     setShowReplaceForm(false);
-    await load();
-  }
-
-  function openWriteoffForm() {
-    setWriteoffError(null);
-    setWriteoffDate("");
-    const claimed = claimedQtyByItem();
-    setWriteoffLines(
-      goodsReceipt
-        ? goodsReceipt.goods_receipt_lines
-            .map((l) => ({
-              item_id: l.item_id,
-              name: l.items.name,
-              uom: l.items.uom,
-              qty_available: l.qty_received - (claimed.get(l.item_id) ?? 0),
-              qty: "",
-            }))
-            .filter((l) => l.qty_available > 0)
-        : []
-    );
-    setShowWriteoffForm(true);
-  }
-
-  function updateWriteoffLine(itemId: string, qty: string) {
-    setWriteoffLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, qty } : l)));
-  }
-
-  async function handleWriteoffSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!bill) return;
-    setWriteoffError(null);
-
-    const activeLines = writeoffLines
-      .filter((l) => l.qty.trim() !== "")
-      .map((l) => ({ item_id: l.item_id, qty: l.qty }));
-
-    if (activeLines.length === 0) {
-      setWriteoffError("Isi minimal 1 baris qty write-off");
-      return;
-    }
-
-    const parsed = createPurchaseWriteoffSchema.safeParse({
-      bill_id: bill.id,
-      writeoff_date: writeoffDate,
-      lines: activeLines,
-      loss_expense_account_id: defaultAccounts["inventory.damage_loss_expense"]?.id ?? "",
-      inventory_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
-    });
-    if (!parsed.success) {
-      setWriteoffError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setWriteoffSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("purchase_writeoffs");
-    } catch (err) {
-      setWriteoffSubmitting(false);
-      setWriteoffError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_purchase_writeoff", {
-      p_bill_id: parsed.data.bill_id,
-      p_writeoff_date: parsed.data.writeoff_date,
-      p_source_ref: sourceRef,
-      p_lines: parsed.data.lines,
-      p_loss_expense_account_id: parsed.data.loss_expense_account_id,
-      p_inventory_account_id: parsed.data.inventory_account_id,
-    });
-    setWriteoffSubmitting(false);
-    if (error) {
-      setWriteoffError(error.message);
-      return;
-    }
-
-    setShowWriteoffForm(false);
     await load();
   }
 
@@ -826,7 +705,6 @@ export function ApBillDetailView({ id }: { id: string }) {
   const canPay = canWrite && !isCancelled && outstanding > 0.005;
   const canRetur = canWrite && !isCancelled;
   const canReplace = canWrite && !isCancelled && goodsReceipt !== null;
-  const canWriteoff = canWrite && !isCancelled && goodsReceipt !== null;
   const canCancel = canWrite && !isCancelled && allocated === 0;
   const availableDeposits = supplierDeposits.filter(
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
@@ -853,15 +731,12 @@ export function ApBillDetailView({ id }: { id: string }) {
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur — Kurangi Utang", badge: creditNotes.length },
-    // Tukar Barang & Tulis-jadi-Beban wajib qty fisik + goods_receipt_notes (create_purchase_replacement/
-    // create_purchase_writeoff nolak kalau gak ada) -- gak ada gunanya ditampilin buat bill financial-only,
-    // submit-nya bakal ketolak RPC. Lihat memory/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
-    ...(!isFinancialOnly
-      ? [
-          { key: "tukar", label: "Tukar Barang", badge: replacements.length },
-          { key: "writeoff", label: "Tulis-jadi-Beban", badge: writeoffs.length },
-        ]
-      : []),
+    // Tukar Barang wajib qty fisik + goods_receipt_notes (create_purchase_replacement nolak
+    // kalau gak ada) -- gak ada gunanya ditampilin buat bill financial-only, submit-nya bakal
+    // ketolak RPC. Lihat memory/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
+    // Opsi C (Tulis-jadi-Beban / purchase_writeoffs) DICABUT -- barang rusak yang supplier
+    // tolak kompensasi sekarang lewat stock_opname generic, bukan RPC khusus AP.
+    ...(!isFinancialOnly ? [{ key: "tukar", label: "Tukar Barang", badge: replacements.length }] : []),
   ];
 
   const detailGroups = [
@@ -1224,57 +1099,6 @@ export function ApBillDetailView({ id }: { id: string }) {
         </div>
       )}
 
-      {activeTab === "writeoff" && (
-        <div className="flex flex-col gap-3">
-          {canWriteoff && (
-            <div className="flex justify-end">
-              <Button variant="toolbar" onClick={openWriteoffForm}>
-                Tulis-jadi-Beban
-              </Button>
-            </div>
-          )}
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                  <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Source Ref</th>
-                  <th className="px-4 py-2">Item Ditulis-jadi-Beban</th>
-                  <th className="px-4 py-2 text-right">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {writeoffs.map((w) => (
-                  <tr key={w.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-2">{w.writeoff_date}</td>
-                    <td className="px-4 py-2">{w.source_ref}</td>
-                    <td className="px-4 py-2">
-                      <ul className="space-y-0.5">
-                        {w.purchase_writeoff_lines.map((l) => (
-                          <li key={l.item_id}>
-                            {l.items.name} — {l.qty_written_off} {l.items.uom}
-                          </li>
-                        ))}
-                      </ul>
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {w.purchase_writeoff_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
-                    </td>
-                  </tr>
-                ))}
-                {writeoffs.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                      Belum ada write-off.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       <Modal
         open={showReturForm}
         onClose={() => setShowReturForm(false)}
@@ -1387,7 +1211,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                   </div>
                 ))}
                 {returLines.length === 0 && (
-                  <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur, tukar barang, atau write-off).</p>
+                  <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur atau tukar barang).</p>
                 )}
               </div>
             )}
@@ -1460,7 +1284,7 @@ export function ApBillDetailView({ id }: { id: string }) {
               </div>
             ))}
             {replaceLines.length === 0 && (
-              <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur, tukar barang, atau write-off).</p>
+              <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur atau tukar barang).</p>
             )}
           </div>
 
@@ -1472,94 +1296,6 @@ export function ApBillDetailView({ id }: { id: string }) {
             </Button>
             <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0}>
               {replaceSubmitting ? "Menyimpan..." : "Simpan Tukar Barang"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
-        open={showWriteoffForm}
-        onClose={() => setShowWriteoffForm(false)}
-        title="Tulis-jadi-Beban (Kerugian Barang Rusak)"
-        maxWidth="max-w-2xl"
-      >
-        <p className="mb-4 text-sm text-slate-600">
-          Supplier nolak kompensasi sama sekali — gak kurangin Utang Usaha, gak kirim
-          pengganti. Barang rusak ini murni kerugian yang ditanggung sendiri, diakui sebagai
-          Beban Kerugian Barang Rusak. Utang Usaha bill ini tetap penuh.
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Beban Kerugian Barang Rusak (debit)",
-                resolved: defaultAccounts["inventory.damage_loss_expense"],
-                side: "debit",
-              },
-              {
-                label: "Akun Persediaan (kredit)",
-                resolved: defaultAccounts["inventory.raw_material"],
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="writeoff_date">Tanggal</Label>
-              <Input
-                id="writeoff_date"
-                type="date"
-                value={writeoffDate}
-                onChange={(e) => setWriteoffDate(e.target.value)}
-              />
-            </div>
-            <LockedAccountField
-              label="Akun Beban Kerugian Barang Rusak (debit)"
-              htmlFor="writeoff_loss_expense_account"
-              resolved={defaultAccounts["inventory.damage_loss_expense"]}
-            />
-            <LockedAccountField
-              label="Akun Persediaan (kredit)"
-              htmlFor="writeoff_inventory_account"
-              resolved={defaultAccounts["inventory.raw_material"]}
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
-              <span>Item Diterima (sisa bisa diklaim)</span>
-              <span>Qty Write-off</span>
-            </div>
-            {writeoffLines.map((line) => (
-              <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                <span className="flex items-center text-sm text-slate-700">
-                  {line.name} ({line.qty_available} {line.uom})
-                </span>
-                <Input
-                  type="number"
-                  min="0"
-                  max={line.qty_available}
-                  placeholder="0"
-                  value={line.qty}
-                  onChange={(e) => updateWriteoffLine(line.item_id, e.target.value)}
-                />
-              </div>
-            ))}
-            {writeoffLines.length === 0 && (
-              <p className="text-sm text-slate-400">Semua item di bill ini udah diklaim penuh (retur, tukar barang, atau write-off).</p>
-            )}
-          </div>
-
-          {writeoffError && <FormError>{writeoffError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowWriteoffForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={writeoffSubmitting || writeoffLines.length === 0}>
-              {writeoffSubmitting ? "Menyimpan..." : "Simpan Write-off"}
             </Button>
           </div>
         </form>
