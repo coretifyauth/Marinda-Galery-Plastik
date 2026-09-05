@@ -195,11 +195,12 @@ export function ApBillDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: b, error: billErr } = await supabase
-      .from("ap_bills")
+      .from("transactions")
       .select(
-        "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
       )
       .eq("id", id)
+      .eq("type", "OUTBOUND")
       .single();
     if (billErr || !b) {
       setLoadError(billErr?.message ?? "Bill gak ditemukan.");
@@ -224,9 +225,9 @@ export function ApBillDetailView({ id }: { id: string }) {
     ] = await Promise.all([
       fetchDefaultAccounts(),
       supabase
-        .from("ap_bill_debit_lines")
+        .from("transaction_lines")
         .select("account_id, accounts(code, name)")
-        .eq("ap_bill_id", id)
+        .eq("transaction_id", id)
         .eq("is_tax", false),
       supabase.from("items").select("inventory_account_id"),
       supabase
@@ -278,7 +279,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       supabase
         .from("ap_deposits")
         .select(
-          "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+          "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills:transactions(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
         .eq("supplier_id", loadedBill.supplier_id)
         .order("deposit_date"),

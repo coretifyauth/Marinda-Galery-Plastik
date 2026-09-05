@@ -40,7 +40,6 @@ const statusStyle: Record<string, string> = {
   sebagian: "bg-amber-50 text-amber-700",
   belum: "bg-slate-100 text-slate-600",
   dibatalkan: "bg-slate-100 text-slate-400 line-through",
-  dihapusbukukan: "bg-red-50 text-red-700",
 };
 
 const originLabel: Record<string, string> = {
@@ -161,13 +160,14 @@ export default function ArInvoicesPage() {
   const createMutation = useMutation({
     mutationFn: async (input: CreateArInvoiceInput) => {
       const sourceRef = await generateDocumentNumber("ar_invoices");
-      const { error } = await supabase.rpc("create_ar_invoice", {
-        p_customer_id: input.customer_id,
-        p_invoice_date: input.invoice_date,
+      const { error } = await supabase.rpc("create_transaction", {
+        p_type: "INBOUND",
+        p_counterparty_id: input.customer_id,
+        p_date: input.invoice_date,
         p_description: input.description || null,
         p_source_ref: sourceRef,
-        p_credit_lines: input.credit_lines,
-        p_receivable_account_id: input.receivable_account_id,
+        p_lines: input.credit_lines,
+        p_control_account_id: input.receivable_account_id,
         p_apply_tax: input.apply_tax,
       });
       if (error) throw new Error(error.message);
@@ -332,7 +332,6 @@ export default function ArInvoicesPage() {
                   <option value="sebagian">Sebagian</option>
                   <option value="lunas">Lunas</option>
                   <option value="dibatalkan">Dibatalkan</option>
-                  <option value="dihapusbukukan">Dihapusbukukan</option>
                 </select>
               </th>
             </tr>
@@ -341,10 +340,7 @@ export default function ArInvoicesPage() {
             {invoices.map((inv) => {
               const { status, outstanding, returned } = inv;
               const overdue =
-                status !== "lunas" &&
-                status !== "dibatalkan" &&
-                status !== "dihapusbukukan" &&
-                inv.due_date < new Date().toISOString().slice(0, 10);
+                status !== "lunas" && status !== "dibatalkan" && inv.due_date < new Date().toISOString().slice(0, 10);
               return (
                 <tr
                   key={inv.id}

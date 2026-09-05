@@ -45,16 +45,17 @@ export function SupplierDetailView({ id }: { id: string }) {
         .eq("id", id)
         .single(),
       supabase
-        .from("ap_bills")
+        .from("transactions")
         .select(
-          "id, supplier_id, bill_date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+          "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
         )
-        .eq("supplier_id", id)
-        .order("bill_date", { ascending: false }),
+        .eq("type", "OUTBOUND")
+        .eq("counterparty_id", id)
+        .order("date", { ascending: false }),
       supabase
         .from("ap_payments")
         .select(
-          "id, supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ap_bills(source_ref)"
+          "id, supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ap_bills:transactions(source_ref)"
         )
         .eq("supplier_id", id)
         .order("payment_date", { ascending: false }),

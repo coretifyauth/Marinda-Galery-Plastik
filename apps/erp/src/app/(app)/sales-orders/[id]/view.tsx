@@ -86,7 +86,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
       const { data: fulfillData } = await supabase
         .from("goods_issue_lines")
         .select(
-          "id, item_id, qty_issued, total_cost, order_line_id, items(name, uom), goods_issues(id, invoice_id, issue_date, ar_invoices(source_ref, amount))"
+          "id, item_id, qty_issued, total_cost, order_line_id, items(name, uom), goods_issues(id, invoice_id, issue_date, ar_invoices:transactions(source_ref, amount))"
         )
         .in("order_line_id", orderLineIds)
         .order("id");

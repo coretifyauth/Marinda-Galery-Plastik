@@ -13,7 +13,6 @@ import {
   createWarrantyReplacementSchema,
   type WarrantyReplacement,
 } from "@/lib/ar-warranty-replacements/schema";
-import { writeOffArInvoiceSchema } from "@/lib/ar-bad-debt-writeoffs/schema";
 import { returnCreditRemaining, refundArReturnCreditSchema, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
 import { recordArPaymentSchema } from "@/lib/ar-payments/schema";
 import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
@@ -78,14 +77,6 @@ type DepositApplicationDetail = {
   ar_deposits: { source_ref: string };
 };
 
-type WriteoffDetail = {
-  id: string;
-  writeoff_date: string;
-  source_ref: string;
-  amount: number;
-  created_at: string;
-};
-
 type CreditNoteDetail = {
   id: string;
   credit_note_date: string;
@@ -110,7 +101,6 @@ const statusStyle: Record<string, string> = {
   sebagian: "bg-amber-50 text-amber-700",
   belum: "bg-slate-100 text-slate-600",
   dibatalkan: "bg-slate-100 text-slate-400 line-through",
-  dihapusbukukan: "bg-red-50 text-red-700",
 };
 
 export function ArInvoiceDetailView({ id }: { id: string }) {
@@ -122,7 +112,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [payments, setPayments] = useState<PaymentDetail[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
-  const [writeoffs, setWriteoffs] = useState<WriteoffDetail[]>([]);
   const [depositApplications, setDepositApplications] = useState<DepositApplicationDetail[]>([]);
   const [customerDeposits, setCustomerDeposits] = useState<ArDeposit[]>([]);
   const [customerReturnCredits, setCustomerReturnCredits] = useState<ArReturnCredit[]>([]);
@@ -164,12 +153,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     : null;
   const effectiveReturAmount = returAutoCalcEligible ? returAutoAmount ?? 0 : Number(returAmount) || 0;
 
-  const [showWriteoffForm, setShowWriteoffForm] = useState(false);
-  const [writeoffDate, setWriteoffDate] = useState("");
-  const [writeoffAmount, setWriteoffAmount] = useState("");
-  const [writeoffError, setWriteoffError] = useState<string | null>(null);
-  const [writeoffSubmitting, setWriteoffSubmitting] = useState(false);
-
   const [replacements, setReplacements] = useState<WarrantyReplacement[]>([]);
   const [showReplaceForm, setShowReplaceForm] = useState(false);
   const [replaceDate, setReplaceDate] = useState("");
@@ -193,11 +176,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: inv, error: invErr } = await supabase
-      .from("ar_invoices")
+      .from("transactions")
       .select(
-        "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount), ar_bad_debt_writeoffs(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
       )
       .eq("id", id)
+      .eq("type", "INBOUND")
       .single();
     if (invErr || !inv) {
       setLoadError(invErr?.message ?? "Invoice gak ditemukan.");
@@ -212,7 +196,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       { data: entries, error: entriesErr },
       { data: pay, error: payErr },
       { data: cns, error: cnErr },
-      { data: wos, error: woErr },
       { data: reps, error: repErr },
       { data: gi },
       { data: creditLineRows },
@@ -246,11 +229,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("invoice_id", id)
         .order("credit_note_date"),
       supabase
-        .from("ar_bad_debt_writeoffs")
-        .select("id, writeoff_date, source_ref, amount, created_at")
-        .eq("invoice_id", id)
-        .order("writeoff_date"),
-      supabase
         .from("warranty_replacements")
         .select(
           "id, invoice_id, replacement_date, source_ref, created_at, warranty_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
@@ -265,9 +243,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("invoice_id", id)
         .maybeSingle(),
       supabase
-        .from("ar_invoice_credit_lines")
+        .from("transaction_lines")
         .select("id, account_id, amount, is_tax, accounts(code, name)")
-        .eq("ar_invoice_id", id)
+        .eq("transaction_id", id)
         .order("is_tax"),
       supabase.from("ar_invoice_charge_types").select("id, name, account_id, archived_at, accounts(code, name)"),
       supabase
@@ -277,7 +255,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("ar_deposits")
         .select(
-          "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+          "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices:transactions(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
         .eq("customer_id", loadedInvoice.customer_id)
         .order("deposit_date"),
@@ -300,7 +278,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setCreditLines((creditLineRows ?? []) as unknown as InvoiceCreditLine[]);
     setChargeTypes((chargeTypeRows ?? []) as unknown as ArInvoiceChargeType[]);
-    setWriteoffs((wos ?? []) as unknown as WriteoffDetail[]);
     setReplacements((reps ?? []) as unknown as WarrantyReplacement[]);
     setGoodsIssue((gi ?? null) as unknown as GoodsIssueForInvoice | null);
     setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
@@ -310,7 +287,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       entriesErr?.message ??
         payErr?.message ??
         cnErr?.message ??
-        woErr?.message ??
         repErr?.message ??
         depAppErr?.message ??
         custDepositsErr?.message ??
@@ -577,57 +553,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     await load();
   }
 
-  function openWriteoffForm() {
-    setWriteoffError(null);
-    setWriteoffDate("");
-    setWriteoffAmount("");
-    setShowWriteoffForm(true);
-  }
-
-  async function handleWriteoffSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!invoice) return;
-    setWriteoffError(null);
-
-    const parsed = writeOffArInvoiceSchema.safeParse({
-      invoice_id: invoice.id,
-      writeoff_date: writeoffDate,
-      amount: writeoffAmount,
-      expense_account_id: defaultAccounts["ar.writeoff_expense"]?.id ?? "",
-      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
-    });
-    if (!parsed.success) {
-      setWriteoffError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setWriteoffSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_bad_debt_writeoffs");
-    } catch (err) {
-      setWriteoffSubmitting(false);
-      setWriteoffError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("write_off_ar_invoice", {
-      p_invoice_id: parsed.data.invoice_id,
-      p_writeoff_date: parsed.data.writeoff_date,
-      p_amount: parsed.data.amount,
-      p_source_ref: sourceRef,
-      p_expense_account_id: parsed.data.expense_account_id,
-      p_receivable_account_id: parsed.data.receivable_account_id,
-    });
-    setWriteoffSubmitting(false);
-    if (error) {
-      setWriteoffError(error.message);
-      return;
-    }
-
-    setShowWriteoffForm(false);
-    await load();
-  }
-
   async function handleCancel() {
     if (!invoice) return;
     if (!window.confirm(`Batalkan invoice ${invoice.source_ref} (Rp${invoice.amount.toLocaleString("id-ID")})?`)) return;
@@ -770,20 +695,16 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   }
 
   const isCancelled = reversedEntryIds.has(invoice.journal_entry_id);
-  const { status, outstanding, allocated, returned, depositApplied, writtenOff } = invoiceStatus(invoice, isCancelled);
+  const { status, outstanding, allocated, returned, depositApplied } = invoiceStatus(invoice, isCancelled);
   const overdue =
-    status !== "lunas" &&
-    status !== "dibatalkan" &&
-    status !== "dihapusbukukan" &&
-    invoice.due_date < new Date().toISOString().slice(0, 10);
+    status !== "lunas" && status !== "dibatalkan" && invoice.due_date < new Date().toISOString().slice(0, 10);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  const canCancel = canWrite && !isCancelled && allocated === 0 && writeoffs.length === 0;
+  const canCancel = canWrite && !isCancelled && allocated === 0;
   const canPay = canWrite && !isCancelled && outstanding > 0.005;
   const canRetur = canWrite && !isCancelled;
   const invoiceReturnCredits = customerReturnCredits.filter((rc) =>
     creditNotes.some((cn) => cn.id === rc.credit_note_id)
   );
-  const canWriteOff = canWrite && !isCancelled && outstanding > 0.005;
   const availableDeposits = customerDeposits.filter(
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
   );
@@ -841,12 +762,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         </tr></thead><tbody>${itemRows}</tbody></table>`
       : `<p class="meta">Invoice financial-only — gak ada rincian barang fisik tercatat.</p>`;
 
-    const watermark =
-      status === "dibatalkan"
-        ? `<div class="watermark">Dibatalkan</div>`
-        : status === "dihapusbukukan"
-          ? `<div class="watermark">Dihapusbukukan — Piutang Tak Tertagih</div>`
-          : "";
+    const watermark = status === "dibatalkan" ? `<div class="watermark">Dibatalkan</div>` : "";
 
     // Rincian ar_invoice_credit_lines (kategori pendapatan tambahan + PPN Keluaran, migration
     // 0025_compound_transactional_entries_schema.sql). Baris pendapatan UTAMA (akun ar.revenue,
@@ -866,15 +782,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       )
       .join("");
 
-    // Baris ringkasan yang berasal dari relasi objek lain (pembayaran/DP/retur/write-off)
-    // cuma ditampilkan kalau nilainya beneran ada (>0) -- invoice yang belum pernah kena
-    // retur/write-off gak perlu nunjukkan baris "Retur: Rp0" di kertas.
+    // Baris ringkasan yang berasal dari relasi objek lain (pembayaran/DP/retur) cuma
+    // ditampilkan kalau nilainya beneran ada (>0) -- invoice yang belum pernah kena
+    // retur gak perlu nunjukkan baris "Retur: Rp0" di kertas.
     const summaryRows = [
       { label: "Jumlah Invoice", value: invoice.amount },
       allocated > 0.005 && { label: "Terbayar (Kas/Bank)", value: allocated },
       depositApplied > 0.005 && { label: "DP Diterapkan", value: depositApplied },
       returned > 0.005 && { label: "Retur", value: returned },
-      writtenOff > 0.005 && { label: "Piutang Tak Tertagih", value: writtenOff },
     ]
       .filter((row): row is { label: string; value: number } => !!row)
       .map((row) => `<tr><td>${row.label}</td><td class="num">Rp${row.value.toLocaleString("id-ID")}</td></tr>`)
@@ -945,7 +860,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         { label: "Terbayar (Kas/Bank)", value: allocated.toLocaleString("id-ID") },
         { label: "DP Diterapkan", value: depositApplied.toLocaleString("id-ID") },
         { label: "Retur", value: returned.toLocaleString("id-ID") },
-        { label: "Piutang Tak Tertagih (Write-off)", value: writtenOff.toLocaleString("id-ID") },
         { label: "Outstanding", value: outstanding.toLocaleString("id-ID") },
       ],
     },
@@ -958,11 +872,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur", badge: creditNotes.length },
-    { key: "writeoff", label: "Piutang Tak Tertagih", badge: writeoffs.length },
     // Penggantian Barang (warranty replacement) wajib nunjuk credit note yang punya retur fisik
     // (inventory_returns), yang cuma mungkin ada kalau invoice ini punya goods_issue -- create_warranty_replacement
     // nolak kalau retur-nya financial-only. Gak ada gunanya ditampilin buat invoice financial-only.
-    // Piutang Tak Tertagih TETAP tampil -- itu soal collectibility piutang, gak ada hubungannya sama barang fisik.
     ...(!isFinancialOnly ? [{ key: "replacements", label: "Penggantian Barang", badge: replacements.length }] : []),
   ];
 
@@ -1255,45 +1167,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         </div>
       )}
 
-      {activeTab === "writeoff" && (
-        <div className="flex flex-col gap-3">
-          {canWriteOff && (
-            <div className="flex justify-end">
-              <Button variant="toolbar" onClick={openWriteoffForm}>
-                Hapusbukukan
-              </Button>
-            </div>
-          )}
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                  <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Source Ref</th>
-                  <th className="px-4 py-2 text-right">Nominal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {writeoffs.map((w) => (
-                  <tr key={w.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-2">{w.writeoff_date}</td>
-                    <td className="px-4 py-2">{w.source_ref}</td>
-                    <td className="px-4 py-2 text-right font-mono">{w.amount.toLocaleString("id-ID")}</td>
-                  </tr>
-                ))}
-                {writeoffs.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                      Belum ada write-off.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
       {activeTab === "replacements" && (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="w-full text-left text-sm">
@@ -1509,77 +1382,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             </Button>
             <Button type="submit" disabled={applySubmitting}>
               {applySubmitting ? "Menyimpan..." : "Terapkan DP"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
-        open={showWriteoffForm}
-        onClose={() => setShowWriteoffForm(false)}
-        title="Hapusbukukan Piutang Tak Tertagih"
-        maxWidth="max-w-2xl"
-      >
-        <p className="mb-4 text-sm text-slate-600">
-          Piutang ini beneran gak akan tertagih (customer menghilang/tutup usaha) —
-          Pendapatan asli gak dibalik, cuma piutangnya dihapusbukukan lewat beban baru.
-          Boleh sebagian, tapi gak boleh ngelebihin sisa outstanding.
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Beban Piutang Tak Tertagih (debit)",
-                resolved: defaultAccounts["ar.writeoff_expense"],
-                side: "debit",
-              },
-              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
-            ],
-          ]}
-        />
-        <form onSubmit={handleWriteoffSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="writeoff_date">Tanggal Write-off</Label>
-              <Input
-                id="writeoff_date"
-                type="date"
-                value={writeoffDate}
-                onChange={(e) => setWriteoffDate(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="writeoff_amount">Nominal Write-off (maks {outstanding.toLocaleString("id-ID")})</Label>
-              <Input
-                id="writeoff_amount"
-                type="number"
-                min="0"
-                max={outstanding}
-                placeholder="0"
-                value={writeoffAmount}
-                onChange={(e) => setWriteoffAmount(e.target.value)}
-              />
-            </div>
-            <LockedAccountField
-              label="Akun Beban Piutang Tak Tertagih (debit)"
-              htmlFor="writeoff_expense_account"
-              resolved={defaultAccounts["ar.writeoff_expense"]}
-            />
-            <LockedAccountField
-              label="Akun Piutang Usaha (kredit)"
-              htmlFor="writeoff_receivable_account"
-              resolved={defaultAccounts["ar.receivable"]}
-            />
-          </div>
-
-          {writeoffError && <FormError>{writeoffError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowWriteoffForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={writeoffSubmitting}>
-              {writeoffSubmitting ? "Menyimpan..." : "Simpan Write-off"}
             </Button>
           </div>
         </form>

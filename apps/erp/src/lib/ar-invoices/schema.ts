@@ -30,7 +30,6 @@ export type ArInvoice = {
     warranty_replacements?: { discount_reversed_amount: number; return_credit_settled_amount: number }[];
   }[];
   ar_deposit_applications?: { amount: number }[];
-  ar_bad_debt_writeoffs?: { amount: number }[];
 };
 
 export type ArInvoiceOrigin = "sales_order" | "goods_issue" | "financial_only";
@@ -62,11 +61,11 @@ export type ArInvoiceListRow = {
   counterparties: { name: string };
 };
 
-export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "dihapusbukukan";
+export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
 
 /**
- * Status derived dari SUM(payment) - SUM(retur) - SUM(deposit applications) -
- * SUM(write-offs) vs amount, plus cek reversal — bukan kolom, ref ar-schema.md.
+ * Status derived dari SUM(payment) - SUM(retur) - SUM(deposit applications)
+ * vs amount, plus cek reversal — bukan kolom, ref ar-schema.md.
  * `ar_payments.invoice_id` gak unique lagi sejak migration 0010 — 1 invoice boleh punya
  * banyak baris payment dari waktu ke waktu (cicil), makanya `ar_payments` di sini array &
  * di-`reduce` (bukan ambil 1 baris). Masih 1 payment = 1 invoice (gak ada gabung invoice).
@@ -101,19 +100,15 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan" | "d
  * di database — kalau ada reducer baru ditambah server-side, tambahin di sini juga.
  * `isCancelled` dihitung caller dari query terpisah (journal_entries.reverses_entry_id
  * yang nunjuk ke invoice.journal_entry_id), karena bukan relasi langsung dari ar_invoices.
- * Status `dihapusbukukan` beda dari `lunas` — piutang ini gak pernah beneran dibayar,
- * cuma diakui hilang lewat write-off (lihat docs/domain/accounts-receivable.md bagian
- * "Piutang Tak Tertagih").
  */
 export function invoiceStatus(
-  invoice: Pick<ArInvoice, "amount" | "ar_payments" | "ar_credit_notes" | "ar_deposit_applications" | "ar_bad_debt_writeoffs">,
+  invoice: Pick<ArInvoice, "amount" | "ar_payments" | "ar_credit_notes" | "ar_deposit_applications">,
   isCancelled = false
 ): {
   status: ArInvoiceStatus;
   allocated: number;
   returned: number;
   depositApplied: number;
-  writtenOff: number;
   outstanding: number;
 } {
   const allocated = invoice.ar_payments.reduce((sum, p) => sum + p.amount, 0);
@@ -132,32 +127,12 @@ export function invoiceStatus(
     0
   );
   const depositApplied = (invoice.ar_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const writtenOff = (invoice.ar_bad_debt_writeoffs ?? []).reduce((sum, a) => sum + a.amount, 0);
   const outstanding =
-    invoice.amount -
-    allocated -
-    returned -
-    depositApplied -
-    writtenOff +
-    returnCreditsSettled +
-    warrantyReplacementReversed;
+    invoice.amount - allocated - returned - depositApplied + returnCreditsSettled + warrantyReplacementReversed;
   if (isCancelled) {
-    return {
-      status: "dibatalkan",
-      allocated,
-      returned,
-      depositApplied,
-      writtenOff,
-      outstanding: 0,
-    };
+    return { status: "dibatalkan", allocated, returned, depositApplied, outstanding: 0 };
   }
   const status: ArInvoiceStatus =
-    writtenOff > 0 && outstanding <= 0.005
-      ? "dihapusbukukan"
-      : outstanding <= 0.005
-        ? "lunas"
-        : allocated > 0 || depositApplied > 0
-          ? "sebagian"
-          : "belum";
-  return { status, allocated, returned, depositApplied, writtenOff, outstanding };
+    outstanding <= 0.005 ? "lunas" : allocated > 0 || depositApplied > 0 ? "sebagian" : "belum";
+  return { status, allocated, returned, depositApplied, outstanding };
 }

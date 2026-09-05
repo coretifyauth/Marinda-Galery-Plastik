@@ -165,13 +165,14 @@ export default function ApBillsPage() {
   const createMutation = useMutation({
     mutationFn: async (input: CreateApBillInput) => {
       const sourceRef = await generateDocumentNumber("ap_bills");
-      const { error } = await supabase.rpc("create_ap_bill", {
-        p_supplier_id: input.supplier_id,
-        p_bill_date: input.bill_date,
+      const { error } = await supabase.rpc("create_transaction", {
+        p_type: "OUTBOUND",
+        p_counterparty_id: input.supplier_id,
+        p_date: input.bill_date,
         p_description: input.description || null,
         p_source_ref: sourceRef,
-        p_debit_lines: input.debit_lines,
-        p_payable_account_id: input.payable_account_id,
+        p_lines: input.debit_lines,
+        p_control_account_id: input.payable_account_id,
         p_apply_tax: input.apply_tax,
         p_supplier_document_ref: input.supplier_document_ref || null,
       });

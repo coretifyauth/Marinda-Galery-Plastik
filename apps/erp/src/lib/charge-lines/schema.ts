@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { ResolvedAccount } from "@/lib/default-accounts/schema";
 
-/** Baris kategori dikirim ke RPC (create_ap_bill/create_ar_invoice/create_pos_sale) — akun sudah
+/** Baris kategori dikirim ke RPC (create_transaction/create_pos_sale) — akun sudah
  * diresolusi dari pilihan katalog di UI, bukan diketik bebas (memory/scope-debt/compound-transactional-entries.md). */
 export const chargeLineSchema = z.object({
   account_id: z.string().uuid(),

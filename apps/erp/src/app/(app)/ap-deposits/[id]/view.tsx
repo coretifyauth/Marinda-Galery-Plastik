@@ -67,7 +67,7 @@ export function ApDepositDetailView({ id }: { id: string }) {
     const { data: dep, error: depErr } = await supabase
       .from("ap_deposits")
       .select(
-        "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+        "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills:transactions(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
       )
       .eq("id", id)
       .single();

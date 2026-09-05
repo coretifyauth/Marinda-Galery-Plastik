@@ -14,7 +14,7 @@ export type GoodsIssueFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices(source_ref, amount, counterparties(name)), goods_issue_lines(id, item_id, qty_issued, total_cost, items(name, uom))";
+  "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, counterparties(name)), goods_issue_lines(id, item_id, qty_issued, total_cost, items(name, uom))";
 
 export async function fetchGoodsIssues(
   filters: GoodsIssueFilters

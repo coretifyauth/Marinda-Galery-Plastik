@@ -44,7 +44,7 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
     const { data: gi, error: giErr } = await supabase
       .from("goods_issues")
       .select(
-        "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices(source_ref, amount, counterparties(name)), goods_issue_lines(id, qty_issued, total_cost, items(name, uom))"
+        "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, counterparties(name)), goods_issue_lines(id, qty_issued, total_cost, items(name, uom))"
       )
       .eq("id", id)
       .single();
