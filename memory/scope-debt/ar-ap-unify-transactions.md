@@ -1,6 +1,6 @@
 # Gabung `ar_invoices`+`ap_bills` jadi 1 tabel `transactions` (`type` INBOUND/OUTBOUND)
 
-**Modul asal:** cross-cutting (AR, AP, dan pemanggilnya di Inventory — `create_goods_issue`/`create_goods_receipt`). Hasil diskusi eksplorasi arsitektur dengan user (2026-09-05), bukan gap yang ketemu pas bangun fitur. **Status:** Ditunda — butuh 1 keputusan owner (singkirkan Credit Hold) sebelum bisa mulai, dan belum ada tekanan kebutuhan konkret buat digarap sekarang.
+**Modul asal:** cross-cutting (AR, AP, dan pemanggilnya di Inventory — `create_goods_issue`/`create_goods_receipt`). Hasil diskusi eksplorasi arsitektur dengan user (2026-09-05), bukan gap yang ketemu pas bangun fitur. **Status:** Fase 1 (Keputusan & Desain) selesai 2026-09-05. Fase 2 langkah 3 (RPC `create_transaction`, migration `0063`) juga selesai ditulis & di-review 2026-09-05 — **belum di-push ke live**. Fase 2 langkah 4 (update pemanggil `create_goods_issue`/`create_goods_receipt`) BELUM dikerjakan — ketauan harus digabung sama Fase 3, gak bisa jalan sendiri (lihat catatan di bawah). Belum ada tekanan kebutuhan konkret buat lanjut ke situ sekarang.
 
 Menggantikan draft awal (`journal-account-determination.md`, ide "tabel journal template" generik) — setelah `create_ar_invoice`/`create_ap_bill` dibaca langsung side-by-side, ternyata bentuknya JAUH lebih dekat buat digabung daripada draft awal ngira. Ide "journal template" sendiri gak dilanjutkan sebagai item terpisah — kebutuhannya udah kejawab jadi bagian desain RPC `create_transaction` di bawah.
 
@@ -27,9 +27,9 @@ Ini cermin sempurna — cuma beda arah debit/kredit, bisa digenericin lewat 1 ko
 
 ## Kenapa ditunda
 
-1. **Prasyarat: keputusan owner soal Credit Hold belum ada.** Fitur ini (`ar_bad_debt_writeoffs` + `counterparties.credit_limit`/`overdue_threshold_days` + check di `create_ar_invoice`) HARUS disingkirkan dulu biar `create_ar_invoice`/`create_ap_bill` beneran simetris — ini keputusan PRODUK (ngilangin kemampuan formal nolak invoice yang ngelewatin plafon kredit / nyatet piutang tak tertagih), bukan keputusan teknis semata. Belum diputuskan.
-2. **Blast radius migrasi LEBIH GEDE dari `orders`** — `orders` cuma punya sedikit dependent (karena PO/SO dulu belum ada jurnal). `ar_invoices`/`ap_bills` udah ada jurnal DAN udah punya **11 tabel turunan** yang FK ke situ: `ar_payments`, `ar_credit_notes`, `ar_deposits`, `ar_return_credits`, `ar_invoice_credit_lines` (+ `ar_bad_debt_writeoffs` kalau fiturnya gak jadi disingkirkan) di sisi AR; `ap_payments`, `ap_credit_notes`, `ap_deposits`, `ap_return_credits`, `ap_bill_debit_lines` di sisi AP. Semua butuh repoint FK + trigger + view disesuaikan — pola teknisnya udah ada (`_repoint_fk_to_counterparties`/`_repoint_fk`, `0059`/`0060`), tapi jumlah tabel yang kena jauh lebih banyak.
-3. **Belum ada tekanan kebutuhan konkret** — murni ide eksplorasi arsitektur, belum ada bug/duplikasi yang beneran mengganggu development sehari-hari.
+1. ~~Prasyarat: keputusan owner soal Credit Hold belum ada.~~ **Selesai 2026-09-05 — owner putuskan SINGKIRKAN.** Fitur `ar_bad_debt_writeoffs` + `counterparties.credit_limit`/`overdue_threshold_days` + check di `create_ar_invoice` akan disingkirkan (eksekusi teknisnya nunggu Fase 2/3 di bawah, gak langsung dieksekusi di sesi keputusan ini — ini keputusan produk yang bukanya jalur teknis mendesak).
+2. **Blast radius migrasi LEBIH GEDE dari `orders`** — `orders` cuma punya sedikit dependent (karena PO/SO dulu belum ada jurnal). `ar_invoices`/`ap_bills` udah ada jurnal DAN udah punya **11 tabel turunan** yang FK ke situ: `ar_payments`, `ar_credit_notes`, `ar_deposits`, `ar_return_credits`, `ar_invoice_credit_lines` (+ `ar_bad_debt_writeoffs`, sekarang PASTI ikut disingkirkan bukan lagi kondisional) di sisi AR; `ap_payments`, `ap_credit_notes`, `ap_deposits`, `ap_return_credits`, `ap_bill_debit_lines` di sisi AP. Semua butuh repoint FK + trigger + view disesuaikan — pola teknisnya udah ada (`_repoint_fk_to_counterparties`/`_repoint_fk`, `0059`/`0060`), tapi jumlah tabel yang kena jauh lebih banyak.
+3. **Belum ada tekanan kebutuhan konkret** — murni ide eksplorasi arsitektur, belum ada bug/duplikasi yang beneran mengganggu development sehari-hari. Fase 1 (keputusan + desain schema) dikerjakan sekarang biar gak nunggu tekanan itu buat mikirin bentuknya, tapi eksekusi migration beneran (Fase 2 ke bawah) tetap nunggu ada alasan konkret.
 
 ## Rencana Bertahap (kalau nanti digarap — bukan cetak biru final)
 
@@ -43,12 +43,57 @@ Fase 4: Sweep Permukaan        -- frontend + laporan, mekanis tapi lebar
 ```
 
 ### Fase 1 — Keputusan & Desain
-1. **Keputusan owner: singkirkan Credit Hold** (`ar_bad_debt_writeoffs` + `counterparties.credit_limit`/`overdue_threshold_days` + check di `create_ar_invoice`) — **gerbang wajib**, gak ada langkah lain yang boleh mulai sebelum ini diputuskan. Kalau owner milih PERTAHANKAN fitur ini, seluruh rencana berhenti di sini (Credit Hold jadi 1 baris kondisional ekstra yang cuma jalan kalau `type='INBOUND'` — masih tolerable, tapi ngerusak kebersihan "generic murni", perlu didiskusikan ulang trade-off-nya kalau ini yang kejadian).
-2. **Desain schema `transactions`+`transaction_lines`** — mirror `orders`+`order_lines`: kolom union dari `ar_invoices`+`ap_bills` (`counterparty_id`, `type` `'INBOUND'`/`'OUTBOUND'`, `date`, `description`, `source_ref`, `amount`, `due_date`, `outstanding`/`status`/`origin` denormalized, `journal_entry_id`, `supplier_document_ref` nullable cuma keisi `OUTBOUND`). Output fase ini murni dokumen desain (DDL rancangan), belum ada migration ditulis.
+
+1. ~~**Keputusan owner: singkirkan Credit Hold**~~ **SELESAI 2026-09-05 — SINGKIRKAN.** `ar_bad_debt_writeoffs`, `counterparties.credit_limit`/`overdue_threshold_days`, dan check-nya di `create_ar_invoice` akan hilang total pas migrasi struktural (Fase 3) / gak dibawa ke `create_transaction` baru (Fase 2). Eksekusi drop-nya sendiri belum jalan sekarang (nunggu fase teknisnya), keputusan produknya yang sudah final.
+
+2. **Desain schema `transactions`+`transaction_lines`** — SELESAI, mirror `orders`+`order_lines`. Union kolom `ar_invoices`+`ap_bills`, ketauan **2 asimetri tambahan** pas nulis desain ini (di luar Credit Hold & `supplier_document_ref` yang udah kecatat sebelumnya) — dicatat di bawah, belum diputuskan resolusinya, jadi bukan blocker (bisa jalan `NULL`-able) tapi butuh keputusan desain kecil pas Fase 2 beneran ditulis:
+
+   - **Kolom `returned`** — cuma ada di `ar_invoices` (dipakai `invoiceStatus()` buat bedain retur murni dari sebagian/write-off, lihat submodule "AR Invoice" `ar-schema.md` migration `0053`). `ap_bills` gak punya padanan — AP gak punya konsep write-off utang (gak ada `ap_bad_debt_writeoffs`), jadi status AP cuma butuh `outstanding`. Opsi: (a) kolom `returned` tetap ada di `transactions`, `NULL`/`0` selalu buat `type='OUTBOUND'`; (b) pindahin ke tabel terpisah `transaction_returns` cuma buat `INBOUND`. Cenderung (a) — lebih murah, konsisten sama pola `supplier_document_ref` (nullable-cuma-1-arah) yang udah diterima duluan.
+   - **Vocabulary `origin` beda istilah AR vs AP** — AR pakai `financial_only`/`sales_order`/`goods_issue`, AP pakai `langsung`/`grn` (`ap_bills_with_status`, migration `0038`/`0032`). Union butuh 1 vocabulary bersama sebelum `origin` bisa jadi kolom generik yang enak dibaca laporan — bukan cuma soal tipe kolom, istilahnya beneran beda kata. Belum diputuskan: unifikasi ke istilah AR (lebih deskriptif), istilah AP (lebih singkat), atau istilah baru netral (mis. `financial_only`/`order`/`goods_movement`). Ini keputusan kecil, bisa ditunda sampai Fase 2 beneran ditulis (gak butuh keputusan owner terpisah kayak Credit Hold — murni penamaan teknis).
+
+   **Rancangan DDL** (union, belum final — ditulis ulang sekali lagi pas Fase 2 kalau ada yang kelewat):
+
+   ```sql
+   create table transactions (
+     id uuid primary key default gen_random_uuid(),
+     type text not null check (type in ('INBOUND', 'OUTBOUND')), -- INBOUND=piutang(dulu ar_invoices), OUTBOUND=utang(dulu ap_bills)
+     counterparty_id uuid not null references counterparties(id),
+     date date not null,               -- dulu invoice_date / bill_date
+     due_date date not null,           -- snapshot pas dibuat, sama pola lama
+     description text,
+     source_ref text not null,
+     amount numeric(14,2) not null check (amount > 0),
+     outstanding numeric(14,2) not null,        -- denormalized (0053), dijaga trigger recompute gabungan
+     returned numeric(14,2),                    -- cuma keisi type='INBOUND', lihat asimetri di atas
+     status text not null,                      -- vocabulary beda per type (AR punya 'dihapusbukukan', AP enggak)
+     origin text,                               -- vocabulary belum diunifikasi, lihat asimetri di atas
+     supplier_document_ref text,                -- cuma keisi type='OUTBOUND' (nomor nota asli supplier)
+     journal_entry_id uuid not null references journal_entries(id),
+     created_by uuid references auth.users(id),
+     created_at timestamptz not null default now()
+   );
+
+   create index transactions_counterparty_id_idx on transactions(counterparty_id);
+   create index transactions_journal_entry_id_idx on transactions(journal_entry_id);
+   create index transactions_type_idx on transactions(type);
+
+   create table transaction_lines (
+     id uuid primary key default gen_random_uuid(),
+     transaction_id uuid not null references transactions(id),
+     account_id uuid not null references accounts(id),
+     amount numeric(14,2) not null check (amount > 0),
+     is_tax boolean not null default false
+   );
+
+   create index transaction_lines_transaction_id_idx on transaction_lines(transaction_id);
+   ```
+
+   Arah baris `transaction_lines` (debit vs kredit) gak disimpan sebagai kolom — ditentuin runtime dari `transactions.type` pas `create_transaction` nyusun `p_journal_lines` buat `create_journal_entry`, persis pola rancangan RPC di Fase 2 langkah 3 (mirror `create_order(p_direction,...)`). Immutability + RLS + trigger `block_edit_delete_or_sync` (pola `0053`) ngikutin persis apa yang udah ada di `ar_invoices`/`ap_bills` — gak diulang di sini, lihat referensi `ar-schema.md`/`ap-schema.md`.
 
 ### Fase 2 — RPC Layer
-3. **RPC `create_transaction(p_type, p_counterparty_id, p_lines, p_control_account_id, p_apply_tax, p_supplier_document_ref default null)`** gantiin `create_ar_invoice`+`create_ap_bill` — cabang `if p_type='INBOUND'` cuma nentuin arah baris FIXED vs VARIABEL/PPN (persis pola `create_order(p_direction,...)`). Bisa ditulis & di-review duluan sebelum tabel lama beneran diganti (RPC baru jalan paralel, `ar_invoices`/`ap_bills` lama masih ada).
-4. **Update pemanggil**: `create_goods_issue` ganti manggil `create_transaction('INBOUND', ...)` gantiin `create_ar_invoice(...)` — jurnal HPP/Persediaan-nya SENDIRI TETAP TERPISAH, gak kesentuh sama sekali. `create_goods_receipt` sama, ganti ke `create_transaction('OUTBOUND', ...)` gantiin `create_ap_bill(...)`.
+
+3. ~~**RPC `create_transaction(...)`**~~ **SELESAI — migration `0063_transactions_schema.sql`** (belum di-push ke live, sudah lolos review `schema-reviewer`: 1 blocker + 2 warning ditemukan & dibenerin — guard `counterparty_role_guard` INBOUND/OUTBOUND yang kelewat dari desain awal, `p_lines` gak divalidasi kosong/≤0, `returned`/`origin` nullable tanpa default). Tabel `transactions`+`transaction_lines` + RPC jalan PARALEL — `ar_invoices`/`ap_bills` lama sama sekali gak disentuh.
+4. **Update pemanggil — BELUM dikerjakan, gak aman dieksekusi sekarang.** Ketauan pas mau lanjut langkah ini: kalau `create_goods_issue`/`create_goods_receipt` diganti manggil `create_transaction` SEBELUM Fase 3 (backfill+repoint FK), invoice/bill baru bakal lahir di `transactions`, tapi `ar_payments`/`ar_credit_notes`/dst (11 tabel turunan) masih FK ke `ar_invoices`/`ap_bills` lama — payment/retur/dst buat transaksi baru itu bakal gagal FK, dan `ar_invoices_with_status`/aging report gak bakal nunjukin transaksi baru itu sama sekali. Langkah ini HARUS digabung jalan bareng Fase 3 (bukan step independen kayak yang tertulis semula di rencana ini) — bukan lagi 2 fase terpisah yang bisa di-batch beda waktu, minimal langkah 4+5+6 harus 1 migration/1 sesi kerja yang sama.
 
 ### Fase 3 — Migrasi Struktural (paling berisiko, butuh review `schema-reviewer` paling ketat)
 5. **Backfill `transactions`/`transaction_lines` dari `ar_invoices`+`ap_bills` PAKAI ID ASLI** (pola sama Fase 1 `order-generalization` — `counterparties`/`0059` — biar tabel turunan cukup di-repoint constraint-nya, gak perlu backfill data per-baris).
