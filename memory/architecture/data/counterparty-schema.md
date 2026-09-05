@@ -29,6 +29,8 @@ create table counterparties (
 
 Struktur identik gabungan `customers`+`suppliers` lama — `credit_limit`/`overdue_threshold_days` cuma dipakai jalur Credit Hold AR (`create_ar_invoice`), gak relevan buat pihak yang cuma berperan supplier tapi kolomnya tetap ada di semua baris (nullable, konsisten 1 tabel 1 bentuk). **Beda dari `customers`/`suppliers` lama**: `payment_term_days` gak lagi punya `DEFAULT` di level kolom (dulu `customers` default 7, `suppliers` default 14 — beda default gak bisa dipertahankan di 1 kolom yang sama) — RPC `create_counterparty` yang nentuin default per pemanggilan (`p_payment_term_days default 7`, form `/suppliers` selalu kirim eksplisit 14).
 
+**DDL & RPC di atas dokumentasi state migration `0059` (histori).** Kolom `credit_limit`/`overdue_threshold_days` **didrop total migration `0065`** (2026-09-05) bareng pencabutan fitur Credit Hold — lihat `memory/architecture/data/ar-schema.md` dan `memory/architecture/data/transactions-schema.md`. `create_counterparty` juga direcreate `0065` tanpa parameter `p_credit_limit`/`p_overdue_threshold_days` (signature terkini: `(p_name text, p_role text, p_contact text default null, p_payment_term_days int default 7)`).
+
 ### `counterparty_type_mapping` — peran (customer/supplier), bisa lebih dari 1 per pihak
 
 ```sql
@@ -68,11 +70,10 @@ end;
 $$ language plpgsql;
 ```
 
-**Awalnya 11 tabel terpasang** (migration `0059`, `before insert`, cukup insert-only karena semua kolom `customer_id`/`supplier_id` di tabel-tabel ini immutable write-once — dijaga trigger selective-lock lain yang udah ada, dikonfirmasi lewat `schema-reviewer` nyisir tuple immutable check di `0053_denormalize_transactional_status.sql`+`0024_purchase_order_sales_order_cancel.sql`). **Sejak migration `0060` (Fase 3 order-generalization), `sales_orders`/`purchase_orders` di-drop** — diganti 1 tabel `orders` (kolom `counterparty_id` tunggal, bukan `customer_id`/`supplier_id` terpisah) dengan trigger validasi SENDIRI, `orders_counterparty_direction_guard` (niru konsep yang sama tapi role wajibnya ditentukan dari kolom `direction` di baris yang sama, bukan hardcode per tabel via `TG_ARGV` — detail: `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Sales Order"). Sisa **9 tabel** di bawah ini tetap dijaga `counterparty_role_guard()` generik:
+**Awalnya 11 tabel terpasang** (migration `0059`, `before insert`, cukup insert-only karena semua kolom `customer_id`/`supplier_id` di tabel-tabel ini immutable write-once — dijaga trigger selective-lock lain yang udah ada, dikonfirmasi lewat `schema-reviewer` nyisir tuple immutable check di `0053_denormalize_transactional_status.sql`+`0024_purchase_order_sales_order_cancel.sql`). **Sejak migration `0060` (Fase 3 order-generalization), `sales_orders`/`purchase_orders` di-drop** — diganti 1 tabel `orders` (kolom `counterparty_id` tunggal, bukan `customer_id`/`supplier_id` terpisah) dengan trigger validasi SENDIRI, `orders_counterparty_direction_guard` (niru konsep yang sama tapi role wajibnya ditentukan dari kolom `direction` di baris yang sama, bukan hardcode per tabel via `TG_ARGV` — detail: `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Sales Order"). **Sejak migration `0064` (AR/AP unify), `ar_invoices`/`ap_bills` juga di-drop** — diganti 1 tabel `transactions` (kolom `counterparty_id` tunggal) dengan trigger validasi sendiri juga, `transactions_counterparty_role_guard_inbound`/`transactions_counterparty_role_guard_outbound` (role wajib ditentukan dari kolom `type` di baris yang sama, pola sama `orders_counterparty_direction_guard` — detail: `memory/architecture/data/transactions-schema.md`). Sisa **7 tabel** di bawah ini tetap dijaga `counterparty_role_guard()` generik:
 
 | Sisi customer (`role='customer'`) | Sisi supplier (`role='supplier'`) |
 |---|---|
-| `ar_invoices.customer_id` | `ap_bills.supplier_id` |
 | `ar_payments.customer_id` | `ap_payments.supplier_id` |
 | `ar_deposits.customer_id` | `ap_deposits.supplier_id` |
 | `ar_return_credits.customer_id` | `ap_return_credits.supplier_id` |
@@ -102,9 +103,9 @@ language plpgsql security invoker as $$ ... $$;
 
 `security definer`, pola sama `delete_item` (`0013_master_data_smart_delete.sql`) — hapus `counterparty_type_mapping` DULU di blok `begin/exception` yang sama (dianggap konfigurasi peran, bukan riwayat transaksi eksternal), baru `counterparties`-nya. `foreign_key_violation` (dari salah satu 11 tabel di atas yang masih nunjuk) ditangkap, fallback arsip (`archived_at`) — bukan hard delete gagal total.
 
-## Dampak ke `create_ar_invoice`/`create_ap_bill`
+## Dampak ke `create_ar_invoice`/`create_ap_bill` (histori — kedua RPC ini sudah didrop `0065`)
 
-Kedua RPC ini (`ar-schema.md`, `ap-schema.md`) sumber lookup `payment_term_days`/`credit_limit`/`overdue_threshold_days` pindah dari `customers`/`suppliers` ke `counterparties` — **satu-satunya perubahan**, seluruh logic lain (credit hold, PPN, journal building) byte-identik ke versi sebelumnya, dikonfirmasi `schema-reviewer` line-by-line.
+Pas migration `0059`: sumber lookup `payment_term_days`/`credit_limit`/`overdue_threshold_days` pindah dari `customers`/`suppliers` ke `counterparties` — **satu-satunya perubahan**, seluruh logic lain (credit hold, PPN, journal building) byte-identik ke versi sebelumnya, dikonfirmasi `schema-reviewer` line-by-line. RPC `create_ar_invoice`/`create_ap_bill` sendiri kemudian digantikan RPC generic `create_transaction` (migration `0063`-`0065`, lihat `memory/architecture/data/transactions-schema.md`), yang gak ngecek credit hold sama sekali (fitur itu dicabut total).
 
 ## Dampak frontend
 

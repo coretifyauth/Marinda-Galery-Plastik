@@ -13,33 +13,15 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 
 ## Konsep Inti
 
-- **Customer** — master data pelanggan yang berutang dengan termin. Punya termin default (misal net-7, net-14) yang dipakai ngitung jatuh tempo tiap invoice baru, batas kredit (opsional) dan toleransi keterlambatan (opsional, lihat submodule "Credit Hold"). Bukan data transaksional — kalau terminnya berubah, cukup diubah di data yang sama, gak perlu bikin catatan baru; perubahan cuma berlaku ke invoice **baru** ke depan, invoice lama yang jatuh temponya udah ditetapkan gak ikut geser.
+- **Customer** — master data pelanggan yang berutang dengan termin. Punya termin default (misal net-7, net-14) yang dipakai ngitung jatuh tempo tiap invoice baru. Bukan data transaksional — kalau terminnya berubah, cukup diubah di data yang sama, gak perlu bikin catatan baru; perubahan cuma berlaku ke invoice **baru** ke depan, invoice lama yang jatuh temponya udah ditetapkan gak ikut geser.
 - **AR Invoice** — piutang timbul, 1 kejadian "kirim barang, belum dibayar". Tiap invoice bikin 1 jurnal: **Debit Piutang Usaha, Kredit Pendapatan**. Jatuh tempo dihitung sekali saat invoice dibuat (dari termin customer saat itu) dan gak berubah lagi setelahnya, walau termin customer berubah belakangan.
 - **AR Payment** — piutang berkurang, kejadian bayar beneran. Selalu nutup **1 invoice spesifik** (gak ada bayar gabungan beberapa invoice sekaligus), boleh **dicicil** (kurang dari sisa tagihan, 1 invoice boleh dibayar berkali-kali dari waktu ke waktu), tapi gak boleh **lebih dari sisa tagihan** (overpay ditolak keras — gak ada kelebihan bayar yang jadi saldo mengambang). Tiap pembayaran bikin 1 jurnal: **Debit Kas/Bank, Kredit Piutang Usaha**, sejumlah yang beneran dibayar.
   - **Kenapa cicil boleh tapi overpay gak boleh**: cicil adalah praktik dagang wajar — customer bayar sebagian, sisanya nanti, tetap taat ke invoice yang sama. Overpay beda soal — kalau dibiarkan, kelebihannya jadi saldo bebas yang bisa dipakai kapan saja ke invoice mana saja, rawan gak jelas pertanggungjawabannya. Makanya: cicil bebas, kelebihan bayar ditolak dari titik pencatatan.
 - **Status invoice** (lunas/sebagian/belum) — selalu dihitung ulang dari total pembayaran yang sudah diterima dibanding nilai invoice, bukan status yang disimpan/di-update manual.
 
-### Credit Hold — Tahan Kredit Customer Telat Bayar
+### Credit Hold — DICABUT TOTAL (2026-09-05)
 
-**Cara Kerja**
-- Kalau piutang customer ke perusahaan udah kelewat batas wajar, sales berhenti kasih termin baru sampai piutang lama beres. Ini level ke-2 dari 4 tindakan penjual ke piutang telat (reminder → **credit hold** → renegosiasi cicilan → write-off).
-- Dua kondisi independen, salah satu kepenuhi langsung memicu hold:
-  - **Nominal**: total piutang belum lunas customer (semua invoice yang masih terbuka, termasuk invoice baru yang mau dibuat) melebihi batas kredit yang ditetapkan buat customer itu. Kalau gak ada batas ditetapkan, gak ada batas nominal.
-  - **Waktu**: ada piutang terbuka yang telatnya udah melebihi toleransi hari yang ditetapkan buat customer itu. Kalau gak ada toleransi ditetapkan, customer itu gak pernah kena hold dari sisi waktu.
-- Status hold gak disimpan sebagai data tetap — selalu dihitung ulang tiap kali invoice baru mau dibuat. Kalau kena hold, invoice baru ditolak sebelum sempat tercatat.
-- Customer on-hold tetap bisa dilayani asal bayar tunai langsung (bukan termin) — itu jalan sebagai penjualan tunai biasa, gak pernah jadi piutang.
-- Toleransi keterlambatan defaultnya disamakan dengan termin pembayaran customer itu pas pertama kali diisi, tapi tetap bisa diubah manual per customer sesuai profil risikonya.
-
-**Aturan Bisnis**
-- Cek credit hold wajib jadi penghalang keras sebelum invoice baru tercatat — bukan cuma peringatan yang bisa dilewati.
-- Status on-hold gak boleh disimpan sebagai data tetap yang di-update manual — harus selalu dihitung ulang biar gak basi.
-
-**Skenario**
-- Invoice baru ditolak karena credit hold — customer kelampaui batas kredit ATAU ada piutang telat lebih dari toleransinya.
-
-**Common Mistakes**
-- Cek credit hold cuma di tampilan (peringatan yang bisa di-skip) — harus jadi penolakan keras di titik pencatatan invoice.
-- Nyimpen status "on hold" sebagai data tetap di profil customer — harus dihitung ulang tiap invoice baru dicek, biar gak ada resiko status basi (customer udah bayar tapi statusnya belum ke-update).
+Sempat ada mekanisme penolakan keras invoice baru kalau customer kelampaui batas kredit atau ada piutang telat lebih dari toleransinya (level ke-2 dari 4 tindakan penjual ke piutang telat: reminder → credit hold → renegosiasi cicilan → write-off). Dicabut total atas keputusan owner sebagai bagian dari penggabungan pencatatan invoice AR dan tagihan AP jadi satu mekanisme generic — batas kredit dan toleransi keterlambatan customer sudah tidak ada lagi.
 
 ### Retur Barang (Credit Note)
 
@@ -176,36 +158,9 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
 - DP hangus dicatat ke Pendapatan Penjualan biasa — harus ke Pendapatan Lain-lain, biar gak nyampur sama hasil jualan beneran.
 - Batalin invoice yang DP-nya udah diterapkan tanpa ikut membalikkan penerapan DP-nya — Piutang Usaha customer itu bakal nyasar jadi minus, dan DP-nya nyangkut gak jelas statusnya.
 
-### Piutang Tak Tertagih (Bad Debt Write-off)
+### Piutang Tak Tertagih (Bad Debt Write-off) — DICABUT TOTAL (2026-09-05)
 
-**Cara Kerja**
-- Piutang yang udah kelewat batas wajar (credit hold, reminder, dst) tapi tetap gak kunjung dibayar, sampai akhirnya jelas customer-nya gak akan pernah bisa/mau bayar (menghilang, tutup usaha, dsb). Ini level ke-4 (paling ekstrem) dari 4 tindakan penjual ke piutang telat.
-- Kenapa bukan pembatalan invoice biasa: invoicenya **benar** dari awal — barang/jasa beneran diserahkan, Pendapatan yang diakui waktu itu valid dan tetap berdiri. Membalikkan Pendapatan akan salah merepresentasikan histori — penjualannya beneran kejadian, yang berubah cuma keyakinan piutangnya bisa dicairkan. Write-off mengakui **kerugian baru** di periode saat ketauan macetnya, bukan mengoreksi periode penjualan yang lama.
-- Metode: **langsung dihapuskan** (bukan mencadangkan/estimasi), dipilih karena:
-  - Gak ada data historis buat estimasi kredibel — usaha skala kecil/baru biasanya belum punya riwayat write-off yang cukup buat dasar estimasi.
-  - Volume & materialitas kecil — piutang macet sifatnya jarang/satuan, bukan pola berulang skala besar.
-  - Sesuai praktik pajak Indonesia — piutang tak tertagih buat badan usaha umum cuma diakui fiskus lewat metode langsung dihapuskan, bukan metode cadangan.
-- Jurnal (1 kejadian = 1 jurnal, gak ada tahap estimasi terpisah):
-  ```
-  Debit Beban Piutang Tak Tertagih
-    Kredit Piutang Usaha
-  ```
-- Write-off boleh sebagian (gak wajib penuh sejumlah sisa tagihan), tapi gak boleh ngelebihin sisa tagihan **riil** invoice itu (nilai invoice dikurangi SEMUA pengurang lain yang udah ada: pembayaran, retur, DP yang diterapkan) — beda dari retur yang sengaja boleh bikin sisa tagihan negatif, write-off gak masuk akal "menghapus" uang yang udah lunas/diretur/dikreditkan duluan lewat mekanisme lain.
-- Invoice yang udah punya write-off gak bisa dibatalkan lewat jalur salah-input biasa — sama alasan invoice yang udah ada pembayaran: piutang ini udah "kesentuh" keputusan bisnis lain.
-- **Di luar scope: recovery** (piutang yang udah di-write-off ternyata akhirnya kebayar juga). Metode langsung dihapuskan gak punya akun "cadangan" penyangga buat nampung kasus ini dengan mulus — kalau nanti beneran kejadian, butuh desain terpisah.
-
-**Aturan Bisnis**
-- Write-off gak boleh melebihi sisa tagihan riil invoice itu (setelah dikurangi semua pengurang lain yang sudah ada).
-- Invoice yang sudah punya write-off gak bisa dibatalkan lewat jalur salah-input biasa.
-- Pendapatan yang sudah diakui dari penjualan yang di-write-off gak boleh ikut dibalik.
-
-**Skenario**
-- Piutang tak tertagih (write-off) — pesanan custom yang customernya menghilang, Debit Beban Piutang Tak Tertagih, Kredit Piutang Usaha, Pendapatan asli gak dibalik.
-
-**Common Mistakes**
-- Write-off lewat pembatalan invoice biasa (membalikkan Pendapatan) — penjualannya beneran kejadian, gak boleh dianggap "gak pernah ada".
-- Write-off ngelebihin sisa tagihan riil invoice (gak ngitung pengurang lain kayak pembayaran/retur/DP yang udah ada) — bisa "menghapus" uang yang sebenarnya udah lunas/diretur duluan.
-- Pakai metode cadangan/estimasi buat usaha skala kecil tanpa data historis kerugian — estimasinya cuma tebakan, dan gak diakui fiskus buat badan usaha umum di Indonesia.
+Sempat ada mekanisme direct write-off (Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik) buat piutang yang beneran gak akan tertagih. Dicabut total atas keputusan owner bareng penggabungan pencatatan invoice AR dan tagihan AP jadi satu mekanisme generic.
 
 ### Kategori Campur & PPN
 
@@ -216,7 +171,6 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
 - Berlaku juga untuk invoice yang lahir dari penjualan barang jadi (Goods Issue) — mekanismenya sama, cuma dipicu dari alur yang berbeda.
 
 **Aturan Bisnis**
-- Kategori campur tidak mengubah cara Credit Hold dihitung — tetap dicek terhadap total invoice (subtotal kategori + PPN kalau ada), bukan per-kategori.
 - Staf AR tidak memilih akun pembukuan bebas untuk kategori tambahan — hanya dari daftar yang sudah disiapkan admin.
 
 **Skenario**

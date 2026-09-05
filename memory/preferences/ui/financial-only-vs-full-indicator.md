@@ -32,10 +32,10 @@ Warna: `amber-50/amber-700` buat financial-only ("orange" preferensi user — co
 
 Tab disaring lewat conditional spread di array `tabs: TabDef[]`, BUKAN disembunyiin via CSS — supaya `activeTab` gak pernah bisa ke-set ke tab yang gak valid buat dokumen itu (user gak bisa klik tab yang gak dirender).
 
-**AP** — disembunyiin kalau `isFinancialOnly`: `tukar` (Tukar Barang), `writeoff` (Tulis-jadi-Beban). **Tetap tampil**: `jurnal`, `pembayaran`, `dp`, `retur` (Kurangi Utang — satu-satunya opsi retur AP yang punya jalur financial-only, lihat percakapan yang jelasin `create_ap_credit_note`).
+**AP** — disembunyiin kalau `isFinancialOnly`: `tukar` (Tukar Barang). **Tetap tampil**: `jurnal`, `pembayaran`, `dp`, `retur` (Kurangi Utang — satu-satunya opsi retur AP yang punya jalur financial-only, lihat percakapan yang jelasin `create_ap_credit_note`). Tab `writeoff` (Tulis-jadi-Beban, Opsi C) **dicabut total** migration `0068` (2026-09-05) — barang rusak tanpa kompensasi sekarang lewat Stock Opname generic, di luar halaman detail bill ini sama sekali.
 
-**AR** — disembunyiin kalau `isFinancialOnly`: `replacements` (Penggantian Barang/Garansi). **Tetap tampil**: `jurnal`, `pembayaran`, `dp`, `retur`, dan **`writeoff` (Piutang Tak Tertagih)** — hati-hati, nama tab ini beda makna dari AP punya `writeoff`. AP `writeoff` = barang rusak ditulis jadi beban (goods-related, disaring). AR `writeoff` = piutang gak ketagih (bad debt, soal collectibility, SAMA SEKALI GAK ADA hubungannya sama barang fisik) — jangan disamain logic filternya kalau nambah modul serupa.
+**AR** — disembunyiin kalau `isFinancialOnly`: `replacements` (Penggantian Barang/Garansi). **Tetap tampil**: `jurnal`, `pembayaran`, `dp`, `retur`. Tab `writeoff` (Piutang Tak Tertagih) **dicabut total** migration `0064`+`0065` (2026-09-05) bareng penggabungan `ar_invoices`+`ap_bills` jadi `transactions`.
 
 ## Kalau nambah modul baru dengan pola serupa
 
-Cek per-opsi retur: apakah RPC-nya punya guard keras (`raise exception` kalau `p_lines`/qty kosong ATAU record fisik gak ada)? Kalau ya → tab itu ikut disaring pola ini. Kalau opsi-nya independen dari fisik (kayak AR bad debt writeoff) → jangan ikut disaring, cek dulu isi RPC-nya sebelum asal nyamain ke modul lain.
+Cek per-opsi retur: apakah RPC-nya punya guard keras (`raise exception` kalau `p_lines`/qty kosong ATAU record fisik gak ada)? Kalau ya → tab itu ikut disaring pola ini. Kalau opsi-nya independen dari fisik → jangan ikut disaring, cek dulu isi RPC-nya sebelum asal nyamain ke modul lain.

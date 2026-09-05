@@ -35,11 +35,11 @@ Fitur ini tadinya murni **layer presentasi** — gak ada tabel/data baru yang di
 
 **Cara Kerja**
 - **Harga per item wajib ditampilkan, bukan cuma qty** — kalau tabel item di sebuah cetakan punya data harga per unit yang tersedia (PO, GRN, Sales Order semuanya menyimpan harga/cost per unit di baris itemnya), harga & subtotal per baris harus ikut ditampilkan, gak cukup nama barang + qty saja.
-- **Baris ringkasan yang nilainya kosong/nol gak ditampilkan** — kalau sebuah cetakan punya baris ringkasan yang datanya berasal dari relasi ke objek lain (misal Retur, Piutang Tak Tertagih, DP Diterapkan), baris itu cuma muncul kalau nilainya benar-benar ada (> 0). Dokumen yang belum pernah kena retur gak perlu nunjukkan baris "Retur: Rp0" di kertas — bikin cetakan lebih ringkas dan gak menyiratkan seolah-olah ada retur yang nilainya nol.
+- **Baris ringkasan yang nilainya kosong/nol gak ditampilkan** — kalau sebuah cetakan punya baris ringkasan yang datanya berasal dari relasi ke objek lain (misal Retur, DP Diterapkan), baris itu cuma muncul kalau nilainya benar-benar ada (> 0). Dokumen yang belum pernah kena retur gak perlu nunjukkan baris "Retur: Rp0" di kertas — bikin cetakan lebih ringkas dan gak menyiratkan seolah-olah ada retur yang nilainya nol.
 
 **Aturan Bisnis**
 - AR Invoice: harga per item cuma ada kalau baris itu fulfillment dari Sales Order (satu-satunya tempat harga jual per item tersimpan). Invoice dari jalur jual langsung (walk-in, gak lewat SO) gak punya harga per item di mana pun (nominal invoice cuma tersimpan sebagai total lump-sum per kategori) — tabel itemnya tetap qty-only, bukan berarti fiturnya belum lengkap.
-- Baris ringkasan AR Invoice yang ikut aturan sembunyikan-kalau-nol: Terbayar, DP Diterapkan, Retur, Piutang Tak Tertagih. Jumlah Invoice dan Outstanding SELALU tampil (bukan data relasi, itu angka inti dokumennya sendiri).
+- Baris ringkasan AR Invoice yang ikut aturan sembunyikan-kalau-nol: Terbayar, DP Diterapkan, Retur. Jumlah Invoice dan Outstanding SELALU tampil (bukan data relasi, itu angka inti dokumennya sendiri).
 - Invoice yang punya kategori pendapatan tambahan (mis. ongkir) dan/atau PPN Keluaran wajib nampilin rinciannya per baris di cetakan, bukan cuma 1 angka total gabungan — pembaca kertas (customer) berhak tahu berapa yang murni harga barang vs biaya tambahan vs pajak.
 
 **Common Mistakes**

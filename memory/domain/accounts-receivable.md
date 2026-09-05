@@ -7,11 +7,11 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 ## Konsep Inti
 
 **Entitas & Jurnal**
-- **customer** — master data (bukan transaksional). Kolom kunci: `payment_term_days` (default termin, dipakai ngitung `due_date` invoice baru). Boleh di-`UPDATE` di tempat kalau termin berubah — gak ngaruh ke invoice lama karena `due_date` udah di-snapshot. (Kolom `credit_limit`/`overdue_threshold_days` — lihat submodule "Credit Hold".)
-- **ar_invoice** — piutang timbul. Jurnal: Debit Piutang Usaha, Kredit Pendapatan (1 atau lebih kategori — lihat submodule "Kategori Campur & PPN"). `due_date = invoice_date + customer.payment_term_days`, dihitung & disimpan **sekali** pas insert (bukan generated column dinamis).
+- **customer** — master data (bukan transaksional). Kolom kunci: `payment_term_days` (default termin, dipakai ngitung `due_date` invoice baru). Boleh di-`UPDATE` di tempat kalau termin berubah — gak ngaruh ke invoice lama karena `due_date` udah di-snapshot. Kolom `credit_limit`/`overdue_threshold_days` **sudah didrop total** (2026-09-05, keputusan owner) bareng pencabutan fitur Credit Hold — lihat catatan di bawah "Kenapa awalnya ada Credit Hold" buat histori.
+- **ar_invoice** — piutang timbul (sejak migration `0064` disimpan sebagai baris `transactions` dengan `type='INBOUND'`, digabung sama tabel bill AP — lihat `memory/architecture/data/transactions-schema.md`, gak mengubah konsep bisnis di dokumen ini sama sekali). Jurnal: Debit Piutang Usaha, Kredit Pendapatan (1 atau lebih kategori — lihat submodule "Kategori Campur & PPN"). `due_date = invoice_date + customer.payment_term_days`, dihitung & disimpan **sekali** pas insert (bukan generated column dinamis).
 - **ar_payment** — piutang berkurang, kejadian bayar nyata (bukan jadwal terjadwal). Jurnal: Debit Kas/Bank, Kredit Piutang Usaha. `invoice_id` kolom langsung (migration `0040`, bukan tabel jembatan lagi) — 1 payment wajib nutup 1 invoice spesifik (gak ada gabung invoice), tapi sejak `0010` **gak lagi unique** — boleh cicil (kurang dari sisa), `record_ar_payment` `raise exception` cuma kalau `amount > ar_invoice_remaining(invoice_id)` (overpay). **Koreksi bisnis `0010`** (2026-08-08): larangan aslinya cuma soal overpay yang jadi saldo ngambang (lihat "AR Customer Credit — dicabut" di bawah), bukan cicilan — desain sebelum `0010` sempat mewajibkan exact-match (gak boleh kurang ATAUpun lebih), dilonggarkan lagi khusus buat sisi cicil.
 - **Status invoice** (lunas/sebagian/belum) — derived dari `SUM(ar_payment.amount)` buat invoice itu (bisa banyak baris sejak `0010`) dibanding `invoice.amount`. Bukan kolom manual (pola sama kayak `archived_at`/"published" di modul lain).
-- **ar_invoice_remaining(invoice_id)** — fungsi SQL terpusat, satu-satunya sumber kebenaran buat "sisa outstanding riil 1 invoice" (amount dikurangi 4 reducer: payment, retur, DP application aktif, write-off aktif). Menggantikan pola lama di mana beberapa fungsi beda-beda ngitung ulang sendiri-sendiri (duplikasi yang udah kebukti berulang jadi sumber bug — reducer baru/dihapus gampang kelewat gak diikutin di salah satu tempat, lihat riwayat `0024`/`0027`/`0041`). Semua guard/RPC yang butuh tau "sisa piutang invoice ini" sekarang manggil fungsi ini, bukan hitung ulang. Reducer ke-5 (return credit application) **dihapus di `0041`** bareng drop `ar_return_credit_applications` — return credit sekarang gak pernah lagi ngurangin outstanding invoice LAIN (lihat submodule "Retur Barang").
+- **ar_invoice_remaining(invoice_id)** — fungsi SQL terpusat, satu-satunya sumber kebenaran buat "sisa outstanding riil 1 invoice" (amount dikurangi 3 reducer: payment, retur, DP application aktif). Menggantikan pola lama di mana beberapa fungsi beda-beda ngitung ulang sendiri-sendiri (duplikasi yang udah kebukti berulang jadi sumber bug — reducer baru/dihapus gampang kelewat gak diikutin di salah satu tempat, lihat riwayat `0024`/`0027`/`0041`). Semua guard/RPC yang butuh tau "sisa piutang invoice ini" sekarang manggil fungsi ini, bukan hitung ulang. Reducer ke-5 (return credit application) **dihapus di `0041`** bareng drop `ar_return_credit_applications`. Reducer write-off (dulu ke-4) **dihapus total `0065`** bareng pencabutan fitur Piutang Tak Tertagih — lihat catatan di bawah.
 - **AR Customer Credit (Kelebihan Bayar) — dicabut total (migration `0040`).** Sempat ada mekanisme "customer transfer lebih dari total invoice, excess-nya jadi saldo kredit" (`ar_customer_credits`/`ar_customer_credit_applications`/`ar_customer_credit_refunds`, RPC `apply_ar_customer_credit`/`refund_ar_customer_credit`, akun `Saldo Kredit Customer`). Dicabut total begitu keputusan bisnis "payment gak boleh overpay" jalan. **Tetap dicabut permanen** setelah `0010` — cicil dibalikin, overpay-jadi-saldo-ngambang TIDAK dibalikin.
 
 **Constraints**
@@ -41,23 +41,9 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 - Nambah reducer baru ke `ar_invoices` tanpa nge-extend `ar_invoice_remaining()` (dan lewat situ otomatis semua guard yang manggilnya) — kelas bug yang udah kejadian berulang sebelum fungsi ini disentralisasi.
 - Drop tabel yang jadi sumber reducer di `ar_invoice_remaining()`/fungsi `*_remaining()` lain tanpa ikut nge-update fungsi itu — persis kelas bug yang kejadian pas nulis `0041` (drop `ar_return_credit_applications` sempat lupa dibarengi update `ar_invoice_remaining`, yang bakal bikin HAMPIR SEMUA RPC AR gagal karena manggil fungsi itu). Selalu grep dulu tabel yang mau di-drop, pastiin semua fungsi yang nyebut itu ikut direvisi di migration yang sama.
 
-## Credit Hold
+## Credit Hold — DICABUT TOTAL, migration `0065` (2026-09-05)
 
-**Entitas & Jurnal**
-- Gak ada tabel baru. `customer.credit_limit` (nullable, batas nominal piutang open sebelum hold) dan `customer.overdue_threshold_days` (nullable, toleransi hari telat sebelum hold — default di-prefill = `payment_term_days` pas customer dibuat, tapi kolom independen) ditambah `0020_ar_credit_hold.sql`.
-
-**Constraints**
-- `create_ar_invoice` hard-reject kalau customer kelampaui `credit_limit` (total outstanding open, prospektif — termasuk invoice baru yang mau dibuat) ATAU ada invoice open yang overdue lebih dari `overdue_threshold_days`-nya (OR, bukan AND). Status hold gak disimpan, derived tiap kali RPC dipanggil. NULL di salah satu kolom = batas itu gak berlaku buat customer itu. Cash sale ke customer on-hold gak lewat `ar_invoices` sama sekali (langsung jurnal Debit Kas/Kredit Pendapatan, di luar scope AR).
-
-**Skenario referensi**
-
-| # | Kasus | Pola |
-|---|---|---|
-| 4 | Credit hold | `create_ar_invoice` ditolak: outstanding > `credit_limit` ATAU overdue terlama > `overdue_threshold_days` |
-
-**Common Mistakes**
-- Cek credit hold cuma di UI (skippable) — harus hard-reject di RPC.
-- Simpen status "on hold" sebagai kolom manual — harus derived tiap invoice baru dicek.
+Sempat ada mekanisme hard-reject `create_ar_invoice` kalau customer kelampaui `credit_limit`/`overdue_threshold_days` (kolom di `customer`, ditambah `0020_ar_credit_hold.sql`). Dicabut total atas keputusan owner sebagai prasyarat penggabungan `ar_invoices`+`ap_bills` jadi `transactions` (lihat `memory/architecture/data/transactions-schema.md`) — kolomnya udah didrop, RPC `create_transaction` gak ngecek batasan ini sama sekali. Skenario #4 dan glossary "Credit Hold" lama dicabut bareng ini.
 
 ## Retur Barang (Credit Note)
 
@@ -130,7 +116,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 
 **Constraints**
 - Semua 3 jalur (`applications`/`refunds`/`forfeitures`) dijaga fungsi terpusat `ar_deposit_remaining()` — total gak boleh ngelebihin `amount` DP awal, partial-capable dari awal.
-- Outstanding buat credit hold ikut ngurangin `ar_deposit_applications` aktif (lihat submodule "Credit Hold").
+- `ar_deposit_applications` aktif ikut ngurangin outstanding invoice (via `ar_invoice_remaining()`) — relevan buat guard payment/retur, bukan lagi buat Credit Hold (dicabut, lihat submodule "Konsep Inti").
 
 **Skenario referensi**
 
@@ -146,24 +132,9 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 - DP refund dicatat lewat jalur `ar_deposit_forfeitures` (atau ke akun pendapatan mana pun) — refund itu murni uang balik ke customer, **gak ada dampak Laba Rugi**, harus lewat `ar_deposit_refunds` (Debit Uang Muka Penjualan / Kredit Kas). Kalau ketuker, seolah-olah ada "pendapatan" dari uang kita sendiri yang balik.
 - `cancel_ar_invoice` cuma reverse jurnal invoice-nya doang tanpa ikut reverse jurnal `ar_deposit_applications` — Piutang Usaha customer itu nyasar jadi minus, DP-nya nyangkut gak jelas status.
 
-## Piutang Tak Tertagih (Bad Debt Write-off)
+## Piutang Tak Tertagih (Bad Debt Write-off) — DICABUT TOTAL, migration `0064`+`0065` (2026-09-05)
 
-**Entitas & Jurnal**
-- **ar_bad_debt_writeoff** — piutang yang benar-benar gak akan tertagih (customer menghilang/tutup usaha), dihapusbukukan. **Metode direct write-off** (bukan allowance/provisi — gak ada data historis buat estimasi kredibel, gak diakui fiskus buat badan usaha umum di Indonesia, gak konsisten sama pola RPC AR lain yang reaktif per-kejadian). Beda dari `cancel_ar_invoice`: Pendapatan asli **gak dibalik** (penjualannya valid), cuma Piutang Usaha yang dihapus lewat beban baru **di periode sekarang** (bukan periode penjualan lama, walau periode itu udah ditutup — `Piutang Usaha` akun permanen, gak ikut di-reset closing). Jurnal: Debit `Beban Piutang Tak Tertagih` (expense biasa, **bukan** kontra) / Kredit Piutang Usaha. Partial-capable, dibatasi sisa outstanding riil (bukan cuma `amount` mentah kayak credit note — write-off ikut ngitung SEMUA reducer lain: payment, retur, DP). **Recovery** (piutang yang di-write-off ternyata kebayar lagi) **di luar scope** — direct write-off gak punya akun cadangan penyangga buat nampung kasus ini dengan mulus, belum didesain.
-
-**Constraints**
-- **No over-writeoff**: `SUM(ar_bad_debt_writeoffs.amount)` per invoice ≤ `ar_invoice_remaining(invoice_id)` (fungsi terpusat, lihat submodule "Konsep Inti").
-
-**Skenario referensi**
-
-| # | Kasus | Pola |
-|---|---|---|
-| 13 | Piutang tak tertagih (write-off) | 1 jurnal, Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik |
-
-**Common Mistakes**
-- Write-off lewat `cancel_ar_invoice` — membalikkan Pendapatan yang valid, harusnya RPC terpisah yang cuma ngurangin Piutang Usaha.
-- Write-off gak ngitung reducer lain (payment/retur/DP) — bisa "menghapus" uang yang udah lunas/diretur duluan.
-- Allowance/provisi method buat UMKM tanpa data historis — estimasi jadi tebakan, gak diakui fiskus buat badan usaha umum.
+Sempat ada direct write-off (`ar_bad_debt_writeoffs`, RPC `write_off_ar_invoice`) buat piutang yang beneran gak akan tertagih — Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik. Dicabut total bareng penggabungan `ar_invoices`+`ap_bills` jadi `transactions` (keputusan owner) — tabel, RPC, trigger guard-nya udah didrop dari live DB. Skenario #13 dan glossary "AR Bad Debt Write-off" lama dicabut bareng ini. Lihat `memory/architecture/data/transactions-schema.md` buat skema pengganti.
 
 ## Kategori Campur & PPN (Compounding)
 
@@ -174,7 +145,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 - Berlaku juga buat invoice yang lahir dari `create_goods_issue` (submodule "Penjualan & Pengakuan HPP" di `inventory.md`) — RPC itu manggil `create_ar_invoice` di dalamnya, jadi ikut dapat kemampuan yang sama.
 
 **Aturan Bisnis**
-- Kategori campur TIDAK mengubah Credit Hold — tetap dicek terhadap total invoice (subtotal kategori + PPN kalau ada), bukan per-kategori.
+- PPN Keluaran dihitung dari total invoice (subtotal kategori + PPN kalau ada), bukan per-kategori.
 
 **Referensi:** `memory/architecture/data/ar-schema.md` submodule "Compounding & PPN" (di situ juga tabel `tax_settings` — pengaturan PPN dipakai bareng AP/AR/POS — didefinisikan penuh).
 
@@ -183,12 +154,10 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktu
 - **Customer**: master data pihak yang berutang ke perusahaan.
 - **AR Invoice**: piutang timbul dari 1 kejadian kirim barang/jasa dengan termin.
 - **AR Payment**: 1 kejadian bayar nyata dari customer, selalu nutup 1 invoice spesifik, boleh cicil (kurang dari sisa) tapi gak boleh overpay (`invoice_id` gak unik lagi sejak `0010`).
-- **Credit Hold**: kondisi derived, customer ditolak bikin invoice baru karena outstanding/keterlambatan kelampaui batasnya.
 - **Aging**: invoice yang `due_date`-nya udah lewat dan belum lunas.
 - **AR Credit Note**: retur barang yang udah diinvoice — ngurangin outstanding invoice tanpa ubah `amount` asli, beda dari `cancel_ar_invoice`. Jalur full: tiap baris punya `condition` (`RESALABLE`/`DAMAGED`) yang nentuin cost-nya balik jadi stok atau jadi Beban Kerugian Barang Rusak.
-- **Beban Kerugian Barang Rusak**: akun expense baru, dipakai barang retur `DAMAGED` (AR) dan write-off Opsi C (AP, `memory/domain/accounts-payable.md`) — kerugian barang yang gak layak jual lagi dan gak dapat kompensasi penuh dari counterparty.
+- **Beban Kerugian Barang Rusak**: akun expense, dipakai barang retur `DAMAGED` (AR) — kerugian barang yang gak layak jual lagi dan gak dapat kompensasi penuh dari customer. Padanan di sisi AP (Opsi C, `purchase_writeoffs`) udah dicabut total; barang rusak AP tanpa kompensasi sekarang lewat Stock Opname generic (`memory/domain/accounts-payable.md`).
 - **AR Return Credit**: excess dari retur setelah invoice lunas, dicairkan otomatis jadi saldo resmi (liability `Saldo Kredit Retur Customer`) — beda akun karena beda asal jurnal (retur, bukan kelebihan kas). Sejak `0057`, cuma bisa diselesaikan refund tunai (jalur "otomatis via `warranty_replacement`" cuma berlaku data historis) — gak bisa dititip ke invoice lain.
 - **Warranty Replacement**: penukaran barang pasca-retur/garansi (BUKAN gratis) — keluar stok+HPP tanpa invoice baru. Sejak `0057`, independen dari credit note (nunjuk `invoice_id` langsung, mirror `purchase_replacement` AP) dan gak nyentuh Piutang Usaha sama sekali — mutual exclusivity sama retur-kredit dijaga `sales_returned_qty()` (qty gabungan lintas jalur), bukan lagi via pembalikan diskon belakangan.
 - **AR Deposit**: uang muka diterima sebelum invoice ada, dicatat ke liability `Uang Muka Penjualan` — beda dari `AR Payment` yang selalu terhadap invoice existing.
-- **AR Bad Debt Write-off**: piutang yang beneran gak akan tertagih, dihapusbukukan lewat beban baru (direct write-off, bukan allowance) — Pendapatan asli gak dibalik, beda dari `cancel_ar_invoice`.
 - **`ar_invoice_remaining()`**: fungsi terpusat, satu-satunya sumber kebenaran buat sisa outstanding riil 1 invoice — dipanggil semua guard/RPC AR yang butuh tau itu.

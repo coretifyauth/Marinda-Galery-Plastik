@@ -17,8 +17,6 @@ Sebelum membuat AR Invoice pertama ke pelanggan yang belum pernah dicatat di sis
    - **Nama** — nama pelanggan/toko.
    - **Kontak** — nomor telepon/WA (opsional).
    - **Termin (hari)** — jumlah hari sejak tanggal invoice sampai jatuh tempo. Default `7`.
-   - **Toleransi Telat (hari)** — berapa hari setelah jatuh tempo baru dianggap "telat" untuk keperluan credit hold. Field ini otomatis ikut nilai **Termin** kalau belum pernah diubah manual — begitu kamu ubah manual, dua field ini lepas dan berjalan sendiri-sendiri.
-   - **Credit Limit** — batas maksimum piutang terbuka pelanggan ini. Kosongkan kalau tanpa batas.
 4. Klik **Simpan**.
 
 ## Hasil Akhir
@@ -29,4 +27,3 @@ Sebelum membuat AR Invoice pertama ke pelanggan yang belum pernah dicatat di sis
 ## Kesalahan Umum
 
 - **Ubah Termin customer dan berharap invoice lama ikut berubah jatuh temponya** — tidak akan berubah, itu snapshot per invoice.
-- **Isi Credit Limit dengan angka kecil tanpa sadar konsekuensinya** — kalau outstanding piutang customer ini melewati limit, transaksi baru ke customer itu bisa tertahan (credit hold). Kosongkan field ini kalau memang belum mau menerapkan batas.

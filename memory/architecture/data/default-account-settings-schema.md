@@ -4,7 +4,7 @@ Padanan naratif: `docs/architecture/default-account-settings-schema.md`. Cross-c
 
 ## Masalah
 
-Sebelum ini, form transaksi (AR Invoice, AP Bill, Goods Issue, Goods Receipt, Production Order, Sales Order, AR/AP Deposit, Items, Stock Opname, dan hampir semua panel aksi di halaman detail — retur, write-off, payment, refund, terapkan/hanguskan DP, penggantian barang) nyuruh user milih BEBAS akun COA (`leafAccounts.map(...)` di raw `<Select>`) buat baris yang sebenarnya SELALU resolve ke akun yang sama tiap kali (mis. "Akun Piutang Usaha" di AR Invoice selalu `1300 Piutang Usaha`). Ini sudah kejadian jadi bug nyata: panel Retur AP Bill pernah kena field "Akun Utang Usaha (debit)" diisi akun Kas, jurnal excess salah arah.
+Sebelum ini, form transaksi (AR Invoice, AP Bill, Goods Issue, Goods Receipt, Production Order, Sales Order, AR/AP Deposit, Items, Stock Opname, dan hampir semua panel aksi di halaman detail — retur, payment, refund, terapkan/hanguskan DP, penggantian barang) nyuruh user milih BEBAS akun COA (`leafAccounts.map(...)` di raw `<Select>`) buat baris yang sebenarnya SELALU resolve ke akun yang sama tiap kali (mis. "Akun Piutang Usaha" di AR Invoice selalu `1300 Piutang Usaha`). Ini sudah kejadian jadi bug nyata: panel Retur AP Bill pernah kena field "Akun Utang Usaha (debit)" diisi akun Kas, jurnal excess salah arah.
 
 ## `default_account_settings` — mapping tetap 1 akun per "peran"
 
@@ -25,21 +25,21 @@ Seed 19 baris (`0017_default_account_settings_schema.sql` + follow-up `0018_defa
 
 | role_key | akun | dipakai di |
 |---|---|---|
-| `ar.receivable` | 1300 Piutang Usaha | AR Invoice, Goods Issue, Sales Order fulfillment, dan hampir semua panel aksi AR (DP, write-off, retur, payment) |
+| `ar.receivable` | 1300 Piutang Usaha | AR Invoice, Goods Issue, Sales Order fulfillment, dan hampir semua panel aksi AR (DP, retur, payment) |
 | `ar.revenue` | 4200 Pendapatan Penjualan Grosir | baris kredit primer AR Invoice/Goods Issue/Sales Order (kategori TAMBAHAN tetap lewat `ar_invoice_charge_types`, gak berubah) |
 | `ar.contra_revenue` | 4900 Retur & Potongan Penjualan | panel Retur & Penggantian Barang AR |
 | `ar.deposit_liability` | 2300 Uang Muka Penjualan | AR Deposit (create, terapkan, refund, hangus) |
-| `ar.writeoff_expense` | 5700 Beban Piutang Tak Tertagih | panel Hapusbukukan AR Invoice |
+| `ar.writeoff_expense` | 5700 Beban Piutang Tak Tertagih | **orphaned** — fitur Piutang Tak Tertagih dicabut total migration `0064`+`0065` (2026-09-05), row seed ini dibiarkan (konvensi: config lama gak dibersihkan setelah fitur dicabut, lihat `document_number_types` di `memory/architecture/data/document-numbering-schema.md`) |
 | `ar.return_credit_liability` | 2500 Saldo Kredit Retur Customer | panel Retur/Penggantian Barang/Refund saldo kredit AR |
 | `ar.other_revenue` | 4300 Pendapatan Lain-lain | panel Hanguskan AR Deposit |
 | `ap.payable` | 2100 Utang Usaha | AP Bill dan hampir semua panel aksi AP (DP, payment, retur) |
 | `ap.return_credit_asset` | 1350 Piutang Retur Supplier | panel Retur & Refund AP Bill |
 | `ap.deposit_asset` | 1360 Uang Muka Pembelian | AP Deposit (create, terapkan, refund, hangus) |
 | `ap.deposit_loss_expense` | 5800 Beban Kerugian Uang Muka | panel Hanguskan AP Deposit |
-| `inventory.raw_material` | 1400 Persediaan Bahan Baku | Goods Receipt, Production Order (kredit), item `RAW_MATERIAL`, panel Tukar Barang/Write-off AP |
+| `inventory.raw_material` | 1400 Persediaan Bahan Baku | Goods Receipt, Production Order (kredit), item `RAW_MATERIAL`, panel Tukar Barang AP |
 | `inventory.finished_good` | 1420 Persediaan Barang Jadi | Goods Issue, Production Order (debit), item `FINISHED_GOOD`, panel Retur/Penggantian Barang AR |
 | `inventory.hpp` | 5100 Harga Pokok Penjualan | Goods Issue, Sales Order fulfillment, panel Retur/Penggantian Barang AR |
-| `inventory.damage_loss_expense` | 5900 Beban Kerugian Barang Rusak | panel Retur AR (baris Rusak), Write-off AP |
+| `inventory.damage_loss_expense` | 5900 Beban Kerugian Barang Rusak | panel Retur AR (baris Rusak) — padanan AP (Write-off Opsi C) dicabut total migration `0068` |
 | `inventory.shortage_expense` | 6000 Beban Selisih Persediaan | Stock Opname |
 | `inventory.surplus_revenue` | 4400 Pendapatan Selisih Persediaan | Stock Opname |
 | `cash.tunai` | 1100 Kas Toko | semua field "Akun Kas/Bank", sisi tunai |

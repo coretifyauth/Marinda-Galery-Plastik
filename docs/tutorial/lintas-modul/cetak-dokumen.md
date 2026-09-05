@@ -20,7 +20,7 @@ Saat butuh salinan cetak/PDF dari invoice pelanggan atau purchase order ke suppl
 ## Hasil Akhir
 
 - Dokumen menampilkan kop surat (nama/alamat/NPWP/logo perusahaan) dan blok tanda tangan sesuai yang diatur di [atur-kop-surat-cetakan.md](../settings/atur-kop-surat-cetakan.md).
-- **Isi dokumen selalu dibaca live saat itu dicetak** — bukan snapshot beku dari saat dokumen pertama dibuat. Kalau invoice ini sudah pernah diretur/di-write-off/dibatalkan setelah pertama kali dicetak, cetakan berikutnya otomatis menunjukkan kondisi terkini itu, bukan angka waktu pertama dicetak.
+- **Isi dokumen selalu dibaca live saat itu dicetak** — bukan snapshot beku dari saat dokumen pertama dibuat. Kalau invoice ini sudah pernah diretur/dibatalkan setelah pertama kali dicetak, cetakan berikutnya otomatis menunjukkan kondisi terkini itu, bukan angka waktu pertama dicetak.
 - Untuk AR Invoice yang berasal dari Goods Issue dengan Sales Order (punya harga per item tercatat), tabel item di cetakan menampilkan kolom harga; untuk invoice financial-only atau tanpa harga per item, tabel cukup menampilkan qty tanpa kolom harga kosong.
 
 ## Kesalahan Umum

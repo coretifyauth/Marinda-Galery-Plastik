@@ -40,10 +40,10 @@ ERD & struktur data tiap modul, dalam bahasa non-teknis + tabel (bukan DDL menta
 - `default-account-settings-schema.md` — 2 tabel baru (Default Akun, Preset Akun Aset Tetap), mengganti dropdown akun bebas di hampir semua form transaksi dengan field otomatis terkunci — dipicu bug nyata (salah pilih akun di panel Retur AP Bill).
 
 ### tutorial/
-User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial`. Batch 1 (alur harian inti) + Batch 2 (kasus khusus) + Batch 3 (gap: ledger/cetak/refund kredit/master data) sudah dibangun — cakupan modul sudah lengkap. Disegmentasi jadi 10 subfolder modul (42 file total):
+User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial`. Batch 1 (alur harian inti) + Batch 2 (kasus khusus) + Batch 3 (gap: ledger/cetak/refund kredit/master data) sudah dibangun — cakupan modul sudah lengkap. Disegmentasi jadi 10 subfolder modul (40 file total — `cek-credit-hold-pelanggan.md` dan `writeoff-piutang.md` dihapus 2026-09-05 bareng pencabutan total fitur Credit Hold & Piutang Tak Tertagih):
 - `chart-of-accounts/` — `tambah-akun-baru.md`.
 - `general-ledger/` — `buat-jurnal-manual.md`, `lihat-buku-besar-akun.md`.
-- `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `tukar-barang-garansi.md`, `uang-muka-ar.md`, `cek-credit-hold-pelanggan.md`, `writeoff-piutang.md`, `batalkan-invoice-ar.md`.
+- `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `tukar-barang-garansi.md`, `uang-muka-ar.md`, `batalkan-invoice-ar.md`.
 - `accounts-payable/` — `tambah-supplier-baru.md`, `buat-bill-ap.md`, `bayar-bill-ap.md`, `retur-barang-ap.md`, `uang-muka-ap.md`, `batalkan-bill-ap.md`.
 - `inventory/` — `tambah-item-master.md`, `atur-satuan-harga-barcode.md`, `kelola-kategori-brand-barang.md`, `buat-purchase-order.md`, `terima-barang-grn.md`, `jual-barang-goods-issue.md`, `buat-resep-bom.md`, `buat-production-order.md`, `buat-sales-order.md`, `kirim-penuhi-sales-order.md`, `stock-opname.md`, `lihat-stock-position.md`.
 - `fixed-assets/` — `tambah-aset-tetap.md`, `posting-penyusutan-aset.md`.
