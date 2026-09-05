@@ -221,37 +221,22 @@ Join `credit_notes` (dulu `ap_credit_notes`) sejak migration `0070` — `credit_
 
 Dipakai 2 trigger insert (`purchase_return_lines_no_over_return_trigger`, `purchase_replacement_lines_no_over_return_trigger`) yang semuanya juga nge-lookup `goods_receipt_lines.qty_received` lewat `goods_receipt_notes.bill_id`.
 
-### `ap_return_credits` + `ap_return_credit_refunds`
+### `ap_return_credits`+`ap_return_credit_refunds` DIGABUNG ke `return_credits`/`return_credit_refunds`, migration `0072` (2026-09-05)
 
-Mirror `ar_return_credits` (0031) persis, arah asset kebalik (di AR liability kita ke customer, di sini asset kita ke supplier). Tabel jembatan ketiga (`ap_return_credit_applications`, disposisi "dipakai motong bill lain") sempat ada dari desain awal fitur ini, **dicabut total migration `0009_ap_remove_return_credit_apply.sql`** — lihat bagian "Pencabutan `apply_ap_return_credit`" di bawah.
+**Fase 4 (TERAKHIR)** dari unifikasi tabel anak AR/AP — lihat
+`memory/architecture/data/return-credits-schema.md` buat DDL/RPC/RLS/trigger lengkap,
+GAK DIULANG di sini. `supplier_id` sekarang `counterparty_id`. RPC `refund_ap_return_credit`
+**DIDROP total**, gantinya `refund_return_credit` generic.
 
-```sql
-create table ap_return_credits (
-  id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
-  credit_note_id uuid not null references credit_notes(id), -- dulu references ap_credit_notes(id), repoint migration 0070
-  amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
+Ringkasan histori yang masih relevan: mirror `ar_return_credits` arah asset kebalik (di
+AR liability kita ke customer, di sini asset kita ke supplier). Tabel jembatan ketiga
+(`ap_return_credit_applications`, disposisi "dipakai motong bill lain") sempat ada dari
+desain awal fitur ini, **dicabut total migration `0009_ap_remove_return_credit_apply.sql`**
+— lihat bagian "Pencabutan `apply_ap_return_credit`" di bawah.
 
-create table ap_return_credit_refunds (
-  id uuid primary key default gen_random_uuid(),
-  credit_id uuid not null references ap_return_credits(id),
-  amount numeric(14,2) not null check (amount > 0),
-  source_ref text not null,
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
+### `ap_bill_remaining(bill_id)` — disentralisasi dari AWAL, sekarang 4 reducer (terakhir didefinisi `0072`, target `payments`/`credit_notes`/`deposit_applications`/`return_credits`)
 
-Guard `ap_return_credit_refunds_guard` cek amount ≤ `ap_return_credit_remaining(credit_id)`. Pola identik `ar_return_credit_refunds_guard`.
-
-### `ap_bill_remaining(bill_id)` — disentralisasi dari AWAL, sekarang 4 reducer (terakhir didefinisi `0071`, target `payments`/`credit_notes`/`deposit_applications`)
-
-Beda dari AR yang baru disentralisasi belakangan (0031, setelah bug over-allocation berulang kebukti) — di AP langsung dibangun dari awal karena polanya udah kenal. Awalnya **2 reducer**: `ap_payments` (langsung, bukan lewat tabel jembatan lagi sejak `0011`) + `ap_credit_notes`. Sempat ada reducer ke-3 (`ap_return_credit_applications` aktif) dari desain awal fitur retur (0035 pra-squash) — dicabut `0009` bareng tabelnya. Nambah reducer DP application (`0013`) jadi 3, nambah add-back `ap_return_credits` (mirror AR) jadi 4 — bentuk final di bawah, target tabel `payments`/`credit_notes`/`deposit_applications` sejak `0069`/`0070`/`0071`.
+Beda dari AR yang baru disentralisasi belakangan (0031, setelah bug over-allocation berulang kebukti) — di AP langsung dibangun dari awal karena polanya udah kenal. Awalnya **2 reducer**: `ap_payments` (langsung, bukan lewat tabel jembatan lagi sejak `0011`) + `ap_credit_notes`. Sempat ada reducer ke-3 (`ap_return_credit_applications` aktif) dari desain awal fitur retur (0035 pra-squash) — dicabut `0009` bareng tabelnya. Nambah reducer DP application (`0013`) jadi 3, nambah add-back `ap_return_credits` (mirror AR) jadi 4 — bentuk final di bawah, target tabel `payments`/`credit_notes`/`deposit_applications`/`return_credits` sejak `0069`-`0072`.
 
 ```sql
 create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
@@ -266,8 +251,8 @@ create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
           )
       ), 0)
     + coalesce((
-        select sum(arc.amount) from ap_return_credits arc
-        join credit_notes acn on acn.id = arc.credit_note_id
+        select sum(rc.amount) from return_credits rc
+        join credit_notes acn on acn.id = rc.credit_note_id
         where acn.transaction_id = p_bill_id
       ), 0)
   from transactions ab
@@ -275,7 +260,7 @@ create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
 $$ language sql stable;
 ```
 
-Bentuk final (pasca `0013` nambah reducer DP, `0064` target `transactions`, `0069`/`0070`/`0071` target `payments`/`credit_notes`/`deposit_applications`) — **4 reducer**, bukan 2 lagi (histori evolusinya di paragraf pembuka submodule ini). **`record_payment`** (`0069`) pakai fungsi ini alih-alih ngecek langsung ke `transactions.amount`, mirror `ar_invoice_remaining`. **`cancel_ap_bill`** hard-block tambahan kalau bill udah punya `credit_notes` (`type='OUTBOUND'`) (pola sama guard payment: bill udah "kesentuh" transaksi lain) — sempat juga punya auto-reverse loop buat `ap_return_credit_applications` aktif, dihapus `0009` bareng tabelnya (gak ada lagi apa pun buat di-unwind di sisi itu).
+Bentuk final (pasca `0013` nambah reducer DP, `0064` target `transactions`, `0069`-`0072` target `payments`/`credit_notes`/`deposit_applications`/`return_credits`) — **4 reducer**, bukan 2 lagi (histori evolusinya di paragraf pembuka submodule ini). **`record_payment`** (`0069`) pakai fungsi ini alih-alih ngecek langsung ke `transactions.amount`, mirror `ar_invoice_remaining`. **`cancel_ap_bill`** hard-block tambahan kalau bill udah punya `credit_notes` (`type='OUTBOUND'`) (pola sama guard payment: bill udah "kesentuh" transaksi lain) — sempat juga punya auto-reverse loop buat `ap_return_credit_applications` aktif, dihapus `0009` bareng tabelnya (gak ada lagi apa pun buat di-unwind di sisi itu).
 
 ### `ap_bills_with_status` view — migration `0032_ap_bill_status_view.sql`
 
@@ -301,11 +286,9 @@ Konsumsi barang rusak pakai `consume_weighted_average` (fungsi yang sama dipakai
 
 Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
 
-### RPC `refund_ap_return_credit`
+### RPC `refund_ap_return_credit` DIGABUNG ke `refund_return_credit`, migration `0072`
 
-Mirror `refund_ar_return_credit` (0031) persis, arah jurnal kebalik (Debit Kas/Bank / Kredit Piutang Retur Supplier). Sempat ada pasangan `apply_ap_return_credit` (Debit Utang Usaha / Kredit Piutang Retur Supplier, motong bill lain) — dicabut `0009`, lihat bagian "Pencabutan `apply_ap_return_credit`" di bawah.
-
-Full body (definisi terkini): `supabase/migrations/0006_ap_schema.sql`.
+**DIDROP total**, gantinya RPC generic `refund_return_credit` — signature & body lengkap: `memory/architecture/data/return-credits-schema.md`. Arah jurnal (Debit Kas/Bank / Kredit Piutang Retur Supplier buat OUTBOUND) gak berubah perilakunya. Sempat ada pasangan `apply_ap_return_credit` (Debit Utang Usaha / Kredit Piutang Retur Supplier, motong bill lain) — dicabut `0009`, lihat bagian "Pencabutan `apply_ap_return_credit`" di bawah.
 
 ### RLS Policy
 

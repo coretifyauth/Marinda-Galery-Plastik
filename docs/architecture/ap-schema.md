@@ -12,8 +12,8 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Detail teknis
 | `credit_notes` (baris `type='OUTBOUND'`) | Retur barang ke pemasok, jalur "kurangi utang" (Opsi A) — tabel yang sama juga dipakai Accounts Receivable (baris `type='INBOUND'`) | `transactions`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian barang yang diretur per item (cuma kalau bill-nya diterima lewat penerimaan barang bertahap) | `credit_notes` |
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — berdiri sendiri, tidak menyambung ke `credit_notes` | `transactions` |
-| `ap_return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `credit_notes` |
-| `ap_return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" sudah dicabut, bukan fondasi AP) | `ap_return_credits` |
+| `return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `credit_notes` |
+| `return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" sudah dicabut, bukan fondasi AP) | `return_credits` |
 | `deposits` (baris `type='OUTBOUND'`) | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) — tabel yang sama juga dipakai Accounts Receivable (baris `type='INBOUND'`) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
 | `deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan — tabel yang sama juga dipakai Accounts Receivable | `deposits`, `transactions` |
 | `deposit_refunds` | DP dicairkan tunai kembali (pemasok yang mutuskan, bukan kita) — tidak berdampak Laba Rugi — tabel yang sama juga dipakai Accounts Receivable | `deposits` |
@@ -23,7 +23,7 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Detail teknis
 
 Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik — di Piutang, kita yang menetapkan termin ke pelanggan; di Utang, pemasok yang menetapkan termin ke kita. Kolom & cara kerjanya identik, cuma makna bisnisnya kebalik.
 
-**Catatan (2026-09-05)**: `ap_bills` (tabel bill AP) dan `ap_bill_debit_lines` (rincian baris debit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Receivable — lihat `docs/architecture/ar-schema.md`. Opsi C "Tulis-jadi-Beban" (`purchase_writeoffs`) di Retur Barang ke Supplier **dicabut total** — demi simetri dengan AR (yang cuma punya 2 jalur resolusi retur). Barang rusak yang pemasok tolak kompensasi sekarang lewat penyesuaian stok generic (`stock_opname`), bukan RPC khusus AP lagi. `ap_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Receivable) — RPC `record_ap_payment` diganti `record_payment`. `ap_credit_notes` juga sudah digabung ke tabel generic `credit_notes` (dipakai bareng Accounts Receivable) — RPC `create_ap_credit_note` TETAP ADA (gak digabung jadi 1 RPC, logic-nya beneran beda bentuk dari sisi AR), cuma tabel penyimpanannya yang digabung. `ap_deposits`+turunannya (applications/refunds/forfeitures) juga sudah digabung ke tabel generic `deposits`/`deposit_applications`/`deposit_refunds`/`deposit_forfeitures` (dipakai bareng Accounts Receivable) — RPC `create_ap_deposit`/`apply_ap_deposit`/`refund_ap_deposit`/`forfeit_ap_deposit` diganti `create_deposit`/`apply_deposit`/`refund_deposit`/`forfeit_deposit`.
+**Catatan (2026-09-05)**: `ap_bills` (tabel bill AP) dan `ap_bill_debit_lines` (rincian baris debit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Receivable — lihat `docs/architecture/ar-schema.md`. Opsi C "Tulis-jadi-Beban" (`purchase_writeoffs`) di Retur Barang ke Supplier **dicabut total** — demi simetri dengan AR (yang cuma punya 2 jalur resolusi retur). Barang rusak yang pemasok tolak kompensasi sekarang lewat penyesuaian stok generic (`stock_opname`), bukan RPC khusus AP lagi. `ap_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Receivable) — RPC `record_ap_payment` diganti `record_payment`. `ap_credit_notes` juga sudah digabung ke tabel generic `credit_notes` (dipakai bareng Accounts Receivable) — RPC `create_ap_credit_note` TETAP ADA (gak digabung jadi 1 RPC, logic-nya beneran beda bentuk dari sisi AR), cuma tabel penyimpanannya yang digabung. `ap_deposits`+turunannya (applications/refunds/forfeitures) juga sudah digabung ke tabel generic `deposits`/`deposit_applications`/`deposit_refunds`/`deposit_forfeitures` (dipakai bareng Accounts Receivable) — RPC `create_ap_deposit`/`apply_ap_deposit`/`refund_ap_deposit`/`forfeit_ap_deposit` diganti `create_deposit`/`apply_deposit`/`refund_deposit`/`forfeit_deposit`. **Fase 4 (terakhir):** `ap_return_credits`+`ap_return_credit_refunds` digabung ke tabel generic `return_credits`/`return_credit_refunds` (dipakai bareng Accounts Receivable) — RPC `refund_ap_return_credit` diganti `refund_return_credit`; `return_credits` sendiri gak pernah punya RPC "create" terpisah, tetap lahir inline dari `create_ap_credit_note`.
 
 ## Konsep Inti
 
@@ -83,8 +83,8 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 | `credit_notes` (`type='OUTBOUND'`) | Retur barang, Opsi A ("kurangi utang") — tabel generic yang sama juga dipakai Accounts Receivable | `transactions`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian item retur, cuma jalur full (bill lewat penerimaan barang) | `credit_notes` |
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang, Opsi B — berdiri sendiri, gak menyambung ke `credit_notes` | `transactions` |
-| `ap_return_credits` | Saldo "Piutang Retur Supplier" — lahir otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `counterparties`, `credit_notes` (sumbernya) |
-| `ap_return_credit_refunds` | Saldo di atas dicairkan tunai — satu-satunya disposisi | `ap_return_credits` |
+| `return_credits` | Saldo "Piutang Retur Supplier" — lahir otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `counterparties`, `credit_notes` (sumbernya) |
+| `return_credit_refunds` | Saldo di atas dicairkan tunai — satu-satunya disposisi | `return_credits` |
 
 Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-satunya metode yang ada sekarang, FIFO sudah dihapus total). Sengaja gak ada batas waktu retur (umur bill vs tanggal retur) — keputusan final, mirror AR yang juga sudah mencabut validasi serupa total.
 
@@ -95,10 +95,10 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Retur, Opsi A (kurangi utang) | `create_ap_credit_note` | Kalau financial-only: 1 jurnal (Debit Utang Usaha, Kredit Persediaan Bahan Baku). Kalau full (bill lewat penerimaan barang): konsumsi stok dulu lewat fungsi Rata-Rata Tertimbang buat dapetin nilai cost fisik, baru jurnal + insert `credit_notes` + `purchase_return_lines` | Trigger no-over-return (total retur ≤ nilai bill, independen status bayar) |
-| Deteksi & cairkan excess jadi Piutang Retur Supplier | `create_ap_credit_note` (lanjutan aksi di atas, 1 pemanggilan) | Kalau sisa outstanding sebelum retur ini udah minus/kurang dari nominal retur, bagian excess-nya dijurnal ulang (Debit Piutang Retur Supplier, Kredit Utang Usaha) + insert `ap_return_credits` | Parameter akun asset wajib diisi kalau ada excess |
+| Deteksi & cairkan excess jadi Piutang Retur Supplier | `create_ap_credit_note` (lanjutan aksi di atas, 1 pemanggilan) | Kalau sisa outstanding sebelum retur ini udah minus/kurang dari nominal retur, bagian excess-nya dijurnal ulang (Debit Piutang Retur Supplier, Kredit Utang Usaha) + insert `return_credits` | Parameter akun asset wajib diisi kalau ada excess |
 | Retur, Opsi B (tukar barang) | `create_purchase_replacement` | Konsumsi barang rusak + terima barang baru pakai harga rata-rata yang sama (net nol ke nilai Persediaan); insert `purchase_replacements` + `purchase_replacement_lines` | Guard qty gabungan (baris di bawah); Utang Usaha gak pernah disentuh |
 | Guard qty gabungan Opsi A + B | Trigger di `purchase_return_lines` dan `purchase_replacement_lines` | — | Total qty retur (Opsi A) + total qty tukar (Opsi B) per item per bill ≤ qty yang diterima di bill itu |
-| Refund tunai Piutang Retur Supplier | `refund_ap_return_credit` | Jurnal Debit Kas/Bank, Kredit Piutang Retur Supplier; insert `ap_return_credit_refunds` | `amount` melebihi sisa saldo → tolak |
+| Refund tunai Piutang Retur Supplier | `refund_return_credit` | Jurnal Debit Kas/Bank, Kredit Piutang Retur Supplier; insert `return_credit_refunds` | `amount` melebihi sisa saldo → tolak |
 
 **Aturan Bisnis → RPC**
 
@@ -107,7 +107,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | Opsi A dan Opsi B saling eksklusif per porsi barang yang sama | Keputusan manual orang yang input — `create_ap_credit_note` dan `create_purchase_replacement` adalah 2 RPC independen, gak saling memanggil |
 | Total qty retur (A) + tukar (B) per item per bill ≤ qty diterima | Trigger guard qty gabungan, jumlahin `purchase_return_lines` + `purchase_replacement_lines` — batasnya di level fisik, bukan per-mekanisme, jadi 1 bill boleh dipecah campuran antar opsi |
 | Excess dari Opsi A pada bill lunas otomatis jadi saldo resmi | `create_ap_credit_note` — bagian yang melebihi sisa outstanding sebelum retur ini, bukan seluruh nominal retur |
-| Saldo Piutang Retur Supplier cuma bisa dicairkan tunai | Cuma 1 RPC yang bisa mengurangi saldo ini: `refund_ap_return_credit` |
+| Saldo Piutang Retur Supplier cuma bisa dicairkan tunai | Cuma 1 RPC yang bisa mengurangi saldo ini: `refund_return_credit` |
 | Retur gak boleh masuk periode tertutup | Reuse aturan umum block-retroactive-period dari General Ledger |
 | Retur gak boleh ngelebihin nilai bill (Opsi A) | Trigger no-over-return, cap ke nilai bill (independen dari status bayar) |
 
@@ -118,9 +118,9 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | `credit_notes` | banyak-ke-satu | `transactions` |
 | `purchase_return_lines` | banyak-ke-satu | `credit_notes` |
 | `purchase_replacements` | banyak-ke-satu | `transactions` (langsung, tanpa lewat `credit_notes`) |
-| `ap_return_credits` | satu-ke-satu | `credit_notes` (sumbernya) |
-| `ap_return_credits` | banyak-ke-satu | `counterparties` |
-| `ap_return_credit_refunds` | banyak-ke-satu | `ap_return_credits` |
+| `return_credits` | satu-ke-satu | `credit_notes` (sumbernya) |
+| `return_credits` | banyak-ke-satu | `counterparties` |
+| `return_credit_refunds` | banyak-ke-satu | `return_credits` |
 
 ## Uang Muka / DP ke Supplier
 

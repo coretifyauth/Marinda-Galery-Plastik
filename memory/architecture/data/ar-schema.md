@@ -234,37 +234,27 @@ Pola identik AR/Inventory lain — `select` semua `authenticated`, `insert` cuma
 
 Retur yang kejadian **setelah** invoice lunas bikin outstanding negatif (`ar_credit_notes_no_over_return` sengaja independen, cuma cek terhadap `amount` invoice, gak peduli status bayar). Excess-nya sekarang otomatis "dicairkan" jadi saldo resmi, dicatat ke akun liability `Saldo Kredit Retur Customer` (kode `2500`). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Retur Barang (Credit Note)" > "Saldo Kredit dari Retur".
 
-#### `ar_return_credits` — saldo kredit lahir (selalu dari `ar_credit_notes` yang bikin invoice minus)
+#### `ar_return_credits`+`ar_return_credit_refunds` DIGABUNG ke `return_credits`/`return_credit_refunds`, migration `0072` (2026-09-05)
 
-Satu baris = satu kejadian excess dari 1 credit note. `credit_note_id` nunjuk `ar_credit_notes` sumbernya, `journal_entry_id` nunjuk entry reklasifikasi **terpisah** dari jurnal kontra-revenue credit note-nya sendiri (2 jurnal independen — pola sama retur jalur full yang juga bikin 2 jurnal).
+**Fase 4 (TERAKHIR)** dari unifikasi tabel anak AR/AP — lihat
+`memory/architecture/data/return-credits-schema.md` buat DDL/RPC/RLS/trigger lengkap,
+GAK DIULANG di sini. `customer_id` sekarang `counterparty_id`. RPC `refund_ar_return_credit`
+**DIDROP total**, gantinya `refund_return_credit` generic. `return_credits` sendiri gak
+pernah punya RPC "create" — TETAP lahir inline dari dalam `create_ar_credit_note`
+(cuma insert target-nya yang berubah).
 
-```sql
-create table ar_return_credits (
-  id uuid primary key default gen_random_uuid(),
-  customer_id uuid not null references counterparties(id), -- dulu references customers(id), repoint migration 0059
-  credit_note_id uuid not null references credit_notes(id), -- dulu references ar_credit_notes(id), repoint migration 0070
-  amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-#### `ar_return_credit_refunds` — 1 dari 2 disposisi (refund tunai)
-
-**(`0041`, disederhanakan)** Sempat ada juga `ar_return_credit_applications` (2 disposisi, pola identik `ar_customer_credit_applications`/`ar_customer_credit_refunds` 0027) — dicabut total. Sekarang cuma 1 tabel disposisi: `ar_return_credit_refunds`, ditambah settlement via barang yang disimpan di `warranty_replacements.return_credit_settled_amount` (bukan tabel terpisah, lihat submodule "Penukaran Barang Pasca-Retur" — Opsi C dari 3 opsi yang dipertimbangkan, dipilih karena niru pola `discount_reversed_amount` yang udah ada di tabel yang sama).
-
-`ar_return_credit_remaining(credit_id)` (fungsi `stable`, terakhir didefinisi `0041`) ngitung sisa: `amount - SUM(warranty_replacements.return_credit_settled_amount via credit_note_id) - SUM(refunds)`.
+Ringkasan histori yang masih relevan: excess dari retur setelah invoice lunas otomatis
+"dicairkan" jadi saldo resmi (liability `Saldo Kredit Retur Customer`, `2500`).
+Satu-satunya disposisi aktif ke depan (`0041`): refund tunai — jalur "titip ke invoice
+lain" (`apply_ar_return_credit`/`ar_return_credit_applications`) dicabut total.
+Settlement via barang (`warranty_replacements.return_credit_settled_amount`) HISTORIS
+doang sejak `0057`.
 
 #### `ar_credit_notes` diperluas — deteksi & cairkan excess (bugfix `0022` jadi baseline, `0031`)
 
-Ini keputusan desain paling penting di submodule ini. Sebelum insert baris `ar_credit_notes`, RPC `create_ar_credit_note` nangkep `v_remaining_before := ar_invoice_remaining(p_invoice_id)` (state SEBELUM retur ini masuk). Setelah insert, hitung `v_excess := greatest(0, p_amount - greatest(0, v_remaining_before))` — cuma bagian retur yang beneran "kelebihan" dari sisa yang ada (bukan seluruh nominal retur), dan kalau invoice udah negatif dari retur sebelumnya (`v_remaining_before < 0`), seluruh retur baru ini jadi excess. Kalau `v_excess > 0`, bikin jurnal reklasifikasi (`Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer`) + insert `ar_return_credits`.
+Ini keputusan desain paling penting di submodule ini. Sebelum insert baris credit note, RPC `create_ar_credit_note` nangkep `v_remaining_before := ar_invoice_remaining(p_invoice_id)` (state SEBELUM retur ini masuk). Setelah insert, hitung `v_excess := greatest(0, p_amount - greatest(0, v_remaining_before))` — cuma bagian retur yang beneran "kelebihan" dari sisa yang ada (bukan seluruh nominal retur), dan kalau invoice udah negatif dari retur sebelumnya (`v_remaining_before < 0`), seluruh retur baru ini jadi excess. Kalau `v_excess > 0`, bikin jurnal reklasifikasi (`Debit Piutang Usaha / Kredit Saldo Kredit Retur Customer`) + insert `return_credits` (`type='INBOUND'`).
 
 Parameter `p_return_credit_liability_account_id` ditaro **paling akhir dengan default `null`** (wajib diisi caller cuma kalau beneran ada excess, `raise exception` kalau NULL pas dibutuhkan) — signature call existing (0023 seed) yang gak isi param ini tetep jalan. `drop function if exists create_ar_credit_note(<signature 9-param lama>)` ditambahin duluan — pelajaran dari bug `record_ar_payment` di 0027 (nambah parameter lewat `create or replace` bikin overload baru kalau gak di-drop eksplisit signature lama). Signature ini gak berubah lagi di `0041` (settlement-nya ada di `create_warranty_replacement`, bukan di sini).
-
-#### RPC `refund_ar_return_credit`
-
-Jurnal Debit Saldo Kredit Retur Customer / Kredit Kas/Bank; insert `ar_return_credit_refunds`. Guard: `amount > ar_return_credit_remaining(credit_id)` → tolak. **Gak berubah** sejak awal — tetap satu-satunya cara refund tunai.
 
 #### RPC `apply_ar_return_credit` — dicabut total (`0041`)
 

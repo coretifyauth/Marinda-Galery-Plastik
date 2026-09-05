@@ -178,7 +178,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes:credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications:deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes:credit_notes(amount, ar_return_credits:return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -262,11 +262,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("type", "INBOUND")
         .order("deposit_date"),
       supabase
-        .from("ar_return_credits")
+        .from("return_credits")
         .select(
-          "id, customer_id, credit_note_id, amount, journal_entry_id, created_at, counterparties(name), ar_credit_notes:credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+          "id, customer_id:counterparty_id, credit_note_id, amount, journal_entry_id, created_at, counterparties(name), ar_credit_notes:credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds:return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
         )
-        .eq("customer_id", loadedInvoice.customer_id)
+        .eq("counterparty_id", loadedInvoice.customer_id)
+        .eq("type", "INBOUND")
         .order("created_at"),
     ]);
 
@@ -671,12 +672,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       setRefundCreditError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("refund_ar_return_credit", {
+    const { error } = await supabase.rpc("refund_return_credit", {
       p_credit_id: parsed.data.credit_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
       p_source_ref: sourceRef,
-      p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id,
+      p_return_credit_account_id: parsed.data.return_credit_liability_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
     });
     setRefundCreditSubmitting(false);

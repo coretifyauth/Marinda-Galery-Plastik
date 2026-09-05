@@ -168,7 +168,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -219,7 +219,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       supabase
         .from("credit_notes")
         .select(
-          "id, credit_note_date, source_ref, amount, created_at, purchase_return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits(id, amount, ap_return_credit_refunds(amount))"
+          "id, credit_note_date, source_ref, amount, created_at, purchase_return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits:return_credits(id, amount, ap_return_credit_refunds:return_credit_refunds(amount))"
         )
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND")
@@ -675,12 +675,12 @@ export function ApBillDetailView({ id }: { id: string }) {
       setRefundCreditError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("refund_ap_return_credit", {
+    const { error } = await supabase.rpc("refund_return_credit", {
       p_credit_id: parsed.data.credit_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
       p_source_ref: sourceRef,
-      p_return_credit_asset_account_id: parsed.data.return_credit_asset_account_id,
+      p_return_credit_account_id: parsed.data.return_credit_asset_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
     });
     setRefundCreditSubmitting(false);
