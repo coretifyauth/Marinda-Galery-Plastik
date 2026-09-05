@@ -26,40 +26,17 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 `set_updated_at()` di-reuse dari `coa-schema.md`. DDL final `counterparties` (bentuk sekarang, pasca `0065`): `memory/architecture/data/counterparty-schema.md`.
 
-#### `ap_payments` — utang berkurang
+#### `ap_payments` DIGABUNG ke `payments` (kolom `type='OUTBOUND'`), migration `0069` (2026-09-05)
 
-Identik `ar_payments` pasca-`0010` (`bill_id` FK langsung, bukan lewat tabel jembatan; gak `unique` — 1 bill boleh punya banyak baris payment buat cicil), arah kebalik (Debit Utang Usaha, Kredit Kas/Bank alih-alih Debit Kas, Kredit Piutang). `bill_id` ditambah belakangan lewat `0011` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel.
+**Fase 1** dari unifikasi tabel anak AR/AP — mirror pola `transactions`, lihat
+`memory/architecture/data/payments-schema.md` buat DDL/RPC/RLS lengkap, GAK DIULANG di
+sini. `bill_id` sekarang `transaction_id`, `supplier_id` sekarang `counterparty_id`. RPC
+`record_ap_payment` **DIDROP total**, gantinya `record_payment('OUTBOUND', ...)`.
 
-```sql
-create table ap_payments (
-  id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
-  bill_id uuid not null references transactions(id), -- dulu references ap_bills(id), repoint migration 0064
-  payment_date date not null,
-  amount numeric(14,2) not null check (amount > 0),
-  source_ref text not null,
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-
-create index ap_payments_supplier_id_idx on ap_payments(supplier_id);
-create index ap_payments_bill_id_idx on ap_payments(bill_id);
-```
-
-Tabel jembatan `ap_payment_allocations` (many-to-many payment↔bill) sempat ada di sini — **dicabut total migration `0011_ap_payment_single_bill.sql`**, lihat bagian "AP Payment — Selaras AR (0011)" di bawah.
-
-### Trigger
-
-#### Immutability — reuse `block_edit_delete()`
-
-```sql
-create trigger ap_payments_block_edit_delete
-  before update or delete on ap_payments
-  for each row execute function block_edit_delete();
-```
-
-`ap_bills` sendiri udah gabung ke `transactions` — immutability-nya (`transactions_block_edit_delete_or_sync`) didokumentasikan di `transactions-schema.md`.
+Ringkasan histori yang masih relevan (detail lengkap: "AP Payment — Selaras AR (0011)" di
+bawah): identik `ar_payments`, arah kebalik (Debit Utang Usaha, Kredit Kas/Bank). Tabel
+jembatan `ap_payment_allocations` (many-to-many payment↔bill) sempat ada — **dicabut
+total migration `0011_ap_payment_single_bill.sql`**.
 
 ### RPC (financial write — atomik, reuse `create_journal_entry`/`reverse_journal_entry`)
 
@@ -74,57 +51,16 @@ Menutup `memory/scope-debt/compound-transactional-entries.md` (sudah dihapus). S
 - **PPN Masukan** — `p_apply_tax=true` baca `tax_settings.ppn_masukan_account_id`/`ppn_rate` (tabel singleton didefinisikan penuh di `ar-schema.md`, dipakai bareng `create_transaction` OUTBOUND dan `create_pos_sale`), dihitung server-side dari `v_subtotal`, **ditambahkan ke `p_control_account_id`** (utang ke supplier termasuk pajak yang bisa dikreditkan). Beda dari `p_lines` yang tetap dipercaya dari klien.
 - **`create_goods_receipt`** (`memory/architecture/data/inventory-schema.md`) manggil `create_transaction('OUTBOUND', ...)` di dalamnya sejak `0064` (dulu `create_ap_bill`) — signature eksternal `create_goods_receipt` sendiri gak berubah. Riwayat `p_extra_debit_lines`/`p_apply_tax` (migration `0012_grn_compound_ppn.sql`) tetap berlaku apa adanya.
 
-#### `record_ap_payment` — bikin payment + journal entry sekaligus, langsung ke 1 bill (terakhir didefinisi `0065`, target `transactions`)
+#### `record_ap_payment` DIGABUNG ke `record_payment('OUTBOUND', ...)`, migration `0069` (2026-09-05)
 
-Identik `record_ar_payment` pasca-`0010` — `p_bill_id` tunggal (bukan `p_allocations jsonb` array lagi, dicabut `0011`), guard cuma nolak kalau `p_amount` **melebihi** `ap_bill_remaining(p_bill_id)` (boleh kurang = cicil, gak boleh lebih = overpay). `p_bill_id` sekarang nunjuk `transactions(id)` (bukan `ap_bills(id)` lagi sejak `0064`).
+RPC lama **DIDROP total**, gantinya RPC generic `record_payment` — signature & body
+lengkap: `memory/architecture/data/payments-schema.md`. Guard overpay gak berubah
+perilakunya, cuma sekarang di 1 RPC yang nge-branch jurnal (Debit Utang Usaha/Kredit Kas)
+berdasar `p_type`.
 
-```sql
-create function record_ap_payment(
-  p_supplier_id uuid,
-  p_payment_date date,
-  p_amount numeric,
-  p_source_ref text,
-  p_payable_account_id uuid,
-  p_cash_account_id uuid,
-  p_bill_id uuid
-) returns uuid
-language plpgsql
-security invoker
-as $$
-declare
-  v_remaining numeric;
-  v_entry_id uuid;
-  v_payment_id uuid;
-  v_bill_ref text;
-begin
-  select ap_bill_remaining(p_bill_id) into v_remaining;
+#### `cancel_ap_bill` — batalkan bill salah input (reversing entry, dengan guard) (terakhir didefinisi `0069`, target `payments`)
 
-  if p_amount > v_remaining then
-    select source_ref into v_bill_ref from transactions where id = p_bill_id;
-    raise exception 'Payment % melebihi sisa utang bill % (sisa %, coba bayar %) -- gak boleh overpay',
-      p_source_ref, v_bill_ref, v_remaining, p_amount;
-  end if;
-
-  v_entry_id := create_journal_entry(
-    p_payment_date, 'Pelunasan utang', p_source_ref,
-    jsonb_build_array(
-      jsonb_build_object('account_id', p_payable_account_id, 'debit', p_amount, 'credit', 0),
-      jsonb_build_object('account_id', p_cash_account_id, 'debit', 0, 'credit', p_amount)
-    )
-  );
-
-  insert into ap_payments (supplier_id, bill_id, payment_date, amount, source_ref, journal_entry_id, created_by)
-  values (p_supplier_id, p_bill_id, p_payment_date, p_amount, p_source_ref, v_entry_id, auth.uid())
-  returning id into v_payment_id;
-
-  return v_payment_id;
-end;
-$$;
-```
-
-#### `cancel_ap_bill` — batalkan bill salah input (reversing entry, dengan guard) (terakhir didefinisi `0065`, target `transactions`)
-
-Identik `cancel_ar_invoice`. Diterapkan dari awal (bukan ditambah belakangan kayak AR), karena guard-nya udah kebukti perlu. Guard payment sekarang cek `ap_payments` langsung (bukan lewat tabel jembatan yang udah gak ada sejak `0011`). Diperluas lagi lewat migration `0035` (guard retur) dan `0013` (auto-unwind DP) — SQL final ada di submodule "Retur Barang ke Supplier" dan "Uang Muka / DP ke Supplier" di bawah.
+Identik `cancel_ar_invoice`. Diterapkan dari awal (bukan ditambah belakangan kayak AR), karena guard-nya udah kebukti perlu. Guard payment sekarang cek `payments` (filter `type='OUTBOUND'`). Diperluas lagi lewat migration `0035` (guard retur) dan `0013` (auto-unwind DP) — SQL final ada di submodule "Retur Barang ke Supplier" dan "Uang Muka / DP ke Supplier" di bawah.
 
 ```sql
 create or replace function cancel_ap_bill(
@@ -143,7 +79,7 @@ declare
   v_bill_ref text;
 begin
   select count(*) into v_allocated_count
-  from ap_payments where bill_id = p_bill_id;
+  from payments where transaction_id = p_bill_id and type = 'OUTBOUND';
 
   if v_allocated_count > 0 then
     select source_ref into v_bill_ref from transactions where id = p_bill_id;
@@ -169,25 +105,7 @@ $$;
 
 ### RLS Policy & Grant
 
-**`ap_payments_select`** — semua yang `authenticated` boleh liat. **`ap_payments_insert`** — cuma `admin`/`accountant`. **Sengaja gak ada policy `UPDATE`/`DELETE`** — RLS default deny + trigger `block_edit_delete` = 2 lapis immutability. RLS/Grant `transactions` (dulu `ap_bills`) sekarang di `transactions-schema.md`, RLS `counterparties`/`counterparty_type_mapping` (dulu `suppliers`) di `counterparty-schema.md` — gak diulang di sini.
-
-```sql
-alter table ap_payments enable row level security;
-
-create policy ap_payments_select on ap_payments
-  for select using (auth.role() = 'authenticated');
-
-create policy ap_payments_insert on ap_payments
-  for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
-  );
--- sengaja gak ada policy UPDATE/DELETE -> RLS default deny
-
-grant select, insert on ap_payments to authenticated;
-```
-
-RPC (`create_transaction`, `record_ap_payment`, `cancel_ap_bill`) otomatis kepakai `authenticated` selama grant `execute` default Postgres gak dicabut.
+RLS/Grant `payments` (dulu `ar_payments`/`ap_payments`) sekarang di `payments-schema.md` — gak diulang di sini. RLS `transactions` (dulu `ap_bills`) di `transactions-schema.md`, RLS `counterparties`/`counterparty_type_mapping` (dulu `suppliers`) di `counterparty-schema.md`.
 
 ### AP Payment — Selaras AR (0011) — migration `0011_ap_payment_single_bill.sql`
 

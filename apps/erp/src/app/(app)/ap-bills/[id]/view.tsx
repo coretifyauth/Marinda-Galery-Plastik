@@ -168,7 +168,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -212,9 +212,9 @@ export function ApBillDetailView({ id }: { id: string }) {
         .or(`id.eq.${loadedBill.journal_entry_id},reverses_entry_id.eq.${loadedBill.journal_entry_id}`)
         .order("entry_date"),
       supabase
-        .from("ap_payments")
+        .from("payments")
         .select("id, payment_date, source_ref, amount")
-        .eq("bill_id", id)
+        .eq("transaction_id", id)
         .order("payment_date"),
       supabase
         .from("ap_credit_notes")
@@ -619,14 +619,15 @@ export function ApBillDetailView({ id }: { id: string }) {
       setPayError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("record_ap_payment", {
-      p_supplier_id: parsed.data.supplier_id,
+    const { error } = await supabase.rpc("record_payment", {
+      p_type: "OUTBOUND",
+      p_counterparty_id: parsed.data.supplier_id,
       p_payment_date: parsed.data.payment_date,
       p_amount: parsed.data.amount,
       p_source_ref: sourceRef,
-      p_payable_account_id: parsed.data.payable_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
-      p_bill_id: parsed.data.bill_id,
+      p_control_account_id: parsed.data.payable_account_id,
+      p_transaction_id: parsed.data.bill_id,
     });
     setPaySubmitting(false);
     if (error) {

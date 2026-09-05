@@ -178,7 +178,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -217,9 +217,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .or(`id.eq.${loadedInvoice.journal_entry_id},reverses_entry_id.eq.${loadedInvoice.journal_entry_id}`)
         .order("entry_date"),
       supabase
-        .from("ar_payments")
+        .from("payments")
         .select("id, payment_date, source_ref, amount")
-        .eq("invoice_id", id)
+        .eq("transaction_id", id)
         .order("payment_date"),
       supabase
         .from("ar_credit_notes")
@@ -615,14 +615,15 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       setPayError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("record_ar_payment", {
-      p_customer_id: parsed.data.customer_id,
+    const { error } = await supabase.rpc("record_payment", {
+      p_type: "INBOUND",
+      p_counterparty_id: parsed.data.customer_id,
       p_payment_date: parsed.data.payment_date,
       p_amount: parsed.data.amount,
       p_source_ref: sourceRef,
       p_cash_account_id: parsed.data.cash_account_id,
-      p_receivable_account_id: parsed.data.receivable_account_id,
-      p_invoice_id: parsed.data.invoice_id,
+      p_control_account_id: parsed.data.receivable_account_id,
+      p_transaction_id: parsed.data.invoice_id,
     });
     setPaySubmitting(false);
     if (error) {

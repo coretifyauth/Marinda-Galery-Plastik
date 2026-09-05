@@ -8,7 +8,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 |---|---|---|
 | `counterparties` | Master data pelanggan (nama, kontak, termin pembayaran) | — |
 | `transactions` (baris `type='INBOUND'`) | Tagihan yang diterbitkan ke pelanggan — tabel yang sama juga dipakai Accounts Payable (baris `type='OUTBOUND'`, lihat `docs/architecture/ap-schema.md`) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ar_payments` | Pembayaran yang diterima dari pelanggan — selalu menunjuk 1 invoice spesifik, boleh cicil, gak boleh kelebihan bayar | `counterparties`, `transactions` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
+| `payments` (baris `type='INBOUND'`) | Pembayaran yang diterima dari pelanggan — selalu menunjuk 1 invoice spesifik, boleh cicil, gak boleh kelebihan bayar — tabel yang sama juga dipakai Accounts Payable (baris `type='OUTBOUND'`) | `counterparties`, `transactions` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
 | `ar_credit_notes` | Retur barang — kejadian nyata barang balik, bukan koreksi salah input | `transactions` (1 invoice bisa punya banyak retur), dan ke transaksi jurnal kontra-revenue yang otomatis dibuat |
 | `inventory_returns` + `inventory_return_lines` | Sisi stok/HPP retur — cuma ada kalau invoicenya lahir dari Goods Issue | `ar_credit_notes` (1 pasangan tiap retur fisik), `goods_issues`, dan ke transaksi jurnal reversal HPP |
 | `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — bagian dari alur Retur Barang | `counterparties`, `ar_credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
@@ -21,7 +21,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 | `ar_invoice_charge_types` | Katalog kategori pendapatan tambahan yang bisa dipilih staf saat bikin invoice — murni master data, disiapkan admin | `accounts` (akun tujuan tiap kategori) |
 | `tax_settings` | Pengaturan PPN (tarif, status aktif, akun Keluaran/Masukan) — 1 baris untuk seluruh sistem, dipakai bareng AP/AR/POS | `accounts` (akun PPN Keluaran/Masukan) |
 
-**Catatan (2026-09-05)**: `ar_invoices` (tabel invoice AR) dan `ar_invoice_credit_lines` (rincian baris kredit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Payable — lihat `docs/architecture/ap-schema.md`. Fitur **Credit Hold** (batas kredit customer) dan **Piutang Tak Tertagih** (write-off) yang dulu ada di modul ini sudah **dicabut total** (keputusan owner) — customer gak lagi punya batas kredit yang ditegakkan sistem, dan AR gak lagi punya jalur formal nyatet piutang macet jadi beban.
+**Catatan (2026-09-05)**: `ar_invoices` (tabel invoice AR) dan `ar_invoice_credit_lines` (rincian baris kredit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Payable — lihat `docs/architecture/ap-schema.md`. Fitur **Credit Hold** (batas kredit customer) dan **Piutang Tak Tertagih** (write-off) yang dulu ada di modul ini sudah **dicabut total** (keputusan owner) — customer gak lagi punya batas kredit yang ditegakkan sistem, dan AR gak lagi punya jalur formal nyatet piutang macet jadi beban. `ar_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Payable) — RPC `record_ar_payment` diganti `record_payment`.
 
 ## Konsep Inti
 
@@ -31,7 +31,7 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 |---|---|---|
 | `counterparties` | Master data pelanggan | — |
 | `transactions` (`type='INBOUND'`) | Piutang timbul — tabel generic yang sama juga dipakai Accounts Payable | `counterparties`, transaksi jurnal |
-| `ar_payments` | Piutang berkurang | `counterparties`, `transactions`, transaksi jurnal |
+| `payments` (`type='INBOUND'`) | Piutang berkurang — tabel generic yang sama juga dipakai Accounts Payable | `counterparties`, `transactions`, transaksi jurnal |
 
 **Struktur invoice (baris `transactions` tipe `INBOUND`)**
 
@@ -42,23 +42,23 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 | jumlah | Nilai tagihan | |
 | status (lunas/sebagian/belum/dibatalkan), sisa tagihan, tipe asal | — | Kolom tersimpan, tapi **gak bisa diedit manual** — otomatis di-update sistem tiap ada pembayaran/DP/retur baru yang nyentuh invoice ini |
 
-Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke-banyak) — kebijakan penagihan tetap gak izinin **bayar gabungan** maupun **kelebihan bayar**. Tapi **cicilan boleh** — 1 invoice bisa punya banyak baris pembayaran dari waktu ke waktu, `ar_payments.invoice_id` gak unik.
+Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke-banyak) — kebijakan penagihan tetap gak izinin **bayar gabungan** maupun **kelebihan bayar**. Tapi **cicilan boleh** — 1 invoice bisa punya banyak baris pembayaran dari waktu ke waktu, `payments.transaction_id` gak unik.
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Buat invoice | `create_transaction` (`p_type='INBOUND'`) | Menghitung `due_date`, memanggil `create_journal_entry` (Debit Piutang Usaha, Kredit Pendapatan), insert `transactions` menunjuk `journal_entry_id` | Minimal 1 baris kategori, tiap baris nominal > 0 |
-| Catat pembayaran | `record_ar_payment` | Memanggil `create_journal_entry` (Debit Kas/Bank, Kredit Piutang Usaha), insert `ar_payments` menunjuk 1 `invoice_id` | `p_amount > ar_invoice_remaining(invoice_id)` → `raise exception` (overpay ditolak, cicil lolos) |
-| Batalkan invoice | `cancel_ar_invoice` | Memanggil `reverse_journal_entry` pakai akun sama persis; invoice asli tidak diedit | Ditolak kalau ada `ar_payments`; auto-unwind `ar_deposit_applications` aktif |
+| Catat pembayaran | `record_payment` (`p_type='INBOUND'`) | Memanggil `create_journal_entry` (Debit Kas/Bank, Kredit Piutang Usaha), insert `payments` menunjuk 1 `transaction_id` | `p_amount > ar_invoice_remaining(transaction_id)` → `raise exception` (overpay ditolak, cicil lolos) |
+| Batalkan invoice | `cancel_ar_invoice` | Memanggil `reverse_journal_entry` pakai akun sama persis; invoice asli tidak diedit | Ditolak kalau ada `payments` (`type='INBOUND'`); auto-unwind `ar_deposit_applications` aktif |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Pembayaran boleh kurang dari sisa tagihan, gak boleh lebih | `record_ar_payment` — cek `p_amount > ar_invoice_remaining(invoice_id)` |
+| Pembayaran boleh kurang dari sisa tagihan, gak boleh lebih | `record_payment` — cek `p_amount > ar_invoice_remaining(transaction_id)` |
 | Data invoice asli (pelanggan/tanggal/jumlah) gak boleh diedit/dihapus | RLS tanpa policy `update`/`delete` + trigger selektif — cuma kolom status/sisa tagihan yang boleh berubah, sisanya tetap terkunci total |
-| Invoice cuma bisa dibatalkan kalau belum ada pembayaran | `cancel_ar_invoice` — `count(*) from ar_payments where invoice_id = ...` > 0 → `raise exception` |
+| Invoice cuma bisa dibatalkan kalau belum ada pembayaran | `cancel_ar_invoice` — `count(*) from payments where transaction_id = ... and type='INBOUND'` > 0 → `raise exception` |
 | `due_date` snapshot, gak retroaktif ikut perubahan termin | `create_transaction` — dihitung sekali dari `counterparties.payment_term_days` saat insert, disimpan sebagai kolom biasa |
 | Status invoice gak bisa nyimpang dari kenyataan pembayaran | Diupdate otomatis sistem tiap ada baris baru di pembayaran/DP/retur — bukan dientri manual, dan gak bisa ketinggalan karena nempel di titik transaksi terjadi, bukan dihitung belakangan |
 
@@ -67,8 +67,8 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `transactions` (`INBOUND`) | banyak-ke-satu | `counterparties` |
-| `ar_payments` | banyak-ke-satu | `transactions` |
-| `transactions` / `ar_payments` | satu-ke-satu (`journal_entry_id`, `not null`) | `journal_entries` |
+| `payments` (`INBOUND`) | banyak-ke-satu | `transactions` |
+| `transactions` / `payments` | satu-ke-satu (`journal_entry_id`, `not null`) | `journal_entries` |
 
 ## Retur Barang (Credit Note)
 
