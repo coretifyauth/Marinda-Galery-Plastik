@@ -36,8 +36,6 @@ export function CustomerDetailView({ id }: { id: string }) {
   const [editName, setEditName] = useState("");
   const [editContact, setEditContact] = useState("");
   const [editPaymentTermDays, setEditPaymentTermDays] = useState("");
-  const [editCreditLimit, setEditCreditLimit] = useState("");
-  const [editOverdueThresholdDays, setEditOverdueThresholdDays] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("invoices");
@@ -54,9 +52,7 @@ export function CustomerDetailView({ id }: { id: string }) {
     ] = await Promise.all([
       supabase
         .from("counterparties")
-        .select(
-          "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at"
-        )
+        .select("id, name, contact, payment_term_days, archived_at")
         .eq("id", id)
         .single(),
       supabase
@@ -86,8 +82,6 @@ export function CustomerDetailView({ id }: { id: string }) {
     setEditName(c.name);
     setEditContact(c.contact ?? "");
     setEditPaymentTermDays(String(c.payment_term_days));
-    setEditCreditLimit(c.credit_limit != null ? String(c.credit_limit) : "");
-    setEditOverdueThresholdDays(c.overdue_threshold_days != null ? String(c.overdue_threshold_days) : "");
     setInvoices((inv ?? []) as unknown as ArInvoice[]);
     setPayments((pay ?? []) as unknown as ArPayment[]);
     setReversedEntryIds(
@@ -123,8 +117,6 @@ export function CustomerDetailView({ id }: { id: string }) {
       name: editName,
       contact: editContact || undefined,
       payment_term_days: editPaymentTermDays,
-      credit_limit: editCreditLimit || undefined,
-      overdue_threshold_days: editOverdueThresholdDays || undefined,
     });
     if (!parsed.success) {
       setEditError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -137,8 +129,6 @@ export function CustomerDetailView({ id }: { id: string }) {
         name: parsed.data.name,
         contact: parsed.data.contact ?? null,
         payment_term_days: parsed.data.payment_term_days,
-        credit_limit: parsed.data.credit_limit ?? null,
-        overdue_threshold_days: parsed.data.overdue_threshold_days ?? null,
       })
       .eq("id", id);
     setSaving(false);
@@ -190,22 +180,12 @@ export function CustomerDetailView({ id }: { id: string }) {
     return <FormError>{loadError ?? "Customer gak ditemukan."}</FormError>;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
   let totalOutstanding = 0;
-  let maxOverdueDays = 0;
   for (const inv of invoices) {
     const isCancelled = reversedEntryIds.has(inv.journal_entry_id);
     const { outstanding } = invoiceStatus(inv, isCancelled);
-    if (outstanding <= 0) continue;
-    totalOutstanding += outstanding;
-    const overdueDays = Math.floor(
-      (Date.parse(today) - Date.parse(inv.due_date)) / (1000 * 60 * 60 * 24)
-    );
-    if (overdueDays > maxOverdueDays) maxOverdueDays = overdueDays;
+    if (outstanding > 0) totalOutstanding += outstanding;
   }
-  const isOnHold =
-    (customer.credit_limit != null && totalOutstanding > customer.credit_limit) ||
-    (customer.overdue_threshold_days != null && maxOverdueDays > customer.overdue_threshold_days);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   const detailGroups = [
@@ -216,22 +196,8 @@ export function CustomerDetailView({ id }: { id: string }) {
         { label: "Kontak", value: customer.contact ?? "-" },
         { label: "Termin", value: `net-${customer.payment_term_days}` },
         {
-          label: "Credit Limit",
-          value: customer.credit_limit != null ? customer.credit_limit.toLocaleString("id-ID") : "Tanpa batas",
-        },
-        { label: "Toleransi Telat", value: `${customer.overdue_threshold_days ?? "Tanpa batas"} hari` },
-        {
           label: "Status",
-          value: (
-            <span className="flex items-center gap-1.5">
-              {customer.archived_at ? "Diarsipkan" : "Aktif"}
-              {isOnHold && (
-                <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-                  Credit Hold
-                </span>
-              )}
-            </span>
-          ),
+          value: customer.archived_at ? "Diarsipkan" : "Aktif",
         },
       ],
     },
@@ -279,36 +245,14 @@ export function CustomerDetailView({ id }: { id: string }) {
             <Label htmlFor="edit_contact">Kontak</Label>
             <Input id="edit_contact" value={editContact} onChange={(e) => setEditContact(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_payment_term_days">Termin (hari)</Label>
-              <Input
-                id="edit_payment_term_days"
-                type="number"
-                min="1"
-                value={editPaymentTermDays}
-                onChange={(e) => setEditPaymentTermDays(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_overdue_threshold_days">Toleransi Telat (hari, kosongkan = tanpa batas)</Label>
-              <Input
-                id="edit_overdue_threshold_days"
-                type="number"
-                min="1"
-                value={editOverdueThresholdDays}
-                onChange={(e) => setEditOverdueThresholdDays(e.target.value)}
-              />
-            </div>
-          </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit_credit_limit">Credit Limit (kosongkan = tanpa batas)</Label>
+            <Label htmlFor="edit_payment_term_days">Termin (hari)</Label>
             <Input
-              id="edit_credit_limit"
+              id="edit_payment_term_days"
               type="number"
-              min="0"
-              value={editCreditLimit}
-              onChange={(e) => setEditCreditLimit(e.target.value)}
+              min="1"
+              value={editPaymentTermDays}
+              onChange={(e) => setEditPaymentTermDays(e.target.value)}
             />
           </div>
           {editError && <FormError>{editError}</FormError>}

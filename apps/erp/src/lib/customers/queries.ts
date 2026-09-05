@@ -17,7 +17,7 @@ export type CustomerFilters = {
 // 0059) -- filter role via inner join ke counterparty_type_mapping, biar supplier-only gak
 // ikut nongol di sini.
 const SELECT_COLUMNS =
-  "id, name, contact, payment_term_days, credit_limit, overdue_threshold_days, archived_at, counterparty_type_mapping!inner(role)";
+  "id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)";
 
 export async function fetchCustomers(
   filters: CustomerFilters
