@@ -65,11 +65,12 @@ export function ArDepositDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: dep, error: depErr } = await supabase
-      .from("ar_deposits")
+      .from("deposits")
       .select(
-        "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices:transactions(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+        "id, customer_id:counterparty_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications:deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices:transactions(source_ref)), ar_deposit_refunds:deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures:deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
       )
       .eq("id", id)
+      .eq("type", "INBOUND")
       .single();
     if (depErr || !dep) {
       setLoadError(depErr?.message ?? "Deposit gak ditemukan.");
@@ -156,12 +157,12 @@ export function ArDepositDetailView({ id }: { id: string }) {
       setRefundError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("refund_ar_deposit", {
+    const { error } = await supabase.rpc("refund_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_amount: parsed.data.amount,
       p_refund_date: parsed.data.refund_date,
       p_source_ref: sourceRef,
-      p_deposit_liability_account_id: parsed.data.deposit_liability_account_id,
+      p_deposit_account_id: parsed.data.deposit_liability_account_id,
       p_cash_account_id: parsed.data.cash_account_id,
     });
     setRefundSubmitting(false);
@@ -207,13 +208,13 @@ export function ArDepositDetailView({ id }: { id: string }) {
       setForfeitError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("forfeit_ar_deposit", {
+    const { error } = await supabase.rpc("forfeit_deposit", {
       p_deposit_id: parsed.data.deposit_id,
       p_amount: parsed.data.amount,
       p_forfeiture_date: parsed.data.forfeiture_date,
       p_source_ref: sourceRef,
-      p_deposit_liability_account_id: parsed.data.deposit_liability_account_id,
-      p_other_revenue_account_id: parsed.data.other_revenue_account_id,
+      p_deposit_account_id: parsed.data.deposit_liability_account_id,
+      p_offset_account_id: parsed.data.other_revenue_account_id,
     });
     setForfeitSubmitting(false);
     if (error) {

@@ -168,7 +168,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -237,15 +237,16 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("bill_id", id)
         .maybeSingle(),
       supabase
-        .from("ap_deposit_applications")
-        .select("id, amount, source_ref, journal_entry_id, ap_deposits(source_ref)")
-        .eq("bill_id", id),
+        .from("deposit_applications")
+        .select("id, amount, source_ref, journal_entry_id, ap_deposits:deposits(source_ref)")
+        .eq("transaction_id", id),
       supabase
-        .from("ap_deposits")
+        .from("deposits")
         .select(
-          "id, supplier_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills:transactions(source_ref)), ap_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+          "id, supplier_id:counterparty_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications:deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills:transactions(source_ref)), ap_deposit_refunds:deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures:deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
-        .eq("supplier_id", loadedBill.supplier_id)
+        .eq("counterparty_id", loadedBill.supplier_id)
+        .eq("type", "OUTBOUND")
         .order("deposit_date"),
     ]);
 
@@ -566,14 +567,14 @@ export function ApBillDetailView({ id }: { id: string }) {
       setApplyError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("apply_ap_deposit", {
+    const { error } = await supabase.rpc("apply_deposit", {
       p_deposit_id: parsed.data.deposit_id,
-      p_bill_id: parsed.data.bill_id,
+      p_transaction_id: parsed.data.bill_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
       p_source_ref: sourceRef,
-      p_payable_account_id: parsed.data.payable_account_id,
-      p_deposit_asset_account_id: parsed.data.deposit_asset_account_id,
+      p_control_account_id: parsed.data.payable_account_id,
+      p_deposit_account_id: parsed.data.deposit_asset_account_id,
     });
     setApplySubmitting(false);
     if (error) {

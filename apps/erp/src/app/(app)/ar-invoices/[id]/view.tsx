@@ -178,7 +178,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes:credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes:credit_notes(amount, ar_return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -250,15 +250,16 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .order("is_tax"),
       supabase.from("ar_invoice_charge_types").select("id, name, account_id, archived_at, accounts(code, name)"),
       supabase
-        .from("ar_deposit_applications")
-        .select("id, amount, source_ref, journal_entry_id, ar_deposits(source_ref)")
-        .eq("invoice_id", id),
+        .from("deposit_applications")
+        .select("id, amount, source_ref, journal_entry_id, ar_deposits:deposits(source_ref)")
+        .eq("transaction_id", id),
       supabase
-        .from("ar_deposits")
+        .from("deposits")
         .select(
-          "id, customer_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices:transactions(source_ref)), ar_deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
+          "id, customer_id:counterparty_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications:deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices:transactions(source_ref)), ar_deposit_refunds:deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures:deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
-        .eq("customer_id", loadedInvoice.customer_id)
+        .eq("counterparty_id", loadedInvoice.customer_id)
+        .eq("type", "INBOUND")
         .order("deposit_date"),
       supabase
         .from("ar_return_credits")
@@ -535,14 +536,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       setApplyError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("apply_ar_deposit", {
+    const { error } = await supabase.rpc("apply_deposit", {
       p_deposit_id: parsed.data.deposit_id,
-      p_invoice_id: parsed.data.invoice_id,
+      p_transaction_id: parsed.data.invoice_id,
       p_amount: parsed.data.amount,
       p_entry_date: parsed.data.entry_date,
       p_source_ref: sourceRef,
-      p_deposit_liability_account_id: parsed.data.deposit_liability_account_id,
-      p_receivable_account_id: parsed.data.receivable_account_id,
+      p_deposit_account_id: parsed.data.deposit_liability_account_id,
+      p_control_account_id: parsed.data.receivable_account_id,
     });
     setApplySubmitting(false);
     if (error) {

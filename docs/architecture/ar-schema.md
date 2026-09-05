@@ -14,14 +14,14 @@ Fase 3. Konsep bisnisnya ada di `docs/domain/accounts-receivable.md`. Detail tek
 | `ar_return_credits` | Saldo kredit yang lahir otomatis dari retur yang terjadi setelah invoice lunas — bagian dari alur Retur Barang | `counterparties`, `credit_notes` (sumbernya), dan ke transaksi jurnal reklasifikasi |
 | `ar_return_credit_refunds` | Saldo kredit retur dikembalikan tunai ke pelanggan | `ar_return_credits`, dan ke transaksi jurnal |
 | `warranty_replacements` + `warranty_replacement_lines` | Penukaran barang pasca-retur/garansi — independen dari retur, gak nyentuh Piutang Usaha sama sekali | `transactions` langsung, dan ke 1 transaksi jurnal (HPP/Persediaan) |
-| `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `counterparties`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) |
-| `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `transactions`, dan ke transaksi jurnal reklasifikasi |
-| `ar_deposit_refunds` | DP dicairkan tunai kembali — tidak berdampak Laba Rugi | `ar_deposits`, dan ke transaksi jurnal |
-| `ar_deposit_forfeitures` | DP dianggap hangus, partial-capable | `ar_deposits`, dan ke transaksi jurnal |
+| `deposits` (baris `type='INBOUND'`) | Uang muka/DP diterima sebelum invoice ada — tabel yang sama juga dipakai Accounts Payable (baris `type='OUTBOUND'`) | `counterparties`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) |
+| `deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan — tabel yang sama juga dipakai Accounts Payable | Menghubungkan `deposits` ↔ `transactions`, dan ke transaksi jurnal reklasifikasi |
+| `deposit_refunds` | DP dicairkan tunai kembali — tidak berdampak Laba Rugi — tabel yang sama juga dipakai Accounts Payable | `deposits`, dan ke transaksi jurnal |
+| `deposit_forfeitures` | DP dianggap hangus, partial-capable — tabel yang sama juga dipakai Accounts Payable | `deposits`, dan ke transaksi jurnal |
 | `ar_invoice_charge_types` | Katalog kategori pendapatan tambahan yang bisa dipilih staf saat bikin invoice — murni master data, disiapkan admin | `accounts` (akun tujuan tiap kategori) |
 | `tax_settings` | Pengaturan PPN (tarif, status aktif, akun Keluaran/Masukan) — 1 baris untuk seluruh sistem, dipakai bareng AP/AR/POS | `accounts` (akun PPN Keluaran/Masukan) |
 
-**Catatan (2026-09-05)**: `ar_invoices` (tabel invoice AR) dan `ar_invoice_credit_lines` (rincian baris kredit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Payable — lihat `docs/architecture/ap-schema.md`. Fitur **Credit Hold** (batas kredit customer) dan **Piutang Tak Tertagih** (write-off) yang dulu ada di modul ini sudah **dicabut total** (keputusan owner) — customer gak lagi punya batas kredit yang ditegakkan sistem, dan AR gak lagi punya jalur formal nyatet piutang macet jadi beban. `ar_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Payable) — RPC `record_ar_payment` diganti `record_payment`. `ar_credit_notes` juga sudah digabung ke tabel generic `credit_notes` (dipakai bareng Accounts Payable) — RPC `create_ar_credit_note` TETAP ADA (gak digabung jadi 1 RPC, logic-nya beneran beda bentuk dari sisi AP), cuma tabel penyimpanannya yang digabung.
+**Catatan (2026-09-05)**: `ar_invoices` (tabel invoice AR) dan `ar_invoice_credit_lines` (rincian baris kredit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Payable — lihat `docs/architecture/ap-schema.md`. Fitur **Credit Hold** (batas kredit customer) dan **Piutang Tak Tertagih** (write-off) yang dulu ada di modul ini sudah **dicabut total** (keputusan owner) — customer gak lagi punya batas kredit yang ditegakkan sistem, dan AR gak lagi punya jalur formal nyatet piutang macet jadi beban. `ar_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Payable) — RPC `record_ar_payment` diganti `record_payment`. `ar_credit_notes` juga sudah digabung ke tabel generic `credit_notes` (dipakai bareng Accounts Payable) — RPC `create_ar_credit_note` TETAP ADA (gak digabung jadi 1 RPC, logic-nya beneran beda bentuk dari sisi AP), cuma tabel penyimpanannya yang digabung. `ar_deposits`+turunannya (applications/refunds/forfeitures) juga sudah digabung ke tabel generic `deposits`/`deposit_applications`/`deposit_refunds`/`deposit_forfeitures` (dipakai bareng Accounts Payable) — RPC `create_ar_deposit`/`apply_ar_deposit`/`refund_ar_deposit`/`forfeit_ar_deposit` diganti `create_deposit`/`apply_deposit`/`refund_deposit`/`forfeit_deposit`.
 
 ## Konsep Inti
 
@@ -50,7 +50,7 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 |---|---|---|---|
 | Buat invoice | `create_transaction` (`p_type='INBOUND'`) | Menghitung `due_date`, memanggil `create_journal_entry` (Debit Piutang Usaha, Kredit Pendapatan), insert `transactions` menunjuk `journal_entry_id` | Minimal 1 baris kategori, tiap baris nominal > 0 |
 | Catat pembayaran | `record_payment` (`p_type='INBOUND'`) | Memanggil `create_journal_entry` (Debit Kas/Bank, Kredit Piutang Usaha), insert `payments` menunjuk 1 `transaction_id` | `p_amount > ar_invoice_remaining(transaction_id)` → `raise exception` (overpay ditolak, cicil lolos) |
-| Batalkan invoice | `cancel_ar_invoice` | Memanggil `reverse_journal_entry` pakai akun sama persis; invoice asli tidak diedit | Ditolak kalau ada `payments` (`type='INBOUND'`); auto-unwind `ar_deposit_applications` aktif |
+| Batalkan invoice | `cancel_ar_invoice` | Memanggil `reverse_journal_entry` pakai akun sama persis; invoice asli tidak diedit | Ditolak kalau ada `payments` (`type='INBOUND'`); auto-unwind `deposit_applications` aktif |
 
 **Aturan Bisnis → RPC**
 
@@ -155,35 +155,35 @@ Kenapa cukup satu pembayaran nunjuk satu invoice (bukan tabel jembatan banyak-ke
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `ar_deposits` | Uang muka/DP diterima sebelum invoice ada | `counterparties`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) yang otomatis dibuat |
-| `ar_deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `ar_deposits` ↔ `transactions`, dan ke transaksi jurnal reklasifikasi |
-| `ar_deposit_refunds` | DP dicairkan tunai kembali ke pelanggan — tidak berdampak Laba Rugi | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Kas) |
-| `ar_deposit_forfeitures` | DP dianggap hangus, partial-capable | `ar_deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Pendapatan Lain-lain) |
+| `deposits` | Uang muka/DP diterima sebelum invoice ada | `counterparties`, dan ke transaksi jurnal (Kas → Uang Muka Penjualan) yang otomatis dibuat |
+| `deposit_applications` | DP diterapkan ke invoice yang udah diterbitkan | Menghubungkan `deposits` ↔ `transactions`, dan ke transaksi jurnal reklasifikasi |
+| `deposit_refunds` | DP dicairkan tunai kembali ke pelanggan — tidak berdampak Laba Rugi | `deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Kas) |
+| `deposit_forfeitures` | DP dianggap hangus, partial-capable | `deposits`, dan ke transaksi jurnal (Uang Muka Penjualan → Pendapatan Lain-lain) |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Terima DP | `create_ar_deposit` | Jurnal Debit Kas/Bank, Kredit Uang Muka Penjualan; insert `ar_deposits` | — |
-| Terapkan ke invoice | `apply_ar_deposit` | Jurnal Debit Uang Muka Penjualan, Kredit Piutang Usaha; insert `ar_deposit_applications` | Trigger `ar_deposit_applications_guard` — `amount > ar_deposit_remaining(deposit_id)` → tolak; invoice target harus customer sama & belum dibatalkan |
-| Refund tunai | `refund_ar_deposit` | Jurnal Debit Uang Muka Penjualan, Kredit Kas/Bank; insert `ar_deposit_refunds` | Trigger `ar_deposit_refunds_guard` — `amount > ar_deposit_remaining(deposit_id)` → tolak |
-| Hanguskan | `forfeit_ar_deposit` | Jurnal Debit Uang Muka Penjualan, Kredit Pendapatan Lain-lain; insert `ar_deposit_forfeitures` | Trigger `ar_deposit_forfeitures_guard` — `amount > ar_deposit_remaining(deposit_id)` → tolak |
+| Terima DP | `create_deposit` | Jurnal Debit Kas/Bank, Kredit Uang Muka Penjualan; insert `deposits` | — |
+| Terapkan ke invoice | `apply_deposit` | Jurnal Debit Uang Muka Penjualan, Kredit Piutang Usaha; insert `deposit_applications` | Trigger `deposit_applications_guard` — `amount > deposit_remaining(deposit_id)` → tolak; invoice target harus customer sama & belum dibatalkan |
+| Refund tunai | `refund_deposit` | Jurnal Debit Uang Muka Penjualan, Kredit Kas/Bank; insert `deposit_refunds` | Trigger `deposit_refunds_guard` — `amount > deposit_remaining(deposit_id)` → tolak |
+| Hanguskan | `forfeit_deposit` | Jurnal Debit Uang Muka Penjualan, Kredit Pendapatan Lain-lain; insert `deposit_forfeitures` | Trigger `deposit_forfeitures_guard` — `amount > deposit_remaining(deposit_id)` → tolak |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| DP gak boleh langsung diakui Pendapatan/pengurang Piutang saat diterima | `create_ar_deposit` — jurnal selalu ke akun Uang Muka Penjualan (liability), bukan Piutang/Pendapatan |
-| Total penyelesaian DP (diterapkan + refund + hangus) ≤ nilai DP awal | Fungsi terpusat `ar_deposit_remaining(deposit_id) = amount − SUM(applications) − SUM(refunds) − SUM(forfeitures)`, dipakai ketiga trigger guard |
-| Invoice yang DP-nya diterapkan dibatalkan → penerapan DP ikut dibalik | `cancel_ar_invoice` — loop `ar_deposit_applications` aktif milik invoice itu, panggil `reverse_journal_entry` per baris |
+| DP gak boleh langsung diakui Pendapatan/pengurang Piutang saat diterima | `create_deposit` — jurnal selalu ke akun Uang Muka Penjualan (liability), bukan Piutang/Pendapatan |
+| Total penyelesaian DP (diterapkan + refund + hangus) ≤ nilai DP awal | Fungsi terpusat `deposit_remaining(deposit_id) = amount − SUM(applications) − SUM(refunds) − SUM(forfeitures)`, dipakai ketiga trigger guard |
+| Invoice yang DP-nya diterapkan dibatalkan → penerapan DP ikut dibalik | `cancel_ar_invoice` — loop `deposit_applications` aktif milik invoice itu, panggil `reverse_journal_entry` per baris |
 
 **Interaksi Antar Tabel**
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ar_deposits` | banyak-ke-satu | `counterparties` |
-| `ar_deposit_applications` | menghubungkan | `ar_deposits` ↔ `transactions` |
-| `ar_deposit_refunds` / `ar_deposit_forfeitures` | banyak-ke-satu | `ar_deposits` |
+| `deposits` | banyak-ke-satu | `counterparties` |
+| `deposit_applications` | menghubungkan | `deposits` ↔ `transactions` |
+| `deposit_refunds` / `deposit_forfeitures` | banyak-ke-satu | `deposits` |
 
 ## Kategori Campur & PPN
 

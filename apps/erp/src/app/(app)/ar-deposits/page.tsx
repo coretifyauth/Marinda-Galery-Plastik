@@ -122,13 +122,14 @@ export default function ArDepositsPage() {
   const createMutation = useMutation({
     mutationFn: async (input: CreateArDepositInput) => {
       const sourceRef = await generateDocumentNumber("ar_deposits");
-      const { error } = await supabase.rpc("create_ar_deposit", {
-        p_customer_id: input.customer_id,
+      const { error } = await supabase.rpc("create_deposit", {
+        p_type: "INBOUND",
+        p_counterparty_id: input.customer_id,
         p_deposit_date: input.deposit_date,
         p_source_ref: sourceRef,
         p_amount: input.amount,
         p_cash_account_id: input.cash_account_id,
-        p_deposit_liability_account_id: input.deposit_liability_account_id,
+        p_deposit_account_id: input.deposit_liability_account_id,
       });
       if (error) throw new Error(error.message);
     },

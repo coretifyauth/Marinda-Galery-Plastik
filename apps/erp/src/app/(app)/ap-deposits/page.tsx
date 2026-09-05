@@ -122,12 +122,13 @@ export default function ApDepositsPage() {
   const createMutation = useMutation({
     mutationFn: async (input: CreateApDepositInput) => {
       const sourceRef = await generateDocumentNumber("ap_deposits");
-      const { error } = await supabase.rpc("create_ap_deposit", {
-        p_supplier_id: input.supplier_id,
+      const { error } = await supabase.rpc("create_deposit", {
+        p_type: "OUTBOUND",
+        p_counterparty_id: input.supplier_id,
         p_deposit_date: input.deposit_date,
         p_source_ref: sourceRef,
         p_amount: input.amount,
-        p_deposit_asset_account_id: input.deposit_asset_account_id,
+        p_deposit_account_id: input.deposit_asset_account_id,
         p_cash_account_id: input.cash_account_id,
       });
       if (error) throw new Error(error.message);

@@ -249,9 +249,9 @@ create table ap_return_credit_refunds (
 
 Guard `ap_return_credit_refunds_guard` cek amount ≤ `ap_return_credit_remaining(credit_id)`. Pola identik `ar_return_credit_refunds_guard`.
 
-### `ap_bill_remaining(bill_id)` — disentralisasi dari AWAL, sekarang 4 reducer (terakhir didefinisi `0070`, target `payments`/`credit_notes`)
+### `ap_bill_remaining(bill_id)` — disentralisasi dari AWAL, sekarang 4 reducer (terakhir didefinisi `0071`, target `payments`/`credit_notes`/`deposit_applications`)
 
-Beda dari AR yang baru disentralisasi belakangan (0031, setelah bug over-allocation berulang kebukti) — di AP langsung dibangun dari awal karena polanya udah kenal. Awalnya **2 reducer**: `ap_payments` (langsung, bukan lewat tabel jembatan lagi sejak `0011`) + `ap_credit_notes`. Sempat ada reducer ke-3 (`ap_return_credit_applications` aktif) dari desain awal fitur retur (0035 pra-squash) — dicabut `0009` bareng tabelnya. Nambah reducer DP application (`0013`) jadi 3, nambah add-back `ap_return_credits` (mirror AR) jadi 4 — bentuk final di bawah, target tabel `payments`/`credit_notes` sejak `0069`/`0070`.
+Beda dari AR yang baru disentralisasi belakangan (0031, setelah bug over-allocation berulang kebukti) — di AP langsung dibangun dari awal karena polanya udah kenal. Awalnya **2 reducer**: `ap_payments` (langsung, bukan lewat tabel jembatan lagi sejak `0011`) + `ap_credit_notes`. Sempat ada reducer ke-3 (`ap_return_credit_applications` aktif) dari desain awal fitur retur (0035 pra-squash) — dicabut `0009` bareng tabelnya. Nambah reducer DP application (`0013`) jadi 3, nambah add-back `ap_return_credits` (mirror AR) jadi 4 — bentuk final di bawah, target tabel `payments`/`credit_notes`/`deposit_applications` sejak `0069`/`0070`/`0071`.
 
 ```sql
 create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
@@ -259,10 +259,10 @@ create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
     - coalesce((select sum(amount) from payments where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
     - coalesce((select sum(amount) from credit_notes where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
     - coalesce((
-        select sum(ada.amount) from ap_deposit_applications ada
-        where ada.bill_id = p_bill_id
+        select sum(da.amount) from deposit_applications da
+        where da.transaction_id = p_bill_id
           and not exists (
-            select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
+            select 1 from journal_entries je where je.reverses_entry_id = da.journal_entry_id
           )
       ), 0)
     + coalesce((
@@ -275,7 +275,7 @@ create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
 $$ language sql stable;
 ```
 
-Bentuk final (pasca `0013` nambah reducer DP, `0064` target `transactions`, `0069`+`0070` target `payments`/`credit_notes`) — **4 reducer**, bukan 2 lagi (histori evolusinya di paragraf pembuka submodule ini). **`record_payment`** (`0069`) pakai fungsi ini alih-alih ngecek langsung ke `transactions.amount`, mirror `ar_invoice_remaining`. **`cancel_ap_bill`** hard-block tambahan kalau bill udah punya `credit_notes` (`type='OUTBOUND'`) (pola sama guard payment: bill udah "kesentuh" transaksi lain) — sempat juga punya auto-reverse loop buat `ap_return_credit_applications` aktif, dihapus `0009` bareng tabelnya (gak ada lagi apa pun buat di-unwind di sisi itu).
+Bentuk final (pasca `0013` nambah reducer DP, `0064` target `transactions`, `0069`/`0070`/`0071` target `payments`/`credit_notes`/`deposit_applications`) — **4 reducer**, bukan 2 lagi (histori evolusinya di paragraf pembuka submodule ini). **`record_payment`** (`0069`) pakai fungsi ini alih-alih ngecek langsung ke `transactions.amount`, mirror `ar_invoice_remaining`. **`cancel_ap_bill`** hard-block tambahan kalau bill udah punya `credit_notes` (`type='OUTBOUND'`) (pola sama guard payment: bill udah "kesentuh" transaksi lain) — sempat juga punya auto-reverse loop buat `ap_return_credit_applications` aktif, dihapus `0009` bareng tabelnya (gak ada lagi apa pun buat di-unwind di sisi itu).
 
 ### `ap_bills_with_status` view — migration `0032_ap_bill_status_view.sql`
 
@@ -327,120 +327,24 @@ Perubahan: drop RPC `apply_ap_return_credit`, drop tabel `ap_return_credit_appli
 
 Full body: `supabase/migrations/0006_ap_schema.sql` (migration history 0001-0025 disquash jadi 9 file per modul 2026-08-10 — riwayat evolusi lengkap tetap ada di git log).
 
-## Uang Muka / DP ke Supplier — migration `0013_ap_deposits_schema.sql` + `0014_seed_ap_deposit_accounts.sql`
+## Uang Muka / DP ke Supplier DIGABUNG ke `deposits`/`deposit_applications`/`deposit_refunds`/`deposit_forfeitures`, migration `0071` (2026-09-05)
 
-Mirror `ar_deposits` (arah kebalik — asset `Uang Muka Pembelian`, bukan liability, karena supplier yang "berutang" balik ke kita). Beda dari AR: dibangun **partial-capable DAN dengan 2 disposisi (refund + hangus) dari AWAL** — bukan retrofit belakangan kayak AR (`0012`) — karena kebijakan refund-tidaknya DP ke supplier itu **supplier** yang nentuin (bukan kita), beda dari kebijakan DP ke customer yang kita sendiri tetapkan (default non-refundable). Rationale bisnis: `docs/domain/accounts-payable.md` bagian "Uang Muka / DP ke Supplier".
+**Fase 3** dari unifikasi tabel anak AR/AP — lihat `memory/architecture/data/deposits-schema.md`
+buat DDL/RPC/RLS/trigger lengkap, GAK DIULANG di sini. `ap_deposits.supplier_id` sekarang
+`counterparty_id`, `ap_deposit_applications.bill_id` sekarang `transaction_id`. RPC
+`create_ap_deposit`/`apply_ap_deposit`/`refund_ap_deposit`/`forfeit_ap_deposit` **DIDROP
+total**, gantinya `create_deposit`/`apply_deposit`/`refund_deposit`/`forfeit_deposit` generic.
 
-### `ap_deposits` — DP dibayar (selalu dibuat)
+Ringkasan histori yang masih relevan: mirror `ar_deposits` arah kebalik (asset `Uang Muka
+Pembelian` `1360`, bukan liability, karena supplier yang "berutang" balik ke kita).
+Dibangun **partial-capable DAN dengan 2 disposisi (refund + hangus) dari AWAL** — beda
+dari AR yang retrofit belakangan (`0012`) — karena kebijakan refund-tidaknya DP ke
+supplier itu **supplier** yang nentuin, bukan kita. Akun `5800` **Beban Kerugian Uang
+Muka** (expense) dipakai forfeiture (`p_offset_account_id` di `forfeit_deposit`).
 
-Satu baris = satu kejadian bayar uang muka ke supplier. `journal_entry_id` nunjuk jurnal Debit Uang Muka Pembelian / Kredit Kas/Bank (`create_journal_entry`, reuse). Immutable, pola sama `ap_bills`/`ap_payments`.
-
-```sql
-create table ap_deposits (
-  id uuid primary key default gen_random_uuid(),
-  supplier_id uuid not null references counterparties(id), -- dulu references suppliers(id), repoint migration 0059
-  deposit_date date not null,
-  source_ref text not null,
-  amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-### `ap_deposit_applications` — DP diterapkan ke bill
-
-Jurnal: Debit Utang Usaha / Kredit Uang Muka Pembelian (reklasifikasi). Struktur identik `ar_deposit_applications`, field `invoice_id` diganti `bill_id`.
-
-```sql
-create table ap_deposit_applications (
-  id uuid primary key default gen_random_uuid(),
-  deposit_id uuid not null references ap_deposits(id),
-  bill_id uuid not null references transactions(id), -- dulu references ap_bills(id), repoint migration 0064
-  amount numeric(14,2) not null check (amount > 0),
-  source_ref text not null,
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-### `ap_deposit_refunds` + `ap_deposit_forfeitures` — 2 disposisi lain, keduanya partial-capable dari awal
-
-`ap_deposit_refunds`: Debit Kas/Bank / Kredit Uang Muka Pembelian — supplier balikin uangnya, **gak ada dampak Laba Rugi**. `ap_deposit_forfeitures`: Debit **Beban Kerugian Uang Muka** (akun baru `5800`, expense) / Kredit Uang Muka Pembelian — supplier gak mau/gak bisa balikin, **ada dampak Laba Rugi**. Struktur identik `ar_deposit_refunds`/`ar_deposit_forfeitures` pasca-`0012` (keduanya udah punya kolom `amount` dari awal, gak perlu `alter table` belakangan kayak AR).
-
-```sql
-create table ap_deposit_refunds (
-  id uuid primary key default gen_random_uuid(),
-  deposit_id uuid not null references ap_deposits(id),
-  amount numeric(14,2) not null check (amount > 0),
-  refund_date date not null,
-  source_ref text not null,
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-
-create table ap_deposit_forfeitures (
-  id uuid primary key default gen_random_uuid(),
-  deposit_id uuid not null references ap_deposits(id),
-  amount numeric(14,2) not null check (amount > 0),
-  forfeiture_date date not null,
-  source_ref text not null,
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-### `ap_deposit_remaining(deposit_id)` — sumber kebenaran tunggal, mirror `ar_deposit_remaining()` (`0012`)
-
-Gak ada aturan "1 disposisi aktif" sama sekali — beda dari AR yang punya riwayat itu sebelum `0012`. Dari awal, ketiga jalur (applications/refunds/forfeitures) boleh dicampur bebas:
-
-```sql
-create function ap_deposit_remaining(p_deposit_id uuid) returns numeric as $$
-  select ad.amount
-    - coalesce((
-        select sum(ada.amount) from ap_deposit_applications ada
-        where ada.deposit_id = p_deposit_id
-          and not exists (
-            select 1 from journal_entries je where je.reverses_entry_id = ada.journal_entry_id
-          )
-      ), 0)
-    - coalesce((select sum(amount) from ap_deposit_refunds where deposit_id = p_deposit_id), 0)
-    - coalesce((select sum(amount) from ap_deposit_forfeitures where deposit_id = p_deposit_id), 0)
-  from ap_deposits ad
-  where ad.id = p_deposit_id;
-$$ language sql stable;
-```
-
-Guard tiap tabel transaksional (`ap_deposit_applications_guard`, `ap_deposit_refunds_guard`, `ap_deposit_forfeitures_guard`) semuanya cek `new.amount > ap_deposit_remaining(new.deposit_id)`. `ap_deposit_applications_guard` juga cek supplier match (deposit vs bill), bill belum dibatalkan, dan `ap_bill_remaining(new.bill_id)` — pola identik `ar_deposit_applications_guard`.
-
-### `ap_deposits_with_status` view — migration `0031_ap_deposit_status_view.sql`
-
-View pertama di project ini. Nutup scope-debt filter status di list `/ap-deposits` (sebelumnya status cuma dihitung client-side lewat `depositStatus()` dari data nested, gak bisa di-`WHERE`-kan). Reuse `ap_deposit_remaining()` di atas lewat `cross join lateral` (biar dievaluasi sekali per baris, bukan 3x), lalu derive `status` (`belum_dipakai | sebagian | selesai`) dengan threshold yang identik dengan `depositStatus()` di `apps/erp/src/lib/ap-deposits/schema.ts`. `security_invoker = true` wajib supaya RLS `ap_deposits_select` (`auth.role() = 'authenticated'`) tetap ke-enforce lewat view, bukan lari ke privilege pemilik view. `grant select ... to authenticated` eksplisit, pola sama semua relasi baru lain di project ini.
-
-List page (`apps/erp/src/lib/ap-deposits/queries.ts`) query langsung ke view ini, bukan tabel `ap_deposits` — jadi gak perlu lagi fetch nested `ap_deposit_applications`/`refunds`/`forfeitures` cuma buat dihitung ulang di client. Halaman detail (`[id]/view.tsx`) tetap pakai tabel dasar + `depositStatus()` client-side (butuh breakdown applied/refunded/forfeited per baris, bukan cuma status ringkasan).
-
-**Denormalisasi ke kolom asli — migration `0053_denormalize_transactional_status.sql`** (mekanisme lengkap di `ar-schema.md` submodule AR Invoice, ini mirror-nya): `remaining`/`status` sekarang kolom asli di `ap_deposits`, dijaga `recompute_ap_deposit_status()` (`security definer`) lewat trigger `AFTER INSERT` di `ap_deposit_applications`/`ap_deposit_refunds`/`ap_deposit_forfeitures` + trigger gabungan `journal_entries_sync_reversal_status`. `ap_deposit_applications` insert juga mancing recompute `ap_bills` (reducer `deposit_applied`) — 1 trigger gabungan, gak dobel-hitung. View sekarang `select` polos, `ap_deposits_block_edit_delete` diganti selective.
-
-### 2 fungsi existing yang diperluas (`create or replace` di `0013`, bukan tabel baru)
-
-- **`ap_bill_remaining()`** — reducer ke-3 (`ap_deposit_applications` aktif), mirror `ar_invoice_remaining()` yang udah punya reducer ini dari awal. Guard soundness: dipanggil dari `ap_deposit_applications_guard()` di dalam trigger `BEFORE INSERT` — baris baru belum ke-commit pas fungsi ini jalan, jadi gak ada double-count, pola yang sama persis kayak `ar_deposit_applications_guard()` → `ar_invoice_remaining()` yang udah lama jalan di AR.
-- **`cancel_ap_bill()`** — auto-unwind loop `ap_deposit_applications` aktif, mirror `cancel_ar_invoice`. **Bukan regresi** dari sisa loop lama (`0006` versi awal sempat punya loop unwind buat `ap_return_credit_applications`, tapi itu udah dihapus total di `0009` bareng tabelnya, dan `0011` juga udah nyederhanain `cancel_ap_bill` jadi cuma 2 guard tanpa loop apa pun) — jadi loop `ap_deposit_applications` di `0013` murni tambahan baru.
-
-### RPC: `create_ap_deposit`, `apply_ap_deposit`, `refund_ap_deposit`, `forfeit_ap_deposit`
-
-`security invoker`, pola sama RPC AP lain — semua reuse `create_journal_entry`. Ke-4 RPC dibangun bareng dari awal (beda dari AR yang `refund_ar_deposit` nyusul belakangan lewat `0012`). Nominal selalu diinput eksplisit dari caller.
-
-Full body: `supabase/migrations/0006_ap_schema.sql`.
-
-### Akun baru — migration seed `0014_seed_ap_deposit_accounts.sql`
-
-`1360` **Uang Muka Pembelian** (asset) dan `5800` **Beban Kerugian Uang Muka** (expense) — pola sama semua akun baru lain (di migration seed terpisah, bukan migration schema).
-
-### RLS & Grant
-
-Pola identik AP/AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`) di keempat tabel baru.
-
-**Catatan non-blocker dari `schema-reviewer`** (pre-existing, bukan diperkenalkan `0013`): `cancel_ap_bill` (dan `cancel_ar_invoice`) gak ngecek apakah `journal_entry_id` bill/invoice-nya udah pernah di-reverse sebelumnya — kalau RPC ini dipanggil 2x buat bill/invoice yang sama, bisa double-reversal. Gap lama sejak `0006`/`0005`, ikut kewarisin ke loop unwind deposit juga — di luar scope migration ini, dicatat sebagai potensi scope-debt kalau belum ada.
+**Catatan non-blocker dari `schema-reviewer`** (pre-existing, bukan diperkenalkan `0013`
+ataupun `0071`): `cancel_ap_bill` (dan `cancel_ar_invoice`) gak ngecek apakah
+`journal_entry_id` bill/invoice-nya udah pernah di-reverse sebelumnya — kalau RPC ini
+dipanggil 2x buat bill/invoice yang sama, bisa double-reversal. Gap lama sejak
+`0006`/`0005`, ikut kewarisin ke loop unwind deposit juga (sekarang `deposit_applications`)
+— di luar scope migration manapun sejauh ini, dicatat sebagai potensi scope-debt.

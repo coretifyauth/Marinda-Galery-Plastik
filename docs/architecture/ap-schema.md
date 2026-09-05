@@ -14,16 +14,16 @@ Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Detail teknis
 | `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — berdiri sendiri, tidak menyambung ke `credit_notes` | `transactions` |
 | `ap_return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `credit_notes` |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" sudah dicabut, bukan fondasi AP) | `ap_return_credits` |
-| `ap_deposits` | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ap_deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan | `ap_deposits`, `transactions` |
-| `ap_deposit_refunds` | DP dicairkan tunai kembali (pemasok yang mutuskan, bukan kita) — tidak berdampak Laba Rugi | `ap_deposits` |
-| `ap_deposit_forfeitures` | DP dianggap hangus (pemasok tidak mau/tidak bisa balikin) — jadi Beban Kerugian Uang Muka | `ap_deposits` |
+| `deposits` (baris `type='OUTBOUND'`) | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) — tabel yang sama juga dipakai Accounts Receivable (baris `type='INBOUND'`) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
+| `deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan — tabel yang sama juga dipakai Accounts Receivable | `deposits`, `transactions` |
+| `deposit_refunds` | DP dicairkan tunai kembali (pemasok yang mutuskan, bukan kita) — tidak berdampak Laba Rugi — tabel yang sama juga dipakai Accounts Receivable | `deposits` |
+| `deposit_forfeitures` | DP dianggap hangus (pemasok tidak mau/tidak bisa balikin) — jadi Beban Kerugian Uang Muka — tabel yang sama juga dipakai Accounts Receivable | `deposits` |
 | `ap_bill_expense_categories` | Katalog kategori beban/persediaan tambahan yang bisa dipilih staf saat bikin bill — master data, disiapkan admin | `accounts` |
 | `tax_settings` | Pengaturan PPN (tarif, status aktif, akun Keluaran/Masukan) — 1 baris untuk seluruh sistem, dipakai bareng AR/POS, didefinisikan penuh di `docs/architecture/ar-schema.md` | `accounts` |
 
 Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik — di Piutang, kita yang menetapkan termin ke pelanggan; di Utang, pemasok yang menetapkan termin ke kita. Kolom & cara kerjanya identik, cuma makna bisnisnya kebalik.
 
-**Catatan (2026-09-05)**: `ap_bills` (tabel bill AP) dan `ap_bill_debit_lines` (rincian baris debit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Receivable — lihat `docs/architecture/ar-schema.md`. Opsi C "Tulis-jadi-Beban" (`purchase_writeoffs`) di Retur Barang ke Supplier **dicabut total** — demi simetri dengan AR (yang cuma punya 2 jalur resolusi retur). Barang rusak yang pemasok tolak kompensasi sekarang lewat penyesuaian stok generic (`stock_opname`), bukan RPC khusus AP lagi. `ap_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Receivable) — RPC `record_ap_payment` diganti `record_payment`. `ap_credit_notes` juga sudah digabung ke tabel generic `credit_notes` (dipakai bareng Accounts Receivable) — RPC `create_ap_credit_note` TETAP ADA (gak digabung jadi 1 RPC, logic-nya beneran beda bentuk dari sisi AR), cuma tabel penyimpanannya yang digabung.
+**Catatan (2026-09-05)**: `ap_bills` (tabel bill AP) dan `ap_bill_debit_lines` (rincian baris debit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Receivable — lihat `docs/architecture/ar-schema.md`. Opsi C "Tulis-jadi-Beban" (`purchase_writeoffs`) di Retur Barang ke Supplier **dicabut total** — demi simetri dengan AR (yang cuma punya 2 jalur resolusi retur). Barang rusak yang pemasok tolak kompensasi sekarang lewat penyesuaian stok generic (`stock_opname`), bukan RPC khusus AP lagi. `ap_payments` juga sudah digabung ke tabel generic `payments` (dipakai bareng Accounts Receivable) — RPC `record_ap_payment` diganti `record_payment`. `ap_credit_notes` juga sudah digabung ke tabel generic `credit_notes` (dipakai bareng Accounts Receivable) — RPC `create_ap_credit_note` TETAP ADA (gak digabung jadi 1 RPC, logic-nya beneran beda bentuk dari sisi AR), cuma tabel penyimpanannya yang digabung. `ap_deposits`+turunannya (applications/refunds/forfeitures) juga sudah digabung ke tabel generic `deposits`/`deposit_applications`/`deposit_refunds`/`deposit_forfeitures` (dipakai bareng Accounts Receivable) — RPC `create_ap_deposit`/`apply_ap_deposit`/`refund_ap_deposit`/`forfeit_ap_deposit` diganti `create_deposit`/`apply_deposit`/`refund_deposit`/`forfeit_deposit`.
 
 ## Konsep Inti
 
@@ -53,7 +53,7 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 |---|---|---|---|
 | Buat bill | `create_transaction` (`p_type='OUTBOUND'`) | Menghitung `due_date`, memanggil `create_journal_entry` (Debit akun yang dipilih — Persediaan/Beban, Kredit Utang Usaha), insert `transactions` menunjuk `journal_entry_id` | Akun debit diterima sebagai parameter, gak di-hardcode; minimal 1 baris kategori, tiap baris nominal > 0 |
 | Catat pembayaran | `record_payment` (`p_type='OUTBOUND'`) | Memanggil `create_journal_entry` (Debit Utang Usaha, Kredit Kas/Bank), insert `payments` menunjuk 1 `transaction_id` | `p_amount > ap_bill_remaining(transaction_id)` → `raise exception` (overpay ditolak, cicil lolos) |
-| Batalkan bill | `cancel_ap_bill` | Memanggil `reverse_journal_entry` pakai akun sama persis; bill asli tidak diedit | Ditolak kalau ada `payments` (`type='OUTBOUND'`) atau `credit_notes`; auto-unwind `ap_deposit_applications` aktif (lihat submodule "Uang Muka / DP ke Supplier") |
+| Batalkan bill | `cancel_ap_bill` | Memanggil `reverse_journal_entry` pakai akun sama persis; bill asli tidak diedit | Ditolak kalau ada `payments` (`type='OUTBOUND'`) atau `credit_notes`; auto-unwind `deposit_applications` aktif (lihat submodule "Uang Muka / DP ke Supplier") |
 
 **Aturan Bisnis → RPC**
 
@@ -128,36 +128,36 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `ap_deposits` | Uang muka dibayar ke pemasok sebelum ada bill | `counterparties`, dan ke transaksi jurnal (Uang Muka Pembelian → Kas) |
-| `ap_deposit_applications` | DP diterapkan ke bill yang sudah diterbitkan | Menghubungkan `ap_deposits` ↔ `transactions` |
-| `ap_deposit_refunds` | DP dicairkan tunai kembali — pemasok yang mutuskan, tidak berdampak Laba Rugi | `ap_deposits` |
-| `ap_deposit_forfeitures` | DP dianggap hangus — jadi Beban Kerugian Uang Muka | `ap_deposits` |
+| `deposits` | Uang muka dibayar ke pemasok sebelum ada bill | `counterparties`, dan ke transaksi jurnal (Uang Muka Pembelian → Kas) |
+| `deposit_applications` | DP diterapkan ke bill yang sudah diterbitkan | Menghubungkan `deposits` ↔ `transactions` |
+| `deposit_refunds` | DP dicairkan tunai kembali — pemasok yang mutuskan, tidak berdampak Laba Rugi | `deposits` |
+| `deposit_forfeitures` | DP dianggap hangus — jadi Beban Kerugian Uang Muka | `deposits` |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Bayar DP | `create_ap_deposit` | Jurnal Debit Uang Muka Pembelian, Kredit Kas/Bank; insert `ap_deposits` | — |
-| Terapkan ke bill | `apply_ap_deposit` | Jurnal Debit Utang Usaha, Kredit Uang Muka Pembelian; insert `ap_deposit_applications` | `amount` melebihi sisa DP → tolak; bill target harus supplier sama & belum dibatalkan |
-| Refund tunai | `refund_ap_deposit` | Jurnal Debit Kas/Bank, Kredit Uang Muka Pembelian; insert `ap_deposit_refunds` | `amount` melebihi sisa DP → tolak |
-| Hanguskan | `forfeit_ap_deposit` | Jurnal Debit Beban Kerugian Uang Muka, Kredit Uang Muka Pembelian; insert `ap_deposit_forfeitures` | `amount` melebihi sisa DP → tolak |
+| Bayar DP | `create_deposit` | Jurnal Debit Uang Muka Pembelian, Kredit Kas/Bank; insert `deposits` | — |
+| Terapkan ke bill | `apply_deposit` | Jurnal Debit Utang Usaha, Kredit Uang Muka Pembelian; insert `deposit_applications` | `amount` melebihi sisa DP → tolak; bill target harus supplier sama & belum dibatalkan |
+| Refund tunai | `refund_deposit` | Jurnal Debit Kas/Bank, Kredit Uang Muka Pembelian; insert `deposit_refunds` | `amount` melebihi sisa DP → tolak |
+| Hanguskan | `forfeit_deposit` | Jurnal Debit Beban Kerugian Uang Muka, Kredit Uang Muka Pembelian; insert `deposit_forfeitures` | `amount` melebihi sisa DP → tolak |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| DP gak boleh langsung diakui Beban/pengurang Utang Usaha saat dibayar | `create_ap_deposit` — jurnal selalu ke akun Uang Muka Pembelian (asset), bukan Beban/Utang Usaha |
+| DP gak boleh langsung diakui Beban/pengurang Utang Usaha saat dibayar | `create_deposit` — jurnal selalu ke akun Uang Muka Pembelian (asset), bukan Beban/Utang Usaha |
 | Total penyelesaian DP (diterapkan + refund + hangus) ≤ nilai DP awal | Fungsi terpusat sisa DP, dipanggil ketiga guard |
-| Bill yang DP-nya diterapkan dibatalkan → penerapan DP ikut dibalik | `cancel_ap_bill` — loop `ap_deposit_applications` aktif milik bill itu |
-| Outstanding bill ikut ngurangin DP aktif | Fungsi sisa outstanding bill memasukkan `ap_deposit_applications` sebagai reducer |
+| Bill yang DP-nya diterapkan dibatalkan → penerapan DP ikut dibalik | `cancel_ap_bill` — loop `deposit_applications` aktif milik bill itu |
+| Outstanding bill ikut ngurangin DP aktif | Fungsi sisa outstanding bill memasukkan `deposit_applications` sebagai reducer |
 
 **Interaksi Antar Tabel**
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ap_deposits` | banyak-ke-satu | `counterparties` |
-| `ap_deposit_applications` | menghubungkan | `ap_deposits` ↔ `transactions` |
-| `ap_deposit_refunds` / `ap_deposit_forfeitures` | banyak-ke-satu | `ap_deposits` |
+| `deposits` | banyak-ke-satu | `counterparties` |
+| `deposit_applications` | menghubungkan | `deposits` ↔ `transactions` |
+| `deposit_refunds` / `deposit_forfeitures` | banyak-ke-satu | `deposits` |
 
 ## Kategori Campur & PPN
 
