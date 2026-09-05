@@ -6,14 +6,10 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 ## Konsep Inti
 
-### Keputusan
+**`ar_invoices` DIGABUNG ke `transactions` (kolom `type='INBOUND'`), migration `0063`-`0066` (2026-09-05)** — DDL/RPC `create_ar_invoice`/RLS/Grant tabel invoice itu sendiri sekarang didokumentasikan di `memory/architecture/data/transactions-schema.md`, GAK DIULANG di sini (pola sama `counterparty-schema.md` buat gabungan `customers`+`suppliers`). Submodule di bawah ini (Retur Barang, Penukaran Barang, Uang Muka/DP, dan RPC `ar_payments`/`ar_credit_notes`/dst yang TETAP tabel terpisah) masih di sini apa adanya — cuma kolom `invoice_id`-nya sekarang FK ke `transactions(id)`, bukan `ar_invoices(id)` lagi. Submodule "Credit Hold" dan "Piutang Tak Tertagih" (Bad Debt Write-off) yang dulu ada di file ini **DICABUT TOTAL** (keputusan owner, dibundel jadi 1, lihat `transactions-schema.md` > "Keputusan") — udah dihapus dari dokumen ini, bukan sekadar dipindah.
 
-- **Gak ada tabel/tahap "draft"** — invoice & payment final begitu dibuat & lolos validasi, sama prinsip kayak Journal Entry (`tech-stack-decisions.md`).
-- **AR gak bikin jalur pencatatan GL baru** — RPC AR (`create_ar_invoice`, `record_ar_payment`) manggil RPC `create_journal_entry` yang udah ada, bukan insert manual ke `journal_entries`/`journal_lines`. Ini mastiin AR gak pernah "kelewat" nyatet ke GL atau nyatet dengan cara beda.
-- **Immutability sama persis pola Journal Entry** — RLS gak ada policy `UPDATE`/`DELETE` (default deny) + trigger `block_edit_delete` (di-reuse dari `journal-entry-schema.md`, gak bikin fungsi baru) sebagai jaring kedua.
-- **`due_date` snapshot, bukan generated column** — dihitung sekali di RPC `create_ar_invoice` dari `counterparties.payment_term_days` **pas invoice dibuat**, disimpan sebagai kolom biasa. Beda dari `accounts.normal_balance` yang generated dan dihitung ulang tiap baca — di sini sengaja snapshot biar perubahan termin customer nanti gak retroaktif ngubah invoice lama (lihat `accounts-receivable.md` domain doc).
-- **Status invoice (lunas/belum/dibatalkan) gak disimpan** — derived query dari ada-tidaknya baris `ar_payments` (unique per invoice) dibanding `ar_invoices.amount`, DITAMBAH cek apakah `journal_entry_id`-nya punya reversal (`exists (select 1 from journal_entries where reverses_entry_id = ar_invoices.journal_entry_id)`) buat status "dibatalkan". Konsisten sama keputusan "no `is_active`" di `coa-schema.md`.
-- **Pembatalan invoice cuma boleh kalau belum ada payment** — RPC `cancel_ar_invoice` nolak keras (`raise exception`) kalau `ar_payments` invoice itu udah punya baris. Ref alasan bisnis: `docs/domain/accounts-receivable.md` constraint #5.
+### Keputusan (yang masih spesifik AR, di luar yang udah pindah ke `transactions-schema.md`)
+
 - **Payment exact-match ditegakkan RPC**, bukan cuma app-level — `record_ar_payment` `raise exception` kalau amount gak persis sama sisa outstanding invoice (migration `0040`, regresi disengaja dari desain alokasi many-to-many yang sempat ada; dikoreksi lagi khusus sisi cicil oleh `0010`, lihat "AR Payment — Cicil Dibalikin" di bawah).
 - **`customers` dulu satu-satunya tabel AR yang mutable** — sejak migration `0059`, digantikan `counterparties` (gabung dengan `suppliers`, lihat `memory/architecture/data/counterparty-schema.md`) — tetap mutable dengan pola yang sama (`payment_term_days`/`name`/`contact` boleh di-`UPDATE` kapan pun, gak ada published-lock kayak `accounts`).
 - Money pakai `numeric(14,2)`, bukan float (invariant `AGENT.md`).
@@ -22,77 +18,29 @@ Struktur module → submodule di file ini SAMA urutannya dengan `docs/architectu
 
 #### `counterparties` (dulu `customers`) — master data pihak yang berutang
 
-**Migration `0059_counterparty_schema.sql` (2026-09-03)**: `customers` digabung dengan `suppliers` (AP) jadi 1 tabel `counterparties` — detail lengkap DDL, trigger type-safety, dan dampak lintas modul ada di `memory/architecture/data/counterparty-schema.md`, gak diulang di sini. Kolom yang relevan AR (`credit_limit`, `overdue_threshold_days`, dipakai submodule "Credit Hold" di bawah) tetap ada persis sama di `counterparties`, cuma sumber tabelnya yang pindah. `ar_invoices.customer_id`/`ar_payments.customer_id`/dst FK-nya sekarang nunjuk `counterparties(id)` (bukan `customers(id)` lagi) — kolom & nama tetap `customer_id`, cuma target FK yang berubah.
+**Migration `0059_counterparty_schema.sql` (2026-09-03)**: `customers` digabung dengan `suppliers` (AP) jadi 1 tabel `counterparties` — detail lengkap DDL, trigger type-safety, dan dampak lintas modul ada di `memory/architecture/data/counterparty-schema.md`, gak diulang di sini. `ar_invoices.customer_id`/`ar_payments.customer_id`/dst FK-nya sekarang nunjuk `counterparties(id)` (bukan `customers(id)` lagi) — kolom & nama tetap `customer_id`, cuma target FK yang berubah.
 
 Ringkasan (padanan `customers` lama, sekarang jadi bagian `counterparties`):
 - `payment_term_days` — default termin (hari) dipakai buat ngitung `due_date` invoice baru. Bukan kolom terkunci — boleh diubah kapan pun, cuma ngaruh ke invoice baru ke depan (`due_date` invoice lama udah ke-snapshot, gak ikut berubah).
-- `credit_limit` — nullable, batas nominal total piutang open (belum lunas) yang boleh nyangkut bersamaan buat customer ini. `NULL` = gak ada batas (unlimited). Dicek di `create_ar_invoice` (lihat submodule "Credit Hold" di bawah), bukan constraint DB — perlu bandingin sama data dari tabel lain (`ar_invoices`/`ar_payments`), gak bisa jadi `CHECK` di level kolom.
-- `overdue_threshold_days` — nullable, toleransi hari keterlambatan sebelum kena hold. `NULL` = gak ada batas waktu buat customer ini.
 - `archived_at` — pola sama kayak `accounts` (`memory/preferences/system/state-naming-convention.md`): satu-satunya penanda lifecycle, gak ada `is_active` terpisah.
 
-```sql
-create table counterparties (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  contact text,
-  payment_term_days int not null check (payment_term_days > 0),
-  credit_limit numeric(14,2) check (credit_limit is null or credit_limit > 0),
-  overdue_threshold_days int check (overdue_threshold_days is null or overdue_threshold_days > 0),
-  archived_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+**`credit_limit`/`overdue_threshold_days` (dulu ditambah `0020_ar_credit_hold.sql`) SUDAH DIDROP total migration `0065`** — bagian dari pencabutan fitur Credit Hold, lihat `transactions-schema.md` > "Keputusan". Bukan lagi bagian tabel `counterparties`. Sempat ada juga `return_window_days` (ditambah `0033`), dicabut total lewat `0039_ar_remove_return_window.sql` — lihat submodule "Retur Barang" bagian batas waktu retur (item lama, gak ada hubungan sama Credit Hold).
 
-create trigger customers_set_updated_at
-  before update on customers
-  for each row execute function set_updated_at();
-```
-
-`credit_limit`/`overdue_threshold_days` ditambah belakangan lewat `0020_ar_credit_hold.sql` (`alter table`) — ditulis di sini langsung di `create table` biar schema doc selalu nunjukin bentuk final tabel, bukan riwayat migration per migration (lihat migration file buat riwayat perubahannya). Sempat ada `return_window_days` (ditambah `0033`), dicabut total lewat `0039_ar_remove_return_window.sql` — lihat submodule "Retur Barang" bagian batas waktu retur.
-
-`set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang.
-
-#### `ar_invoices` — piutang timbul
-
-Satu baris = satu kejadian "kirim barang/jasa, belum dibayar". Yang perlu diperhatiin:
-- `due_date` — **disimpan**, dihitung `invoice_date + counterparties.payment_term_days` di RPC pas insert, bukan generated column (lihat "Keputusan" di atas).
-- `journal_entry_id` — **wajib** (`not null`), nunjuk ke entry yang dibikin RPC `create_journal_entry` (Debit Piutang Usaha, Kredit Pendapatan). Invoice AR tanpa journal entry gak boleh ada — dijamin karena satu-satunya jalur insert yang diizinin RLS (lewat RPC `security invoker`) selalu bikin entry-nya duluan.
-- `source_ref` — wajib, pola sama `journal_entries` (traceability ke bukti fisik/surat jalan).
-- **Gak ada `updated_at`/`archived_at`** — invoice gak pernah diedit, sekali ada permanen (koreksi = reversing entry lewat `journal_entries`, invoice asli tetap kelihatan di histori).
-
-```sql
-create table ar_invoices (
-  id uuid primary key default gen_random_uuid(),
-  customer_id uuid not null references counterparties(id), -- dulu references customers(id), repoint migration 0059
-  invoice_date date not null,
-  due_date date not null,
-  description text,
-  source_ref text not null,
-  amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-
-create index ar_invoices_customer_id_idx on ar_invoices(customer_id);
-create index ar_invoices_journal_entry_id_idx on ar_invoices(journal_entry_id);
-```
-
-Index di `customer_id` buat query "semua invoice 1 customer" (histori piutang per warung, dipakai aging report). Index di `journal_entry_id` jaga-jaga lookup balik dari sisi GL.
+`set_updated_at()` udah ada dari `coa-schema.md`, gak perlu bikin ulang. DDL final `counterparties` (bentuk sekarang, pasca `0065`): `memory/architecture/data/counterparty-schema.md`.
 
 #### `ar_payments` — piutang berkurang
 
 Satu baris = satu kejadian bayar nyata dari customer (bukan jadwal), **selalu nutup 1 invoice spesifik** (gak ada gabung ke invoice lain) — tapi sejak `0010_ar_allow_partial_payment.sql` boleh **cicil** (kurang dari sisa outstanding), 1 invoice bisa punya banyak baris payment dari waktu ke waktu. Riwayat: `0040_ar_payment_strict_invoice_match.sql` (pra-squash) sempat mewajibkan EXACT match (gak boleh cicil ATAUpun overpay) — ternyata itu kelewat ketat, larangan yang dimaksud aslinya cuma soal overpay yang jadi saldo ngambang (`ar_customer_credits`, TETAP dicabut, gak dibalikin), bukan cicil. `0010` melonggarkan itu — lihat "AR Payment — Cicil Dibalikin" di bawah buat detail lengkap. Yang perlu diperhatiin:
 - `invoice_id` — **bukan unique lagi** sejak `0010` — langsung nunjuk ke 1 invoice (bukan lewat tabel jembatan), tapi 1 invoice boleh punya banyak baris payment.
 - `amount` — gak boleh **melebihi** `ar_invoice_remaining(invoice_id)` pas `record_ar_payment` dipanggil (boleh kurang = cicil, gak boleh lebih = overpay tetap ditolak), ditegakkan RPC (`raise exception`), bukan constraint DB.
-- `journal_entry_id` — wajib, pola sama `ar_invoices`.
-- **Gak ada `updated_at`/`archived_at`** — sama alasan `ar_invoices`.
+- `journal_entry_id` — wajib, pola sama `transactions`.
+- **Gak ada `updated_at`/`archived_at`** — sama alasan `transactions`.
 
 ```sql
 create table ar_payments (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references counterparties(id), -- dulu references customers(id), repoint migration 0059
-  invoice_id uuid not null references ar_invoices(id),
+  invoice_id uuid not null references transactions(id), -- dulu references ar_invoices(id), repoint migration 0064
   payment_date date not null,
   amount numeric(14,2) not null check (amount > 0),
   source_ref text not null,
@@ -109,13 +57,9 @@ create index ar_payments_invoice_id_idx on ar_payments(invoice_id);
 
 ### Trigger — Immutability, reuse `block_edit_delete()` dari Journal Entry
 
-Fungsi ini udah ada di `journal-entry-schema.md`, tinggal dipasang ke 2 tabel AR yang gak boleh diedit/dihapus.
+Fungsi ini udah ada di `journal-entry-schema.md`, tinggal dipasang ke `ar_payments` (`ar_invoices` sendiri udah gabung ke `transactions`, immutability-nya didokumentasikan di `transactions-schema.md`).
 
 ```sql
-create trigger ar_invoices_block_edit_delete
-  before update or delete on ar_invoices
-  for each row execute function block_edit_delete();
-
 create trigger ar_payments_block_edit_delete
   before update or delete on ar_payments
   for each row execute function block_edit_delete();
@@ -123,106 +67,23 @@ create trigger ar_payments_block_edit_delete
 
 ### RPC (financial write — atomik, reuse `create_journal_entry`)
 
-Dua-duanya `security invoker`, pola sama `journal-entry-schema.md`. Kunci desainnya: **gak insert manual ke `journal_entries`/`journal_lines`** — manggil RPC `create_journal_entry` yang udah ada, biar validasi (leaf-only, balance-check) dan atomicity-nya otomatis kewarisin, gak perlu ditulis ulang.
+`security invoker`, pola sama `journal-entry-schema.md`. Kunci desainnya: **gak insert manual ke `journal_entries`/`journal_lines`** — manggil RPC `create_journal_entry` yang udah ada, biar validasi (leaf-only, balance-check) dan atomicity-nya otomatis kewarisin, gak perlu ditulis ulang.
 
-#### `create_ar_invoice` — bikin invoice + journal entry-nya sekaligus (terakhir didefinisi `0025`)
+`create_ar_invoice` (dulu ada di sini) UDAH DIDROP total migration `0065`, gantinya `create_transaction('INBOUND', ...)` — signature & body baru didokumentasikan di `transactions-schema.md`, gak diulang di sini. Rincian PPN/kategori tambahan (`p_credit_lines`/`p_lines`, `tax_settings`, `ar_invoice_charge_types`) yang dulu dijelasin di submodule "Compounding & PPN" bawah ini TETAP RELEVAN (`ar_invoice_charge_types` masih ada, cuma tabel `ar_invoice_credit_lines` yang digantikan `transaction_lines` generic) — baca terus di bawah.
 
-**Credit Hold** (`0020_ar_credit_hold.sql`, dasarnya dipertahankan tiap revisi, detail rationale bisnis & guard lengkap di submodule "Credit Hold" di bawah) — sebelum bikin apa pun, RPC ini cek 2 kondisi independen (OR, salah satu kepenuhi udah cukup nolak) terhadap `counterparties.credit_limit`/`overdue_threshold_days`, pakai outstanding dari `ar_invoice_remaining(invoice_id)` (fungsi terpusat, lihat bawah). Kalau salah satu kepenuhi, RPC `raise exception` sebelum sempat manggil `create_journal_entry` — invoice gak jadi dibuat, gak ada jejak apa pun di GL (gagal bersih, bukan partial write). Kredit Hold dicek terhadap **`v_total_amount`** (SUM baris kredit + PPN kalau `p_apply_tax`), bukan lagi `p_amount` mentah — lihat submodule "Compounding & PPN" di bawah.
+### Compounding & PPN — migration `0025_compound_transactional_entries_schema.sql` (histori), diserap `create_transaction` migration `0063`
 
-```sql
-create or replace function create_ar_invoice(
-  p_customer_id uuid,
-  p_invoice_date date,
-  p_description text,
-  p_source_ref text,
-  p_credit_lines jsonb, -- array of {"account_id":uuid,"amount":numeric} -- kategori pendapatan, BUKAN termasuk PPN
-  p_receivable_account_id uuid,
-  p_apply_tax boolean default false
-) returns uuid
-language plpgsql
-security invoker
-as $$
-declare
-  v_term_days int;
-  v_due_date date;
-  v_entry_id uuid;
-  v_invoice_id uuid;
-  v_credit_limit numeric;
-  v_overdue_threshold_days int;
-  v_outstanding numeric;
-  v_max_overdue_days int;
-  v_line jsonb;
-  v_line_amount numeric;
-  v_subtotal numeric := 0;
-  v_tax_amount numeric := 0;
-  v_total_amount numeric;
-  v_tax_active boolean;
-  v_tax_rate numeric;
-  v_tax_account_id uuid;
-  v_journal_lines jsonb;
-begin
-  -- jumlahin p_credit_lines -> v_subtotal, tambah PPN kalau p_apply_tax (lihat
-  -- submodule "Compounding & PPN"), v_total_amount = v_subtotal + v_tax_amount
-  select payment_term_days, credit_limit, overdue_threshold_days
-    into v_term_days, v_credit_limit, v_overdue_threshold_days
-    from counterparties where id = p_customer_id; -- dulu "from customers", pindah migration 0059
-  v_due_date := p_invoice_date + v_term_days;
+Menutup `memory/scope-debt/compound-transactional-entries.md` (sudah dihapus, lihat "Aturan siklus hidup dokumen" `memory/brief.md`) — `create_ar_invoice` (dulu) sebelumnya cuma nerima **1 akun kredit tetap** (`p_revenue_account_id`) + `p_amount` mentah. Sekarang (`create_transaction`) nerima `p_lines jsonb` (array `{account_id, amount}`) — bisa dipecah beberapa kategori pendapatan (mis. Pendapatan Penjualan Barang + Pendapatan Jasa Antar) dalam **1 transaksi yang sama**. Sisi debit (Piutang Usaha, `p_control_account_id`) TETAP 1 baris, gak berubah — cuma sisi kredit yang jadi array.
 
-  select coalesce(sum(greatest(r.remaining, 0)), 0),
-         coalesce(max(p_invoice_date - ai.due_date), 0)
-    into v_outstanding, v_max_overdue_days
-    from ar_invoices ai
-    cross join lateral (select ar_invoice_remaining(ai.id) as remaining) r
-    where ai.customer_id = p_customer_id
-      and not exists (
-        select 1 from journal_entries je where je.reverses_entry_id = ai.journal_entry_id
-      )
-      and r.remaining > 0;
+- **`transaction_lines`** (dulu `ar_invoice_credit_lines`, digabung sisi AP juga sejak `0064`) — 1 baris per elemen `p_lines` + 1 baris tambahan kalau `p_apply_tax` (`is_tax=true`). Immutable (`block_edit_delete`), FK `transaction_id` ke `transactions`. Ini yang bikin PPN & kategori tambahan **traceable ke 1 transaksi**, gak lagi jurnal manual lepas kayak sebelumnya (lihat catatan PPN di bawah). DDL lengkap: `transactions-schema.md`.
+- **`ar_invoice_charge_types`** — katalog master data (bukan tabel transaksional), TETAP ADA gak kesentuh migrasi ini: `id`, `name`, `account_id` (FK `accounts`), `archived_at` (soft-delete, `state-naming-convention.md`). Murni buat UI (dropdown "pilih kategori" di form AR Invoice) — **gak ada FK dari sini ke `transaction_lines`**, sama kayak `item_units` yang juga cuma resolve pilihan di UI sebelum manggil RPC (trust boundary gak berubah: RPC tetap cuma terima `account_id` mentah, sama kayak `p_control_account_id` yang udah lama gitu). Cuma admin yang bisa insert/update (RLS `ar_invoice_charge_types_insert`/`_update`).
+- **PPN (`p_apply_tax boolean default false`)** — beda perlakuan dari kategori bebas: PPN **dihitung server-side**, gak pernah dari input klien (`is_tax` di `transaction_lines` gak pernah diisi dari JSON klien, cuma RPC yang set `true` pas insert baris PPN-nya sendiri). Kalau `p_apply_tax=true`, RPC baca `tax_settings` (singleton, lihat bawah) — `raise exception` kalau `is_active=false` atau akun PPN Keluaran belum diset. Alasan gak dipercaya dari klien: sebelumnya (interim, migration `0022`) PPN dicatat manual lewat `create_journal_entry` di luar `create_ar_invoice` — gak traceable ke invoice manapun (lihat `memory/scope-debt/tax-handling.md`, sudah dihapus, riwayat resolusinya diringkas di sini).
+- **`tax_settings`** — tabel singleton (`id boolean primary key default true` + `check (id)`, cuma bisa ada 1 baris selamanya), TETAP ADA gak kesentuh migrasi ini. Kolom: `is_active` (apakah bisnis ini sekarang wajib pungut PPN — beda dari `archived_at` katalog, ini flag konfigurasi bukan lifecycle per-baris), `ppn_rate numeric(5,2)`, `ppn_keluaran_account_id`/`ppn_masukan_account_id` (FK `accounts`, dipetakan ke akun `2400`/`1500` yang diseed di file yang sama). Tarif PPN itu aturan pemerintah (nasional) — disimpan di DB bukan di-hardcode di kode, biar ganti tarif cukup 1 `UPDATE`, gak perlu deploy ulang. RLS: select semua authenticated, update admin doang, **gak ada insert/delete** (baris tunggalnya cuma diseed migration, constraint singleton nolak baris kedua). Dipakai bareng oleh `create_transaction` (sisi OUTBOUND, PPN Masukan) dan `create_pos_sale` (PPN Keluaran) — didefinisikan sekali di sini, referensi silang dari `ap-schema.md`/`pos-schema.md`.
+- **`create_goods_issue`** (`memory/architecture/data/inventory-schema.md`) manggil `create_transaction('INBOUND', ...)` di dalamnya sejak `0064` (dulu `create_ar_invoice`) — signature eksternal `create_goods_issue` sendiri gak berubah.
 
-  if v_credit_limit is not null and (v_outstanding + v_total_amount) > v_credit_limit then
-    raise exception 'Customer kena credit hold: piutang outstanding % + invoice baru % ngelewatin credit_limit %',
-      v_outstanding, v_total_amount, v_credit_limit;
-  end if;
+#### `record_ar_payment` — bikin payment + journal entry sekaligus, langsung ke 1 invoice (terakhir didefinisi `0065`, target `transactions`)
 
-  if v_overdue_threshold_days is not null and v_max_overdue_days > v_overdue_threshold_days then
-    raise exception 'Customer kena credit hold: ada piutang telat % hari (toleransi % hari)',
-      v_max_overdue_days, v_overdue_threshold_days;
-  end if;
-
-  v_journal_lines := jsonb_build_array(
-    jsonb_build_object('account_id', p_receivable_account_id, 'debit', v_total_amount, 'credit', 0)
-  );
-  -- + 1 baris kredit per elemen p_credit_lines, + 1 baris PPN kalau p_apply_tax
-
-  v_entry_id := create_journal_entry(p_invoice_date, p_description, p_source_ref, v_journal_lines);
-
-  insert into ar_invoices (customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_by)
-  values (p_customer_id, p_invoice_date, v_due_date, p_description, p_source_ref, v_total_amount, v_entry_id, auth.uid())
-  returning id into v_invoice_id;
-
-  -- insert 1 baris ar_invoice_credit_lines per elemen p_credit_lines (is_tax=false)
-  -- + 1 baris is_tax=true kalau p_apply_tax -- lihat submodule "Compounding & PPN"
-
-  return v_invoice_id;
-end;
-$$;
-```
-
-Full body (loop lengkap `p_credit_lines`/PPN/insert `ar_invoice_credit_lines`): `supabase/migrations/0005_ar_schema.sql` (migration history 0001-0025 disquash jadi 9 file per modul 2026-08-10 — riwayat evolusi lengkap tetap ada di git log).
-
-### Compounding & PPN — migration `0025_compound_transactional_entries_schema.sql`
-
-Menutup `memory/scope-debt/compound-transactional-entries.md` (sudah dihapus, lihat "Aturan siklus hidup dokumen" `memory/brief.md`) — `create_ar_invoice` sebelumnya cuma nerima **1 akun kredit tetap** (`p_revenue_account_id`) + `p_amount` mentah. Sekarang nerima `p_credit_lines jsonb` (array `{account_id, amount}`) — bisa dipecah beberapa kategori pendapatan (mis. Pendapatan Penjualan Barang + Pendapatan Jasa Antar) dalam **1 invoice yang sama**. Sisi debit (Piutang Usaha, `p_receivable_account_id`) TETAP 1 baris, gak berubah — cuma sisi kredit yang jadi array.
-
-- **`ar_invoice_credit_lines`** — tabel baru, 1 baris per elemen `p_credit_lines` + 1 baris tambahan kalau `p_apply_tax` (`is_tax=true`). Immutable (`block_edit_delete`), FK `ar_invoice_id` ke `ar_invoices` (index `ar_invoice_credit_lines_ar_invoice_id_idx`). Ini yang bikin PPN & kategori tambahan **traceable ke 1 invoice**, gak lagi jurnal manual lepas kayak sebelumnya (lihat catatan PPN di bawah).
-- **`ar_invoice_charge_types`** — katalog master data (bukan tabel transaksional): `id`, `name`, `account_id` (FK `accounts`), `archived_at` (soft-delete, `state-naming-convention.md`). Murni buat UI (dropdown "pilih kategori" di form AR Invoice) — **gak ada FK dari sini ke `ar_invoice_credit_lines`**, sama kayak `item_units` yang juga cuma resolve pilihan di UI sebelum manggil RPC (trust boundary gak berubah: RPC tetap cuma terima `account_id` mentah, sama kayak `p_receivable_account_id` yang udah lama gitu). Cuma admin yang bisa insert/update (RLS `ar_invoice_charge_types_insert`/`_update`).
-- **PPN (`p_apply_tax boolean default false`)** — beda perlakuan dari kategori bebas: PPN **dihitung server-side**, gak pernah dari input klien (`is_tax` di `ar_invoice_credit_lines` gak pernah diisi dari JSON klien, cuma RPC yang set `true` pas insert baris PPN-nya sendiri). Kalau `p_apply_tax=true`, RPC baca `tax_settings` (singleton, lihat bawah) — `raise exception` kalau `is_active=false` atau akun PPN Keluaran belum diset. `v_tax_amount := round(v_subtotal * v_tax_rate / 100, 2)`. Alasan gak dipercaya dari klien: sebelumnya (interim, migration `0022`) PPN dicatat manual lewat `create_journal_entry` di luar `create_ar_invoice` — gak traceable ke invoice manapun (lihat `memory/scope-debt/tax-handling.md`, sudah dihapus, riwayat resolusinya diringkas di sini).
-- **`tax_settings`** — tabel singleton (`id boolean primary key default true` + `check (id)`, cuma bisa ada 1 baris selamanya). Kolom: `is_active` (apakah bisnis ini sekarang wajib pungut PPN — beda dari `archived_at` katalog, ini flag konfigurasi bukan lifecycle per-baris), `ppn_rate numeric(5,2)`, `ppn_keluaran_account_id`/`ppn_masukan_account_id` (FK `accounts`, dipetakan ke akun `2400`/`1500` yang diseed di file yang sama). Tarif PPN itu aturan pemerintah (nasional) — disimpan di DB bukan di-hardcode di kode, biar ganti tarif cukup 1 `UPDATE`, gak perlu deploy ulang. RLS: select semua authenticated, update admin doang, **gak ada insert/delete** (baris tunggalnya cuma diseed migration, constraint singleton nolak baris kedua). Dipakai bareng oleh `create_ap_bill` (PPN Masukan) dan `create_pos_sale` (PPN Keluaran) — didefinisikan sekali di sini, referensi silang dari `ap-schema.md`/`pos-schema.md`.
-- **`create_goods_issue`** (`memory/architecture/data/inventory-schema.md`) manggil `create_ar_invoice` di dalamnya — ikut disesuaikan (`p_amount`+`p_revenue_account_id` jadi `p_credit_lines`, `p_apply_tax` diteruskan apa adanya) di migration yang sama, breaking change yang sudah diantisipasi sejak submodule "Sales Order" (`inventory-schema.md`).
-
-#### `record_ar_payment` — bikin payment + journal entry sekaligus, langsung ke 1 invoice (terakhir didefinisi `0010`)
-
-Signature 7 param, `p_invoice_id` tunggal — bukan `p_allocations` jsonb array (riwayat: `0007` versi awal 7 param beda bentuk, `0027` diperluas jadi 8 param `p_allocations`+`p_customer_credit_account_id`, `0040` balik ke 7 param + wajib exact-match, `0010` signature TETAP SAMA cuma guard-nya dilonggarkan — detail lengkap di "AR Payment — Cicil Dibalikin" di bawah). `p_amount` gak boleh **melebihi** `ar_invoice_remaining(p_invoice_id)` — boleh kurang (cicil), gak boleh lebih (overpay) — `raise exception` sebelum jurnal apa pun dibuat kalau overpay.
+Signature 7 param, `p_invoice_id` tunggal — bukan `p_allocations` jsonb array (riwayat: `0007` versi awal 7 param beda bentuk, `0027` diperluas jadi 8 param `p_allocations`+`p_customer_credit_account_id`, `0040` balik ke 7 param + wajib exact-match, `0010` signature TETAP SAMA cuma guard-nya dilonggarkan — detail lengkap di "AR Payment — Cicil Dibalikin" di bawah). `p_amount` gak boleh **melebihi** `ar_invoice_remaining(p_invoice_id)` — boleh kurang (cicil), gak boleh lebih (overpay) — `raise exception` sebelum jurnal apa pun dibuat kalau overpay. `p_invoice_id` sekarang nunjuk `transactions(id)` (bukan `ar_invoices(id)` lagi sejak `0064`).
 
 ```sql
 create or replace function record_ar_payment(
@@ -241,12 +102,14 @@ declare
   v_remaining numeric;
   v_entry_id uuid;
   v_payment_id uuid;
+  v_invoice_ref text;
 begin
   select ar_invoice_remaining(p_invoice_id) into v_remaining;
 
   if p_amount > v_remaining then
-    raise exception 'Payment % melebihi sisa piutang invoice % (sisa %, coba bayar %) — gak boleh overpay',
-      p_source_ref, p_invoice_id, v_remaining, p_amount;
+    select source_ref into v_invoice_ref from transactions where id = p_invoice_id;
+    raise exception 'Payment % melebihi sisa piutang invoice % (sisa %, coba bayar %) -- gak boleh overpay',
+      p_source_ref, v_invoice_ref, v_remaining, p_amount;
   end if;
 
   v_entry_id := create_journal_entry(
@@ -266,9 +129,9 @@ end;
 $$;
 ```
 
-#### `cancel_ar_invoice` — batalkan invoice salah input (reversing entry, dengan guard) (terakhir didefinisi `0041`)
+#### `cancel_ar_invoice` — batalkan invoice salah input (reversing entry, dengan guard) (terakhir didefinisi `0065`, target `transactions`)
 
-Manggil `reverse_journal_entry` yang udah ada (fase 2) — pakai **akun yang sama persis** dengan invoice asli, debit/kredit ketuker, gak butuh akun baru (ini koreksi "salah input", bukan kejadian bisnis baru kayak retur barang). Bedanya dari reversing entry biasa: ada validasi awal yang nolak kalau invoice udah kesentuh payment atau write-off (guard write-off ditambah submodule "Piutang Tak Tertagih"), dan auto-unwind jurnal `ar_deposit_applications` aktif (reklasifikasi sederhana, aman dibalik — beda dari payment/write-off yang hard-reject, detail lengkap di submodule "Uang Muka / DP"). Loop unwind `ar_return_credit_applications` yang sempat ada (`0031`) **dihapus di `0041`** bareng tabelnya — gak ada lagi apa pun buat di-unwind di sisi return credit (lihat submodule "Retur Barang").
+Manggil `reverse_journal_entry` yang udah ada (fase 2) — pakai **akun yang sama persis** dengan invoice asli, debit/kredit ketuker, gak butuh akun baru (ini koreksi "salah input", bukan kejadian bisnis baru kayak retur barang). Auto-unwind jurnal `ar_deposit_applications` aktif (reklasifikasi sederhana, aman dibalik — detail lengkap di submodule "Uang Muka / DP"). Guard write-off (dulu ngecek `ar_bad_debt_writeoffs`) **DIHAPUS `0065`** bareng tabelnya — fitur Piutang Tak Tertagih dicabut total, gak ada lagi apa pun buat di-guard di sisi itu. Loop unwind `ar_return_credit_applications` yang sempat ada (`0031`) juga **dihapus di `0041`** bareng tabelnya — gak ada lagi apa pun buat di-unwind di sisi return credit (lihat submodule "Retur Barang").
 
 ```sql
 create or replace function cancel_ar_invoice(
@@ -281,26 +144,20 @@ security invoker
 as $$
 declare
   v_paid_count int;
-  v_written_off_count int;
   v_original_entry_id uuid;
   v_new_entry_id uuid;
   v_application record;
+  v_invoice_ref text;
 begin
   select count(*) into v_paid_count
   from ar_payments where invoice_id = p_invoice_id;
 
   if v_paid_count > 0 then
-    raise exception 'Invoice % udah punya payment — gak bisa dibatalkan lewat jalur ini', p_invoice_id;
+    select source_ref into v_invoice_ref from transactions where id = p_invoice_id;
+    raise exception 'Invoice % udah punya payment — gak bisa dibatalkan lewat jalur ini', v_invoice_ref;
   end if;
 
-  select count(*) into v_written_off_count
-  from ar_bad_debt_writeoffs where invoice_id = p_invoice_id;
-
-  if v_written_off_count > 0 then
-    raise exception 'Invoice % udah punya % write-off piutang tak tertagih — gak bisa dibatalkan lewat jalur ini', p_invoice_id, v_written_off_count;
-  end if;
-
-  select journal_entry_id into v_original_entry_id from ar_invoices where id = p_invoice_id;
+  select journal_entry_id into v_original_entry_id from transactions where id = p_invoice_id;
 
   v_new_entry_id := reverse_journal_entry(v_original_entry_id, p_entry_date, p_source_ref);
 
@@ -320,28 +177,13 @@ end;
 $$;
 ```
 
-Gak insert/update apa pun ke `ar_invoices` — baris invoice asli tetap ada persis kayak semula (immutability tetap utuh). Status "dibatalkan" murni kebaca dari keberadaan reversal di `journal_entries`, sama pola derived kayak status lunas/belum.
+Gak insert/update apa pun ke `transactions` (baris `type='INBOUND'`) — baris invoice asli tetap ada persis kayak semula (immutability tetap utuh). Status "dibatalkan" murni kebaca dari keberadaan reversal di `journal_entries`, sama pola derived kayak status lunas/belum.
 
-### RLS Policy
+### RLS Policy & Grant
 
-**`ar_invoices_select`, `ar_payments_select`** — semua yang `authenticated` boleh liat, pola sama modul lain: data AR itu referensi bareng buat kerja/lapor, gak dibatesin per role. RLS `counterparties`/`counterparty_type_mapping` (dulu `customers`) sekarang didokumentasikan di `memory/architecture/data/counterparty-schema.md`, gak diulang di sini — polanya sama persis (select semua authenticated, insert/update admin/accountant, delete lewat RPC `delete_counterparty()` gantiin `delete_customer()`).
-
-**`ar_invoices_insert`, `ar_payments_insert`** — cuma `admin`/`accountant` (subquery ke `user_roles`, pola identik `accounts_insert`).
-
-**Sengaja gak ada policy `UPDATE`/`DELETE` di 2 tabel AR transaksional** (`ar_invoices`, `ar_payments`) — RLS default deny + trigger `block_edit_delete` = 2 lapis immutability, sama persis `journal_entries`/`journal_lines`.
+**`ar_payments_select`** — semua yang `authenticated` boleh liat, pola sama modul lain. **`ar_payments_insert`** — cuma `admin`/`accountant`. **Sengaja gak ada policy `UPDATE`/`DELETE`** — RLS default deny + trigger `block_edit_delete` = 2 lapis immutability. RLS/Grant `transactions` (dulu `ar_invoices`) sekarang di `transactions-schema.md`, RLS `counterparties`/`counterparty_type_mapping` (dulu `customers`) di `counterparty-schema.md` — gak diulang di sini.
 
 ```sql
-alter table ar_invoices enable row level security;
-
-create policy ar_invoices_select on ar_invoices
-  for select using (auth.role() = 'authenticated');
-
-create policy ar_invoices_insert on ar_invoices
-  for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
-  );
-
 alter table ar_payments enable row level security;
 
 create policy ar_payments_select on ar_payments
@@ -352,21 +194,12 @@ create policy ar_payments_insert on ar_payments
     exists (select 1 from user_roles ur
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
--- sengaja gak ada policy UPDATE/DELETE di 2 tabel AR transaksional -> RLS default deny
-```
+-- sengaja gak ada policy UPDATE/DELETE -> RLS default deny
 
-### Grant
-
-"Automatically expose new tables" dimatikan di project settings (`coa-schema.md`) — tabel baru butuh grant eksplisit biar PostgREST gak nolak duluan sebelum RLS sempat dicek.
-
-```sql
-grant select, insert on ar_invoices to authenticated;
 grant select, insert on ar_payments to authenticated;
 ```
 
-Grant `counterparties`/`counterparty_type_mapping` ada di `counterparty-schema.md`.
-
-RPC (`create_ar_invoice`, `record_ar_payment`) otomatis kepakai `authenticated` selama grant `execute` default Postgres gak dicabut — konsisten sama perlakuan `create_journal_entry`/`reverse_journal_entry` di `journal-entry-schema.md` (grant RPC eksplisit ditambahin di migration terpisah kalau ternyata perlu, ref migration `0006_journal_entry_rpc_grants.sql`).
+RPC (`create_transaction`, `record_ar_payment`) otomatis kepakai `authenticated` selama grant `execute` default Postgres gak dicabut.
 
 ### AR Payment — Cicil Dibalikin (migration `0010_ar_allow_partial_payment.sql`)
 
@@ -407,21 +240,9 @@ Nutup scope-debt filter status di list `/ar-invoices`. Reuse `ar_invoice_remaini
 
 Sempat ada mekanisme "customer transfer lebih dari total invoice yang dilunasin, excess-nya jadi saldo kredit" — tabel `ar_customer_credits`/`ar_customer_credit_applications`/`ar_customer_credit_refunds` (migration `0027`), RPC `apply_ar_customer_credit`/`refund_ar_customer_credit`, akun liability `Saldo Kredit Customer` (`2400`). Semuanya dicabut total (tabel di-drop, RPC di-drop) begitu keputusan bisnis "payment gak boleh overpay" jalan — gak ada lagi jalur buat kelebihan bayar "nyantol", `record_ar_payment` `raise exception` kalau amount ngelebihin sisa. Rationale: `docs/domain/accounts-receivable.md` bagian "Kenapa cicil boleh tapi overpay gak boleh". **Tetap dicabut permanen** — cicil dibalikin (`0010`, lihat di atas) tapi overpay-jadi-saldo-ngambang ini TIDAK dibalikin.
 
-## Credit Hold
+## Credit Hold — DICABUT TOTAL, migration `0065` (2026-09-05)
 
-Gak ada tabel baru — kolom `counterparties.credit_limit`/`overdue_threshold_days` (DDL lengkap di submodule "Konsep Inti") dan logic pengecekannya nempel langsung di RPC `create_ar_invoice` (SQL lengkap juga di submodule "Konsep Inti") — bukan RPC/tabel terpisah.
-
-**Detail cek 2 kondisi independen** (`0020_ar_credit_hold.sql`, dasarnya dipertahankan tiap revisi):
-- **Nominal prospektif**: `(outstanding sekarang + amount invoice baru) > credit_limit` — sengaja prospektif (nambahin amount invoice yang mau dibuat), bukan cuma cek "udah lewat limit apa belum", karena tujuan limit itu nyegah exposure nambah lewat batas, bukan cuma ngasih tau udah lewat.
-- **Waktu**: ada invoice open (belum lunas & belum dibatalkan) yang `p_invoice_date - due_date` (hari overdue-nya) > `overdue_threshold_days`.
-
-Outstanding dihitung dari `ar_invoice_remaining(invoice_id)` (fungsi terpusat, submodule "Konsep Inti") per invoice open milik customer itu, exclude invoice yang punya reversal (`journal_entries.reverses_entry_id`). `NULL` di `credit_limit`/`overdue_threshold_days` bikin kondisi itu di-skip (gak pernah nolak dari sisi itu).
-
-Kalau salah satu kepenuhi, `create_ar_invoice` `raise exception` sebelum sempat manggil `create_journal_entry` — invoice gak jadi dibuat, gak ada jejak apa pun di GL (gagal bersih, bukan partial write).
-
-### RLS & Grant
-
-Gak ada RLS/grant tambahan — hold cuma logic di dalam `create_ar_invoice`, tunduk ke RLS/grant `ar_invoices_insert` yang sudah ada (submodule "Konsep Inti").
+Dulu ada di sini: kolom `counterparties.credit_limit`/`overdue_threshold_days` + cek 2 kondisi independen (nominal prospektif outstanding+invoice baru vs `credit_limit`, dan overdue days vs `overdue_threshold_days`) nempel di RPC `create_ar_invoice`. **Keputusan owner (2026-09-05)**: disingkirkan total — `create_transaction` (RPC pengganti) gak pernah punya cek ini sejak desain awal, kolomnya sendiri didrop migration `0065`. Rationale lengkap & histori keputusan: `memory/architecture/data/transactions-schema.md` > "Keputusan". AR gak lagi punya kemampuan formal nolak invoice yang ngelewatin plafon kredit — kalau kebutuhan ini muncul lagi, dirancang ulang dari nol (bukan diaktifkan lagi begitu saja).
 
 ## Retur Barang (Credit Note)
 
@@ -440,7 +261,7 @@ Satu baris = satu kejadian retur terhadap 1 invoice. Yang perlu diperhatiin:
 ```sql
 create table ar_credit_notes (
   id uuid primary key default gen_random_uuid(),
-  invoice_id uuid not null references ar_invoices(id),
+  invoice_id uuid not null references transactions(id), -- dulu references ar_invoices(id), repoint migration 0064
   credit_note_date date not null,
   source_ref text not null,
   amount numeric(14,2) not null check (amount > 0),
@@ -587,7 +408,7 @@ Satu baris header = satu kejadian penggantian (bisa lebih dari 1 kali per invoic
 ```sql
 create table warranty_replacements (
   id uuid primary key default gen_random_uuid(),
-  invoice_id uuid not null references ar_invoices(id),           -- 0057, rujukan utama
+  invoice_id uuid not null references transactions(id),          -- 0057, rujukan utama; dulu ar_invoices(id), repoint 0064
   credit_note_id uuid references ar_credit_notes(id),             -- 0057: jadi nullable, cuma histori
   replacement_date date not null,
   source_ref text not null,
@@ -693,7 +514,7 @@ Trigger `ar_deposit_applications_guard` (before insert, 5 pengecekan berurutan):
 create table ar_deposit_applications (
   id uuid primary key default gen_random_uuid(),
   deposit_id uuid not null references ar_deposits(id),
-  invoice_id uuid not null references ar_invoices(id),
+  invoice_id uuid not null references transactions(id), -- dulu references ar_invoices(id), repoint migration 0064
   amount numeric(14,2) not null check (amount > 0),
   source_ref text not null,
   journal_entry_id uuid not null references journal_entries(id),
@@ -792,51 +613,6 @@ Fix-nya **`create or replace function`** di `0024_ar_deposits_schema.sql` (bukan
 
 Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
 
-## Piutang Tak Tertagih (Bad Debt Write-off)
+## Piutang Tak Tertagih (Bad Debt Write-off) — DICABUT TOTAL, migration `0064`+`0065` (2026-09-05)
 
-Piutang yang beneran gak akan pernah tertagih (customer menghilang/tutup usaha), dihapusbukukan lewat metode **direct write-off** (bukan allowance/provisi — gak ada data historis buat estimasi kredibel, gak diakui fiskus buat badan usaha umum di Indonesia, gak konsisten sama pola RPC AR lain yang reaktif per-kejadian). Detail rationale bisnis: `docs/domain/accounts-receivable.md` bagian "Piutang Tak Tertagih (Bad Debt Write-off)". Migration: `0029_ar_bad_debt_writeoffs.sql` + `0030_seed_demo_ar_bad_debt_writeoffs.sql`.
-
-**Recovery** (piutang yang udah di-write-off ternyata akhirnya kebayar juga) **di luar scope submodule ini** — direct write-off gak punya akun "cadangan" penyangga buat nampung kasus ini dengan mulus (beda dari allowance method), belum didesain.
-
-### `ar_bad_debt_writeoffs` — write-off, selalu terhadap 1 invoice
-
-Satu baris = satu kejadian write-off. `journal_entry_id` nunjuk jurnal Debit `Beban Piutang Tak Tertagih` (`5700`, expense biasa — **bukan** kontra, beda dari `Retur & Potongan Penjualan`/`Akumulasi Penyusutan`) / Kredit Piutang Usaha (`create_journal_entry`, reuse). Immutable, pola sama `ar_credit_notes`.
-
-```sql
-create table ar_bad_debt_writeoffs (
-  id uuid primary key default gen_random_uuid(),
-  invoice_id uuid not null references ar_invoices(id),
-  writeoff_date date not null,
-  source_ref text not null,
-  amount numeric(14,2) not null check (amount > 0),
-  journal_entry_id uuid not null references journal_entries(id),
-  created_by uuid references auth.users(id),
-  created_at timestamptz not null default now()
-);
-```
-
-### Trigger `ar_bad_debt_writeoffs_no_over_writeoff`
-
-Beda dari `ar_credit_notes_no_over_return` (sengaja independen, boleh bikin outstanding negatif) — write-off gak boleh ngelebihin **sisa outstanding riil** invoice, dihitung lewat `ar_invoice_remaining()` (payment, retur, DP aktif, write-off lain yang udah ada) — gak masuk akal "menghapus" uang yang udah lunas/diretur duluan lewat jalur lain. Juga nolak kalau invoice-nya udah dibatalkan (exists reversal), pola sama `ar_deposit_applications_guard`.
-
-### RPC `write_off_ar_invoice`
-
-`security invoker`, reuse `create_journal_entry`. 1 kejadian = 1 jurnal, gak ada tahap estimasi/cadangan terpisah. Nominal (`p_amount`) input eksplisit dari caller, konsisten pola RPC AR lain.
-
-Full body: `supabase/migrations/0029_ar_bad_debt_writeoffs.sql`.
-
-### 5 fungsi existing yang ikut diperluas (`create or replace` di `0029`, bukan tabel baru)
-
-Sekarang ada **5 reducer independen** terhadap outstanding 1 invoice — `ar_payment_allocations`, `ar_credit_notes`, `ar_deposit_applications`, `ar_customer_credit_applications`, `ar_bad_debt_writeoffs` — jadi guard yang udah ada semua di-extend biar konsisten jumlahin write-off juga (exclude yang udah di-reverse, pola sama 3 perluasan sebelumnya):
-- **`ar_payment_allocations_no_over_allocation`** (0007, di-extend 0024/0027) — tambah `v_invoice_written_off` ke perhitungan.
-- **`ar_deposit_applications_guard`** (0024, di-extend 0027) — tambah `v_already_written_off_to_invoice`.
-- **`ar_customer_credit_applications_guard`** (0027) — tambah `v_already_written_off`.
-- **`create_ar_invoice`** (0007, di-extend 0020/0024/0027) — outstanding calc buat credit hold ikut ngurangin `ar_bad_debt_writeoffs` aktif (union ke-4 di subquery `combined`) — piutang yang udah dihapusbukukan gak boleh masih keitung exposure customer itu.
-
-**`cancel_ar_invoice`** (0009, di-extend 0024/0027) ikut di-extend lagi: guard baru di awal fungsi, nolak keras kalau invoice udah punya `ar_bad_debt_writeoffs` — beda dari `ar_deposit_applications`/`ar_customer_credit_applications` (auto-unwind), write-off itu keputusan bisnis yang udah dijurnal sebagai kerugian nyata, sama kelasnya kayak guard `ar_payment_allocations` (ditolak keras, bukan di-unwind). SQL final guard ini ada di RPC `cancel_ar_invoice`, submodule "Konsep Inti".
-
-Direview `schema-reviewer` sebelum apply — gak ada temuan blocker/warning, termasuk dicek eksplisit soal function-overload hazard (nama fungsi yang di-`create or replace` semua signature-nya identik ke versi sebelumnya, gak butuh `drop function if exists`).
-
-### RLS & Grant (Piutang Tak Tertagih)
-
-Pola identik AR lain — `select` semua `authenticated`, `insert` cuma `admin`/`accountant`, **gak ada** policy `update`/`delete` (default deny + `block_edit_delete`). Detail: migration file.
+Dulu ada di sini: `ar_bad_debt_writeoffs` (write-off direct terhadap 1 invoice, immutable) + RPC `write_off_ar_invoice` + guard `ar_bad_debt_writeoffs_no_over_writeoff` + reducer ke-5 di beberapa fungsi outstanding. **Keputusan owner (2026-09-05)**, dibundel jadi 1 sama pencabutan Credit Hold: disingkirkan total — RPC & trigger aktif didrop migration `0064`, tabelnya sendiri didrop migration `0065`. Rationale lengkap & histori keputusan: `memory/architecture/data/transactions-schema.md` > "Keputusan". AR gak lagi punya jalur formal buat nyatet piutang macet jadi beban — kalau kebutuhan ini muncul lagi (termasuk fitur "Recovery" yang dulu emang belum sempat didesain), dirancang ulang dari nol.

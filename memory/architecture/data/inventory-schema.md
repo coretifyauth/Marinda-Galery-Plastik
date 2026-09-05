@@ -258,7 +258,7 @@ Insert `goods_receipt_lines` inilah yang **memicu** penambahan Persediaan: updat
 create table goods_receipt_notes (
   id uuid primary key default gen_random_uuid(),
   order_id uuid references orders(id), -- dulu purchase_order_id -> purchase_orders(id), rename migration 0060
-  bill_id uuid not null references ap_bills(id),
+  bill_id uuid not null references transactions(id), -- dulu references ap_bills(id), repoint migration 0064
   delivery_note_ref text,
   receipt_date date not null,
   created_by uuid references auth.users(id),
@@ -562,12 +562,12 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 
 ### `goods_issues` + `goods_issue_lines`
 
-Kebalikan GRN — barang jadi **keluar** karena terjual. Header: **wajib nunjuk `invoice_id`** (dibuat bersamaan dengan `ar_invoices`, sama pola GRN+Bill), **`journal_entry_id`** (Debit HPP, Kredit Persediaan Barang Jadi — **jurnal tambahan**, terpisah dari jurnal invoice yang sudah ada Debit Piutang/Kredit Pendapatan). Lines: `item_id` (barang jadi), `qty_issued`, `total_cost` (dari Weighted Average, sama mekanisme `production_order_lines`, via `consume_weighted_average` di submodule "Konsep Inti"). Immutable (reuse `block_edit_delete`).
+Kebalikan GRN — barang jadi **keluar** karena terjual. Header: **wajib nunjuk `invoice_id`** (dibuat bersamaan dengan `transactions` baris `type='INBOUND'`, dulu `ar_invoices` — sama pola GRN+Bill), **`journal_entry_id`** (Debit HPP, Kredit Persediaan Barang Jadi — **jurnal tambahan**, terpisah dari jurnal invoice yang sudah ada Debit Piutang/Kredit Pendapatan). Lines: `item_id` (barang jadi), `qty_issued`, `total_cost` (dari Weighted Average, sama mekanisme `production_order_lines`, via `consume_weighted_average` di submodule "Konsep Inti"). Immutable (reuse `block_edit_delete`).
 
 ```sql
 create table goods_issues (
   id uuid primary key default gen_random_uuid(),
-  invoice_id uuid not null references ar_invoices(id),
+  invoice_id uuid not null references transactions(id), -- dulu references ar_invoices(id), repoint migration 0064
   journal_entry_id uuid not null references journal_entries(id),
   issue_date date not null,
   source_ref text not null,

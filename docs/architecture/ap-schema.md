@@ -1,29 +1,30 @@
 # Accounts Payable — Struktur Data & Teknis
 
-Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/ap-schema.md`. Strukturnya cerminan persis dari Accounts Receivable (`docs/architecture/ar-schema.md`), arah kebalik — di sini kita yang berutang, bukan piutang.
+Fase 4. Konsep bisnisnya ada di `docs/domain/accounts-payable.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/ap-schema.md` + `memory/architecture/data/transactions-schema.md` (tabel inti, digabung dengan Accounts Receivable sejak 2026-09-05). Strukturnya cerminan persis dari Accounts Receivable (`docs/architecture/ar-schema.md`), arah kebalik — di sini kita yang berutang, bukan piutang.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `counterparties` | Master data pemasok (nama, kontak, termin pembayaran) | — |
-| `ap_bills` | Tagihan yang diterima dari pemasok | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ap_payments` | Pembayaran yang dikirim ke pemasok — selalu menunjuk 1 bill spesifik, boleh cicil, gak boleh kelebihan bayar | `counterparties`, `ap_bills` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
-| `ap_credit_notes` | Retur barang ke pemasok, jalur "kurangi utang" (Opsi A) | `ap_bills`, dan ke transaksi jurnal yang otomatis dibuat |
+| `transactions` (baris `type='OUTBOUND'`) | Tagihan yang diterima dari pemasok — tabel yang sama juga dipakai Accounts Receivable (baris `type='INBOUND'`, lihat `docs/architecture/ar-schema.md`) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
+| `ap_payments` | Pembayaran yang dikirim ke pemasok — selalu menunjuk 1 bill spesifik, boleh cicil, gak boleh kelebihan bayar | `counterparties`, `transactions` (banyak-ke-satu), dan ke transaksi jurnal yang otomatis dibuat |
+| `ap_credit_notes` | Retur barang ke pemasok, jalur "kurangi utang" (Opsi A) | `transactions`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian barang yang diretur per item (cuma kalau bill-nya diterima lewat penerimaan barang bertahap) | `ap_credit_notes` |
-| `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — berdiri sendiri, tidak menyambung ke `ap_credit_notes` | `ap_bills` |
-| `purchase_writeoffs` + `purchase_writeoff_lines` | Barang rusak yang pemasok tolak kompensasi sama sekali, jalur "tulis-jadi-beban" (Opsi C) — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `ap_bills` |
+| `purchase_replacements` + `purchase_replacement_lines` | Tukar barang rusak dengan barang baik dari pemasok, jalur "tukar barang" (Opsi B) — berdiri sendiri, tidak menyambung ke `ap_credit_notes` | `transactions` |
+| `purchase_writeoffs` + `purchase_writeoff_lines` | Barang rusak yang pemasok tolak kompensasi sama sekali, jalur "tulis-jadi-beban" (Opsi C) — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `transactions` |
 | `ap_return_credits` | Saldo "Piutang Retur Pemasok" — muncul otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `ap_credit_notes` |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai (satu-satunya disposisi — "dipakai motong bill lain" sudah dicabut, bukan fondasi AP) | `ap_return_credits` |
 | `ap_deposits` | Uang muka yang kita bayar ke pemasok sebelum ada bill — asset "Uang Muka Pembelian" (kebalikan AR: di AR itu liability, di sini asset karena pemasok yang "berutang" balik ke kita) | `counterparties`, dan ke transaksi jurnal yang otomatis dibuat |
-| `ap_deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan | `ap_deposits`, `ap_bills` |
+| `ap_deposit_applications` | DP di atas diterapkan ke bill yang sudah diterbitkan | `ap_deposits`, `transactions` |
 | `ap_deposit_refunds` | DP dicairkan tunai kembali (pemasok yang mutuskan, bukan kita) — tidak berdampak Laba Rugi | `ap_deposits` |
 | `ap_deposit_forfeitures` | DP dianggap hangus (pemasok tidak mau/tidak bisa balikin) — jadi Beban Kerugian Uang Muka | `ap_deposits` |
-| `ap_bill_debit_lines` | Rincian baris debit (kategori beban/persediaan + PPN) 1 bill, kalau lebih dari 1 kategori | `ap_bills` (banyak-ke-satu) |
 | `ap_bill_expense_categories` | Katalog kategori beban/persediaan tambahan yang bisa dipilih staf saat bikin bill — master data, disiapkan admin | `accounts` |
 | `tax_settings` | Pengaturan PPN (tarif, status aktif, akun Keluaran/Masukan) — 1 baris untuk seluruh sistem, dipakai bareng AR/POS, didefinisikan penuh di `docs/architecture/ar-schema.md` | `accounts` |
 
 Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik — di Piutang, kita yang menetapkan termin ke pelanggan; di Utang, pemasok yang menetapkan termin ke kita. Kolom & cara kerjanya identik, cuma makna bisnisnya kebalik.
+
+**Catatan (2026-09-05)**: `ap_bills` (tabel bill AP) dan `ap_bill_debit_lines` (rincian baris debit) sudah digabung ke tabel generic `transactions`/`transaction_lines` yang dipakai bareng Accounts Receivable — lihat `docs/architecture/ar-schema.md`.
 
 ## Konsep Inti
 
@@ -32,10 +33,10 @@ Satu perbedaan penting dari AR: kolom termin pembayaran di sini artinya kebalik 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `counterparties` | Master data pemasok | — |
-| `ap_bills` | Utang timbul | `counterparties`, transaksi jurnal |
-| `ap_payments` | Utang berkurang | `counterparties`, `ap_bills`, transaksi jurnal |
+| `transactions` (`type='OUTBOUND'`) | Utang timbul — tabel generic yang sama juga dipakai Accounts Receivable | `counterparties`, transaksi jurnal |
+| `ap_payments` | Utang berkurang | `counterparties`, `transactions`, transaksi jurnal |
 
-**Struktur `ap_bills`**
+**Struktur bill (baris `transactions` tipe `OUTBOUND`)**
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
@@ -51,7 +52,7 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Buat bill | `create_ap_bill` | Menghitung `due_date`, memanggil `create_journal_entry` (Debit akun yang dipilih — Persediaan/Beban, Kredit Utang Usaha), insert `ap_bills` menunjuk `journal_entry_id` | Akun debit diterima sebagai parameter, gak di-hardcode — beda dari `create_ar_invoice` yang akunnya fixed |
+| Buat bill | `create_transaction` (`p_type='OUTBOUND'`) | Menghitung `due_date`, memanggil `create_journal_entry` (Debit akun yang dipilih — Persediaan/Beban, Kredit Utang Usaha), insert `transactions` menunjuk `journal_entry_id` | Akun debit diterima sebagai parameter, gak di-hardcode; minimal 1 baris kategori, tiap baris nominal > 0 |
 | Catat pembayaran | `record_ap_payment` | Memanggil `create_journal_entry` (Debit Utang Usaha, Kredit Kas/Bank), insert `ap_payments` menunjuk 1 `bill_id` | `p_amount > ap_bill_remaining(bill_id)` → `raise exception` (overpay ditolak, cicil lolos) |
 | Batalkan bill | `cancel_ap_bill` | Memanggil `reverse_journal_entry` pakai akun sama persis; bill asli tidak diedit | Ditolak kalau ada `ap_payments` atau `ap_credit_notes`; auto-unwind `ap_deposit_applications` aktif (lihat submodule "Uang Muka / DP ke Supplier") |
 
@@ -62,7 +63,7 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 | Pembayaran boleh kurang dari sisa tagihan, gak boleh lebih | `record_ap_payment` — cek `p_amount > ap_bill_remaining(bill_id)` |
 | Data bill asli (pemasok/tanggal/jumlah) gak boleh diedit/dihapus | RLS tanpa policy `update`/`delete` + trigger selektif — cuma kolom status/sisa utang yang boleh berubah, sisanya tetap terkunci total |
 | Bill cuma bisa dibatalkan kalau belum ada pembayaran/retur | `cancel_ap_bill` — cek `count(*)` dari `ap_payments` dan `ap_credit_notes` |
-| `due_date` snapshot, gak retroaktif ikut perubahan termin | `create_ap_bill` — dihitung sekali dari termin supplier saat insert, disimpan sebagai kolom biasa |
+| `due_date` snapshot, gak retroaktif ikut perubahan termin | `create_transaction` — dihitung sekali dari termin supplier saat insert, disimpan sebagai kolom biasa |
 | Status bill gak bisa nyimpang dari kenyataan pembayaran | Diupdate otomatis sistem tiap ada baris baru di pembayaran/DP/retur/pembatalan — bukan dientri manual |
 | Gak ada bayar gabungan lintas bill | `record_ap_payment` — parameter `p_bill_id` tunggal, gak ada array alokasi |
 
@@ -70,9 +71,9 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ap_bills` | banyak-ke-satu | `counterparties` |
-| `ap_payments` | banyak-ke-satu | `ap_bills` |
-| `ap_bills` / `ap_payments` | satu-ke-satu (`journal_entry_id`, `not null`) | `journal_entries` |
+| `transactions` (`OUTBOUND`) | banyak-ke-satu | `counterparties` |
+| `ap_payments` | banyak-ke-satu | `transactions` |
+| `transactions` / `ap_payments` | satu-ke-satu (`journal_entry_id`, `not null`) | `journal_entries` |
 
 ## Retur Barang ke Supplier
 
@@ -80,10 +81,10 @@ Kenapa cukup satu pembayaran nunjuk satu bill (bukan tabel jembatan banyak-ke-ba
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `ap_credit_notes` | Retur barang, Opsi A ("kurangi utang") | `ap_bills`, dan ke transaksi jurnal yang otomatis dibuat |
+| `ap_credit_notes` | Retur barang, Opsi A ("kurangi utang") | `transactions`, dan ke transaksi jurnal yang otomatis dibuat |
 | `purchase_return_lines` | Rincian item retur, cuma jalur full (bill lewat penerimaan barang) | `ap_credit_notes` |
-| `purchase_replacements` + `purchase_replacement_lines` | Tukar barang, Opsi B — berdiri sendiri, gak menyambung ke `ap_credit_notes` | `ap_bills` |
-| `purchase_writeoffs` + `purchase_writeoff_lines` | Tulis-jadi-beban, Opsi C — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `ap_bills` |
+| `purchase_replacements` + `purchase_replacement_lines` | Tukar barang, Opsi B — berdiri sendiri, gak menyambung ke `ap_credit_notes` | `transactions` |
+| `purchase_writeoffs` + `purchase_writeoff_lines` | Tulis-jadi-beban, Opsi C — berdiri sendiri, gak menyambung ke `ap_credit_notes`, Utang Usaha gak pernah kesentuh | `transactions` |
 | `ap_return_credits` | Saldo "Piutang Retur Supplier" — lahir otomatis kalau Opsi A dipakai pada bill yang sudah lunas | `counterparties`, `ap_credit_notes` (sumbernya) |
 | `ap_return_credit_refunds` | Saldo di atas dicairkan tunai — satu-satunya disposisi | `ap_return_credits` |
 
@@ -116,10 +117,10 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ap_credit_notes` | banyak-ke-satu | `ap_bills` |
+| `ap_credit_notes` | banyak-ke-satu | `transactions` |
 | `purchase_return_lines` | banyak-ke-satu | `ap_credit_notes` |
-| `purchase_replacements` | banyak-ke-satu | `ap_bills` (langsung, tanpa lewat `ap_credit_notes`) |
-| `purchase_writeoffs` | banyak-ke-satu | `ap_bills` (langsung, tanpa lewat `ap_credit_notes`) |
+| `purchase_replacements` | banyak-ke-satu | `transactions` (langsung, tanpa lewat `ap_credit_notes`) |
+| `purchase_writeoffs` | banyak-ke-satu | `transactions` (langsung, tanpa lewat `ap_credit_notes`) |
 | `ap_return_credits` | satu-ke-satu | `ap_credit_notes` (sumbernya) |
 | `ap_return_credits` | banyak-ke-satu | `counterparties` |
 | `ap_return_credit_refunds` | banyak-ke-satu | `ap_return_credits` |
@@ -131,7 +132,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `ap_deposits` | Uang muka dibayar ke pemasok sebelum ada bill | `counterparties`, dan ke transaksi jurnal (Uang Muka Pembelian → Kas) |
-| `ap_deposit_applications` | DP diterapkan ke bill yang sudah diterbitkan | Menghubungkan `ap_deposits` ↔ `ap_bills` |
+| `ap_deposit_applications` | DP diterapkan ke bill yang sudah diterbitkan | Menghubungkan `ap_deposits` ↔ `transactions` |
 | `ap_deposit_refunds` | DP dicairkan tunai kembali — pemasok yang mutuskan, tidak berdampak Laba Rugi | `ap_deposits` |
 | `ap_deposit_forfeitures` | DP dianggap hangus — jadi Beban Kerugian Uang Muka | `ap_deposits` |
 
@@ -158,7 +159,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `ap_deposits` | banyak-ke-satu | `counterparties` |
-| `ap_deposit_applications` | menghubungkan | `ap_deposits` ↔ `ap_bills` |
+| `ap_deposit_applications` | menghubungkan | `ap_deposits` ↔ `transactions` |
 | `ap_deposit_refunds` / `ap_deposit_forfeitures` | banyak-ke-satu | `ap_deposits` |
 
 ## Kategori Campur & PPN
@@ -167,7 +168,7 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `ap_bill_debit_lines` | Rincian baris debit (kategori beban/persediaan + PPN) 1 bill | `ap_bills` (banyak-ke-satu) |
+| `transaction_lines` | Rincian baris debit (kategori beban/persediaan + PPN) 1 bill — tabel generic yang sama juga dipakai Accounts Receivable | `transactions` (banyak-ke-satu) |
 | `ap_bill_expense_categories` | Katalog kategori beban/persediaan tambahan — master data | `accounts` |
 | `tax_settings` | Pengaturan PPN, sama tabel dengan AR/POS (`docs/architecture/ar-schema.md`) | `accounts` |
 
@@ -175,23 +176,23 @@ Fitur ini cuma menangani item dengan metode costing Rata-Rata Tertimbang (satu-s
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Bikin bill dengan >1 kategori debit | `create_ap_bill` (`p_debit_lines` array) | 1 baris jurnal debit per kategori, insert `ap_bill_debit_lines` per baris | Minimal 1 baris kategori |
-| Bikin bill dengan PPN Masukan | `create_ap_bill` (`p_apply_tax=true`) | Tambahan 1 baris debit PPN Masukan, ditambahkan ke Utang Usaha | Ditolak kalau `tax_settings.is_active=false` atau akun PPN Masukan belum diset |
+| Bikin bill dengan >1 kategori debit | `create_transaction` (`p_lines` array) | 1 baris jurnal debit per kategori, insert `transaction_lines` per baris | Minimal 1 baris kategori, tiap baris nominal > 0 |
+| Bikin bill dengan PPN Masukan | `create_transaction` (`p_apply_tax=true`) | Tambahan 1 baris debit PPN Masukan, ditambahkan ke Utang Usaha | Ditolak kalau `tax_settings.is_active=false` atau akun PPN Masukan belum diset |
 
 **Aturan Bisnis → RPC**
 
 | Aturan | Dijaga oleh |
 |---|---|
 | Kategori tambahan dipilih dari katalog, bukan akun bebas | Diselesaikan di UI (dropdown `ap_bill_expense_categories`) |
-| PPN gak boleh diketik manual | `create_ap_bill` menghitung sendiri dari `tax_settings` |
-| Penerimaan barang dari PO (3-Way Matching) JUGA dapat kategori campur & PPN | `create_goods_receipt` diperluas terima kategori tambahan & PPN, mirror `create_ap_bill` — lihat `docs/architecture/inventory-schema.md` |
+| PPN gak boleh diketik manual | `create_transaction` menghitung sendiri dari `tax_settings` |
+| Penerimaan barang dari PO (3-Way Matching) JUGA dapat kategori campur & PPN | `create_goods_receipt` diperluas terima kategori tambahan & PPN, mirror `create_transaction` — lihat `docs/architecture/inventory-schema.md` |
 
 **Interaksi Antar Tabel**
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `ap_bill_debit_lines` | banyak-ke-satu | `ap_bills` |
-| `ap_bill_expense_categories` | referensi (dipakai UI, bukan FK langsung) | `ap_bill_debit_lines` |
+| `transaction_lines` | banyak-ke-satu | `transactions` |
+| `ap_bill_expense_categories` | referensi (dipakai UI, bukan FK langsung) | `transaction_lines` |
 
 ## Siapa Boleh Apa
 

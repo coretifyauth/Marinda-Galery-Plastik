@@ -32,18 +32,21 @@ export type ArInvoice = {
   ar_deposit_applications?: { amount: number }[];
 };
 
-export type ArInvoiceOrigin = "sales_order" | "goods_issue" | "financial_only";
+export type ArInvoiceOrigin = "order" | "goods_movement" | "financial_only";
 
 /** Invoice lahir dari 3 jalur beda (`memory/domain/inventory.md` submodule "Sales Order &
- * Pemenuhan Bertahap"): (1) pemenuhan Sales Order — ada `goods_issues` yang salah satu
- * baris-nya nunjuk balik ke `order_lines` (`order_line_id` keisi); (2) Goods Issue langsung
- * (jual spontan, kios walk-in) — ada `goods_issues` tapi `order_line_id` semua baris-nya kosong;
- * (3) financial-only — invoice dicatat manual lewat /ar-invoices, gak ada `goods_issues` sama
- * sekali (gak ada stok/HPP yang kesentuh, mis. pendapatan jasa). 0 vs 1 baris `goods_issues`
- * per invoice, gak pernah lebih dari 1 -- tiap `create_goods_issue` call bikin invoice barunya
- * sendiri (fulfillment dicicil = invoice terpisah tiap cicilan). Dihitung server-side lewat
- * kolom `origin` di `ar_invoices_with_status` (migration `0038`), bukan lagi fungsi client --
- * lihat `ArInvoiceListRow`. */
+ * Pemenuhan Bertahap"): (1) `order` — pemenuhan Sales Order, ada `goods_issues` yang salah
+ * satu baris-nya nunjuk balik ke `order_lines` (`order_line_id` keisi); (2) `goods_movement`
+ * — Goods Issue langsung (jual spontan, kios walk-in), ada `goods_issues` tapi `order_line_id`
+ * semua baris-nya kosong; (3) `financial_only` — invoice dicatat manual lewat /ar-invoices,
+ * gak ada `goods_issues` sama sekali (gak ada stok/HPP yang kesentuh, mis. pendapatan jasa).
+ * 0 vs 1 baris `goods_issues` per invoice, gak pernah lebih dari 1 -- tiap `create_goods_issue`
+ * call bikin invoice barunya sendiri (fulfillment dicicil = invoice terpisah tiap cicilan).
+ * Vocabulary ini SAMA dipakai sisi AP (`ApBillOrigin`, `order`=dari Purchase Order,
+ * `goods_movement`=terima barang langsung) sejak migration `0066` -- sebelumnya AR pakai
+ * `sales_order`/`goods_issue`/`financial_only`, AP pakai `grn`/`langsung`, diunifikasi biar
+ * 1 vocabulary buat konsep yang sama di 2 arah. Dihitung server-side lewat `recompute_transaction_status`
+ * (migration `0064`+`0066`), kolom `origin` di `ar_invoices_with_status` -- lihat `ArInvoiceListRow`. */
 export type ArInvoiceListRow = {
   id: string;
   customer_id: string;

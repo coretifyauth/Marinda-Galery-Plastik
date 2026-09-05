@@ -30,14 +30,18 @@ export type ApBill = {
   ap_deposit_applications?: { amount: number }[];
 };
 
-export type ApBillOrigin = "grn" | "langsung";
+export type ApBillOrigin = "order" | "goods_movement" | "financial_only";
 
-/** Bill lahir dari PO -> Goods Receipt (`goods_receipt_notes.bill_id` nunjuk balik ke bill ini) vs
- * bill langsung dicatat manual lewat /ap-bills (gak ada goods_receipt_notes sama sekali, biasanya
- * beban non-persediaan atau nota yang gak lewat PO). 0 vs 1 baris `goods_receipt_notes` per bill,
- * gak pernah lebih dari 1 -- tiap create_goods_receipt call bikin bill barunya sendiri. Dihitung
- * server-side lewat kolom `origin` di `ap_bills_with_status` (migration `0038`), bukan lagi
- * fungsi client -- lihat `ApBillListRow`. */
+/** Bill lahir dari 3 jalur beda, mirror `ArInvoiceOrigin`: (1) `order` — dari Purchase Order,
+ * `goods_receipt_notes.order_id` keisi; (2) `goods_movement` — terima barang langsung tanpa PO,
+ * ada `goods_receipt_notes` tapi `order_id` kosong; (3) `financial_only` — bill dicatat manual
+ * lewat /ap-bills, gak ada `goods_receipt_notes` sama sekali (biasanya beban non-persediaan).
+ * 0 vs 1 baris `goods_receipt_notes` per bill, gak pernah lebih dari 1 -- tiap
+ * `create_goods_receipt` call bikin bill barunya sendiri. Vocabulary ini sebelumnya cuma
+ * `grn`/`langsung` (2-arah, gak pernah bedain GRN dari PO vs terima langsung) -- diunifikasi
+ * sama sisi AR jadi 3-arah di migration `0066`. Dihitung server-side lewat
+ * `recompute_transaction_status` (migration `0064`+`0066`), kolom `origin` di
+ * `ap_bills_with_status` -- lihat `ApBillListRow`. */
 export type ApBillListRow = {
   id: string;
   supplier_id: string;

@@ -50,10 +50,10 @@ erDiagram
 | `item_units` | Satuan jual per barang (boleh lebih dari 1, misal per pieces atau per pack) — masing-masing punya faktor konversi ke satuan dasar & harga sendiri | `items` |
 | `inventory_balances` | Posisi stok tersimpan per barang — qty tersedia + harga rata-rata berjalan, satu-satunya state costing yang hidup di modul ini | `items` (1:1) |
 | `orders` + `order_lines` | Komitmen pesan — belum ada transaksi jurnal. 1 struktur buat 2 arah (dibedakan kolom arah): pesan ke pemasok (dulu "Purchase Order", **opsional**) atau pesan dari customer (dulu "Sales Order", **opsional** dari awal) | `counterparties`, `items` |
-| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima (arah beli) — dibuat bersamaan dengan bill (tagihan) pemasok, memicu penambahan Persediaan | `orders` (arah beli), tagihan pemasok (`ap_bills`), `items`, `inventory_balances` |
+| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima (arah beli) — dibuat bersamaan dengan bill (tagihan) pemasok, memicu penambahan Persediaan | `orders` (arah beli), tagihan pemasok (`transactions`, tipe `OUTBOUND`), `items`, `inventory_balances` |
 | `bom_headers` + `bom_lines` | Resep produksi: 1 barang jadi butuh bahan baku apa saja, berapa takarannya per 1 batch. Boleh direvisi kapan saja tanpa mengubah histori produksi yang sudah terjadi | `items` |
 | `production_orders` + `production_order_lines` | Satu kejadian produksi nyata: mengonsumsi bahan baku sesuai resep, menghasilkan barang jadi, dan ke transaksi jurnal yang otomatis dibuat | `bom_headers`, `items`, `inventory_balances`, transaksi jurnal |
-| `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual (arah jual) — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`ar_invoices`), `orders` (arah jual, opsional), `items`, `inventory_balances`, transaksi jurnal |
+| `goods_issues` + `goods_issue_lines` | Barang jadi keluar karena terjual (arah jual) — dibuat bersamaan dengan invoice penjualan, dan ke transaksi jurnal khusus HPP yang otomatis dibuat | invoice penjualan (`transactions`, tipe `INBOUND`), `orders` (arah jual, opsional), `items`, `inventory_balances`, transaksi jurnal |
 | `stock_opnames` + `stock_opname_lines` | Sesi hitung fisik gudang — posisi stok disesuaikan langsung ke hasil hitung, selisih diakui sebagai beban/pendapatan | `items`, `inventory_balances`, transaksi jurnal (1 per baris yang ada selisih) |
 | `inventory_movements` | Kartu Stok — riwayat mutasi kronologis per barang (kapan masuk/keluar, dari mana, berapa). Lapisan riwayat di atas `inventory_balances`, bukan pengganti — kalau ada beda, `inventory_balances` yang benar | `items`, dan SATU dari 11 kemungkinan dokumen sumber tiap barisnya (lihat submodule "Kartu Stok / Riwayat Mutasi per Item") |
 
@@ -108,7 +108,7 @@ erDiagram
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `orders` + `order_lines` | Komitmen pesan, opsional. Belum ada transaksi jurnal — ini baru rencana, belum ada pertukaran aset. 1 struktur buat 2 arah: pesan ke pemasok (dulu "Purchase Order") atau pesan dari customer (dulu "Sales Order") | `counterparties`, `items` |
-| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima (arah beli) — boleh berasal dari order, boleh juga berdiri sendiri (langsung, tanpa order). Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `orders` (arah beli, opsional), `counterparties` (wajib kalau gak lewat order), `ap_bills`, `items`, `inventory_balances` |
+| `goods_receipt_notes` + `goods_receipt_lines` | Bukti barang benar-benar diterima (arah beli) — boleh berasal dari order, boleh juga berdiri sendiri (langsung, tanpa order). Dibuat bersamaan dengan bill (tagihan) pemasok — nota penerimaan barang dianggap sama waktunya dengan tagihan resmi, jadi tidak perlu akun perantara "barang diterima belum ditagih" | `orders` (arah beli, opsional), `counterparties` (wajib kalau gak lewat order), `transactions` (tipe `OUTBOUND`), `items`, `inventory_balances` |
 
 **Alur Teknis (RPC)**
 
@@ -143,7 +143,7 @@ erDiagram
 | `order_lines` | banyak-ke-satu | `orders` |
 | `goods_receipt_lines` | banyak-ke-satu, dicocokkan ke (opsional) | `order_lines` (order arah beli) |
 | `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `order_lines` (order arah jual) |
-| `goods_receipt_notes` | satu-ke-satu | tagihan pemasok (`ap_bills`) |
+| `goods_receipt_notes` | satu-ke-satu | tagihan pemasok (`transactions`, tipe `OUTBOUND`) |
 | `goods_receipt_lines` | tiap baris memicu update | `inventory_balances` |
 
 ## Produksi (Bill of Materials & Production Order)
@@ -184,7 +184,7 @@ erDiagram
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `goods_issues` + `goods_issue_lines` | Kebalikan dari penerimaan barang — barang jadi keluar karena terjual. Dibuat bersamaan dengan invoice penjualan | invoice penjualan (`ar_invoices`), `items`, `inventory_balances`, transaksi jurnal |
+| `goods_issues` + `goods_issue_lines` | Kebalikan dari penerimaan barang — barang jadi keluar karena terjual. Dibuat bersamaan dengan invoice penjualan | invoice penjualan (`transactions`, tipe `INBOUND`), `items`, `inventory_balances`, transaksi jurnal |
 
 **Alur Teknis (RPC)**
 
@@ -204,7 +204,7 @@ erDiagram
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `goods_issues` | satu-ke-satu | invoice penjualan (`ar_invoices`) |
+| `goods_issues` | satu-ke-satu | invoice penjualan (`transactions`, tipe `INBOUND`) |
 | `goods_issue_lines` | tiap baris didahului konsumsi dari | `inventory_balances` |
 | `goods_issue_lines` | opsional, banyak-ke-satu, dicocokkan ke | `order_lines` (order arah jual) |
 | Retur barang (modul Piutang Usaha) | banyak-ke-satu, kebalikan pemakaian | `goods_issues` — detail penuh: `docs/architecture/ar-schema.md` |

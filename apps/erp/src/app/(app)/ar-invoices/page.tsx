@@ -43,14 +43,14 @@ const statusStyle: Record<string, string> = {
 };
 
 const originLabel: Record<string, string> = {
-  sales_order: "Dari Sales Order",
-  goods_issue: "Goods Issue Langsung",
+  order: "Dari Sales Order",
+  goods_movement: "Goods Issue Langsung",
   financial_only: "Financial Only",
 };
 
 const originStyle: Record<string, string> = {
-  sales_order: "bg-blue-50 text-blue-700",
-  goods_issue: "bg-slate-100 text-slate-600",
+  order: "bg-blue-50 text-blue-700",
+  goods_movement: "bg-slate-100 text-slate-600",
   financial_only: "bg-purple-50 text-purple-700",
 };
 
@@ -313,8 +313,8 @@ export default function ArInvoicesPage() {
                   className={compactFilterSelectClass}
                 >
                   <option value="">Semua tipe</option>
-                  <option value="sales_order">{originLabel.sales_order}</option>
-                  <option value="goods_issue">{originLabel.goods_issue}</option>
+                  <option value="order">{originLabel.order}</option>
+                  <option value="goods_movement">{originLabel.goods_movement}</option>
                   <option value="financial_only">{originLabel.financial_only}</option>
                 </select>
               </th>

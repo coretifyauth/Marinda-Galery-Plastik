@@ -43,13 +43,15 @@ const statusStyle: Record<string, string> = {
 };
 
 const originLabel: Record<string, string> = {
-  grn: "Dari GRN",
-  langsung: "Bill Langsung",
+  order: "Dari Purchase Order",
+  goods_movement: "Terima Barang Langsung",
+  financial_only: "Bill Langsung",
 };
 
 const originStyle: Record<string, string> = {
-  grn: "bg-blue-50 text-blue-700",
-  langsung: "bg-slate-100 text-slate-600",
+  order: "bg-blue-50 text-blue-700",
+  goods_movement: "bg-slate-100 text-slate-600",
+  financial_only: "bg-purple-50 text-purple-700",
 };
 
 export default function ApBillsPage() {
@@ -332,8 +334,9 @@ export default function ApBillsPage() {
                   className={compactFilterSelectClass}
                 >
                   <option value="">Semua tipe</option>
-                  <option value="grn">{originLabel.grn}</option>
-                  <option value="langsung">{originLabel.langsung}</option>
+                  <option value="order">{originLabel.order}</option>
+                  <option value="goods_movement">{originLabel.goods_movement}</option>
+                  <option value="financial_only">{originLabel.financial_only}</option>
                 </select>
               </th>
               <th className="px-4 py-1.5" />
