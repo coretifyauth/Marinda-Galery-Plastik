@@ -170,13 +170,25 @@ Full body: `supabase/migrations/0069_unify_payments_schema.sql`.
 
 Signature & fungsi gak berubah, cuma `from ar_payments`/`ap_payments where invoice_id/
 bill_id = ...` diganti `from payments where transaction_id = ... and type = 'INBOUND'/
-'OUTBOUND'`. Detail reducer lengkap tetap di `ar-schema.md`/`ap-schema.md` masing-masing.
+'OUTBOUND'`. Detail reducer lengkap tetap di `transactions-schema.md` submodule
+`ar_invoice_remaining`/`ap_bill_remaining`.
 
 ## `cancel_ar_invoice`/`cancel_ap_bill` — guard payment-count target `payments`
 
 Signature & fungsi gak berubah, cuma `count(*) from ar_payments/ap_payments where
 invoice_id/bill_id = ...` diganti `count(*) from payments where transaction_id = ... and
 type = 'INBOUND'/'OUTBOUND'`.
+
+## Histori: `ap_payment_allocations` many-to-many dicabut (migration `0011_ap_payment_single_bill.sql`)
+
+AP awalnya (desain Fase 4 pra-unifikasi) lebih longgar dari AR — tabel jembatan
+`ap_payment_allocations` ngizinin 1 payment dipecah ke banyak bill sekaligus ("bayar
+gabungan"). Migration `0011` (2026-08-08, menyusul `0010` AR allow-partial-payment)
+nyamain filosofi kedua sisi: **payment boleh cicil, tapi wajib fokus nunjuk 1 transaksi
+tertentu** — `ap_payments.bill_id` (sekarang `payments.transaction_id`) FK langsung,
+bukan lewat tabel jembatan. Tabel `ap_payment_allocations` di-drop total (0 baris di DB
+live saat itu, verifikasi sebelum drop) — 1 payment = 1 transaksi tetap berlaku sampai
+sekarang, gak pernah di-restore.
 
 ## RLS Policy & Grant
 

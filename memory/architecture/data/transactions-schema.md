@@ -9,10 +9,12 @@ keputusan & proses eksekusi lengkap: `memory/scope-debt/ar-ap-unify-transactions
 (Debit Piutang vs Kredit Utang, dst).
 
 Pola sama kayak `counterparty-schema.md` (gabung `customers`+`suppliers`): dokumen ini
-gantiin bagian "Konsep Inti" `ar-schema.md`+`ap-schema.md` yang lama. Submodule LAIN di
-2 file itu (Retur Barang, Penukaran Barang, Uang Muka/DP, dst) TETAP di file masing-masing
-— tabelnya gak ikut digabung, cuma kolom `invoice_id`/`bill_id`-nya sekarang FK ke
-`transactions(id)` (bukan `ar_invoices(id)`/`ap_bills(id)` lagi).
+gantiin bagian "Konsep Inti" `ar-schema.md`+`ap-schema.md` lama (file itu sendiri sudah
+dihapus, digantikan struktur spine-per-tabel — lihat submodule "Referensi" di bawah buat
+peta lengkap ke mana tiap bagian pindah). Tabel anak AR/AP (Retur Barang, Penukaran
+Barang, Uang Muka/DP, dst) gak ikut digabung ke `transactions` — masing-masing punya
+spine file sendiri, cuma kolom `invoice_id`/`bill_id`-nya sekarang FK ke `transactions(id)`
+(bukan `ar_invoices(id)`/`ap_bills(id)` lagi).
 
 ## Keputusan
 
@@ -155,19 +157,186 @@ create function create_transaction(
 
 Validasi: `p_type` harus `'INBOUND'`/`'OUTBOUND'`, `p_lines` wajib minimal 1 baris dan tiap
 baris `amount > 0` (fail-fast, sebelum jurnal dibuat). PPN dihitung server-side dari
-`tax_settings` (singleton, `ar-schema.md` submodule "Compounding & PPN") — sama pola
-`create_ar_invoice`/`create_ap_bill` lama, gak pernah dipercaya dari input klien.
+`tax_settings` (singleton, `tax-settings-schema.md`) — sama pola `create_ar_invoice`/
+`create_ap_bill` lama, gak pernah dipercaya dari input klien.
 
 Full body: `supabase/migrations/0063_transactions_schema.sql`.
 
-## `ar_invoice_remaining`/`ap_bill_remaining` — target `transactions`
+## Katalog kategori tambahan (`transaction_lines.account_id`) — `charge_categories`
+
+Katalog master data (bukan tabel transaksional), TETAP ADA gak kesentuh unifikasi
+`0063`-`0066` — murni buat UI (dropdown "pilih kategori" di form transaksi). **Gak ada
+FK dari sini ke `transaction_lines`** — sama kayak `item_units` yang juga cuma resolve
+pilihan di UI sebelum manggil RPC (trust boundary gak berubah: RPC tetap cuma terima
+`account_id` mentah).
+
+Awalnya 3 tabel identik terpisah per module (`ar_invoice_charge_types`/
+`ap_bill_expense_categories`/`pos_charge_types`, lihat `pos-schema.md`) — digabung jadi 1
+tabel generic `charge_categories` (migration `0073`, kolom discriminator `module` check
+`pos`/`ar`/`ap`) karena strukturnya SAMA PERSIS, gak ada asimetri kolom kayak
+`ar_invoices`/`ap_bills` dulu (bandingkan preseden `ar-ap-unify-transactions.md`). `module`
+nentuin dropdown mana yang muncul di form mana (`ar` di form `INBOUND`, `ap` di
+`OUTBOUND`, `pos` di checkout kasir) — `account_id` `module='ar'` biasanya nunjuk akun
+kategori `revenue`, `module='ap'` nunjuk akun kategori `expense`, gak pernah campur.
+
+```sql
+create table charge_categories (
+  id uuid primary key default gen_random_uuid(),
+  module text not null check (module in ('pos', 'ar', 'ap')),
+  name text not null,
+  account_id uuid not null references accounts(id),
+  archived_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+```
+
+`archived_at` — soft-delete (`state-naming-convention.md`). RLS/Grant: `select` semua
+`authenticated`, `insert`/`update` cuma `admin` (`charge_categories_insert`/`_update`) —
+pola identik `item_categories` (`items-schema.md`). **Gak ada policy `delete`** —
+nonaktifkan pakai `archived_at`.
+
+Migration awal: `0005_ar_schema.sql` (`ar_invoice_charge_types`)/`0006_ap_schema.sql`
+(`ap_bill_expense_categories`)/`0009_pos_schema.sql` (`pos_charge_types`), digabung
+`0073_unify_charge_categories.sql`.
+
+## `ar_invoice_remaining`/`ap_bill_remaining` — reducer "sisa outstanding riil", target `transactions`
 
 Signature & fungsi gak berubah dari sebelumnya, cuma `from ar_invoices`/`from ap_bills`
 diganti `from transactions` (migration `0064`+`0065` — reducer `ar_bad_debt_writeoffs`
 di `ar_invoice_remaining` sempat dipertahankan sementara di `0064` selagi tabelnya masih
-ada, dicabut beneran di `0065` bareng drop tabelnya). Detail reducer lengkap tetap di
-`ar-schema.md`/`ap-schema.md` masing-masing (gak diulang di sini, fungsinya sendiri gak
-pindah nama/lokasi konsep, cuma target tabelnya yang diganti).
+ada, dicabut beneran di `0065` bareng drop tabelnya). `ar_invoice_remaining` disentralisasi
+migration `0031` (dulu 5 fungsi ngitung ulang sendiri-sendiri, digabung jadi 1 sumber
+kebenaran — riwayat lengkap: `memory/scope-debt/ar-ap-unify-transactions.md`);
+`ap_bill_remaining` disentralisasi dari AWAL desain AP (gak pernah retrofit).
+
+```sql
+create function ar_invoice_remaining(p_invoice_id uuid) returns numeric as $$
+  select ai.amount
+    - coalesce((select sum(amount) from payments where transaction_id = p_invoice_id and type = 'INBOUND'), 0)
+    - coalesce((select sum(amount) from credit_notes where transaction_id = p_invoice_id and type = 'INBOUND'), 0)
+    - coalesce((
+        select sum(da.amount) from deposit_applications da
+        where da.transaction_id = p_invoice_id
+          and not exists (select 1 from journal_entries je where je.reverses_entry_id = da.journal_entry_id)
+      ), 0)
+    + coalesce((
+        select sum(rc.amount) from return_credits rc
+        join credit_notes acn on acn.id = rc.credit_note_id
+        where acn.transaction_id = p_invoice_id
+      ), 0)
+  from transactions ai
+  where ai.id = p_invoice_id;
+$$ language sql stable;
+
+create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
+  select ab.amount
+    - coalesce((select sum(amount) from payments where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
+    - coalesce((select sum(amount) from credit_notes where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
+    - coalesce((
+        select sum(da.amount) from deposit_applications da
+        where da.transaction_id = p_bill_id
+          and not exists (select 1 from journal_entries je where je.reverses_entry_id = da.journal_entry_id)
+      ), 0)
+    + coalesce((
+        select sum(rc.amount) from return_credits rc
+        join credit_notes acn on acn.id = rc.credit_note_id
+        where acn.transaction_id = p_bill_id
+      ), 0)
+  from transactions ab
+  where ab.id = p_bill_id;
+$$ language sql stable;
+```
+
+4 reducer masing-masing (payment/credit note langsung, deposit application aktif exclude
+reversed, return credit add-back) — bentuk final pasca `0031` (AR) dan pasca `0013`+`0072`
+(AP). `record_payment` (`payments-schema.md`) pakai fungsi ini buat guard overpay.
+Detail histori evolusi reducer (kenapa disentralisasi, bug yang pernah kejadian):
+`memory/scope-debt/ar-ap-unify-transactions.md`.
+
+## `cancel_ar_invoice`/`cancel_ap_bill` — batalkan transaksi salah input (reversing entry, dengan guard)
+
+Manggil `reverse_journal_entry` yang udah ada (Fase 2 Journal Entry) — pakai **akun yang
+sama persis** dengan transaksi asli, debit/kredit ketuker, gak butuh akun baru (ini
+koreksi "salah input", bukan kejadian bisnis baru kayak retur barang). `cancel_ar_invoice`
+auto-unwind jurnal `deposit_applications` aktif (reklasifikasi sederhana, aman dibalik —
+detail lengkap `deposits-schema.md`). `cancel_ap_bill` hard-block tambahan kalau bill
+udah punya `credit_notes` (`type='OUTBOUND'`) — AR gak punya guard setara karena retur AR
+(`credit_notes` INBOUND) gak exclusive sama pembatalan invoice (beda perilaku bisnis,
+dipertahankan apa adanya dari desain awal masing-masing).
+
+```sql
+create or replace function cancel_ar_invoice(
+  p_invoice_id uuid, p_entry_date date, p_source_ref text
+) returns uuid language plpgsql security invoker as $$
+declare
+  v_paid_count int; v_original_entry_id uuid; v_new_entry_id uuid;
+  v_application record; v_invoice_ref text;
+begin
+  select count(*) into v_paid_count
+  from payments where transaction_id = p_invoice_id and type = 'INBOUND';
+
+  if v_paid_count > 0 then
+    select source_ref into v_invoice_ref from transactions where id = p_invoice_id;
+    raise exception 'Invoice % udah punya payment -- gak bisa dibatalkan lewat jalur ini', v_invoice_ref;
+  end if;
+
+  select journal_entry_id into v_original_entry_id from transactions where id = p_invoice_id;
+  v_new_entry_id := reverse_journal_entry(v_original_entry_id, p_entry_date, p_source_ref);
+
+  for v_application in
+    select da.journal_entry_id from deposit_applications da
+    where da.transaction_id = p_invoice_id
+      and not exists (select 1 from journal_entries je where je.reverses_entry_id = da.journal_entry_id)
+  loop
+    perform reverse_journal_entry(v_application.journal_entry_id, p_entry_date, p_source_ref);
+  end loop;
+
+  return v_new_entry_id;
+end;
+$$;
+
+create or replace function cancel_ap_bill(
+  p_bill_id uuid, p_entry_date date, p_source_ref text
+) returns uuid language plpgsql security invoker as $$
+declare
+  v_allocated_count int; v_credit_note_count int; v_original_entry_id uuid;
+  v_new_entry_id uuid; v_bill_ref text;
+begin
+  select count(*) into v_allocated_count
+  from payments where transaction_id = p_bill_id and type = 'OUTBOUND';
+
+  if v_allocated_count > 0 then
+    select source_ref into v_bill_ref from transactions where id = p_bill_id;
+    raise exception 'Bill % udah punya % payment -- gak bisa dibatalkan lewat jalur ini', v_bill_ref, v_allocated_count;
+  end if;
+
+  select count(*) into v_credit_note_count
+  from credit_notes where transaction_id = p_bill_id and type = 'OUTBOUND';
+
+  if v_credit_note_count > 0 then
+    select source_ref into v_bill_ref from transactions where id = p_bill_id;
+    raise exception 'Bill % udah punya % retur (credit note) -- gak bisa dibatalkan lewat jalur ini', v_bill_ref, v_credit_note_count;
+  end if;
+
+  select journal_entry_id into v_original_entry_id from transactions where id = p_bill_id;
+  v_new_entry_id := reverse_journal_entry(v_original_entry_id, p_entry_date, p_source_ref);
+
+  return v_new_entry_id;
+end;
+$$;
+```
+
+Gak insert/update apa pun ke `transactions` — baris asli tetap ada persis kayak semula
+(immutability tetap utuh). Status "dibatalkan" murni kebaca dari keberadaan reversal di
+`journal_entries`, sama pola derived kayak status lunas/belum. Guard write-off (dulu
+ngecek `ar_bad_debt_writeoffs`) **DIHAPUS `0065`** bareng tabelnya — fitur Piutang Tak
+Tertagih dicabut total.
+
+**Gap lama (pre-existing, bukan diperkenalkan migration manapun)**: kedua fungsi ini gak
+ngecek apakah `journal_entry_id`-nya udah pernah di-reverse sebelumnya — kalau dipanggil
+2x buat transaksi yang sama, bisa double-reversal. Di luar scope migration manapun
+sejauh ini, dicatat sebagai potensi scope-debt.
 
 ## `recompute_transaction_status(p_transaction_id)` — gantiin `recompute_ar_invoice_status`+`recompute_ap_bill_status` (migration `0064`, origin CASE diupdate `0066`)
 
@@ -277,7 +446,7 @@ Signature EKSTERNAL gak berubah sama sekali (migration `0064`) — cuma body int
 ganti manggil `create_transaction('INBOUND'/'OUTBOUND', ...)` gantiin
 `create_ar_invoice(...)`/`create_ap_bill(...)`. Jurnal HPP/Persediaan yang dibikin
 `create_goods_issue`/`create_goods_receipt` SENDIRI (terpisah dari `create_transaction`)
-sama sekali gak kesentuh — detail lengkap tetap di `inventory-schema.md`.
+sama sekali gak kesentuh — detail lengkap tetap di `goods-issue-schema.md`/`goods-receipt-schema.md`.
 
 ## Migrasi struktural (riwayat singkat — detail lengkap `memory/scope-debt/ar-ap-unify-transactions.md`, sudah ditutup)
 
@@ -296,14 +465,19 @@ sama sekali gak kesentuh — detail lengkap tetap di `inventory-schema.md`.
 - `0066` — unifikasi vocabulary `origin` (`financial_only`/`order`/`goods_movement`
   dipakai kedua arah, gantiin `sales_order`/`goods_issue` vs `grn`/`langsung`).
 
-## Referensi
+## Referensi — peta tabel anak AR/AP lama (`ar-schema.md`/`ap-schema.md`, sudah dihapus) ke spine baru
 
-- `memory/architecture/data/ar-schema.md` — submodule AR yang tersisa (Retur Barang,
-  Penukaran Barang, Uang Muka/DP AR) — `invoice_id` sekarang FK ke `transactions(id)`.
-- `memory/architecture/data/ap-schema.md` — submodule AP yang tersisa (Retur Barang ke
-  Supplier, Uang Muka/DP AP) — `bill_id` sekarang FK ke `transactions(id)`.
+- `memory/architecture/data/credit-notes-schema.md` — Retur Barang (AR & AP), termasuk
+  `inventory_returns`/`purchase_return_lines` — `invoice_id`/`bill_id` sekarang FK ke
+  `transactions(id)`.
+- `memory/architecture/data/return-credits-schema.md` — Saldo Kredit dari Retur (AR & AP).
+- `memory/architecture/data/warranty-replacements-schema.md` — Penukaran Barang
+  Pasca-Retur (Garansi), sisi AR.
+- `memory/architecture/data/purchase-replacements-schema.md` — Retur Barang ke Supplier
+  Opsi B (tukar barang), sisi AP.
+- `memory/architecture/data/deposits-schema.md` — Uang Muka/DP, AR & AP.
 - `memory/architecture/data/counterparty-schema.md` — preseden pola dokumen ini (gabung
   `customers`+`suppliers` jadi `counterparties`), `counterparty_role_guard()`.
-- `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Sales Order
-  (`orders`)" — preseden generalisasi PO+SO, pola `_repoint_fk`, deviasi "2 view tetap
-  terpisah" yang jadi rujukan migration `0064` di atas.
+- `memory/architecture/data/orders-schema.md` — preseden generalisasi PO+SO, pola
+  `_repoint_fk`, deviasi "2 view tetap terpisah" yang jadi rujukan migration `0064` di
+  atas.

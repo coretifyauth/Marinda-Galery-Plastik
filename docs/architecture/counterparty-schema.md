@@ -6,7 +6,7 @@ Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng Piutang (AR)
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `counterparties` | Master data 1 pihak — gabungan tabel pelanggan dan pemasok yang dulu terpisah | — |
+| `counterparties` | Master data 1 pihak — pelanggan dan pemasok dalam 1 tabel yang sama | — |
 | `counterparty_type_mapping` | Peran pihak itu (pelanggan dan/atau pemasok) — 1 pihak boleh punya lebih dari 1 peran sekaligus | `counterparties` |
 
 ## Konsep Inti
@@ -18,7 +18,7 @@ Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng Piutang (AR)
 | `counterparties` | Nama, kontak, termin pembayaran, plus batas kredit & toleransi telat (cuma relevan buat peran pelanggan) | — |
 | `counterparty_type_mapping` | 1 baris per peran yang dimiliki 1 pihak | `counterparties` |
 
-Dulu "pelanggan" dan "pemasok" adalah 2 tabel yang sama sekali terpisah. Digabung jadi 1 karena strukturnya nyaris identik (cuma beda 2 kolom yang emang cuma relevan buat pelanggan), dan supaya di masa depan 1 pihak yang sama bisa berperan pelanggan DAN pemasok sekaligus tanpa harus dicatat sebagai 2 entitas berbeda dengan ID berbeda.
+"Pelanggan" dan "pemasok" disimpan di 1 tabel yang sama karena strukturnya nyaris identik (cuma beda 2 kolom yang emang cuma relevan buat pelanggan), dan supaya 1 pihak yang sama bisa berperan pelanggan DAN pemasok sekaligus tanpa harus dicatat sebagai 2 entitas berbeda dengan ID berbeda.
 
 **Alur Teknis (RPC)**
 
@@ -44,24 +44,24 @@ Dulu "pelanggan" dan "pemasok" adalah 2 tabel yang sama sekali terpisah. Digabun
 
 **Peta Data (ERD)**
 
-| Kolom di tabel transaksi | Peran wajib | Modul |
+`transactions`/`payments`/`deposits`/`return_credits`/`orders` adalah tabel generic 1-kolom, dipakai bareng AR & AP dan dibedakan kolom `type`/`direction` (lihat `transactions-schema.md`, `payments-schema.md`, `deposits-schema.md`, `return-credits-schema.md`, `orders-schema.md`) — gak ada kolom `customer_id`/`supplier_id` terpisah di tabel-tabel ini, semuanya 1 kolom `counterparty_id` tunggal, peran wajibnya ditentukan dinamis dari kolom arah di baris yang sama:
+
+| Kolom di tabel transaksi | Peran wajib | Ditentukan dari |
 |---|---|---|
-| `ar_invoices.customer_id` | pelanggan | Piutang (AR) |
-| `ar_payments.customer_id` | pelanggan | Piutang (AR) |
-| `ar_deposits.customer_id` | pelanggan | Piutang (AR) |
-| `ar_return_credits.customer_id` | pelanggan | Piutang (AR) |
-| `pos_sales.customer_id` (opsional) | pelanggan | Kios (POS) |
-| `ap_bills.supplier_id` | pemasok | Utang (AP) |
-| `ap_payments.supplier_id` | pemasok | Utang (AP) |
-| `ap_deposits.supplier_id` | pemasok | Utang (AP) |
-| `ap_return_credits.supplier_id` | pemasok | Utang (AP) |
-| `orders.counterparty_id` | pelanggan (arah jual) atau pemasok (arah beli), tergantung kolom arah di baris yang sama | Inventory (Order beli/jual — lihat `docs/architecture/inventory-schema.md`) |
+| `transactions.counterparty_id` | pelanggan (invoice AR) atau pemasok (bill AP) | Kolom `type` (`INBOUND`/`OUTBOUND`) di baris yang sama |
+| `payments.counterparty_id` | pelanggan atau pemasok | Kolom `type` di baris yang sama |
+| `deposits.counterparty_id` | pelanggan atau pemasok | Kolom `type` di baris yang sama |
+| `return_credits.counterparty_id` | pelanggan atau pemasok | Kolom `type` di baris yang sama |
+| `orders.counterparty_id` | pelanggan (arah jual) atau pemasok (arah beli) | Kolom `direction` di baris yang sama |
+| `pos_sales.customer_id` (opsional) | pelanggan | Tetap (tabel ini cuma 1 arah) |
+
+`credit_notes` sengaja **tidak** punya kolom pihak sendiri — pihaknya ditelusuri gak langsung lewat `transaction_id` ke `transactions.counterparty_id`, jadi gak butuh pengaman perannya sendiri (peran udah tervalidasi waktu `transactions`-nya dibuat).
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Simpan transaksi apa pun yang menunjuk pihak (invoice, pembayaran, uang muka, retur, penjualan kios, order beli/jual) | Seluruh RPC/insert yang sudah ada di modul masing-masing (**tidak ada RPC baru** khusus untuk ini) | Sebelum baris transaksi tersimpan, sistem cek dulu peran pihak yang ditunjuk | Ditolak kalau pihak itu belum terdaftar berperan sesuai kebutuhan tabel itu — dicek otomatis di level database, bukan cuma disiplin form/kode |
+| Simpan transaksi apa pun yang menunjuk pihak (invoice/bill, pembayaran, uang muka, retur kredit, penjualan kios, order beli/jual) | Seluruh RPC/insert yang sudah ada di modul masing-masing (**tidak ada RPC baru** khusus untuk ini) | Sebelum baris transaksi tersimpan, sistem cek dulu peran pihak yang ditunjuk sesuai arah baris itu | Ditolak kalau pihak itu belum terdaftar berperan sesuai kebutuhan baris itu — dicek otomatis di level database, bukan cuma disiplin form/kode |
 
 **Aturan Bisnis → RPC**
 
@@ -73,7 +73,7 @@ Dulu "pelanggan" dan "pemasok" adalah 2 tabel yang sama sekali terpisah. Digabun
 **Interaksi Antar Tabel**
 
 - Semua baris di tabel Peta Data submodule ini menunjuk balik ke `counterparty_type_mapping` (lewat pengaman otomatis di atas), bukan lewat relasi FK biasa — jadi gak kelihatan di ERD sebagai garis penghubung biasa.
-- `orders` sengaja dijaga pengaman yang sedikit beda dari 9 tabel lainnya — karena 1 kolom `counterparty_id` yang sama dipakai buat 2 arah (beli/jual), peran wajibnya ditentukan dinamis dari kolom arah di baris itu sendiri, bukan tetap 1 peran per tabel seperti 9 tabel lainnya.
+- Karena 1 kolom `counterparty_id`/`customer_id` yang sama dipakai bergantian, tiap tabel generic di atas sebenarnya dijaga SEPASANG pengaman (1 buat pelanggan, 1 buat pemasok) yang saling eksklusif — cuma salah satu yang aktif tergantung arah baris itu.
 
 ## Dampak ke Piutang (AR) & Utang (AP)
 
@@ -85,14 +85,14 @@ Tidak ada tabel baru — perhitungan termin pembayaran, batas kredit, dan tolera
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Terbitkan invoice/bill baru | RPC penerbitan invoice (Piutang)/bill (Utang) yang sudah ada | Termin pembayaran & (khusus invoice) pengecekan batas kredit tetap jalan seperti sebelumnya, cuma sumber datanya sekarang `counterparties` | — |
+| Terbitkan invoice/bill baru | RPC penerbitan invoice (Piutang)/bill (Utang) yang sudah ada | Termin pembayaran & (khusus invoice) pengecekan batas kredit dihitung dari `counterparties` | — |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Tanggal jatuh tempo dan batas kredit tetap dihitung persis sama seperti sebelum penggabungan | Logika perhitungannya 0 perubahan — cuma tabel sumbernya yang beda |
+| Tanggal jatuh tempo dan batas kredit dihitung dari `counterparties` | Logika perhitungannya membaca `counterparties` sebagai sumber data tunggal untuk kedua arah |
 
 **Interaksi Antar Tabel**
 
-- `ar_invoices`/`ap_bills` dan seluruh tabel turunannya (pembayaran, uang muka, retur, write-off) tetap menunjuk `counterparties` seperti dulu menunjuk tabel pelanggan/pemasok masing-masing — cuma nama tabel tujuannya yang berubah, bentuk relasinya tidak.
+- `transactions` dan seluruh tabel turunannya (pembayaran, uang muka, retur) menunjuk `counterparties` untuk kedua arah (piutang maupun utang).

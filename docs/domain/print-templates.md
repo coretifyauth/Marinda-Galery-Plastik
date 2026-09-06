@@ -12,7 +12,7 @@ Solusinya: tiap halaman detail dokumen yang relevan dapat tombol "Cetak" yang me
 
 ## Konsep Inti
 
-Fitur ini tadinya murni **layer presentasi** — gak ada tabel/data baru yang disimpan, cetakan dirender langsung dari data yang sudah ada di sistem (`ar_invoices`, `purchase_orders`, dst). Sejak submodule "Kop Surat & Blok Tanda Tangan" di bawah, ada 2 baris config baru (identitas perusahaan, daftar penandatangan) — tapi prinsipnya tetap sama: gak ada hasil cetak yang disimpan/di-generate terpisah, cuma sumber datanya sekarang ada 2 (data transaksi + config cetakan).
+Fitur ini pada dasarnya murni **layer presentasi** — gak ada tabel/data baru yang disimpan, cetakan dirender langsung dari data yang sudah ada di sistem (`ar_invoices`, `purchase_orders`, dst). Submodule "Kop Surat & Blok Tanda Tangan" di bawah nambahin 2 baris config (identitas perusahaan, daftar penandatangan) — tapi prinsipnya tetap sama: gak ada hasil cetak yang disimpan/di-generate terpisah, sumber datanya cuma ada 2 (data transaksi + config cetakan).
 
 ### Live Data, Bukan Snapshot Beku
 
@@ -45,17 +45,17 @@ Fitur ini tadinya murni **layer presentasi** — gak ada tabel/data baru yang di
 **Common Mistakes**
 - Mengira semua tabel item di semua cetakan otomatis dapat kolom harga — cuma kalau harga per unit itu memang tersimpan di data sumbernya. Mengarang harga (misal pakai cost/HPP sebagai pengganti harga jual) MALAH salah — HPP itu biaya kita, bukan harga yang ditagih ke customer, jangan ditampilkan sebagai "harga" di dokumen customer-facing.
 
-### Cakupan Dokumen (Fase 1)
+### Cakupan Dokumen
 
 **Cara Kerja**
-- Baru **AR Invoice** dan **Purchase Order** yang punya tombol cetak. Dokumen transaksional lain (AP Bill, Goods Receipt, Goods Issue, dst) belum dicakup — ditambahkan belakangan sesuai kebutuhan nyata, pola implementasinya sama (reuse mekanisme yang sama, cukup tambah 1 handler per halaman detail).
+- Baru **AR Invoice** dan **Purchase Order** yang punya tombol cetak. Dokumen transaksional lain (AP Bill, Goods Receipt, Goods Issue, dst) belum dicakup — pola implementasinya sama (reuse mekanisme yang sama, cukup tambah 1 handler per halaman detail) kalau suatu saat mau diperluas.
 
 **Aturan Bisnis**
 - AR Invoice: cetakan menampilkan info invoice (nomor, tanggal, jatuh tempo, customer), rincian barang (kalau invoice-nya "Full" — ada Goods Issue di baliknya) atau catatan "financial-only" (kalau gak ada barang fisik), dan ringkasan (jumlah, terbayar, DP, retur, write-off, outstanding).
 - Purchase Order: cetakan menampilkan info PO (nomor, tanggal, estimasi tiba, supplier) dan tabel item pesanan (nama, qty, harga/unit, subtotal, total).
 
 **Common Mistakes**
-- Mengira semua dokumen transaksional otomatis bisa dicetak begitu fitur ini ada — cuma 2 jenis dokumen yang sudah didukung Fase 1.
+- Mengira semua dokumen transaksional otomatis bisa dicetak begitu fitur ini ada — cuma 2 jenis dokumen yang saat ini didukung.
 
 ### Kop Surat & Blok Tanda Tangan
 

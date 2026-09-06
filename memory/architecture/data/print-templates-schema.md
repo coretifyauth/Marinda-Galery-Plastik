@@ -6,7 +6,7 @@ Domain context: `memory/domain/print-templates.md` submodule "Kop Surat & Blok T
 
 ### `company_settings`
 
-Identitas perusahaan buat kop surat cetakan — singleton, pola sama `tax_settings` (`memory/architecture/data/ar-schema.md`): PK `id boolean` yang cuma bisa bernilai `true`, dijaga `check (id)` supaya baris kedua gak mungkin ke-insert. `logo_url` murni link ke gambar yang sudah di-host di tempat lain (keputusan eksplisit 2026-08-15) — gak ada Supabase Storage bucket/upload file di fase ini, jadi kolomnya `text` nullable biasa, bukan referensi ke storage object.
+Identitas perusahaan buat kop surat cetakan — singleton, pola sama `tax_settings` (`memory/architecture/data/tax-settings-schema.md`): PK `id boolean` yang cuma bisa bernilai `true`, dijaga `check (id)` supaya baris kedua gak mungkin ke-insert. `logo_url` murni link ke gambar yang sudah di-host di tempat lain (keputusan eksplisit 2026-08-15) — gak ada Supabase Storage bucket/upload file di fase ini, jadi kolomnya `text` nullable biasa, bukan referensi ke storage object.
 
 ```sql
 create table company_settings (
@@ -48,7 +48,7 @@ create trigger document_signatories_set_updated_at
   for each row execute function set_updated_at();
 ```
 
-Pola master data mutable biasa (`archived_at` nullable, state-naming-convention.md) — mirip `item_categories`/`ar_invoice_charge_types`, bedanya tabel ini **juga** boleh di-hard-delete (lihat migration `0027` di bawah), gak cuma diarsipkan.
+Pola master data mutable biasa (`archived_at` nullable, state-naming-convention.md) — mirip `item_categories`/`charge_categories`, bedanya tabel ini **juga** boleh di-hard-delete (lihat migration `0027` di bawah), gak cuma diarsipkan.
 
 ### RLS & Grant
 
@@ -94,7 +94,7 @@ grant select, insert, update on document_signatories to authenticated;
 
 ### Hard Delete — migration `0027_document_signatories_hard_delete.sql`
 
-Follow-up same-day: `document_signatories` sengaja **dibedain dari pola `item_categories`/`ar_invoice_charge_types`** (yang delete-nya ditutup total, cuma bisa diarsipkan) — di sini hard delete AMAN karena gak ada FK dari tabel manapun ke `document_signatories.id` (cross-cutting config, dibaca by-value pas cetak, bukan direferensikan lewat FK). Keputusan eksplisit user (2026-08-15): admin boleh hapus permanen, `archived_at` (dari `0026`) tetap ada sebagai opsi nonaktifkan sementara tanpa hapus datanya.
+Follow-up same-day: `document_signatories` sengaja **dibedain dari pola `item_categories`/`charge_categories`** (yang delete-nya ditutup total, cuma bisa diarsipkan) — di sini hard delete AMAN karena gak ada FK dari tabel manapun ke `document_signatories.id` (cross-cutting config, dibaca by-value pas cetak, bukan direferensikan lewat FK). Keputusan eksplisit user (2026-08-15): admin boleh hapus permanen, `archived_at` (dari `0026`) tetap ada sebagai opsi nonaktifkan sementara tanpa hapus datanya.
 
 ```sql
 create policy document_signatories_delete on document_signatories

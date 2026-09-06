@@ -4,14 +4,14 @@
 
 | Tabel | Fungsi |
 |---|---|
-| Default Akun | Master mapping "peran akun" (mis. Piutang Usaha, Kas Toko) ke 1 akun tetap di Chart of Accounts — dipakai form transaksi supaya user gak lagi milih akun bebas. |
+| Default Akun | Master mapping "peran akun" (mis. Piutang Usaha, Kas Toko) ke 1 akun tetap di Chart of Accounts — dipakai form transaksi supaya user gak perlu milih akun bebas. |
 | Preset Akun Aset Tetap | Master paket 3 akun sekaligus (Aset/Akumulasi Penyusutan/Beban Penyusutan) per jenis aset tetap. |
 
 ## Masalah yang Diselesaikan
 
-Sebelumnya, hampir semua form transaksi (AR Invoice, AP Bill, Goods Issue, Goods Receipt, Production Order, Sales Order, AR/AP Deposit, Items, Stock Opname, dan sebagian besar aksi di halaman detail seperti retur/write-off/pembayaran/refund) menampilkan dropdown akun **kosong** yang isinya seluruh Chart of Accounts — user (yang belum tentu paham debit/kredit) harus milih sendiri akun mana yang benar. Ini rawan salah, dan pernah beneran kejadian: 1 kasus retur AP Bill salah pilih akun, jurnalnya jadi salah arah.
+Untuk sebagian besar field akun di form transaksi (AR Invoice, AP Bill, Goods Issue, Goods Receipt, Production Order, Sales Order, AR/AP Deposit, Items, Stock Opname, dan sebagian besar aksi di halaman detail seperti retur/write-off/pembayaran/refund), jawabannya SELALU sama — "Akun Piutang Usaha" di form AR Invoice akan selalu akun yang sama setiap kali, gak pernah beda-beda per transaksi. Kalau field ini dibiarkan jadi dropdown bebas berisi seluruh Chart of Accounts, user (yang belum tentu paham debit/kredit) harus milih sendiri akun mana yang benar — rawan salah pilih, dan salah pilih akun di sini bikin jurnalnya salah arah.
 
-Padahal untuk sebagian besar field ini, jawabannya SELALU sama — "Akun Piutang Usaha" di form AR Invoice akan selalu akun yang sama setiap kali, gak pernah beda-beda per transaksi. Modul ini menutup gap itu: field-field seperti ini sekarang otomatis terisi & terkunci (read-only), user tinggal lihat, gak bisa salah pilih.
+Modul ini menutup gap itu: field-field seperti ini otomatis terisi & terkunci (read-only), user tinggal lihat, gak bisa salah pilih.
 
 ## Default Akun
 
@@ -24,7 +24,7 @@ Padahal untuk sebagian besar field ini, jawabannya SELALU sama — "Akun Piutang
 - Kalau suatu peran belum di-set admin (kasusnya harusnya jarang, semua peran yang dipakai sudah diisi dari awal), field itu tampil peringatan merah + link ke halaman Pengaturan, bukan diam-diam dikosongkan atau nampilin dropdown bebas lagi.
 
 **Aturan Bisnis → Data**
-- "User gak boleh salah pilih akun" dijaga karena gak ada lagi dropdown bebas untuk field-field ini — satu-satunya cara mengubah akun yang dipakai adalah admin masuk ke halaman Pengaturan.
+- "User gak boleh salah pilih akun" dijaga karena gak ada dropdown bebas untuk field-field ini — satu-satunya cara mengubah akun yang dipakai adalah admin masuk ke halaman Pengaturan.
 
 **Kasus khusus: Kas/Bank** — 1 pengecualian, field "Akun Kas/Bank" tetap butuh 1 pilihan nyata dari user (tunai fisik atau transfer/QRIS), tapi pilihannya cuma 2 tombol (Tunai / Transfer Bank), bukan dropdown seluruh akun — mirip cara kios (POS) sudah kerja duluan.
 
@@ -44,7 +44,7 @@ Padahal untuk sebagian besar field ini, jawabannya SELALU sama — "Akun Piutang
 
 ## Kasus Khusus — Retur AP Bill
 
-Field akun kredit di panel Retur AP Bill (persis lokasi bug nyata yang jadi pemicu modul ini) sengaja BUKAN 1 akun tetap — harus sama dengan akun yang dipakai waktu bill itu dicatat pertama kali, dan itu bisa beda-beda tergantung isi bill-nya. Solusinya: pilihannya dibatasi cuma ke akun-akun yang beneran dipakai di bill yang sedang diretur (bukan seluruh COA lagi) — kalau bill itu cuma pakai 1 akun, otomatis cuma ada 1 pilihan.
+Field akun kredit di panel Retur AP Bill sengaja BUKAN 1 akun tetap — harus sama dengan akun yang dipakai waktu bill itu dicatat pertama kali, dan itu bisa beda-beda tergantung isi bill-nya. Solusinya: pilihannya dibatasi cuma ke akun-akun yang beneran dipakai di bill yang sedang diretur (bukan seluruh COA) — kalau bill itu cuma pakai 1 akun, otomatis cuma ada 1 pilihan.
 
 ## Yang Sengaja Gak Disentuh
 

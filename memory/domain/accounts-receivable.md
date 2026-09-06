@@ -2,7 +2,7 @@
 
 AR = lapisan tambahan di atas General Ledger buat nagih piutang termin: siapa berutang (customer), berapa/kapan jatuh tempo (invoice), udah dibayar berapa (payment). Tiap invoice/payment tetap wajib punya journal entry sendiri (Debit/Kredit sesuai kejadian) — AR gak bypass GL.
 
-Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu dan dengan `memory/architecture/data/ar-schema.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
+Naratif lengkap + reasoning penuh: `docs/domain/accounts-receivable.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu. Arsitektur teknis sekarang di-organize per spine tabel, bukan per modul — lihat `memory/architecture/data/transactions-schema.md` (Konsep Inti), `credit-notes-schema.md` (Retur Barang), `warranty-replacements-schema.md` (Penukaran Barang), `deposits-schema.md` (Uang Muka/DP) (`AGENTS.md` > "Format Baku: Domain (module-based) vs Architecture (spine-based)").
 
 ## Konsep Inti
 
@@ -140,14 +140,14 @@ Sempat ada direct write-off (`ar_bad_debt_writeoffs`, RPC `write_off_ar_invoice`
 
 **Cara Kerja**
 - Dulu `create_ar_invoice` cuma bisa 1 kategori pendapatan per invoice. Sekarang bisa dipecah beberapa kategori dalam **1 invoice yang sama** (mis. Pendapatan Penjualan Barang + Pendapatan Jasa Antar) — debit (Piutang Usaha) tetap 1 baris, cuma sisi kredit yang jadi array.
-- Kategori dipilih dari katalog preset (`ar_invoice_charge_types`) yang disiapkan admin — nama + akun tujuan — bukan pilih akun COA mentah tiap transaksi. Nominal tetap diinput manual per invoice (gak ada nilai default).
+- Kategori dipilih dari katalog preset (`charge_categories`, module `ar`) yang disiapkan admin — nama + akun tujuan — bukan pilih akun COA mentah tiap transaksi. Nominal tetap diinput manual per invoice (gak ada nilai default).
 - PPN Keluaran (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Piutang Usaha (customer ikut berutang pajaknya) — bukan diketik manual.
 - Berlaku juga buat invoice yang lahir dari `create_goods_issue` (submodule "Penjualan & Pengakuan HPP" di `inventory.md`) — RPC itu manggil `create_ar_invoice` di dalamnya, jadi ikut dapat kemampuan yang sama.
 
 **Aturan Bisnis**
 - PPN Keluaran dihitung dari total invoice (subtotal kategori + PPN kalau ada), bukan per-kategori.
 
-**Referensi:** `memory/architecture/data/ar-schema.md` submodule "Compounding & PPN" (di situ juga tabel `tax_settings` — pengaturan PPN dipakai bareng AP/AR/POS — didefinisikan penuh).
+**Referensi:** `memory/architecture/data/transactions-schema.md` submodule "RPC `create_transaction`" + `memory/architecture/data/tax-settings-schema.md` (tabel `tax_settings` — pengaturan PPN dipakai bareng AP/AR/POS — didefinisikan penuh di situ).
 
 ## Glossary
 

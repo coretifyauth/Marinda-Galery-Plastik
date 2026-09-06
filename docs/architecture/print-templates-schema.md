@@ -18,7 +18,7 @@ Konsep bisnisnya ada di `docs/domain/print-templates.md`. Detail teknis penuh (D
 | Identitas Perusahaan | Nama, alamat, NPWP, link logo — cuma 1 baris, gak bisa nambah baris kedua | — |
 | Daftar Penandatangan | 1 baris per jabatan (mis. "Kepala Toko"), urutan tampil, status aktif/nonaktif | — |
 
-Identitas Perusahaan sengaja cuma boleh punya 1 baris (dijaga di level database, bukan cuma disiplin form) — pola yang sama dipakai Pengaturan PPN (`docs/architecture/ar-schema.md`). Daftar Penandatangan sengaja **tidak** menyimpan nama pegawai — cuma label jabatan, karena tanda tangannya dibubuhkan manual di kertas, bukan e-signature.
+Identitas Perusahaan sengaja cuma boleh punya 1 baris (dijaga di level database, bukan cuma disiplin form) — pola yang sama dipakai Pengaturan PPN (`docs/architecture/tax-settings-schema.md`). Daftar Penandatangan sengaja **tidak** menyimpan nama pegawai — cuma label jabatan, karena tanda tangannya dibubuhkan manual di kertas, bukan e-signature.
 
 **Alur Teknis (RPC)**
 

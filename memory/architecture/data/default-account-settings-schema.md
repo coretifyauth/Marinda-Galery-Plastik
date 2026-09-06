@@ -8,7 +8,7 @@ Sebelum ini, form transaksi (AR Invoice, AP Bill, Goods Issue, Goods Receipt, Pr
 
 ## `default_account_settings` — mapping tetap 1 akun per "peran"
 
-Pola singleton-per-baris niru `tax_settings` (`memory/architecture/data/ar-schema.md`) — baris diseed migration, admin cuma `UPDATE account_id`, **sengaja gak ada policy INSERT** (`role_key` yang valid ditentukan kode FE, bukan bebas ditambah admin).
+Pola singleton-per-baris niru `tax_settings` (`memory/architecture/data/tax-settings-schema.md`) — baris diseed migration, admin cuma `UPDATE account_id`, **sengaja gak ada policy INSERT** (`role_key` yang valid ditentukan kode FE, bukan bebas ditambah admin).
 
 ```sql
 create table default_account_settings (
@@ -26,7 +26,7 @@ Seed 19 baris (`0017_default_account_settings_schema.sql` + follow-up `0018_defa
 | role_key | akun | dipakai di |
 |---|---|---|
 | `ar.receivable` | 1300 Piutang Usaha | AR Invoice, Goods Issue, Sales Order fulfillment, dan hampir semua panel aksi AR (DP, retur, payment) |
-| `ar.revenue` | 4200 Pendapatan Penjualan Grosir | baris kredit primer AR Invoice/Goods Issue/Sales Order (kategori TAMBAHAN tetap lewat `ar_invoice_charge_types`, gak berubah) |
+| `ar.revenue` | 4200 Pendapatan Penjualan Grosir | baris kredit primer AR Invoice/Goods Issue/Sales Order (kategori TAMBAHAN tetap lewat `charge_categories` module `ar`, gak berubah) |
 | `ar.contra_revenue` | 4900 Retur & Potongan Penjualan | panel Retur & Penggantian Barang AR |
 | `ar.deposit_liability` | 2300 Uang Muka Penjualan | AR Deposit (create, terapkan, refund, hangus) |
 | `ar.writeoff_expense` | 5700 Beban Piutang Tak Tertagih | **orphaned** — fitur Piutang Tak Tertagih dicabut total migration `0064`+`0065` (2026-09-05), row seed ini dibiarkan (konvensi: config lama gak dibersihkan setelah fitur dicabut, lihat `document_number_types` di `memory/architecture/data/document-numbering-schema.md`) |
@@ -47,7 +47,7 @@ Seed 19 baris (`0017_default_account_settings_schema.sql` + follow-up `0018_defa
 
 ## `fixed_asset_account_presets` — beda pola, katalog bukan singleton
 
-Fixed Assets butuh 3 akun sekaligus (aset/akumulasi/beban) DAN jenis aset baru tetap mungkin muncul (bukan set role tetap yang diketahui di awal) — jadi bukan `default_account_settings`, tapi katalog niru `ar_invoice_charge_types`: admin daftarkan 1 preset per JENIS aset, form Fixed Assets pilih 1 preset (bukan 3 akun terpisah) — mencegah kombinasi ketuker (mis. akun Aset "Rak" dipasangkan Akumulasi "Mobil Pickup").
+Fixed Assets butuh 3 akun sekaligus (aset/akumulasi/beban) DAN jenis aset baru tetap mungkin muncul (bukan set role tetap yang diketahui di awal) — jadi bukan `default_account_settings`, tapi katalog niru `charge_categories`: admin daftarkan 1 preset per JENIS aset, form Fixed Assets pilih 1 preset (bukan 3 akun terpisah) — mencegah kombinasi ketuker (mis. akun Aset "Rak" dipasangkan Akumulasi "Mobil Pickup").
 
 ```sql
 create table fixed_asset_account_presets (
@@ -83,10 +83,10 @@ Field "Akun Persediaan" di form Items (`items/page.tsx`) gak nanya user langsung
 
 ## RLS + Grant
 
-`default_account_settings`: select=authenticated, update=admin doang, **gak ada insert** (persis pola `tax_settings`). `fixed_asset_account_presets`: select=authenticated, insert+update=admin, nonaktifkan pakai `archived_at` (persis pola `ar_invoice_charge_types`).
+`default_account_settings`: select=authenticated, update=admin doang, **gak ada insert** (persis pola `tax_settings`). `fixed_asset_account_presets`: select=authenticated, insert+update=admin, nonaktifkan pakai `archived_at` (persis pola `charge_categories`).
 
 ## Yang SENGAJA gak disentuh mekanisme ini
 
 - **Journal Entries manual** (`/journal-entries`) — ini justru ALAT buat entry akun bebas, by design (dipakai admin/accountant buat transaksi yang gak match pola RPC manapun). Kalau ini ikut dikunci, gak ada jalan buat transaksi non-standar.
-- **Kategori pendapatan/beban TAMBAHAN** (`ar_invoice_charge_types`/`ap_bill_expense_categories`/`pos_charge_types`) — mekanisme lama yang udah bener sejak awal (compounding, migration `0025` versi sebelum squash), genuinely butuh pilihan (nama kategori beda-beda), gak diganti.
+- **Kategori pendapatan/beban TAMBAHAN** (`charge_categories`, module `ar`/`ap`/`pos`) — mekanisme lama yang udah bener sejak awal (compounding, migration `0025` versi sebelum squash), genuinely butuh pilihan (nama kategori beda-beda), gak diganti.
 - **Filter dropdown akun** di `/general-ledger` (pilih akun mana yang mau dilihat ledgernya) — bukan field posting/transaksi, cuma query read-only.

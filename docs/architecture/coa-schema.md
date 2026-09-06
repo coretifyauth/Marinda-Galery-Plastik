@@ -1,6 +1,6 @@
 # Chart of Accounts — Struktur Data
 
-Fase 1. Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Kalau butuh detail teknis (kode SQL, nama fungsi persis), itu ada di `memory/architecture/data/coa-schema.md`.
+Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Kalau butuh detail teknis (kode SQL, nama fungsi persis), itu ada di `memory/architecture/data/coa-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -65,20 +65,19 @@ Fase 1. Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini 
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `accounts.is_contra` (kolom, ditambah Fase 6 — Fixed Assets) | Flag penanda akun kontra — belum ada sampai Fase 5, semua akun asset yang lahir normal debit polos | `accounts` itu sendiri, bukan tabel baru |
+| `accounts.is_contra` | Flag boolean penanda akun kontra | `accounts` itu sendiri, bukan tabel baru |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Tandai akun sebagai kontra | — (kolom ditambah Fase 6, lihat modul Fixed Assets) | Formula generated `normal_balance` bercabang berdasar `is_contra` — kebalik dari default kategori kalau `true` | Trigger `accounts_published_lock` (versi Fase 6) ikut mengunci `is_contra` begitu akun dipakai transaksi |
+| Tandai akun sebagai kontra | — (lihat modul Fixed Assets) | Formula generated `normal_balance` bercabang berdasar `is_contra` — kebalik dari default kategori kalau `true` | Trigger `accounts_published_lock` ikut mengunci `is_contra` begitu akun dipakai transaksi |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Kategori akun kontra tetap ikut akun pasangan, cuma normal balance yang kebalik | Formula generated `normal_balance` bercabang berdasar `is_contra` |
-| Sampai Fase 5, gak ada akun kontra yang bisa dibuat | `normal_balance` generated rigid (`asset`/`expense` → debit, sisanya kredit) tanpa kolom `is_contra` — belum ditambah |
 
 **Interaksi Antar Tabel**
 

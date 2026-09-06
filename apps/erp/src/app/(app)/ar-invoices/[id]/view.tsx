@@ -15,7 +15,7 @@ import {
 } from "@/lib/ar-warranty-replacements/schema";
 import { returnCreditRemaining, refundArReturnCreditSchema, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
 import { recordArPaymentSchema } from "@/lib/ar-payments/schema";
-import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
+import type { ChargeCategoryWithAccount } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -117,7 +117,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [customerReturnCredits, setCustomerReturnCredits] = useState<ArReturnCredit[]>([]);
   const [goodsIssue, setGoodsIssue] = useState<GoodsIssueForInvoice | null>(null);
   const [creditLines, setCreditLines] = useState<InvoiceCreditLine[]>([]);
-  const [chargeTypes, setChargeTypes] = useState<ArInvoiceChargeType[]>([]);
+  const [chargeTypes, setChargeTypes] = useState<ChargeCategoryWithAccount[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [signatoryLabels, setSignatoryLabels] = useState<string[]>([]);
@@ -248,7 +248,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .select("id, account_id, amount, is_tax, accounts(code, name)")
         .eq("transaction_id", id)
         .order("is_tax"),
-      supabase.from("ar_invoice_charge_types").select("id, name, account_id, archived_at, accounts(code, name)"),
+      supabase.from("charge_categories").select("id, name, account_id, archived_at, accounts(code, name)").eq("module", "ar"),
       supabase
         .from("deposit_applications")
         .select("id, amount, source_ref, journal_entry_id, ar_deposits:deposits(source_ref)")
@@ -280,7 +280,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setPayments((pay ?? []) as unknown as PaymentDetail[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setCreditLines((creditLineRows ?? []) as unknown as InvoiceCreditLine[]);
-    setChargeTypes((chargeTypeRows ?? []) as unknown as ArInvoiceChargeType[]);
+    setChargeTypes((chargeTypeRows ?? []) as unknown as ChargeCategoryWithAccount[]);
     setReplacements((reps ?? []) as unknown as WarrantyReplacement[]);
     setGoodsIssue((gi ?? null) as unknown as GoodsIssueForInvoice | null);
     setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
@@ -773,7 +773,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     // dipilih otomatis lewat LockedAccountField, bukan katalog) sengaja DIKELUARKAN dari breakdown
     // ini -- sudah terwakili tabel barang + "Jumlah Invoice", nampilinnya lagi di sini cuma
     // ngulang. Yang ditampilkan cuma baris yang beneran "tambahan": PPN, dan kategori yang
-    // match ke katalog ar_invoice_charge_types -- dilabeli pakai NAMA KATEGORI (customer-facing,
+    // match ke katalog charge_categories (module ar) -- dilabeli pakai NAMA KATEGORI (customer-facing,
     // diisi admin di Settings), BUKAN nama akun COA internal (bug 2026-08-15: sempat nampilin
     // "Pendapatan Penjualan Grosir"/"Pendapatan Lain-lain" -- nama akun buku besar, bukan sesuatu
     // yang customer perlu tahu).

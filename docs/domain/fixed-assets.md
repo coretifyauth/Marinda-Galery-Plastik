@@ -30,7 +30,7 @@ Prinsipnya sama akar kayak Inventory: **matching principle** — biaya diakui be
 2. **Nilai buku = 2 akun terpisah, ditampilkan berdampingan di Neraca**, bukan 1 akun yang nilainya berkurang — Aset Tetap (nilai perolehan) dikurangi Akumulasi Penyusutan (kontra-asset, saldo kredit, tampil sebagai pengurang) menghasilkan Nilai Buku.
 3. **Auditability** — bisa dijawab kapan pun "aset ini beli berapa dulu?" langsung dari saldo akun Aset Tetap, tanpa perlu hitung mundur dari penyusutan yang udah jalan.
 
-**Akun Kontra-Asset** — Akumulasi Penyusutan adalah akun kontra-asset: kategorinya tetap asset, tapi saldo normalnya **kredit**, kebalikan dari asset biasa yang normal debit. Konsep umum akun kontra (definisi, contoh lintas kategori, simulasi dengan/tanpa kontra) dibahas penuh di `docs/domain/chart-of-accounts.md` bagian "Akun Kontra". Ini pemakaian pertama konsep kontra di project ini — modul-modul sebelumnya (COA, GL, AR, AP, Inventory) semua akun asset-nya normal debit tanpa pengecualian.
+**Akun Kontra-Asset** — Akumulasi Penyusutan adalah akun kontra-asset: kategorinya tetap asset, tapi saldo normalnya **kredit**, kebalikan dari asset biasa yang normal debit. Konsep umum akun kontra (definisi, contoh lintas kategori, simulasi dengan/tanpa kontra) dibahas penuh di `docs/domain/chart-of-accounts.md` bagian "Akun Kontra".
 
 **Constraint Wajib**
 - **Penyusutan gak boleh melebihi (Nilai Perolehan - Nilai Residu).** Akumulasi Penyusutan punya batas atas — kalau posting penyusutan diteruskan lewat batas ini, nilai buku bisa jadi negatif, gak masuk akal secara akuntansi (aset gak mungkin bernilai negatif).

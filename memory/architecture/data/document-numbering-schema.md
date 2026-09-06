@@ -49,7 +49,7 @@ Seed 29 baris (1 per tabel transaksional yang punya kolom `source_ref`, hasil au
 | depreciation_entries | DEPR | Posting Penyusutan |
 | item_unit_barcodes | SKU | Kode Scan Barang (item_units.barcode) |
 
-**Baris ke-30, `item_unit_barcodes`, PENGECUALIAN dari aturan "`doc_type` = nama tabel transaksional" di atas** — gak ada tabel `item_unit_barcodes` beneran (`memory/architecture/data/inventory-schema.md` submodule "Kode Scan Barang"). Kode ini nempel ke SEBAGIAN baris `item_units` yang user pilih generate satu-satu (tombol "Buat Kode" di `/items/[id]`), bukan otomatis 1 nomor per baris kayak 29 doc_type lain di atas yang selalu digenerate barengan tiap row transaksi baru diinsert. Aman dipakai walau bukan nama tabel — `generate_document_number()` di bawah cuma butuh `doc_type` buat lookup `prefix` + upsert counter, gak ada dynamic SQL yang mengasumsikan tabel bernama itu exist (dikonfirmasi eksplisit lewat `schema-reviewer` sebelum migration `0022` diterapkan).
+**Baris ke-30, `item_unit_barcodes`, PENGECUALIAN dari aturan "`doc_type` = nama tabel transaksional" di atas** — gak ada tabel `item_unit_barcodes` beneran (`memory/architecture/data/items-schema.md` submodule "Kode Scan Barang"). Kode ini nempel ke SEBAGIAN baris `item_units` yang user pilih generate satu-satu (tombol "Buat Kode" di `/items/[id]`), bukan otomatis 1 nomor per baris kayak 29 doc_type lain di atas yang selalu digenerate barengan tiap row transaksi baru diinsert. Aman dipakai walau bukan nama tabel — `generate_document_number()` di bawah cuma butuh `doc_type` buat lookup `prefix` + upsert counter, gak ada dynamic SQL yang mengasumsikan tabel bernama itu exist (dikonfirmasi eksplisit lewat `schema-reviewer` sebelum migration `0022` diterapkan).
 
 **`document_number_counters`** — penghitung urutan per `(doc_type, year)`. Composite PK memaksa uniqueness + jadi kunci upsert atomik; `year` bukan kolom generated dari tanggal transaksi manapun — dihitung dari `extract(year from now())` (waktu server saat nomor digenerate), bukan tanggal dokumen yang mungkin di-backdate.
 
@@ -96,11 +96,11 @@ grant execute on function generate_document_number(text) to authenticated;
 
 **Kenapa gak digabung ke tiap RPC create (`create_ap_bill`, dst) jadi 1 transaksi**: akan berarti ubah signature/body 28 RPC yang sudah ada dan sudah dipakai di production. Sebagai gantinya, frontend panggil `generate_document_number(doc_type)` sendiri tepat sebelum panggil RPC create yang sudah ada, hasilnya dioper sebagai `p_source_ref` — persis kayak dulu user ketik manual, cuma sekarang string-nya dari sini. Trade-off: nomor bisa "kepakai tapi gak ada dokumennya" kalau call kedua (create) gagal setelah call pertama (generate) sukses — diterima, lihat `memory/domain/document-numbering.md` submodule "Kapan Nomor Ditentukan".
 
-**RLS**: gak ada policy sama sekali (bukan cuma insert/update) untuk role `authenticated` di `document_number_counters` maupun `document_number_types` — satu-satunya jalur nulis adalah lewat fungsi `generate_document_number`, yang `security definer` (jalan pakai privilege pemilik fungsi, bypass RLS table-level sebagai owner) — client gak pernah dapat akses langsung ke tabelnya sama sekali, cuma lewat `grant execute` ke fungsinya. `document_number_types` tambahan dapat `grant select` eksplisit ke `authenticated` (dropdown/label kalau dibutuhkan UI) karena "Automatically expose new tables" dimatikan di project settings — grant eksplisit wajib walau sudah ada select policy, konvensi sama semua tabel lain (lihat `tax_settings` di `memory/architecture/data/ar-schema.md`). `document_number_counters` gak dapat grant select apa pun — client gak pernah perlu baca counter mentah.
+**RLS**: gak ada policy sama sekali (bukan cuma insert/update) untuk role `authenticated` di `document_number_counters` maupun `document_number_types` — satu-satunya jalur nulis adalah lewat fungsi `generate_document_number`, yang `security definer` (jalan pakai privilege pemilik fungsi, bypass RLS table-level sebagai owner) — client gak pernah dapat akses langsung ke tabelnya sama sekali, cuma lewat `grant execute` ke fungsinya. `document_number_types` tambahan dapat `grant select` eksplisit ke `authenticated` (dropdown/label kalau dibutuhkan UI) karena "Automatically expose new tables" dimatikan di project settings — grant eksplisit wajib walau sudah ada select policy, konvensi sama semua tabel lain (lihat `tax_settings` di `memory/architecture/data/tax-settings-schema.md`). `document_number_counters` gak dapat grant select apa pun — client gak pernah perlu baca counter mentah.
 
-## AP Bill — Nomor Nota Supplier
+## AP Bill — Nomor Nota Supplier (histori — `ap_bills` sudah di-merge ke `transactions` migration `0064`, lihat `memory/architecture/data/transactions-schema.md`)
 
-**Kolom baru** — `ap_bills.supplier_document_ref text null`. Nullable karena gak semua transaksi punya nota fisik resmi (ambil barang informal, dsb) — beda dari `source_ref` yang `not null` karena sekarang selalu ada (auto-generate).
+**Kolom baru (saat itu masih tabel `ap_bills`, sekarang `transactions.supplier_document_ref`)** — `ap_bills.supplier_document_ref text null`. Nullable karena gak semua transaksi punya nota fisik resmi (ambil barang informal, dsb) — beda dari `source_ref` yang `not null` karena sekarang selalu ada (auto-generate).
 
 ```sql
 alter table ap_bills add column supplier_document_ref text;
@@ -108,7 +108,7 @@ alter table ap_bills add column supplier_document_ref text;
 
 **RPC `create_ap_bill`** — dapat 1 parameter baru di akhir signature (additive, gak breaking): `p_supplier_document_ref text default null`. Disimpan apa adanya ke kolom baru, gak ada validasi format/uniqueness.
 
-Referensi RPC lengkap (signature sebelumnya): `memory/architecture/data/ap-schema.md` submodule "Kategori Campur & PPN".
+Referensi RPC lengkap (signature sebelumnya): `memory/architecture/data/transactions-schema.md` submodule "RPC `create_transaction`".
 
 ## Data Lama — Gak Dibackfill
 

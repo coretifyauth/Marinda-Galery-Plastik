@@ -15,7 +15,7 @@ import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 
-type CatalogTable = "pos_charge_types" | "ar_invoice_charge_types" | "ap_bill_expense_categories";
+type CatalogModule = "pos" | "ar" | "ap";
 
 type CatalogRow = {
   id: string;
@@ -26,14 +26,14 @@ type CatalogRow = {
 };
 
 /** Kelola 1 katalog "jenis biaya tambahan" — komponen generik, dipakai 3x (POS/AR/AP) karena
- * struktur ketiga tabel identik (memory/scope-debt/compound-transactional-entries.md). */
+ * ketiga katalog itu 1 tabel fisik `charge_categories`, difilter kolom `module`. */
 function CatalogManager({
-  table,
+  module,
   title,
   accounts,
   canWrite,
 }: {
-  table: CatalogTable;
+  module: CatalogModule;
   title: string;
   accounts: Account[];
   canWrite: boolean;
@@ -49,11 +49,12 @@ function CatalogManager({
 
   const load = useCallback(async () => {
     const { data } = await supabase
-      .from(table)
+      .from("charge_categories")
       .select("id, name, account_id, archived_at, accounts(code, name)")
+      .eq("module", module)
       .order("name");
     setRows((data ?? []) as unknown as CatalogRow[]);
-  }, [table]);
+  }, [module]);
 
   useEffect(() => {
     let active = true;
@@ -73,7 +74,7 @@ function CatalogManager({
       return;
     }
     setSubmitting(true);
-    const { error: err } = await supabase.from(table).insert({ name, account_id: accountId });
+    const { error: err } = await supabase.from("charge_categories").insert({ name, account_id: accountId, module });
     setSubmitting(false);
     if (err) {
       setError(err.message);
@@ -87,7 +88,7 @@ function CatalogManager({
 
   async function toggleArchive(row: CatalogRow) {
     await supabase
-      .from(table)
+      .from("charge_categories")
       .update({ archived_at: row.archived_at ? null : new Date().toISOString() })
       .eq("id", row.id);
     await load();
@@ -151,17 +152,17 @@ function CatalogManager({
         <Modal open={showForm} onClose={() => setShowForm(false)} title={title}>
           <form onSubmit={handleCreate} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${table}-name`}>Nama Kategori</Label>
+              <Label htmlFor={`${module}-name`}>Nama Kategori</Label>
               <Input
-                id={`${table}-name`}
+                id={`${module}-name`}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="mis. Biaya Packing"
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${table}-account`}>Akun</Label>
-              <Select id={`${table}-account`} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+              <Label htmlFor={`${module}-account`}>Akun</Label>
+              <Select id={`${module}-account`} value={accountId} onChange={(e) => setAccountId(e.target.value)}>
                 <option value="">Pilih akun...</option>
                 {leafAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -1024,19 +1025,19 @@ export default function ChargesSettingsPage() {
       {activeTab === "charge_categories" && (
         <div className="flex flex-col gap-6">
           <CatalogManager
-            table="pos_charge_types"
+            module="pos"
             title="Kategori Biaya Tambahan — POS"
             accounts={accounts}
             canWrite={canWrite}
           />
           <CatalogManager
-            table="ar_invoice_charge_types"
+            module="ar"
             title="Kategori Pendapatan Tambahan — AR Invoice"
             accounts={accounts}
             canWrite={canWrite}
           />
           <CatalogManager
-            table="ap_bill_expense_categories"
+            module="ap"
             title="Kategori Beban/Persediaan Tambahan — AP Bill"
             accounts={accounts}
             canWrite={canWrite}

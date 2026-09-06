@@ -7,13 +7,13 @@ import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
 import { createApBillSchema, type ApBillOrigin, type ApBillStatus, type CreateApBillInput } from "@/lib/ap-bills/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useApBills } from "@/lib/ap-bills/queries";
-import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
 import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
 import {
   resolveChargeLines,
   resolveCategoryLeg,
   resolveChargeLineLegs,
   type ChargeLineInput,
+  type ChargeCategoryWithAccount,
 } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
@@ -81,7 +81,7 @@ export default function ApBillsPage() {
   const [debitCategoryId, setDebitCategoryId] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
-  const [expenseCategories, setExpenseCategories] = useState<ApBillExpenseCategory[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<ChargeCategoryWithAccount[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -128,10 +128,11 @@ export default function ApBillsPage() {
 
   const loadExpenseCategories = useCallback(async () => {
     const { data } = await supabase
-      .from("ap_bill_expense_categories")
+      .from("charge_categories")
       .select("id, name, account_id, archived_at, accounts(code, name)")
+      .eq("module", "ap")
       .order("name");
-    setExpenseCategories((data ?? []) as unknown as ApBillExpenseCategory[]);
+    setExpenseCategories((data ?? []) as unknown as ChargeCategoryWithAccount[]);
   }, []);
 
   const loadTaxSettings = useCallback(async () => {

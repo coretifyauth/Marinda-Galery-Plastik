@@ -10,8 +10,8 @@ export const chargeLineSchema = z.object({
 
 export type ChargeLine = z.infer<typeof chargeLineSchema>;
 
-/** State form mentah sebelum di-resolve — `category_id` menunjuk baris katalog (pos_charge_types/
- * ar_invoice_charge_types/ap_bill_expense_categories), `account_id` diambil dari situ pas submit. */
+/** State form mentah sebelum di-resolve — `category_id` menunjuk baris katalog `charge_categories`
+ * (filter `module` pos/ar/ap), `account_id` diambil dari situ pas submit. */
 export type ChargeLineInput = { category_id: string; amount: string };
 
 export function emptyChargeLine(): ChargeLineInput {
@@ -31,7 +31,7 @@ export function resolveChargeLines(lines: ChargeLineInput[], chargeTypes: Charge
 }
 
 /** Varian ChargeType yang udah di-join ke accounts(code,name) -- semua query katalog kategori
- * di app ini (ap_bill_expense_categories/ar_invoice_charge_types/dst) udah select bentuk ini. */
+ * di app ini (`charge_categories`, difilter per module) udah select bentuk ini. */
 export type ChargeCategoryWithAccount = ChargeType & { accounts: { code: string; name: string } };
 
 export type ChargeLeg = { label: string; resolved: ResolvedAccount | undefined; side: "debit" | "credit" };

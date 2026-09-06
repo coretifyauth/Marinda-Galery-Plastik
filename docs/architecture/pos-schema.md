@@ -9,8 +9,8 @@ Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger):
 | `pos_sales` | 1 transaksi kasir tunai di kios — header, gak pernah nyentuh Piutang Usaha | `counterparties` (opsional), `accounts` (akun kas & pendapatan), 2 transaksi jurnal (Kas/Pendapatan dan HPP/Persediaan) |
 | `pos_sale_lines` | Baris item per transaksi (barang, qty, harga, biaya pokok) | `pos_sales`, `items` |
 | `pos_sale_extra_credit_lines` | Rincian baris kredit tambahan (biaya packing/ongkir + PPN) 1 transaksi, kalau ada | `pos_sales` (banyak-ke-satu) |
-| `pos_charge_types` | Katalog jenis biaya tambahan yang bisa dipilih kasir saat checkout — master data, disiapkan admin | `accounts` |
-| `tax_settings` | Pengaturan PPN — 1 baris untuk seluruh sistem, dipakai bareng AP/AR, didefinisikan penuh di `docs/architecture/ar-schema.md` | `accounts` |
+| `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan yang bisa dipilih kasir saat checkout — master data, disiapkan admin. Tabel yang sama dipakai AR/AP (`module='ar'`/`'ap'`), lihat `transactions-schema.md` | `accounts` |
+| `tax_settings` | Pengaturan PPN — 1 baris untuk seluruh sistem, dipakai bareng AP/AR, didefinisikan penuh di `docs/architecture/tax-settings-schema.md` | `accounts` |
 
 ## Konsep Inti
 
@@ -90,8 +90,8 @@ Gak ada tabel baru — status "dibatalkan" jadi kolom tersendiri di `pos_sales`,
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `pos_sale_extra_credit_lines` | Rincian baris kredit tambahan (biaya packing/ongkir + PPN) 1 transaksi kasir | `pos_sales` (banyak-ke-satu) |
-| `pos_charge_types` | Katalog jenis biaya tambahan — master data, disiapkan admin | `accounts` |
-| `tax_settings` | Pengaturan PPN, sama tabel dengan AP/AR (`docs/architecture/ar-schema.md`) | `accounts` |
+| `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan — master data, disiapkan admin | `accounts` |
+| `tax_settings` | Pengaturan PPN, sama tabel dengan AP/AR (`docs/architecture/tax-settings-schema.md`) | `accounts` |
 
 **Alur Teknis (RPC)**
 
@@ -104,7 +104,7 @@ Gak ada tabel baru — status "dibatalkan" jadi kolom tersendiri di `pos_sales`,
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Kasir gak pernah pilih akun pembukuan bebas | Kasir cuma pilih dari daftar `pos_charge_types` aktif — RPC tetap terima `account_id` mentah, tapi UI checkout gak pernah kasih kasir akses ke seluruh daftar akun |
+| Kasir gak pernah pilih akun pembukuan bebas | Kasir cuma pilih dari daftar `charge_categories` (`module='pos'`) aktif — RPC tetap terima `account_id` mentah, tapi UI checkout gak pernah kasih kasir akses ke seluruh daftar akun |
 | PPN gak boleh diketik kasir | `create_pos_sale` menghitung sendiri dari `tax_settings`, bukan dari input checkout |
 | Basket item tetap gak bisa dimanipulasi klien | `p_revenue_account_id`/total item TETAP dihitung server dari `p_lines`, gak berubah oleh fitur ini |
 | Biaya tambahan & PPN ikut kebalik kalau transaksi dibatalkan | Sama jurnal (`revenue_journal_entry_id`) dengan basket item — `void_pos_sale` reverse semua baris sekaligus, gak perlu diubah |
@@ -114,4 +114,4 @@ Gak ada tabel baru — status "dibatalkan" jadi kolom tersendiri di `pos_sales`,
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `pos_sale_extra_credit_lines` | banyak-ke-satu | `pos_sales` |
-| `pos_charge_types` | referensi (dipakai UI checkout, bukan FK langsung) | `pos_sale_extra_credit_lines` |
+| `charge_categories` (`module='pos'`) | referensi (dipakai UI checkout, bukan FK langsung) | `pos_sale_extra_credit_lines` |

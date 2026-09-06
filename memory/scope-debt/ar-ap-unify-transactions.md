@@ -122,6 +122,6 @@ Fase 4: Sweep Permukaan        -- frontend + laporan, mekanis tapi lebar
 
 ## Referensi
 
-- `memory/architecture/data/ar-schema.md` — `create_ar_invoice` (definisi terkini: `supabase/migrations/0059_counterparty_schema.sql:241-364`), `ar_invoice_remaining()`, Credit Hold.
-- `memory/architecture/data/ap-schema.md` — `create_ap_bill` (definisi terkini: `supabase/migrations/0059_counterparty_schema.sql:371-461`), `ap_bill_remaining()`.
-- `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Sales Order (`orders`)" — preseden generalisasi PO+SO, pola `_repoint_fk`, dan deviasi "2 view tetap terpisah" yang jadi rujukan langkah 6 di atas. Juga tempat `create_goods_issue`/`create_goods_receipt` (pemanggil `create_ar_invoice`/`create_ap_bill`) didefinisikan.
+- `memory/architecture/data/transactions-schema.md` — `create_transaction` (gantiin `create_ar_invoice`/`create_ap_bill`), `ar_invoice_remaining()`/`ap_bill_remaining()`, `cancel_ar_invoice`/`cancel_ap_bill`. Credit Hold (dicabut) didokumentasikan di submodule "Keputusan"-nya. (Catatan: `ar-schema.md`/`ap-schema.md` yang disebut di draft asli scope-debt ini sudah dihapus total — file arsitektur sekarang di-organize per spine tabel, lihat `AGENTS.md` > "Format Baku: Domain (module-based) vs Architecture (spine-based)".)
+- `memory/architecture/data/orders-schema.md` — preseden generalisasi PO+SO, pola `_repoint_fk`, dan deviasi "2 view tetap terpisah" yang jadi rujukan langkah 6 di atas.
+- `memory/architecture/data/goods-issue-schema.md`/`goods-receipt-schema.md` — `create_goods_issue`/`create_goods_receipt` (pemanggil `create_transaction`).

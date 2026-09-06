@@ -29,7 +29,7 @@ create table counterparties (
 
 Struktur identik gabungan `customers`+`suppliers` lama — `credit_limit`/`overdue_threshold_days` cuma dipakai jalur Credit Hold AR (`create_ar_invoice`), gak relevan buat pihak yang cuma berperan supplier tapi kolomnya tetap ada di semua baris (nullable, konsisten 1 tabel 1 bentuk). **Beda dari `customers`/`suppliers` lama**: `payment_term_days` gak lagi punya `DEFAULT` di level kolom (dulu `customers` default 7, `suppliers` default 14 — beda default gak bisa dipertahankan di 1 kolom yang sama) — RPC `create_counterparty` yang nentuin default per pemanggilan (`p_payment_term_days default 7`, form `/suppliers` selalu kirim eksplisit 14).
 
-**DDL & RPC di atas dokumentasi state migration `0059` (histori).** Kolom `credit_limit`/`overdue_threshold_days` **didrop total migration `0065`** (2026-09-05) bareng pencabutan fitur Credit Hold — lihat `memory/architecture/data/ar-schema.md` dan `memory/architecture/data/transactions-schema.md`. `create_counterparty` juga direcreate `0065` tanpa parameter `p_credit_limit`/`p_overdue_threshold_days` (signature terkini: `(p_name text, p_role text, p_contact text default null, p_payment_term_days int default 7)`).
+**DDL & RPC di atas dokumentasi state migration `0059` (histori).** Kolom `credit_limit`/`overdue_threshold_days` **didrop total migration `0065`** (2026-09-05) bareng pencabutan fitur Credit Hold — lihat `memory/architecture/data/transactions-schema.md`. `create_counterparty` juga direcreate `0065` tanpa parameter `p_credit_limit`/`p_overdue_threshold_days` (signature terkini: `(p_name text, p_role text, p_contact text default null, p_payment_term_days int default 7)`).
 
 ### `counterparty_type_mapping` — peran (customer/supplier), bisa lebih dari 1 per pihak
 
@@ -70,13 +70,17 @@ end;
 $$ language plpgsql;
 ```
 
-**Awalnya 11 tabel terpasang** (migration `0059`, `before insert`, cukup insert-only karena semua kolom `customer_id`/`supplier_id` di tabel-tabel ini immutable write-once — dijaga trigger selective-lock lain yang udah ada, dikonfirmasi lewat `schema-reviewer` nyisir tuple immutable check di `0053_denormalize_transactional_status.sql`+`0024_purchase_order_sales_order_cancel.sql`). **Sejak migration `0060` (Fase 3 order-generalization), `sales_orders`/`purchase_orders` di-drop** — diganti 1 tabel `orders` (kolom `counterparty_id` tunggal, bukan `customer_id`/`supplier_id` terpisah) dengan trigger validasi SENDIRI, `orders_counterparty_direction_guard` (niru konsep yang sama tapi role wajibnya ditentukan dari kolom `direction` di baris yang sama, bukan hardcode per tabel via `TG_ARGV` — detail: `memory/architecture/data/inventory-schema.md` submodule "Purchase Order & Sales Order"). **Sejak migration `0064` (AR/AP unify), `ar_invoices`/`ap_bills` juga di-drop** — diganti 1 tabel `transactions` (kolom `counterparty_id` tunggal) dengan trigger validasi sendiri juga, `transactions_counterparty_role_guard_inbound`/`transactions_counterparty_role_guard_outbound` (role wajib ditentukan dari kolom `type` di baris yang sama, pola sama `orders_counterparty_direction_guard` — detail: `memory/architecture/data/transactions-schema.md`). Sisa **7 tabel** di bawah ini tetap dijaga `counterparty_role_guard()` generik:
+**Awalnya 11 tabel terpasang** (migration `0059`, `before insert`, cukup insert-only karena semua kolom `customer_id`/`supplier_id` di tabel-tabel ini immutable write-once — dijaga trigger selective-lock lain yang udah ada, dikonfirmasi lewat `schema-reviewer` nyisir tuple immutable check di `0053_denormalize_transactional_status.sql`+`0024_purchase_order_sales_order_cancel.sql`). Sejak itu, tabel-tabel yang dulu punya `customer_id`/`supplier_id` terpisah (2 kolom, 2 tabel kembar) satu per satu digabung jadi 1 tabel generic dengan 1 kolom `counterparty_id` tunggal — **fungsi `counterparty_role_guard()` tetap dipakai (gak ditulis ulang)**, cuma sekarang dipasang sebagai SEPASANG trigger per tabel (`_inbound`/`_outbound`, masing-masing `TG_ARGV` beda role) yang saling eksklusif lewat kondisi `WHEN` pada kolom `direction`/`type` di baris yang sama, bukan lagi 1 trigger per tabel yang hardcode 1 kolom:
+- `orders` (migration `0060`, gantiin `sales_orders`/`purchase_orders`) — `orders_counterparty_role_guard_inbound`/`_outbound`, dari kolom `direction`. Detail: `memory/architecture/data/orders-schema.md`.
+- `transactions` (migration `0064`, gantiin `ar_invoices`/`ap_bills`) — `transactions_counterparty_role_guard_inbound`/`_outbound`, dari kolom `type`. Detail: `memory/architecture/data/transactions-schema.md`.
+- `payments` (gantiin `ar_payments`/`ap_payments`), `deposits` (gantiin `ar_deposits`/`ap_deposits`), `return_credits` (gantiin `ar_return_credits`/`ap_return_credits`) — pola identik, masing-masing `<tabel>_counterparty_role_guard_inbound`/`_outbound` dari kolom `type`. Detail: `memory/architecture/data/payments-schema.md`, `deposits-schema.md`, `return-credits-schema.md`.
+
+`credit_notes` sengaja **gak punya kolom `counterparty_id` sama sekali** — pihaknya ditelusuri gak langsung lewat `transaction_id` -> `transactions.counterparty_id`, jadi gak butuh trigger role-guard sendiri (detail: `memory/architecture/data/credit-notes-schema.md`).
+
+Sisa **1 tabel** yang masih dijaga pola asli migration `0059` (1 trigger, 1 kolom hardcode via `TG_ARGV`, karena kolomnya emang cuma 1 arah dan nullable):
 
 | Sisi customer (`role='customer'`) | Sisi supplier (`role='supplier'`) |
 |---|---|
-| `ar_payments.customer_id` | `ap_payments.supplier_id` |
-| `ar_deposits.customer_id` | `ap_deposits.supplier_id` |
-| `ar_return_credits.customer_id` | `ap_return_credits.supplier_id` |
 | `pos_sales.customer_id` (nullable) | — |
 
 ## Repoint 11 FK constraint — fungsi introspeksi, bukan tebak nama

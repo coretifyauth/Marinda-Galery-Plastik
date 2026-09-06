@@ -2,7 +2,7 @@
 
 AP = kebalikan AR: CV Barokah berutang ke supplier, bukan piutang dari customer. Struktur tabel mirror persis AR (`memory/domain/accounts-receivable.md`), cuma beda 1 hal konteks bisnis: **di AR, kita nentuin `payment_term_days` buat customer; di AP, supplier yang nentuin termin buat kita.** Kolomnya tetap sama, cuma maknanya kebalik.
 
-Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu dan dengan `memory/architecture/data/ap-schema.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
+Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu. Arsitektur teknis sekarang di-organize per spine tabel, bukan per modul — lihat `memory/architecture/data/transactions-schema.md` (Konsep Inti), `credit-notes-schema.md` (Retur Barang), `purchase-replacements-schema.md` (Retur Opsi B), `deposits-schema.md` (Uang Muka/DP) (`AGENTS.md` > "Format Baku: Domain (module-based) vs Architecture (spine-based)").
 
 ## Konsep Inti
 
@@ -99,14 +99,14 @@ Naratif lengkap + reasoning penuh: `docs/domain/accounts-payable.md`. Struktur m
 
 **Cara Kerja**
 - Dulu `create_ap_bill` cuma bisa 1 kategori debit per nota (misal semua dianggap Persediaan, walau notanya campur Persediaan + Beban Ongkir). Sekarang bisa dipecah beberapa kategori dalam **1 nota yang sama** — kredit (Utang Usaha) tetap 1 baris, cuma sisi debit yang jadi array.
-- Kategori dipilih dari katalog preset (`ap_bill_expense_categories`) yang disiapkan admin — nama + akun tujuan — bukan pilih akun COA mentah tiap transaksi. Nominal tetap diinput manual per nota (gak ada nilai default).
+- Kategori dipilih dari katalog preset (`charge_categories`, module `ap`) yang disiapkan admin — nama + akun tujuan — bukan pilih akun COA mentah tiap transaksi. Nominal tetap diinput manual per nota (gak ada nilai default).
 - PPN Masukan (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Utang Usaha (utang ke supplier termasuk pajak yang bisa dikreditkan) — bukan diketik manual.
 
 **Aturan Bisnis**
 - Kategori campur TIDAK mengubah cara Utang Usaha dihitung — tetap 1 angka total (subtotal kategori + PPN kalau ada).
 - `create_goods_receipt` (PO → GRN → Bill) sekarang IKUT dapat kategori campur & PPN, mirror `create_ap_bill` (migration `0012_grn_compound_ppn.sql`) — 2 param baru di akhir signature (`p_extra_debit_lines`, `p_apply_tax`), internal-nya gabungin baris Persediaan dasar + baris tambahan sebelum manggil `create_ap_bill`. Ditutup (2026-08-12) setelah kebukti kasus nyata: pembelian formal lewat PO tetap bisa punya nota campuran ongkir+PPN, jadi asumsi lama "1 GRN = selalu 1 kategori" gak selalu benar.
 
-**Referensi:** `memory/architecture/data/ap-schema.md` submodule "Compounding & PPN".
+**Referensi:** `memory/architecture/data/transactions-schema.md` submodule "RPC `create_transaction`" + "Katalog kategori tambahan" + `memory/architecture/data/tax-settings-schema.md`.
 
 ## Glossary
 

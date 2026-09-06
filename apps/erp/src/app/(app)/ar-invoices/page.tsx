@@ -12,9 +12,13 @@ import {
   type CreateArInvoiceInput,
 } from "@/lib/ar-invoices/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useArInvoices } from "@/lib/ar-invoices/queries";
-import type { ArInvoiceChargeType } from "@/lib/ar-invoice-charge-types/schema";
 import { fetchTaxSettings, resolvedPpnKeluaran, type TaxSettings } from "@/lib/tax-settings/schema";
-import { resolveChargeLines, resolveChargeLineLegs, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import {
+  resolveChargeLines,
+  resolveChargeLineLegs,
+  type ChargeLineInput,
+  type ChargeCategoryWithAccount,
+} from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Label } from "@/components/ui/label";
@@ -77,7 +81,7 @@ export default function ArInvoicesPage() {
   const [amount, setAmount] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
-  const [chargeTypes, setChargeTypes] = useState<ArInvoiceChargeType[]>([]);
+  const [chargeTypes, setChargeTypes] = useState<ChargeCategoryWithAccount[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -121,10 +125,11 @@ export default function ArInvoicesPage() {
 
   const loadChargeTypes = useCallback(async () => {
     const { data } = await supabase
-      .from("ar_invoice_charge_types")
+      .from("charge_categories")
       .select("id, name, account_id, archived_at, accounts(code, name)")
+      .eq("module", "ar")
       .order("name");
-    setChargeTypes((data ?? []) as unknown as ArInvoiceChargeType[]);
+    setChargeTypes((data ?? []) as unknown as ChargeCategoryWithAccount[]);
   }, []);
 
   const loadTaxSettings = useCallback(async () => {

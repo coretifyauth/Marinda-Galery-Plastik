@@ -21,7 +21,7 @@ Naratif lengkap + reasoning penuh: `docs/domain/pos.md`. Struktur module → sub
 - **Retur belum dibangun** — grey area kebijakan bisnis, belum keputusan owner. Detail: `memory/special-case/pos-retur-policy.md`.
 
 **Kategori Biaya Tambahan & PPN (migration `0025_compound_transactional_entries_schema.sql`)** — dulu `create_pos_sale` cuma bisa 1 akun kredit tetap (Pendapatan Penjualan Toko), jadi biaya packing/ongkir atau PPN gak bisa nempel ke 1 transaksi kasir yang sama. Sekarang:
-- Kasir bisa nambah baris "kategori biaya tambahan" (mis. Biaya Packing) dari katalog preset yang disiapkan admin (`pos_charge_types` — nama + akun tujuan), bukan pilih akun bebas. Nominalnya tetap diinput manual tiap transaksi (gak ada nilai default).
+- Kasir bisa nambah baris "kategori biaya tambahan" (mis. Biaya Packing) dari katalog preset yang disiapkan admin (`charge_categories`, module `pos` — nama + akun tujuan), bukan pilih akun bebas. Nominalnya tetap diinput manual tiap transaksi (gak ada nilai default).
 - PPN (kalau kios ini PKP) dihitung **otomatis oleh sistem** dari tarif yang diset admin (`tax_settings`), bukan diketik manual — dulu (interim) PPN dicatat lewat jurnal manual terpisah yang gak nempel ke transaksi kasir manapun, sekarang jadi bagian jurnal yang sama sehingga ikut kebalik otomatis kalau transaksinya dibatalkan.
 - Detail teknis penuh: `memory/architecture/data/pos-schema.md` submodule "Compounding & PPN".
 

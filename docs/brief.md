@@ -27,20 +27,38 @@ Seluruh isi `/docs` direpresentasikan juga di web app-nya sendiri, di routing `/
 - `general-ledger.md` — Journal Entry vs General Ledger, accrual vs cash basis, constraint wajib (balance, min 2 baris, leaf-only, immutability/reversing entry, source_ref, atomicity), period closing (konsep + kenapa levelnya beda dari immutability), contoh transaksi generik, common mistake.
 - `accounts-receivable.md` — customer master data + termin, invoice (due_date snapshot) & payment & payment allocation (many-to-many, kenapa gak cukup invoice_id langsung), status invoice derived, constraint (journal-backed, immutability, anti over-allocation, cancellation guard), 5 skenario alokasi, belum termasuk (retur, DP, overpayment).
 - `accounts-payable.md` — kebalikan AR: supplier master data + termin (ditentuin SUPPLIER, bukan kita), bill & payment & payment allocation, constraint identik AR + cancellation guard, 5 skenario (termasuk aging kebalik dari AR), belum termasuk (retur, DP, bill compound).
-- `inventory.md` — membeli ≠ berbiaya (matching principle), Weighted Average (satu-satunya metode costing, FIFO sudah dihapus total — migration `0038`), BOM/Production Order (biaya bahan baku doang, belum labor/overhead), PO → GRN+Bill (3-way matching), Goods Issue (titik HPP diakui), belum termasuk (GR/IR clearing, Sales Order, price variance report).
+- `inventory.md` — membeli ≠ berbiaya (matching principle), Weighted Average (satu-satunya metode costing), BOM/Production Order (biaya bahan baku doang, belum labor/overhead), PO → GRN+Bill (3-way matching), Goods Issue (titik HPP diakui), belum termasuk (GR/IR clearing, Sales Order, price variance report).
 - `fixed-assets.md` — matching by time (beda dari Inventory yang matching by event), 2 metode penyusutan in-scope: garis lurus (SLM) & saldo menurun (declining balance), kenapa kredit penyusutan wajib ke akun Akumulasi Penyusutan terpisah, akun kontra-asset, disposal aset (jual/buang/hilang + laba-rugi pelepasan), belum termasuk (metode Unit Produksi, revaluasi, ganti metode di tengah jalan).
 - `financial-reports.md` — read-only agregasi dari jurnal, 4 laporan: Trial Balance, Income Statement, Balance Sheet, Cash Flow. Urutan wajib TB→IS→BS→CF, cara validasi silang. Contoh angka lengkap 1 periode tervalidasi end-to-end. Period Closing (konteks bisnis).
 - `document-numbering.md` — cross-cutting, menggantikan field "Rujukan Dokumen" isi-manual dengan nomor otomatis format PREFIX-TAHUN-URUTAN (reset tiap tahun) di semua dokumen transaksional. Kasus khusus AP Bill (dokumen eksternal, nota supplier) — nomor asli direkam terpisah di field "Nomor Nota Supplier".
 
 ### architecture/
-ERD & struktur data tiap modul, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan bahas RPC/trigger secara kode):
-- `coa-schema.md`, `journal-entry-schema.md`, `ar-schema.md`, `ap-schema.md`, `inventory-schema.md`, `fixed-assets-schema.md`.
-- `financial-reports-schema.md` — 4 laporan (Trial Balance/Income Statement/Balance Sheet/Cash Flow) dijelaskan sebagai lapisan baca di atas 3 tabel yang sudah ada (`accounts`, `journal_entries`, `journal_lines`), gak ada tabel baru. Tutup Buku (Period Closing) beda — nambah 1 tabel (`period_closings`), plus aturan urutan-bersambung & gak bisa dibuka lagi. Keterbatasan lain: Cash Flow Direct Method, kategorisasi Investing/Financing otomatis.
+ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan bahas RPC/trigger secara kode). Spine-based — 1 file `.md` per tabel spine/root yang beneran ada di Supabase, bukan per modul bisnis (tabel yang dipakai bareng lintas modul, mis. transaksi AR & AP, tetap 1 file). Daftar resmi & pengelompokan file: `memory/brief.md` bagian `architecture/data/` — itu yang jadi acuan.
+
+- `coa-schema.md`, `journal-entry-schema.md`, `fixed-assets-schema.md`, `financial-reports-schema.md`, `pos-schema.md` — gak berubah, gak kena unifikasi.
+- `counterparty-schema.md` — gabungan pelanggan+pemasok jadi `counterparties`.
+- `transactions-schema.md` — gabungan invoice AR + bill AP.
+- `payments-schema.md` — gabungan pembayaran AR + AP.
+- `credit-notes-schema.md` — gabungan nota kredit retur AR + AP.
+- `return-credits-schema.md` — gabungan saldo kredit retur AR + AP.
+- `deposits-schema.md` — gabungan uang muka AR + AP.
+- `warranty-replacements-schema.md` — sisi AR tukar barang garansi (retur Opsi B).
+- `purchase-replacements-schema.md` — sisi AP tukar barang ke pemasok (retur Opsi B).
+- `tax-settings-schema.md` — Pengaturan PPN, 1 baris dipakai bareng AR/AP/POS.
+- `items-schema.md` — master barang, satuan jual/harga, Kode Scan Barang.
+- `orders-schema.md` — gabungan Purchase Order + Sales Order.
+- `goods-receipt-schema.md` — penerimaan barang dari pemasok (3-Way Matching).
+- `goods-issue-schema.md` — penjualan/keluar barang ke pelanggan, titik HPP diakui.
+- `bom-schema.md` — resep produksi (Bill of Materials).
+- `production-orders-schema.md` — order produksi, konsumsi bahan baku jadi barang jadi.
+- `stock-opname-schema.md` — penyesuaian stok fisik.
+- `inventory-ledger-schema.md` — saldo & kartu stok (Weighted Average Costing).
 - `document-numbering-schema.md` — 2 tabel baru (Daftar Jenis Dokumen, Penghitung Nomor) + 1 kolom baru di AP Bill (Nomor Nota Supplier).
 - `default-account-settings-schema.md` — 2 tabel baru (Default Akun, Preset Akun Aset Tetap), mengganti dropdown akun bebas di hampir semua form transaksi dengan field otomatis terkunci — dipicu bug nyata (salah pilih akun di panel Retur AP Bill).
+- `print-templates-schema.md` — Kop Surat & Blok Tanda Tangan (config presentasi cetak dokumen).
 
 ### tutorial/
-User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial`. Batch 1 (alur harian inti) + Batch 2 (kasus khusus) + Batch 3 (gap: ledger/cetak/refund kredit/master data) sudah dibangun — cakupan modul sudah lengkap. Disegmentasi jadi 10 subfolder modul (40 file total — `cek-credit-hold-pelanggan.md` dan `writeoff-piutang.md` dihapus 2026-09-05 bareng pencabutan total fitur Credit Hold & Piutang Tak Tertagih):
+User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial` — cakupan modul sudah lengkap. Disegmentasi jadi 10 subfolder modul (40 file total):
 - `chart-of-accounts/` — `tambah-akun-baru.md`.
 - `general-ledger/` — `buat-jurnal-manual.md`, `lihat-buku-besar-akun.md`.
 - `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `tukar-barang-garansi.md`, `uang-muka-ar.md`, `batalkan-invoice-ar.md`.

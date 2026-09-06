@@ -2,7 +2,7 @@
 
 ## Masalah yang Diselesaikan
 
-Fase 2 (General Ledger) udah bisa nyatet piutang timbul (Debit Piutang Usaha) pas jual dengan termin. Tapi itu baru "kejadiannya kecatet" — belum ada mekanisme buat:
+General Ledger bisa nyatet piutang timbul (Debit Piutang Usaha) pas jual dengan termin. Tapi itu baru "kejadiannya kecatet" — belum ada mekanisme buat:
 
 - Tau **siapa** yang berutang (identitas customer belum ada datanya sendiri, cuma nempel di catatan bebas transaksi jurnal).
 - Tau **kapan jatuh tempo** tiap piutang, dan **berapa termin** yang disepakati per customer.
@@ -19,13 +19,13 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
   - **Kenapa cicil boleh tapi overpay gak boleh**: cicil adalah praktik dagang wajar — customer bayar sebagian, sisanya nanti, tetap taat ke invoice yang sama. Overpay beda soal — kalau dibiarkan, kelebihannya jadi saldo bebas yang bisa dipakai kapan saja ke invoice mana saja, rawan gak jelas pertanggungjawabannya. Makanya: cicil bebas, kelebihan bayar ditolak dari titik pencatatan.
 - **Status invoice** (lunas/sebagian/belum) — selalu dihitung ulang dari total pembayaran yang sudah diterima dibanding nilai invoice, bukan status yang disimpan/di-update manual.
 
-### Credit Hold — DICABUT TOTAL (2026-09-05)
+### Credit Hold
 
-Sempat ada mekanisme penolakan keras invoice baru kalau customer kelampaui batas kredit atau ada piutang telat lebih dari toleransinya (level ke-2 dari 4 tindakan penjual ke piutang telat: reminder → credit hold → renegosiasi cicilan → write-off). Dicabut total atas keputusan owner sebagai bagian dari penggabungan pencatatan invoice AR dan tagihan AP jadi satu mekanisme generic — batas kredit dan toleransi keterlambatan customer sudah tidak ada lagi.
+Tidak ada mekanisme penolakan otomatis untuk invoice baru berdasarkan batas kredit atau keterlambatan piutang customer — customer tidak punya batas kredit maupun toleransi keterlambatan yang disimpan/dicek sistem. Penagihan piutang telat ditangani lewat reminder dan renegosiasi cicilan, dilakukan manual oleh staf, bukan lewat blokir otomatis sistem.
 
 ### Retur Barang (Credit Note)
 
-Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikutsertakan saldo excess retur yang direklasifikasi keluar dari Piutang Usaha — padanan fix yang sudah lebih dulu diterapkan di sisi AP.
+Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo excess retur yang direklasifikasi keluar dari Piutang Usaha, sama seperti di sisi AP.
 
 **Cara Kerja**
 - Customer ngembaliin barang yang udah diinvoice — kejadian bisnis nyata (barang beneran balik), bukan koreksi "invoice salah dari awal". Invoice asli gak diubah/dibatalkan sama sekali — retur dicatat sebagai catatan tambahan yang mengurangi sisa tagihan.
@@ -65,11 +65,12 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
   Debit Piutang Usaha
     Kredit Saldo Kredit Retur Customer
   ```
-- **Cuma SATU cara aktif nyelesaiin saldo ini ke depan** — TIDAK BOLEH "dititip"/dipakai motong invoice lain:
+- **Cuma SATU cara aktif nyelesaiin saldo ini** — TIDAK BOLEH "dititip"/dipakai motong invoice lain:
   1. **Direfund tunai** — Debit Saldo Kredit Retur Customer, Kredit Kas/Bank.
-  2. *(Peninggalan data lama, gak berlaku transaksi baru)* — sebagian retur lama pernah otomatis "terbayar" pakai barang pengganti kalau retur itu diselesaikan lewat penukaran barang pasca-retur. Sejak keputusan penyeragaman dengan alur pembelian (lihat submodule "Penukaran Barang Pasca-Retur"), penukaran barang gak lagi berhubungan sama saldo kredit retur sama sekali — customer harus pilih SATU dari awal: retur (dapat kredit/diskon) atau ganti barang, gak bisa dua-duanya buat barang yang sama.
+
+  Penukaran barang pasca-retur (lihat submodule "Penukaran Barang Pasca-Retur") gak berhubungan sama saldo kredit retur sama sekali — customer harus pilih SATU dari awal: retur (dapat kredit/diskon) atau ganti barang, gak bisa dua-duanya buat barang yang sama.
 - Kenapa opsi "dipakai motong invoice lain" gak dibolehkan: sama alasan larangan overpay jadi saldo mengambang di Konsep Inti — gak mau ada saldo yang "ngambang" bisa dipakai kapan aja ke invoice mana aja.
-- Sengaja gak ada batas waktu retur (umur invoice vs tanggal retur) — pernah ada, dicabut karena angkanya gak pernah punya dasar/justifikasi kuat. Retur diterima/ditolak sekarang murni keputusan manual staf di luar sistem.
+- Sengaja gak ada batas waktu retur (umur invoice vs tanggal retur). Retur diterima/ditolak murni keputusan manual staf di luar sistem.
 - Batasan yang tetap dijaga otomatis: retur gak boleh dicatat ke periode akuntansi yang udah ditutup — ini soal integritas pembukuan umum (semua transaksi tunduk aturan ini), bukan aturan khusus retur.
 - Retur bukan penukaran barang — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penukaran barang pasca-retur (garansi) adalah submodule terpisah.
 
@@ -100,7 +101,7 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
 
 ### Penukaran Barang Pasca-Retur (Garansi)
 
-**Restrukturisasi (2026-09-03, keputusan owner)**: dulu penukaran barang harus menempel ke retur yang sudah tercatat, lalu membalikkan sebagian diskon retur biar customer gak dapat kompensasi dobel. Sekarang diseragamkan dengan cara pembelian menangani kasus serupa (tukar barang ke supplier) — customer harus pilih SATU jalan sejak awal: **retur (dapat kredit/diskon) ATAU ganti barang**, gak bisa dua-duanya buat barang yang sama. Karena pilihannya sudah dipisah sejak awal, penukaran barang sekarang gak perlu lagi "mengoreksi" apa pun — jadi lebih sederhana.
+Penukaran barang berdiri sendiri dari retur, diseragamkan dengan cara pembelian menangani kasus serupa (tukar barang ke supplier) — customer harus pilih SATU jalan sejak awal: **retur (dapat kredit/diskon) ATAU ganti barang**, gak bisa dua-duanya buat barang yang sama. Karena pilihannya dipisah sejak awal, penukaran barang gak perlu "mengoreksi" apa pun.
 
 **Cara Kerja**
 - Customer punya barang bermasalah (garansi kualitas) DAN minta barang pengganti — bukan hadiah, customer memang berhak dapat barang layak jual sebagai ganti barang cacat. Bedanya sama retur biasa: retur murni "barang balik, tagihan berkurang"; ini "barang cacat ditukar barang baik" — secara net customer tetap bayar penuh nilai barang yang akhirnya dia terima, cuma gak ada penerbitan tagihan baru buat barang pengganti itu.
@@ -110,7 +111,7 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
   Debit Harga Pokok Penjualan
     Kredit Persediaan Barang Jadi
   ```
-  Piutang Usaha customer sama sekali gak disentuh oleh penukaran barang — beda dari versi lama yang wajib bikin jurnal tambahan buat membalikkan diskon retur.
+  Piutang Usaha customer sama sekali gak disentuh oleh penukaran barang.
 - **Satu barang, satu jalan kompensasi.** Begitu qty tertentu dari satu invoice udah "dipakai" lewat retur (dapat kredit/diskon), qty yang sama gak bisa lagi diajukan buat ganti barang — dan sebaliknya, qty yang udah dipakai ganti barang gak bisa lagi diretur. Sisa yang masih bisa diproses (baik lewat retur maupun ganti barang) selalu dihitung dari total qty terjual dikurangi SEMUA yang udah "diklaim" lewat jalur manapun — jadi gak peduli customer mau retur duluan atau ganti barang duluan, hasil akhirnya tetap konsisten: gak ada barang yang dikompensasi dua kali.
 - **Ganti barang gak bisa diajukan buat tagihan yang gak pernah ada barang fisiknya** (misal tagihan jasa) — cuma berlaku buat tagihan yang beneran mengeluarkan barang dari gudang.
 - Barang pengganti diambil dari stok aktif yang sama dengan stok jualan biasa — aman karena retur yang **rusak** (submodule "Retur Barang" di atas) TIDAK PERNAH masuk ke stok aktif sama sekali (langsung jadi Beban Kerugian Barang Rusak, gak direstock), jadi gak ada resiko barang cacat yang balik ikut kepakai lagi buat penukaran.
@@ -127,7 +128,7 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
 - Penukaran barang lewat proses pengeluaran barang biasa (bikin tagihan lagi) — piutang & pendapatan numpuk palsu padahal gak ada penjualan baru.
 - Barang pengganti diambil dari stok bekas retur (barang rusak yang baru balik) — harusnya dari stok fresh/layak jual, barang rusak gak dipakai ganti lagi.
 - Nganggep proteksi "gak boleh dikompensasi dobel" cukup dicek dari 1 arah aja (misal cuma pas mau ganti barang) — customer yang retur dulu BARU ganti barang buat barang yang sama juga harus tetap dicegah, bukan cuma arah sebaliknya.
-- Mengira penukaran barang masih perlu menunjuk retur yang sudah ada — itu perilaku lama, sekarang keduanya berdiri sendiri-sendiri.
+- Mengira penukaran barang perlu menunjuk retur yang sudah ada — keduanya berdiri sendiri-sendiri, gak saling bergantung.
 
 ### Uang Muka / DP (Deposit)
 
@@ -158,15 +159,15 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) sekarang sudah mengikut
 - DP hangus dicatat ke Pendapatan Penjualan biasa — harus ke Pendapatan Lain-lain, biar gak nyampur sama hasil jualan beneran.
 - Batalin invoice yang DP-nya udah diterapkan tanpa ikut membalikkan penerapan DP-nya — Piutang Usaha customer itu bakal nyasar jadi minus, dan DP-nya nyangkut gak jelas statusnya.
 
-### Piutang Tak Tertagih (Bad Debt Write-off) — DICABUT TOTAL (2026-09-05)
+### Piutang Tak Tertagih (Bad Debt Write-off)
 
-Sempat ada mekanisme direct write-off (Debit Beban Piutang Tak Tertagih / Kredit Piutang Usaha, Pendapatan asli gak dibalik) buat piutang yang beneran gak akan tertagih. Dicabut total atas keputusan owner bareng penggabungan pencatatan invoice AR dan tagihan AP jadi satu mekanisme generic.
+Tidak ada mekanisme write-off untuk piutang yang beneran gak akan tertagih — piutang tetap tercatat apa adanya sampai dilunasi atau diretur, gak ada jalur khusus buat "menghapusnya" dari pembukuan.
 
 ### Kategori Campur & PPN
 
 **Cara Kerja**
-- 1 invoice ke customer kadang isinya campuran kategori pendapatan — misal Rp500.000 Pendapatan Penjualan Barang + Rp20.000 Pendapatan Jasa Pengiriman, kalau perusahaan mau memisahkan kedua kategori itu di laporan. Dulu sistem cuma bisa mencatat 1 kategori pendapatan per invoice.
-- Sekarang admin bisa menyiapkan daftar kategori pendapatan tambahan (misal "Jasa Pengiriman"), dan staf AR bisa menambahkan baris kategori itu saat membuat invoice — nominalnya tetap diinput manual per invoice, gak ada nilai default.
+- 1 invoice ke customer kadang isinya campuran kategori pendapatan — misal Rp500.000 Pendapatan Penjualan Barang + Rp20.000 Pendapatan Jasa Pengiriman, kalau perusahaan mau memisahkan kedua kategori itu di laporan.
+- Admin bisa menyiapkan daftar kategori pendapatan tambahan (misal "Jasa Pengiriman"), dan staf AR bisa menambahkan baris kategori itu saat membuat invoice — nominalnya tetap diinput manual per invoice, gak ada nilai default.
 - PPN Keluaran (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Piutang Usaha (customer ikut berutang pajaknya) — bukan diketik manual.
 - Berlaku juga untuk invoice yang lahir dari penjualan barang jadi (Goods Issue) — mekanismenya sama, cuma dipicu dari alur yang berbeda.
 

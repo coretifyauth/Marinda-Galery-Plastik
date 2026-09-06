@@ -67,7 +67,7 @@ Awalnya ini sengaja dikecualikan dari scope `<LockedAccountField>` (kategori = S
 **Perbaikan** — `lib/charge-lines/schema.ts` nambah 2 helper (pola sama `resolveCashAccount`/`resolvedPpnMasukan`):
 - `resolveCategoryLeg(categoryId, categories, side)` — 1 kategori terpilih -> 1 leg, `undefined` kalau belum dipilih (BUKAN nampilin warning merah "belum diset admin" — beda kasus, ini emang belum ada pilihan user, bukan admin lupa setup).
 - `resolveChargeLineLegs(lines, categories, side)` — N baris `ChargeLinesEditor` yang udah keisi (kategori+nominal) -> N leg, filter yang masih kosong. Ditulis sebagai `...resolveChargeLineLegs(...)` di tengah array leg grup (bukan bikin grup baru — semua ini 1 `journal_entry` yang sama, RPC nampung ke `v_journal_lines`/`v_debit_lines` array yang sama).
-- Kategori (`ApBillExpenseCategory`/`ArInvoiceChargeType`, dari `ap_bill_expense_categories`/`ar_invoice_charge_types`) udah kequery ikut join `accounts(code,name)` dari awal (dipakai buat resolve submit) — tinggal dipakai ulang, gak perlu fetch tambahan.
+- Kategori (`ChargeCategoryWithAccount`, dari `charge_categories` difilter `module`) udah kequery ikut join `accounts(code,name)` dari awal (dipakai buat resolve submit) — tinggal dipakai ulang, gak perlu fetch tambahan.
 - Label leg dari NAMA KATEGORI (`cat.name`, mis. "Ongkir Supplier"), bukan nama akun — kategori itu yang user pilih & kenali, akun cuma detail teknis di baris resolved-nya.
 
 File yang kena revisi 4: `ap-bills/page.tsx` (primary category + extra), `ar-invoices/page.tsx` + `goods-issues/page.tsx` + `goods-receipts/page.tsx` + `sales-orders/[id]/view.tsx` (extra doang, primary-nya udah fixed/`LockedAccountField`).

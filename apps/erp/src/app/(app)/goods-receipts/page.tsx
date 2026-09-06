@@ -8,12 +8,16 @@ import { poStatus, lineRemaining, type PurchaseOrder } from "@/lib/purchase-orde
 import { createGoodsReceiptSchema, type CreateGoodsReceiptInput } from "@/lib/goods-receipts/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsReceipts } from "@/lib/goods-receipts/queries";
 import { generateDocumentNumber } from "@/lib/document-numbers";
-import type { ApBillExpenseCategory } from "@/lib/ap-bill-expense-categories/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import type { Item } from "@/lib/items/schema";
 import type { Supplier } from "@/lib/suppliers/schema";
 import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
-import { resolveChargeLines, resolveChargeLineLegs, type ChargeLineInput } from "@/lib/charge-lines/schema";
+import {
+  resolveChargeLines,
+  resolveChargeLineLegs,
+  type ChargeLineInput,
+  type ChargeCategoryWithAccount,
+} from "@/lib/charge-lines/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -69,7 +73,7 @@ export default function GoodsReceiptsPage() {
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [lines, setLines] = useState<LineInput[]>([]);
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
-  const [expenseCategories, setExpenseCategories] = useState<ApBillExpenseCategory[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<ChargeCategoryWithAccount[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -140,10 +144,11 @@ export default function GoodsReceiptsPage() {
 
   const loadExpenseCategories = useCallback(async () => {
     const { data } = await supabase
-      .from("ap_bill_expense_categories")
+      .from("charge_categories")
       .select("id, name, account_id, archived_at, accounts(code, name)")
+      .eq("module", "ap")
       .order("name");
-    setExpenseCategories((data ?? []) as unknown as ApBillExpenseCategory[]);
+    setExpenseCategories((data ?? []) as unknown as ChargeCategoryWithAccount[]);
   }, []);
 
   const loadTaxSettings = useCallback(async () => {

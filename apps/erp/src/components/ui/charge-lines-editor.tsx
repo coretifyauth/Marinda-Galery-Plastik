@@ -6,8 +6,8 @@ import { Input } from "./input";
 import { Button } from "./button";
 
 /** Editor baris "kategori biaya tambahan" dinamis — dipakai di AP Bill, AR Invoice, dan Goods
- * Issue. Kategori dipilih dari katalog admin (bukan akun mentah), nominal diinput bebas per
- * transaksi (memory/scope-debt/compound-transactional-entries.md, gak ada nilai default). */
+ * Issue. Kategori dipilih dari katalog admin (`charge_categories`, bukan akun mentah), nominal
+ * diinput bebas per transaksi (gak ada nilai default). */
 export function ChargeLinesEditor({
   label,
   lines,

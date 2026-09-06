@@ -1,6 +1,6 @@
 # General Ledger & Journal Entry — Struktur Data
 
-Fase 2. Konsep bisnisnya ada di `docs/domain/general-ledger.md` — file ini fokus ke struktur data & aturan otomatis. Detail teknis: `memory/architecture/data/journal-entry-schema.md`. Akun yang dipakai bergantung ke `docs/architecture/coa-schema.md`.
+Konsep bisnisnya ada di `docs/domain/general-ledger.md` — file ini fokus ke struktur data & aturan otomatis. Detail teknis: `memory/architecture/data/journal-entry-schema.md`. Akun yang dipakai bergantung ke `docs/architecture/coa-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

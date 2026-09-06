@@ -47,23 +47,62 @@ Ada 2 folder dokumentasi terpisah, buat 2 pembaca berbeda — jangan tercampur:
 
 **Kenapa dipisah:** `/memory` adalah working memory agent — padat, boleh nyebut nama tabel/kolom/fungsi SQL langsung, gak perlu enak dibaca manusia. `/docs` adalah knowledge base milik user — naratif, dihindari istilah kode mentah, karena ini media belajar & jejak keputusan bisnis buat manusia baca ulang. Konten sering membahas topik yang sama (misal `coa-schema.md` ada di kedua folder), tapi levelnya beda: `memory/architecture/data/*.md` = DDL+RPC+trigger, `docs/architecture/*.md` = ERD dalam tabel + penjelasan aturan pakai bahasa natural.
 
-### Format Baku: Struktur Module → Submodule
+### Format Baku: Domain (module-based) vs Architecture (spine-based)
 
-Berlaku di semua 4 lokasi (`docs/domain`, `docs/architecture`, `memory/domain`, `memory/architecture/data`) — cuma level bahasa/detail yang beda (naratif vs compact-teknis, lihat "Kenapa dipisah" di atas), strukturnya sama. **Posisi & pengelompokan submodule harus identik** antara `docs/domain/<modul>.md` ↔ `docs/architecture/<modul>-schema.md`, dan antara `memory/domain/<modul>.md` ↔ `memory/architecture/data/<modul>-schema.md`. Kalau 1 submodule adalah konsekuensi langsung dari submodule lain (misal "Saldo Kredit dari Retur" yang lahir otomatis dari "Retur Barang"), gabung jadi 1 submodule — jangan dipisah sendiri.
+**`docs/domain`/`memory/domain` tetap module-based** (dikelompokkan per konsep bisnis —
+AR, AP, Inventory, POS, dst), **`docs/architecture`/`memory/architecture/data` sekarang
+spine-based** (1 file `.md` per tabel spine/root yang beneran ada di Supabase, bukan per
+modul bisnis — keputusan owner 2026-09-05, ngegantiin konvensi module→submodule lama di
+2 lokasi ini). Alasan pindah: modul bisnis (AR/AP) dan tabel fisik gak lagi 1:1 sejak
+unifikasi `transactions`/`payments`/`credit_notes`/dst (1 tabel dipakai 2 modul
+sekaligus) — file per-modul jadi berantakan (dokumen `ar-schema.md`/`ap-schema.md`
+saling menunjuk isi yang sama). File per-tabel-spine gak punya masalah itu: 1 tabel = 1
+file, gak peduli modul bisnis mana yang makai.
 
-**`docs/domain/<modul>.md`** (naratif, TANPA nama RPC/tabel/kolom/migration):
+**Definisi "spine"**: tabel root/independen (unit bisnis berdiri sendiri — `transactions`,
+`payments`, `credit_notes`, `deposits`, `orders`, `items`, dst) ATAU tabel cross-cutting
+yang direferensikan lintas banyak modul (`accounts`, `journal_entries`,
+`inventory_balances`+`inventory_movements`, `tax_settings`) — ditentukan dari
+intent/bounded-context, BUKAN dari arah FK mentah (tabel yang direferensikan hampir semua
+tabel lain, kayak `accounts`/`journal_entries`, tetap spine sendiri, bukan "anak" dari
+siapa pun yang nunjuk ke situ). **"Supporting table"**: child/anak langsung dari 1 spine
+(baris item, tabel disposisi) — didokumentasikan DI DALAM file spine induknya sebagai
+submodule, bukan file terpisah. Gak wajib ada FK literal ke spine induknya — tabel
+config/katalog yang lahir bareng 1 migration/1 fitur yang sama dan konsepnya berdekatan
+(mis. `roles`+`user_roles` di `coa-schema.md`, `company_settings`+`document_signatories`
+di `print-templates-schema.md`, `default_account_settings`+`fixed_asset_account_presets`
+di `default-account-settings-schema.md`, `inventory_balances`+`inventory_movements` di
+`inventory-ledger-schema.md`) tetap 1 file — daftar spine resmi & pengelompokan filenya
+ada di `memory/brief.md` bagian `architecture/data/`, itu yang jadi acuan, bukan aturan
+FK yang diturunkan ulang tiap kali.
+
+**`docs/architecture/<spine>-schema.md`/`memory/architecture/data/<spine>-schema.md`**
+(1 file per spine, cuma beda level bahasa naratif vs compact-teknis, lihat "Kenapa
+dipisah" di atas):
+- `##` "Keputusan" (rationale desain spine ini + kenapa tabel-tabel tertentu masuk sini
+  sebagai supporting, bukan spine sendiri).
+- `##` DDL spine + tiap supporting table sebagai `##`/`###` terpisah.
+- `##` per RPC/trigger utama, `##` RLS & Grant di akhir.
+- Kalau 1 spine punya banyak RPC/proses (misal `orders` + realisasi fisiknya), bebas
+  dipecah `##` per proses selama tetap 1 file per spine.
+
+**`docs/domain/<modul>.md`** (naratif, TANPA nama RPC/tabel/kolom/migration) TETAP
+module-based:
 - `##` level modul: "Masalah yang Diselesaikan", "Konsep Inti" (entitas bisnis dasar yang dipakai semua submodule).
 - `###` per submodule, isi pakai **bold label** (bukan heading lebih dalam): **Cara Kerja** (alur bisnis + jurnal per skenario — akun yang didebit/dikredit, TANPA nominal konkret), **Aturan Bisnis** (boleh/tidak boleh, bahasa bisnis murni), **Skenario** (poin ringkas), **Common Mistakes** (kesalahan pemahaman/pemakaian sisi bisnis, bukan bug teknis).
 
-**`docs/architecture/<modul>-schema.md`** (teknis, semua konten dalam bentuk tabel markdown):
-- `##` level modul: "Peta Data (ERD) — Ringkasan Semua Tabel" (satu baris per tabel, mewakili SEMUA tabel modul itu).
-- `##` per submodule (sejajar level modul, bukan `###`), isi pakai **bold label**: **Peta Data (ERD)** (subset tabel submodule ini), **Alur Teknis (RPC)** (aksi → RPC → efek → guard), **Aturan Bisnis → RPC** (mapping tiap aturan dari `docs/domain` ke RPC/trigger yang menjaganya), **Interaksi Antar Tabel**.
-
-**`memory/domain/<modul>.md`** & **`memory/architecture/data/<modul>-schema.md`**: struktur module → submodule yang sama persis (posisi submodule identik dengan pasangan `docs/`-nya), tapi tetap compact & teknis (boleh nyebut RPC/tabel/kolom/DDL/trigger langsung) — bukan ditulis ulang naratif kayak `docs/`.
+**`memory/domain/<modul>.md`**: struktur module → submodule yang sama persis dengan
+`docs/domain/<modul>.md` pasangannya (posisi submodule identik), tapi tetap compact &
+teknis (boleh nyebut RPC/tabel/kolom/DDL/trigger langsung) — bukan ditulis ulang naratif.
+**Gak lagi wajib mirror ke `memory/architecture/data`** (yang sekarang di-organize per
+spine, bukan per modul) — referensi silang cukup lewat link ke file spine yang relevan,
+bisa lebih dari 1 file spine per submodule domain kalau modul bisnisnya nyentuh beberapa
+tabel spine sekaligus (mis. submodule "Retur Barang" AR nunjuk `credit-notes-schema.md`
++ `return-credits-schema.md`).
 
 **Gak ada section "Belum Termasuk" di keempat lokasi** — item yang sengaja ditunda dilacak lewat `memory/scope-debt/*.md` (lihat "Aturan siklus hidup: scope-debt" di bawah), disebut inline di prosa/tabel kalau relevan konteksnya, bukan section terpisah tiap file.
 
-Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor (lihat `memory/preferences/system/md-file-naming.md`). Nama file sama antara `memory/domain/*.md` dan `docs/domain/*.md`.
+Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor (lihat `memory/preferences/system/md-file-naming.md`). Nama file sama antara `memory/domain/*.md` dan `docs/domain/*.md` (module-based). Nama file arsitektur sekarang `<nama-tabel-spine-singular-atau-plural-natural>-schema.md` (mis. `orders-schema.md`, `items-schema.md`, `inventory-ledger-schema.md`) — TIDAK selalu sama dengan nama file domain pasangannya lagi, karena 1 file domain (modul bisnis) bisa merujuk banyak file arsitektur (tabel spine).
 
 Jangan generate ulang logic yang sudah tercatat di `memory/domain/*.md` atau `memory/architecture/*.md` — load sebagai context dulu sebelum implement ulang.
 

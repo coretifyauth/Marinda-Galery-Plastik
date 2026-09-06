@@ -149,8 +149,9 @@ async function fetchCustomers(): Promise<Customer[]> {
 
 async function fetchChargeTypes(): Promise<ChargeType[]> {
   const { data, error } = await supabase
-    .from("pos_charge_types")
+    .from("charge_categories")
     .select("id, name, account_id")
+    .eq("module", "pos")
     .is("archived_at", null)
     .order("name");
   if (error) throw new Error(error.message);

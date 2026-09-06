@@ -50,20 +50,20 @@ Solusinya: sistem yang menerbitkan nomornya sendiri, otomatis, begitu dokumen te
 **Common Mistakes**
 - Berharap bisa lihat/catat nomornya SEBELUM klik Simpan — gak bisa, karena nomor baru pasti ada setelah data beneran tersimpan. Konsekuensinya: kalau proses simpan gagal di tengah jalan (misal koneksi putus), nomor yang sempat digenerate bisa "hilang" tanpa pernah terpakai — ini disengaja, bukan bug, karena nomor ini murni referensi internal (bukan nomor resmi seperti Faktur Pajak yang diatur pemerintah), jadi celah semacam itu gak jadi masalah kepatuhan.
 
-### Data Lama (Sebelum Sistem Ini Ada)
+### Dokumen dengan Rujukan Manual Lama
 
 **Cara Kerja**
-- Semua dokumen yang sudah tersimpan SEBELUM sistem penomoran ini ada masih pakai Rujukan Dokumen lama yang diketik manual (bukan format `PREFIX-TAHUN-URUTAN`) — isinya gak pernah diubah ke format baru.
+- Sebagian dokumen di sistem masih menyimpan Rujukan Dokumen lama yang diketik manual (bukan format `PREFIX-TAHUN-URUTAN`) — isinya gak pernah diubah ke format baru.
 
 **Aturan Bisnis**
 - Sistem ini punya aturan "sekali dokumen tersimpan, gak pernah bisa diedit lagi — cuma bisa dibikin entry pembalik" (prinsip yang sama dengan jurnal akuntansi: transaksi yang sudah tercatat gak boleh dihapus/diubah diam-diam). Rujukan Dokumen ikut terkunci aturan ini juga, walau isinya cuma teks referensi, bukan angka uang.
-- Konsekuensinya: dokumen lama TETAP pakai rujukan manual lamanya selamanya. Cuma dokumen yang dibuat SETELAH sistem penomoran ini aktif yang dapat Nomor Dokumen otomatis.
+- Konsekuensinya: dokumen dengan rujukan manual lama TETAP pakai rujukan itu selamanya — cuma dokumen yang dibuat dengan mekanisme penomoran otomatis ini yang dapat Nomor Dokumen otomatis.
 
 **Skenario**
-- AP Bill dari Januari 2026 (sebelum sistem penomoran aktif) rujukannya masih "Nota Beli #PJ-001" (isi manual lama). AP Bill baru yang dibuat setelahnya otomatis dapat `APB-2026-00004`, dst.
+- AP Bill dengan rujukan manual lama masih tampil "Nota Beli #PJ-001" (isi manual). AP Bill lain yang dibuat lewat mekanisme penomoran otomatis dapat `APB-2026-00004`, dst.
 
 **Common Mistakes**
-- Mengira semua dokumen lama otomatis "dirapikan" begitu sistem penomoran aktif. Gak — cuma dokumen baru yang bernomor; dokumen lama gak pernah disentuh karena aturan "gak bisa diedit" berlaku ke SEMUA kolom, termasuk Rujukan Dokumen.
+- Mengira dokumen dengan rujukan manual lama otomatis "dirapikan" ke format baru. Gak — dokumen itu gak pernah disentuh karena aturan "gak bisa diedit" berlaku ke SEMUA kolom, termasuk Rujukan Dokumen.
 
 ## Glossary
 

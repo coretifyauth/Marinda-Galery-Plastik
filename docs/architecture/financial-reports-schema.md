@@ -1,12 +1,12 @@
 # Financial Reports — Struktur Data
 
-Fase 7. Konsep bisnisnya ada di `docs/domain/financial-reports.md`. Detail teknis: `memory/architecture/data/financial-reports-schema.md`.
+Konsep bisnisnya ada di `docs/domain/financial-reports.md`. Detail teknis: `memory/architecture/data/financial-reports-schema.md`.
 
 Struktur module → submodule di file ini SAMA urutannya dengan `docs/domain/financial-reports.md` dan `memory/domain/financial-reports.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel & Fungsi Laporan
 
-Beda dari semua fase sebelumnya: Financial Reports **hampir gak menambah tabel baru**. Empat laporannya (Trial Balance, Income Statement, Balance Sheet, Cash Flow) semuanya dihitung on-demand dari 3 tabel yang sudah ada sejak Fase 1 dan Fase 2 — cuma Tutup Buku (submodule terakhir) yang beneran nambah struktur baru.
+Beda dari modul-modul pencatatan transaksi lainnya: Financial Reports **hampir gak menambah tabel baru**. Empat laporannya (Trial Balance, Income Statement, Balance Sheet, Cash Flow) semuanya dihitung on-demand dari 3 tabel yang sudah ada di Chart of Accounts dan General Ledger — cuma Tutup Buku (submodule terakhir) yang beneran nambah struktur baru.
 
 | Nama | Jenis | Fungsi | Terhubung ke |
 |---|---|---|---|
@@ -42,7 +42,7 @@ Laporan-laporan baca ini bisa dibayangkan sebagai **lapisan baca (read layer)** 
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Total debit = total kredit persis, gak ada toleransi | Konsekuensi otomatis dari aturan "setiap jurnal wajib balance" yang udah ditegakkan sejak baris pertama dicatat (Fase 2) — Trial Balance cuma membuktikan ulang, gak menjamin dari nol |
+| Total debit = total kredit persis, gak ada toleransi | Konsekuensi otomatis dari aturan "setiap jurnal wajib balance" yang ditegakkan di General Ledger sejak baris pertama dicatat — Trial Balance cuma membuktikan ulang, gak menjamin dari nol |
 | Saldo per akun dihitung dari arah saldo normal | Fungsi Trial Balance — debit dikurangi kredit kalau `normal_balance` akun itu debit, kebalikannya kalau kredit |
 
 **Interaksi Antar Tabel**

@@ -2,13 +2,13 @@
 
 ## Masalah yang Diselesaikan
 
-Semua fase sebelumnya (COA → General Ledger → AR → AP → Inventory → Fixed Assets) itu **infrastruktur pengumpulan data** — tiap transaksi dicatat rapi sebagai baris jurnal berpasangan (debit/kredit). Tapi bank yang mau ngasih pinjaman modal ke pemilik usaha (motivasi utama) gak mau baca ratusan baris jurnal mentah. Mereka minta **4 laporan standar**: Trial Balance, Income Statement (Laba Rugi), Balance Sheet (Neraca), Cash Flow Statement (Arus Kas).
+Modul-modul lain (Chart of Accounts, General Ledger, AR, AP, Inventory, Fixed Assets) itu **infrastruktur pengumpulan data** — tiap transaksi dicatat rapi sebagai baris jurnal berpasangan (debit/kredit). Tapi bank yang mau ngasih pinjaman modal ke pemilik usaha (motivasi utama) gak mau baca ratusan baris jurnal mentah. Mereka minta **4 laporan standar**: Trial Balance, Income Statement (Laba Rugi), Balance Sheet (Neraca), Cash Flow Statement (Arus Kas).
 
-Modul ini beda dari semua modul sebelumnya: **gak ada catatan baru, gak ada transaksi baru dicatat.** Financial Reports murni **merangkum ulang (read-only)** data yang udah ada sejak Fase 2 — jawab "jadi gimana kondisi bisnisnya sekarang", bukan "apa yang terjadi".
+Modul ini beda dari modul-modul pencatatan transaksi: **gak ada catatan baru, gak ada transaksi baru dicatat.** Financial Reports murni **merangkum ulang (read-only)** data yang udah tercatat di General Ledger — jawab "jadi gimana kondisi bisnisnya sekarang", bukan "apa yang terjadi".
 
 ## Konsep Inti
 
-- **Laporan ini murni lapisan baca** — gak ada kejadian bisnis baru yang tercatat di sini, gak ada dokumen sumber baru. Semua 4 laporan standar dihitung ulang dari data yang udah dicatat rapi sejak fase-fase sebelumnya.
+- **Laporan ini murni lapisan baca** — gak ada kejadian bisnis baru yang tercatat di sini, gak ada dokumen sumber baru. Semua 4 laporan standar dihitung ulang dari data yang udah dicatat rapi di modul-modul pencatatan transaksi.
 - **Trial Balance adalah fondasi semua laporan lain** — 1 sumber angka (saldo tiap akun di satu titik waktu) yang dipakai bareng buat nyusun Income Statement DAN Balance Sheet, bukan dihitung ulang 2x terpisah dengan logic beda-beda.
 - **Ada urutan wajib penyusunan** (dependency, gak bisa dibalik):
   ```
@@ -52,7 +52,7 @@ Modul ini beda dari semua modul sebelumnya: **gak ada catatan baru, gak ada tran
   Laba Bersih = Total Pendapatan - Total Beban
   ```
 - **Kenapa harus rentang waktu?** Pendapatan/Beban "reset" tiap periode (matching principle, `general-ledger.md`). Laba Rugi bulan ini beda dari Laba Rugi bulan depan, meski Neraca akhir bulan ini dan bulan depan bisa aja mirip.
-- Laporan ini nutup semua Harga Pokok Penjualan/Beban yang udah dibangun dari fase-fase sebelumnya: HPP dari penjualan barang (Inventory), Beban Penyusutan dari aset tetap (Fixed Assets), Beban Gaji/Sewa/Bunga dari pencatatan manual.
+- Laporan ini nutup semua Harga Pokok Penjualan/Beban yang tercatat dari modul-modul lain: HPP dari penjualan barang (Inventory), Beban Penyusutan dari aset tetap (Fixed Assets), Beban Gaji/Sewa/Bunga dari pencatatan manual.
 - **Interaksi sama Tutup Buku**: begitu suatu periode ditutup (lihat submodule "Tutup Buku"), transaksi jurnal penutup periode itu SENGAJA dikeluarkan dari perhitungan laporan ini — biar lihat ulang Laba Rugi periode yang udah ditutup tetap nunjukin angka historis aslinya, bukan balik ke nol.
 
 **Aturan Bisnis**
@@ -69,7 +69,7 @@ Modul ini beda dari semua modul sebelumnya: **gak ada catatan baru, gak ada tran
 ### Balance Sheet (Neraca)
 
 **Cara Kerja**
-- Ambil akun Asset, Liability, Equity dari Trial Balance, per **1 tanggal tertentu**. Harus tegakin persamaan akuntansi dari Fase 1:
+- Ambil akun Asset, Liability, Equity dari Trial Balance, per **1 tanggal tertentu**. Harus tegakin persamaan akuntansi dasar (`docs/domain/chart-of-accounts.md`):
   ```
   Asset = Liability + Equity
   ```
@@ -140,10 +140,10 @@ Modul ini beda dari semua modul sebelumnya: **gak ada catatan baru, gak ada tran
 ### Tutup Buku (Period Closing)
 
 **Cara Kerja**
-- Ditandai dari Fase 2 sebagai "ditunda ke Fase 7" — karena butuh Income Statement jalan dulu buat tau angka Laba Bersih definitif yang mau ditutup. Mekanisme teknis (closing entry, contoh angka) udah ditulis di `docs/domain/general-ledger.md` bagian "Period Closing" — bagian ini nambahin **konteks bisnis** yang belum dijelasin di sana.
+- Tutup Buku butuh Income Statement buat tau angka Laba Bersih definitif yang mau ditutup, makanya submodule ini hidup berdampingan dengan laporan-laporan di atas. Mekanisme teknis (closing entry, contoh angka) udah ditulis di `docs/domain/general-ledger.md` bagian "Period Closing" — bagian ini nambahin **konteks bisnis** yang belum dijelasin di sana.
 - **Masalah dunia nyata**: Bank gak cuma minta "laporan keuangan" sekali doang — mereka minta laporan **per periode spesifik** ("Laba Rugi bulan Juli 2026", "Neraca per 31 Desember 2026"). Begitu pemilik usaha nyerahin laporan itu, **laporan itu jadi dasar keputusan bank** (approve pinjaman, berapa plafon).
   - **Skenario tanpa period closing:** Pemilik usaha udah ngasih Laporan Laba Rugi Juli ke bank. Bank udah proses keputusan berdasarkan angka itu. Minggu depan, karyawan nemu nota belanja bahan baku tanggal 28 Juli yang kelupaan dicatat. Kalau sistem **boleh** nyelipin entry baru bertanggal 28 Juli (periode yang udah dilaporkan), Laba Bersih Juli **diam-diam berubah** — padahal bank udah pegang & ambil keputusan berdasarkan angka lama, dan gak pernah tau laporannya berubah tanpa sepengetahuan mereka.
-  - Ini beda dari kasus "salah catat, dikoreksi lewat reversing entry" yang udah di-handle dari Fase 2 (`general-ledger.md` constraint #4) — itu emang dimaksudkan buat **KETAHUAN** ada koreksi (reversing entry kelihatan di histori). Masalah di sini soal periode yang **udah "disegel" dan dipakai pihak luar** — begitu udah dilaporkan, gak boleh diam-diam berubah, titik.
+  - Ini beda dari kasus "salah catat, dikoreksi lewat reversing entry" (`general-ledger.md` constraint #4) — itu emang dimaksudkan buat **KETAHUAN** ada koreksi (reversing entry kelihatan di histori). Masalah di sini soal periode yang **udah "disegel" dan dipakai pihak luar** — begitu udah dilaporkan, gak boleh diam-diam berubah, titik.
 - **Masalah kedua (internal, buat pemilik usaha sendiri):** dia mau tau **performa per bulan** — bulan mana untung, bulan mana rugi — buat mutusin naikin harga jual atau ganti supplier. Kalau Pendapatan/Beban gak pernah direset tiap bulan, angka yang keliatan itu **kumulatif dari awal usaha berdiri** — Laba Rugi bulan tertentu bakal keliatan gabungan bertahun-tahun, bukan performa bulan itu doang. Gak bisa dibandingin "bulan A untung berapa vs bulan B untung berapa".
 - **Solusi** (ringkas — detail teknis di `general-ledger.md`):
   1. **Tutup buku**: pindahin saldo Pendapatan/Beban periode itu ke `Laba Ditahan` (Equity, permanen), Pendapatan/Beban balik ke 0 — bulan depan mulai dari nol, bisa dibandingin performa antar bulan.

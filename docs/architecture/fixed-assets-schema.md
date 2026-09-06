@@ -1,6 +1,6 @@
 # Fixed Assets — Struktur Data
 
-Fase 6. Konsep bisnisnya ada di `docs/domain/fixed-assets.md`. Konsep akun kontra: `docs/domain/chart-of-accounts.md` bagian "Akun Kontra". Detail teknis: `memory/architecture/data/fixed-assets-schema.md`.
+Konsep bisnisnya ada di `docs/domain/fixed-assets.md`. Konsep akun kontra: `docs/domain/chart-of-accounts.md` bagian "Akun Kontra". Detail teknis: `memory/architecture/data/fixed-assets-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

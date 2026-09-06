@@ -2,7 +2,7 @@
 
 Inventory melacak barang fisik (qty + harga per satuan) dari diterima → diproses jadi barang jadi → terjual, supaya HPP (Harga Pokok Penjualan / COGS) bisa dihitung akurat. **Prinsip inti: membeli bahan baku BUKAN biaya** — itu tukar aset (Kas/Utang → Persediaan). HPP baru diakui pas barang jadi **terjual** (matching principle), gak peduli kapan utang ke supplier dibayar.
 
-Naratif lengkap + reasoning penuh: `docs/domain/inventory.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu dan dengan `memory/architecture/data/inventory-schema.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
+Naratif lengkap + reasoning penuh: `docs/domain/inventory.md`. Struktur module → submodule di file ini SAMA urutannya dengan padanan naratif itu. Arsitektur teknis sekarang di-organize per spine tabel, bukan per modul — lihat `memory/architecture/data/items-schema.md`, `orders-schema.md`, `goods-receipt-schema.md`, `goods-issue-schema.md`, `bom-schema.md`, `production-orders-schema.md`, `stock-opname-schema.md`, `inventory-ledger-schema.md` (`AGENTS.md` > "Format Baku: Domain (module-based) vs Architecture (spine-based)").
 
 ## Konsep Inti
 
@@ -94,7 +94,7 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 ## Kategori & Brand Barang (migration `0023_item_categories_brands.sql`)
 
 **Entitas & Kolom**
-- `item_categories`/`item_brands` — 2 tabel katalog independen, `{id, name, archived_at, created_at, updated_at}`. Pola SAMA PERSIS kayak `ar_invoice_charge_types`/`ap_bill_expense_categories`/`pos_charge_types` (katalog terkontrol, admin kelola sendiri) — bedanya cuma gak ada `account_id` (kategori/brand bukan konsep akuntansi, gak pernah dipetakan ke akun).
+- `item_categories`/`item_brands` — 2 tabel katalog independen, `{id, name, archived_at, created_at, updated_at}`. Pola SAMA PERSIS kayak `charge_categories` (katalog terkontrol, admin kelola sendiri) — bedanya cuma gak ada `account_id` (kategori/brand bukan konsep akuntansi, gak pernah dipetakan ke akun).
 - `items.category_id`/`items.brand_id` — FK nullable ke masing-masing katalog. Independen satu sama lain, dan independen dari kolom `items` lain (gak ada validasi silang ke `item_type`, dst).
 - Murni metadata deskriptif buat filter/pengelompokan pas katalog barang udah banyak — 0 RPC baru, 0 perubahan ke RPC transaksi manapun (PO/GRN/BOM/Production/Goods Issue/SO/Opname semua gak nyentuh kolom ini sama sekali).
 
@@ -180,10 +180,10 @@ Cuma tahap terakhir yang menyentuh Laporan Laba Rugi.
 Schema->API->UI selesai (migration `0042`-`0052` + halaman `/items/[id]` kartu stok) — bekas scope-debt `inventory-movement-ledger.md`, sudah ditutup.
 
 **Cara Kerja**
-- `/inventory` sekarang cuma nunjukin `inventory_balances.qty_on_hand`+`avg_cost` (saldo akhir) — gak ada riwayat gimana angka itu terbentuk. Ditutup lewat **tabel ledger terpusat baru `inventory_movements`** (keputusan arsitektur eksplisit, BUKAN view gabungan read-only — trade-off yang diterima sadar: baca riwayat lebih cepat & konsisten jangka panjang, ditukar biaya awal lebih besar karena harus ubah ±9-10 RPC + backfill data lama, lihat submodule "RPC & Backfill" di `memory/architecture/data/inventory-schema.md`).
+- `/inventory` sekarang cuma nunjukin `inventory_balances.qty_on_hand`+`avg_cost` (saldo akhir) — gak ada riwayat gimana angka itu terbentuk. Ditutup lewat **tabel ledger terpusat baru `inventory_movements`** (keputusan arsitektur eksplisit, BUKAN view gabungan read-only — trade-off yang diterima sadar: baca riwayat lebih cepat & konsisten jangka panjang, ditukar biaya awal lebih besar karena harus ubah ±9-10 RPC + backfill data lama, lihat submodule "Rencana Bertahap — RPC & Backfill" di `memory/architecture/data/inventory-ledger-schema.md`).
 - **`inventory_balances` TETAP satu-satunya sumber kebenaran qty/avg_cost real-time** — `inventory_movements` murni lapisan riwayat/audit trail di atasnya, gak pernah dipakai buat hitung ulang stok/HPP. Kalau `SUM(inventory_movements.qty)` per item gak cocok sama `inventory_balances.qty_on_hand`, `inventory_balances` yang dianggap benar (dicek lewat query rekonsiliasi pas backfill).
 - 1 baris `inventory_movements` = 1 kejadian mutasi qty 1 item, `qty` bertanda (positif=masuk/negatif=keluar). **Saldo berjalan derived, bukan kolom tersimpan** — dibaca pakai pola opening-balance (agregat `SUM` sampai cutoff) + halaman (baris di halaman itu doang), mirror persis `report_account_ledger_opening_balance` (General Ledger, migration `0041`) — dipilih ketimbang window function polos atas seluruh riwayat karena tetap cepat walau riwayat 1 item udah panjang, dan ketimbang kolom tersimpan karena akurasi (gak ada risiko drift nilai tersimpan) jadi prioritas, bukan performa tulis.
-- Tiap baris nunjuk balik ke SATU dari ±10 tabel sumber transaksi lain (lihat detail kolom di `memory/architecture/data/inventory-schema.md`) — traceability ke dokumen sumber asli.
+- Tiap baris nunjuk balik ke SATU dari ±10 tabel sumber transaksi lain (lihat detail kolom di `memory/architecture/data/inventory-ledger-schema.md`) — traceability ke dokumen sumber asli.
 
 **Aturan Bisnis**
 - Kartu Stok gak pernah jadi sumber kebenaran baru buat qty/HPP — cuma cerminan transaksi yang udah tercatat di modul lain (`inventory_balances` tetap yang utama).
