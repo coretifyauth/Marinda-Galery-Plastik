@@ -123,7 +123,7 @@ export default function ApDepositsPage() {
     mutationFn: async (input: CreateApDepositInput) => {
       const sourceRef = await generateDocumentNumber("ap_deposits");
       const { error } = await supabase.rpc("create_deposit", {
-        p_type: "OUTBOUND",
+        p_type: "INBOUND",
         p_counterparty_id: input.supplier_id,
         p_deposit_date: input.deposit_date,
         p_source_ref: sourceRef,

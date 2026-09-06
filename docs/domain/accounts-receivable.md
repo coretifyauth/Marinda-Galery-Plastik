@@ -43,20 +43,7 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo 
     Debit Persediaan Barang Jadi
       Kredit Harga Pokok Penjualan
     ```
-    Nilai HPP yang dibalik pakai harga **snapshot asli** pas barang itu keluar, bukan harga sekarang — biar konsisten sama biaya yang beneran diakui waktu itu. Barang yang balik masuk lagi ke stok yang aktif.
-  - **Klasifikasi kondisi barang, per baris item (jalur full)** — tiap baris barang yang diretur wajib diklasifikasi kondisinya: **masih layak jual** (default, jurnal di atas berlaku apa adanya — barang balik masuk stok) atau **rusak** (barang gak akan pernah dijual lagi, gak boleh dianggap nambah nilai stok). Bedanya cuma di sisi cost, bukan di sisi piutang:
-    ```
-    Baris "masih layak jual":
-      Debit Persediaan Barang Jadi
-        Kredit Harga Pokok Penjualan
-      (seperti biasa, balik masuk stok)
-
-    Baris "rusak":
-      Debit Beban Kerugian Barang Rusak
-        Kredit Harga Pokok Penjualan
-      (TIDAK balik masuk stok)
-    ```
-    Sisi kontra-revenue (Debit Retur & Potongan Penjualan / Kredit Piutang Usaha) tetap jalan **sama** buat kedua kondisi — customer tetap dapat kompensasi piutang berkurang, terlepas kondisi fisik barangnya (klaim balik dari customer dan nasib fisik barangnya adalah dua hal independen). 1 kejadian retur (1 credit note) boleh campur — sebagian baris layak jual, sebagian rusak, masing-masing punya perlakuan cost sendiri.
+    Nilai HPP yang dibalik pakai harga **snapshot asli** pas barang itu keluar, bukan harga sekarang — biar konsisten sama biaya yang beneran diakui waktu itu. Barang yang balik masuk lagi ke stok yang aktif — **semua barang retur jalur full selalu direstock**, gak ada lagi klasifikasi kondisi (layak jual/rusak) per baris di titik retur ini. Kalau ternyata barang yang balik itu rusak, itu ditangani belakangan lewat penyesuaian Stock Opname terpisah (submodule "Stock Opname" di `docs/domain/inventory.md`) — bukan bagian dari alur retur.
 - Kenapa pakai akun kontra "Retur & Potongan Penjualan" (bukan langsung mengurangi Pendapatan Penjualan): biar "penjualan kotor" (nilai invoice asli) tetap keliatan utuh di histori, terpisah dari "berapa yang balik".
 - Retur independen dari status bayar invoice — tetap bisa dibuat baik invoice-nya belum dibayar, sebagian, maupun udah lunas penuh.
 - **Kalau invoice udah lunas, retur bikin sisa tagihan jadi negatif** — perusahaan "berutang" balik ke customer sejumlah itu. Butuh mekanisme sendiri buat ini, bukan cuma dibiarkan sebagai angka minus: tanpa itu, gak ada cara resmi buat customer mencairkan haknya, padahal secara bisnis dia berhak dapat refund atau ganti barang. Dicatat ke akun liability terpisah "Saldo Kredit Retur Customer" — biar riwayatnya tetap bisa ditelusuri balik ke retur mana yang jadi sumbernya.
@@ -80,14 +67,11 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo 
 - Retur gak boleh dicatat ke periode yang sudah ditutup.
 - Saldo kredit retur cuma boleh diselesaikan lewat refund tunai atau ganti barang — gak boleh dipakai motong invoice lain.
 - Total yang dicairkan/disettle dari saldo kredit retur gak boleh melebihi nominal saldo yang tersisa.
-- Klasifikasi kondisi (layak jual/rusak) ditentukan per baris item, bukan per keseluruhan credit note — 1 credit note boleh campur kondisi kalau isinya lebih dari 1 jenis barang.
 
 **Skenario**
 - Retur barang, invoice financial-only, belum lunas — sisa tagihan turun langsung dari nominal retur.
 - Retur barang, invoice yang stoknya dilacak, udah lunas — 2 jurnal (kontra-revenue + reversal HPP), stok masuk lagi, sisa tagihan jadi negatif (jadi saldo kredit).
 - Saldo kredit dari retur, direfund tunai — retur setelah invoice lunas bikin sisa tagihan negatif, excess-nya otomatis dicairkan jadi saldo resmi, lalu direfund tunai (satu-satunya cara aktif menyelesaikan saldo ini sekarang).
-- Retur barang rusak, jalur full — kontra-revenue tetap jalan seperti retur biasa (piutang berkurang), tapi cost-nya diakui Beban Kerugian Barang Rusak, TIDAK balik masuk stok.
-- Retur campuran dalam 1 credit note — sebagian baris item masih layak jual (balik stok), sebagian baris rusak (jadi beban), masing-masing baris diproses sesuai kondisinya sendiri-sendiri.
 
 **Common Mistakes**
 - Retur mereduksi Pendapatan Penjualan langsung (bukan lewat akun kontra) — bikin nilai "penjualan kotor" asli gak keliatan lagi di histori.
@@ -97,7 +81,7 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo 
 - Excess dari retur negatif dicatat ke akun saldo kredit yang sama dengan kelebihan bayar biasa — harus akun terpisah, beda asal jurnal.
 - Excess dari retur dihitung dari seluruh nominal retur (bukan cuma bagian yang ngelebihin sisa tagihan) — bikin dobel hitung kalau sisa tagihannya masih ada sebagian.
 - Kasih jalan lagi buat saldo kredit retur "dititip"/dipakai motong invoice lain — keputusan bisnis udah eksplisit cuma refund tunai.
-- Barang rusak yang diretur ikut direstock ke stok aktif seolah masih layak jual — harus diakui sebagai Beban Kerugian Barang Rusak, bukan nambah Persediaan Barang Jadi. Kontra-revenue-nya (piutang berkurang) tetap jalan seperti biasa — yang beda cuma sisi cost/stoknya.
+- Nyoba klasifikasi kondisi barang (layak jual/rusak) di titik retur — itu bukan lagi tanggung jawab alur retur, barang rusak ditangani belakangan lewat Stock Opname setelah retur selesai direstock.
 
 ### Penukaran Barang Pasca-Retur (Garansi)
 

@@ -18,6 +18,16 @@ spine file sendiri, cuma kolom `invoice_id`/`bill_id`-nya sekarang FK ke `transa
 
 ## Keputusan
 
+- **Arah `type` DIBALIK migration `0074`** (2026-09-06, keputusan owner) — sebelumnya
+  `INBOUND`=piutang(AR)/`OUTBOUND`=utang(AP) (basis piutang-utang). Sekarang **`OUTBOUND`=piutang(AR)/
+  `INBOUND`=utang(AP)** (basis arah fisik barang keluarga transaksi: invoice jual → barang
+  KELUAR dari gudang via `create_goods_issue` → `OUTBOUND`; bill beli → barang MASUK via
+  `create_goods_receipt` → `INBOUND`). Alasan: `payments`/`deposits`/transaksi
+  `financial_only` gak pernah punya barang fisik sendiri, tapi tetap ikut label keluarga
+  asalnya (AR selalu `OUTBOUND`, AP selalu `INBOUND`) — beda dari retur (`returns-schema.md`)
+  yang justru HARUS kebalikan dari label keluarga induknya (retur = pembalikan arah, bukan
+  ikut arah asal). Data historis di-`UPDATE` (nilai ditukar), role-guard/reducer/view ikut
+  dibalik — detail lengkap & daftar semua titik yang berubah: `supabase/migrations/0074_flip_transactions_type_direction.sql`.
 - **`ar_invoices`+`ap_bills` ternyata cermin sempurna** — baris FIXED (Piutang debit vs
   Utang kredit) + baris VARIABEL (kategori) + baris opsional PPN, cuma beda arah
   debit/kredit. Klaim lama "AR bikin 2 jurnal, AP cuma 1" itu salah atribusi — jurnal ganda
@@ -63,12 +73,12 @@ spine file sendiri, cuma kolom `invoice_id`/`bill_id`-nya sekarang FK ke `transa
 
 ## DDL
 
-### `transactions` — piutang (`type='INBOUND'`) & utang (`type='OUTBOUND'`) timbul, 1 tabel generic
+### `transactions` — piutang (`type='OUTBOUND'`) & utang (`type='INBOUND'`) timbul, 1 tabel generic
 
 ```sql
 create table transactions (
   id uuid primary key default gen_random_uuid(),
-  type text not null check (type in ('INBOUND', 'OUTBOUND')), -- INBOUND=piutang(dulu ar_invoices), OUTBOUND=utang(dulu ap_bills)
+  type text not null check (type in ('INBOUND', 'OUTBOUND')), -- OUTBOUND=piutang(dulu ar_invoices, barang keluar), INBOUND=utang(dulu ap_bills, barang masuk) -- dibalik migration 0074
   counterparty_id uuid not null references counterparties(id),
   date date not null,               -- dulu invoice_date / bill_date
   due_date date not null,           -- snapshot pas dibuat
@@ -76,10 +86,10 @@ create table transactions (
   source_ref text not null,
   amount numeric(14,2) not null check (amount > 0),
   outstanding numeric(14,2) not null,
-  returned numeric(14,2) not null default 0,     -- cuma relevan type='INBOUND', selalu 0 buat OUTBOUND
+  returned numeric(14,2) not null default 0,     -- cuma relevan type='OUTBOUND' (AR), selalu 0 buat INBOUND (AP)
   status text not null default 'belum',
   origin text not null default 'financial_only',
-  supplier_document_ref text,                    -- cuma keisi type='OUTBOUND'
+  supplier_document_ref text,                    -- cuma keisi type='INBOUND' (AP)
   journal_entry_id uuid not null references journal_entries(id),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
@@ -91,18 +101,18 @@ create index transactions_type_idx on transactions(type);
 ```
 
 Guard type-safety counterparty (pola `counterparty_role_guard` dari `counterparty-schema.md`)
-— INBOUND wajib pihak berperan `customer`, OUTBOUND wajib `supplier`:
+— sejak `0074`: INBOUND (AP) wajib pihak berperan `supplier`, OUTBOUND (AR) wajib `customer`:
 
 ```sql
 create trigger transactions_counterparty_role_guard_inbound
   before insert on transactions
   for each row when (new.type = 'INBOUND')
-  execute function counterparty_role_guard('counterparty_id', 'customer');
+  execute function counterparty_role_guard('counterparty_id', 'supplier');
 
 create trigger transactions_counterparty_role_guard_outbound
   before insert on transactions
   for each row when (new.type = 'OUTBOUND')
-  execute function counterparty_role_guard('counterparty_id', 'supplier');
+  execute function counterparty_role_guard('counterparty_id', 'customer');
 ```
 
 ### `transaction_lines` — baris VARIABEL (kategori + PPN), gantiin `ar_invoice_credit_lines`+`ap_bill_debit_lines`
@@ -143,15 +153,15 @@ FIXED (control account) dan baris VARIABEL/PPN — persis pola `create_order(p_d
 
 ```sql
 create function create_transaction(
-  p_type text,                  -- 'INBOUND' | 'OUTBOUND'
+  p_type text,                  -- 'INBOUND' (AP/utang) | 'OUTBOUND' (AR/piutang) -- makna dibalik 0074
   p_counterparty_id uuid,
   p_date date,
   p_description text,
   p_source_ref text,
   p_lines jsonb,                -- array of {"account_id":uuid,"amount":numeric} -- BUKAN termasuk PPN
-  p_control_account_id uuid,    -- INBOUND: Piutang Usaha, OUTBOUND: Utang Usaha
+  p_control_account_id uuid,    -- OUTBOUND: Piutang Usaha, INBOUND: Utang Usaha
   p_apply_tax boolean default false,
-  p_supplier_document_ref text default null   -- cuma dipakai type='OUTBOUND'
+  p_supplier_document_ref text default null   -- cuma dipakai type='INBOUND'
 ) returns uuid
 ```
 
@@ -160,7 +170,8 @@ baris `amount > 0` (fail-fast, sebelum jurnal dibuat). PPN dihitung server-side 
 `tax_settings` (singleton, `tax-settings-schema.md`) — sama pola `create_ar_invoice`/
 `create_ap_bill` lama, gak pernah dipercaya dari input klien.
 
-Full body: `supabase/migrations/0063_transactions_schema.sql`.
+Body asli: `supabase/migrations/0063_transactions_schema.sql`. Final (branch literal `p_type`
+dibalik, isi tiap branch TIDAK berubah): `0074_flip_transactions_type_direction.sql`.
 
 ## Katalog kategori tambahan (`transaction_lines.account_id`) — `charge_categories`
 
@@ -213,8 +224,8 @@ kebenaran — riwayat lengkap: `memory/scope-debt/ar-ap-unify-transactions.md`);
 ```sql
 create function ar_invoice_remaining(p_invoice_id uuid) returns numeric as $$
   select ai.amount
-    - coalesce((select sum(amount) from payments where transaction_id = p_invoice_id and type = 'INBOUND'), 0)
-    - coalesce((select sum(amount) from credit_notes where transaction_id = p_invoice_id and type = 'INBOUND'), 0)
+    - coalesce((select sum(amount) from payments where transaction_id = p_invoice_id and type = 'OUTBOUND'), 0)
+    - coalesce((select sum(amount) from returns where transaction_id = p_invoice_id and type = 'INBOUND'), 0)
     - coalesce((
         select sum(da.amount) from deposit_applications da
         where da.transaction_id = p_invoice_id
@@ -222,8 +233,8 @@ create function ar_invoice_remaining(p_invoice_id uuid) returns numeric as $$
       ), 0)
     + coalesce((
         select sum(rc.amount) from return_credits rc
-        join credit_notes acn on acn.id = rc.credit_note_id
-        where acn.transaction_id = p_invoice_id
+        join returns r on r.id = rc.return_id
+        where r.transaction_id = p_invoice_id
       ), 0)
   from transactions ai
   where ai.id = p_invoice_id;
@@ -231,8 +242,8 @@ $$ language sql stable;
 
 create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
   select ab.amount
-    - coalesce((select sum(amount) from payments where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
-    - coalesce((select sum(amount) from credit_notes where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
+    - coalesce((select sum(amount) from payments where transaction_id = p_bill_id and type = 'INBOUND'), 0)
+    - coalesce((select sum(amount) from returns where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
     - coalesce((
         select sum(da.amount) from deposit_applications da
         where da.transaction_id = p_bill_id
@@ -240,13 +251,18 @@ create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
       ), 0)
     + coalesce((
         select sum(rc.amount) from return_credits rc
-        join credit_notes acn on acn.id = rc.credit_note_id
-        where acn.transaction_id = p_bill_id
+        join returns r on r.id = rc.return_id
+        where r.transaction_id = p_bill_id
       ), 0)
   from transactions ab
   where ab.id = p_bill_id;
 $$ language sql stable;
 ```
+
+Literal `type` di filter `payments` DIBALIK migration `0074` (payments ikut label keluarga
+transaksi induknya). Literal `type` di filter `returns` (dulu `credit_notes`) **TIDAK
+berubah** — retur harus tetap kebalikan dari label transaksi induknya, lihat
+`returns-schema.md`.
 
 4 reducer masing-masing (payment/credit note langsung, deposit application aktif exclude
 reversed, return credit add-back) — bentuk final pasca `0031` (AR) dan pasca `0013`+`0072`
@@ -261,9 +277,9 @@ sama persis** dengan transaksi asli, debit/kredit ketuker, gak butuh akun baru (
 koreksi "salah input", bukan kejadian bisnis baru kayak retur barang). `cancel_ar_invoice`
 auto-unwind jurnal `deposit_applications` aktif (reklasifikasi sederhana, aman dibalik —
 detail lengkap `deposits-schema.md`). `cancel_ap_bill` hard-block tambahan kalau bill
-udah punya `credit_notes` (`type='OUTBOUND'`) — AR gak punya guard setara karena retur AR
-(`credit_notes` INBOUND) gak exclusive sama pembatalan invoice (beda perilaku bisnis,
-dipertahankan apa adanya dari desain awal masing-masing).
+udah punya `returns` (dulu `credit_notes`, `type='OUTBOUND'`) — AR gak punya guard setara
+karena retur AR (`returns` INBOUND) gak exclusive sama pembatalan invoice (beda perilaku
+bisnis, dipertahankan apa adanya dari desain awal masing-masing).
 
 ```sql
 create or replace function cancel_ar_invoice(
@@ -274,7 +290,7 @@ declare
   v_application record; v_invoice_ref text;
 begin
   select count(*) into v_paid_count
-  from payments where transaction_id = p_invoice_id and type = 'INBOUND';
+  from payments where transaction_id = p_invoice_id and type = 'OUTBOUND';
 
   if v_paid_count > 0 then
     select source_ref into v_invoice_ref from transactions where id = p_invoice_id;
@@ -300,23 +316,23 @@ create or replace function cancel_ap_bill(
   p_bill_id uuid, p_entry_date date, p_source_ref text
 ) returns uuid language plpgsql security invoker as $$
 declare
-  v_allocated_count int; v_credit_note_count int; v_original_entry_id uuid;
+  v_allocated_count int; v_return_count int; v_original_entry_id uuid;
   v_new_entry_id uuid; v_bill_ref text;
 begin
   select count(*) into v_allocated_count
-  from payments where transaction_id = p_bill_id and type = 'OUTBOUND';
+  from payments where transaction_id = p_bill_id and type = 'INBOUND';
 
   if v_allocated_count > 0 then
     select source_ref into v_bill_ref from transactions where id = p_bill_id;
     raise exception 'Bill % udah punya % payment -- gak bisa dibatalkan lewat jalur ini', v_bill_ref, v_allocated_count;
   end if;
 
-  select count(*) into v_credit_note_count
-  from credit_notes where transaction_id = p_bill_id and type = 'OUTBOUND';
+  select count(*) into v_return_count
+  from returns where transaction_id = p_bill_id and type = 'OUTBOUND';
 
-  if v_credit_note_count > 0 then
+  if v_return_count > 0 then
     select source_ref into v_bill_ref from transactions where id = p_bill_id;
-    raise exception 'Bill % udah punya % retur (credit note) -- gak bisa dibatalkan lewat jalur ini', v_bill_ref, v_credit_note_count;
+    raise exception 'Bill % udah punya % retur -- gak bisa dibatalkan lewat jalur ini', v_bill_ref, v_return_count;
   end if;
 
   select journal_entry_id into v_original_entry_id from transactions where id = p_bill_id;
@@ -358,11 +374,11 @@ begin
 
   select exists (select 1 from journal_entries je where je.reverses_entry_id = v_journal_entry_id) into v_is_cancelled;
 
-  if v_type = 'INBOUND' then
-    -- reducer ar_invoice_remaining/ar_credit_notes/ar_payments/ar_deposit_applications,
+  if v_type = 'OUTBOUND' then -- AR, dibalik migration 0074 (dulu 'INBOUND')
+    -- reducer ar_invoice_remaining/returns(type='INBOUND')/ar_payments/ar_deposit_applications,
     -- status lunas/sebagian/belum/dibatalkan, origin financial_only/order/goods_movement
-    -- (cek goods_issues + goods_issue_lines.order_line_id) -- detail: 0064+0066.
-  else
+    -- (cek goods_issues + goods_issue_lines.order_line_id) -- detail: 0064+0066+0074.
+  else -- AP ('INBOUND', dibalik migration 0074, dulu 'OUTBOUND')
     -- reducer ap_bill_remaining/ap_payments/ap_deposit_applications (deposit_applied exclude
     -- reversed -- asimetri sengaja, disalin apa adanya dari recompute_ap_bill_status lama),
     -- origin financial_only/order/goods_movement (cek goods_receipt_notes + order_id).
@@ -394,7 +410,7 @@ select
   journal_entry_id, created_at, outstanding::numeric as outstanding, returned::numeric as returned,
   status, origin
 from transactions
-where type = 'INBOUND';
+where type = 'OUTBOUND';
 
 create or replace view ap_bills_with_status
   with (security_invoker = true) as
@@ -402,8 +418,11 @@ select
   id, counterparty_id as supplier_id, date as bill_date, due_date, description, source_ref, supplier_document_ref,
   amount, journal_entry_id, created_at, outstanding::numeric as outstanding, status, origin
 from transactions
-where type = 'OUTBOUND';
+where type = 'INBOUND';
 ```
+
+Filter `where type=` DIBALIK migration `0074` — kolom publik view TIDAK berubah nama sama
+sekali, cuma target internal-nya.
 
 Cast `::numeric` (bukan `numeric(14,2)`) di `outstanding`/`returned` WAJIB — kolom asli
 `ar_invoices.outstanding`/`ap_bills.outstanding` (dari `0053`, sekarang udah didrop) dulu
@@ -464,11 +483,18 @@ sama sekali gak kesentuh — detail lengkap tetap di `goods-issue-schema.md`/`go
   `create_ap_bill`, drop kolom `counterparties.credit_limit`/`overdue_threshold_days`.
 - `0066` — unifikasi vocabulary `origin` (`financial_only`/`order`/`goods_movement`
   dipakai kedua arah, gantiin `sales_order`/`goods_issue` vs `grn`/`langsung`).
+- `0074` (2026-09-06) — balik arah `type` (AR jadi `OUTBOUND`, AP jadi `INBOUND`, basis arah
+  fisik barang keluarga transaksi, bukan lagi piutang/utang) — data historis, role-guard,
+  6 RPC inti (`create_transaction`/`record_payment`/`create_deposit`/`apply_deposit`/
+  `refund_deposit`/`forfeit_deposit`), 2 pemanggil (`create_goods_issue`/`create_goods_receipt`),
+  4 view, 4 reducer. `returns`/`return_credits` (retur) SENGAJA TIDAK ikut dibalik — lihat
+  `returns-schema.md`.
 
 ## Referensi — peta tabel anak AR/AP lama (`ar-schema.md`/`ap-schema.md`, sudah dihapus) ke spine baru
 
-- `memory/architecture/data/credit-notes-schema.md` — Retur Barang (AR & AP), termasuk
-  `inventory_returns`/`purchase_return_lines` — `invoice_id`/`bill_id` sekarang FK ke
+- `memory/architecture/data/returns-schema.md` (dulu `credit-notes-schema.md`) — Retur
+  Barang (AR & AP), termasuk `return_lines` (dulu `inventory_returns`+`inventory_return_lines`+
+  `purchase_return_lines`, digabung migration `0075`) — `invoice_id`/`bill_id` sekarang FK ke
   `transactions(id)`.
 - `memory/architecture/data/return-credits-schema.md` — Saldo Kredit dari Retur (AR & AP).
 - `memory/architecture/data/warranty-replacements-schema.md` — Penukaran Barang

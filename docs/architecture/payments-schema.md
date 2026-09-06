@@ -1,6 +1,6 @@
 # Pembayaran — Struktur Data
 
-Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, dibedakan kolom arah (`type`: `INBOUND` = piutang berkurang, `OUTBOUND` = utang berkurang) — mirror pola tabel induknya, `transactions` (lihat `docs/architecture/transactions-schema.md`). Baca `docs/domain/accounts-receivable.md` (bagian "AR Payment") dan `docs/domain/accounts-payable.md` (bagian pelunasan utang) buat konteks lengkap. Detail teknis penuh (DDL/trigger/RPC persis) ada di `memory/architecture/data/payments-schema.md`.
+Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang berkurang, `INBOUND` = utang berkurang) — mirror pola tabel induknya, `transactions` (lihat `docs/architecture/transactions-schema.md`). Baca `docs/domain/accounts-receivable.md` (bagian "AR Payment") dan `docs/domain/accounts-payable.md` (bagian pelunasan utang) buat konteks lengkap. Detail teknis penuh (DDL/trigger/RPC persis) ada di `memory/architecture/data/payments-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -20,8 +20,8 @@ Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, di
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
-| `type` | `INBOUND` (pelunasan piutang) / `OUTBOUND` (pelunasan utang) | Pembeda arah jurnal — INBOUND: Debit Kas, Kredit Piutang; OUTBOUND: Debit Utang, Kredit Kas |
-| `counterparty_id` | Pihak yang membayar/dibayar | `INBOUND` wajib pihak berperan pelanggan, `OUTBOUND` wajib pihak berperan pemasok |
+| `type` | `OUTBOUND` (pelunasan piutang) / `INBOUND` (pelunasan utang) | Pembeda arah jurnal — OUTBOUND: Debit Kas, Kredit Piutang; INBOUND: Debit Utang, Kredit Kas |
+| `counterparty_id` | Pihak yang membayar/dibayar | `OUTBOUND` wajib pihak berperan pelanggan, `INBOUND` wajib pihak berperan pemasok |
 | `transaction_id` | Invoice/tagihan spesifik yang dilunasi | Wajib nunjuk 1 transaksi tertentu — **gak ada bayar gabungan** untuk beberapa invoice/tagihan sekaligus |
 | `payment_date` | Tanggal pembayaran diterima/dilakukan | — |
 | `amount` | Nilai yang dibayar kali ini | Boleh kurang dari sisa tagihan (cicil), **gak boleh lebih** (overpay ditolak) |
@@ -33,8 +33,8 @@ Sama seperti `transactions`, baris `payments` **gak bisa diubah atau dihapus** s
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Catat pelunasan piutang | `record_payment('INBOUND', ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Kas/Bank, Kredit Piutang Usaha) sekaligus | Nilai bayar gak boleh melebihi sisa piutang riil (`ar_invoice_remaining`) — dicek sebelum jurnal apa pun dibuat |
-| Catat pelunasan utang | `record_payment('OUTBOUND', ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Utang Usaha, Kredit Kas/Bank) sekaligus | Nilai bayar gak boleh melebihi sisa utang riil (`ap_bill_remaining`) — dicek sebelum jurnal apa pun dibuat |
+| Catat pelunasan piutang | `record_payment('OUTBOUND', ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Kas/Bank, Kredit Piutang Usaha) sekaligus | Nilai bayar gak boleh melebihi sisa piutang riil (`ar_invoice_remaining`) — dicek sebelum jurnal apa pun dibuat |
+| Catat pelunasan utang | `record_payment('INBOUND', ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Utang Usaha, Kredit Kas/Bank) sekaligus | Nilai bayar gak boleh melebihi sisa utang riil (`ap_bill_remaining`) — dicek sebelum jurnal apa pun dibuat |
 
 **Aturan Bisnis → RPC**
 

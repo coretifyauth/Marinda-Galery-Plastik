@@ -1,6 +1,6 @@
 # Retur Barang ke Supplier (Opsi B — Tukar Barang) — Struktur Data
 
-Konsep bisnisnya ada di `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier" — salah satu dari 2 resolusi retur ke supplier: bahan baku yang diterima ternyata rusak, dan supplier setuju mengirim barang pengganti (bukan mengurangi utang). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/purchase-replacements-schema.md`. Ini sisi AP — mirror sisi AR-nya ada di `warranty-replacements-schema.md` (dua-duanya tabel fisik terpisah). Resolusi retur satunya lagi (Opsi A — kurangi utang) ada di `credit-notes-schema.md`.
+Konsep bisnisnya ada di `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier" — salah satu dari 2 resolusi retur ke supplier: bahan baku yang diterima ternyata rusak, dan supplier setuju mengirim barang pengganti (bukan mengurangi utang). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/purchase-replacements-schema.md`. Ini sisi AP — mirror sisi AR-nya ada di `warranty-replacements-schema.md` (dua-duanya tabel fisik terpisah). Resolusi retur satunya lagi (Opsi A — kurangi utang) ada di `returns-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -22,7 +22,7 @@ Konsep bisnisnya ada di `docs/domain/accounts-payable.md` bagian "Retur Barang k
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
-| `bill_id` | Bill asal barang yang cacat | Rujukan utama — Opsi B berdiri sendiri, **gak pernah** menunjuk ke `credit_notes` sama sekali (beda dari sisi AR yang masih punya kolom histori) |
+| `bill_id` | Bill asal barang yang cacat | Rujukan utama — Opsi B berdiri sendiri, **gak pernah** menunjuk ke `returns` sama sekali (beda dari sisi AR yang masih punya kolom histori) |
 | `journal_entry_id` | Jurnal Debit Persediaan (barang baru) / Kredit Persediaan (barang rusak) | Akun yang sama dipakai di 2 baris, net nol — murni reklasifikasi fisik demi jejak audit, bukan mengakui untung/rugi |
 | `qty_replaced`, `total_cost` (di `_lines`) | Qty barang ditukar & nilai costingnya | Dihitung dari harga rata-rata berjalan (Weighted Average) saat kejadian, bukan harga saat barang diterima |
 
@@ -35,7 +35,7 @@ Opsi B **berlaku sama persis di semua status bayar bill** — Utang Usaha gak pe
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Catat penukaran barang ke supplier | `create_purchase_replacement` | Konsumsi barang rusak (Weighted Average) lalu "terima" barang baru dengan `avg_cost` yang identik — karena unit cost sama persis, rata-rata berjalan otomatis balik ke nilai semula (net nol, konsisten sama klaim dokumentasi bisnis) | Trigger `purchase_replacement_lines_no_over_return_trigger` mencegah qty ditukar melebihi sisa yang belum "diklaim" |
-| Cek sisa qty yang masih bisa diklaim (Opsi A + Opsi B gabungan) | Fungsi bantu `purchase_returned_qty(bill_id, item_id)` | Menjumlah qty yang sudah diklaim lewat retur (Opsi A, `purchase_return_lines`) DAN ganti barang (Opsi B, `purchase_replacement_lines`), dibandingkan ke qty yang benar-benar diterima (`goods_receipt_lines`) | Dipakai 2 trigger insert (retur & ganti barang), bukan dipanggil user langsung |
+| Cek sisa qty yang masih bisa diklaim (Opsi A + Opsi B gabungan) | Fungsi bantu `purchase_returned_qty(bill_id, item_id)` | Menjumlah qty yang sudah diklaim lewat retur (Opsi A, `return_lines`) DAN ganti barang (Opsi B, `purchase_replacement_lines`), dibandingkan ke qty yang benar-benar diterima (`goods_receipt_lines`) | Dipakai 2 trigger insert (retur & ganti barang), bukan dipanggil user langsung |
 
 **Aturan Bisnis → RPC**
 
@@ -55,7 +55,7 @@ Opsi B **berlaku sama persis di semua status bayar bill** — Utang Usaha gak pe
 | `purchase_replacements.journal_entry_id` | banyak-ke-satu | `journal_entries` |
 | `purchase_replacement_lines.purchase_replacement_id` | banyak-ke-satu | `purchase_replacements` |
 | `purchase_replacement_lines.item_id` | banyak-ke-satu | `items` |
-| `purchase_replacement_lines` (via `purchase_returned_qty`) | dibandingkan dengan | `purchase_return_lines` (Opsi A, lihat `credit-notes-schema.md`) dan `goods_receipt_lines` (lihat `goods-receipt-schema.md`) |
+| `purchase_replacement_lines` (via `purchase_returned_qty`) | dibandingkan dengan | `return_lines` (Opsi A, lihat `returns-schema.md`) dan `goods_receipt_lines` (lihat `goods-receipt-schema.md`) |
 
 ## Siapa Boleh Apa
 

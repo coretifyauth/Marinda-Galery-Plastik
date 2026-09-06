@@ -24,7 +24,7 @@ export type ArInvoice = {
   created_at: string;
   counterparties: { name: string };
   ar_payments: { amount: number }[];
-  ar_credit_notes?: {
+  ar_returns?: {
     amount: number;
     ar_return_credits?: { amount: number }[];
     warranty_replacements?: { discount_reversed_amount: number; return_credit_settled_amount: number }[];
@@ -76,15 +76,15 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
  * Kredit Retur Customer (`ar_return_credits`, akun 2500) lewat jurnal reklasifikasi TERPISAH
  * yang membalikkan Piutang Usaha invoice ini balik ke 0 — makanya `ar_return_credits` di-ADD
  * BACK di sini (mirror `ar_invoice_remaining()` server-side, migration
- * `0020_ar_invoice_remaining_return_credit_fix.sql`), bukan cuma ngurangin lewat `ar_credit_notes`
+ * `0020_ar_invoice_remaining_return_credit_fix.sql`), bukan cuma ngurangin lewat `ar_returns`
  * doang. Tanpa add-back ini outstanding bisa keliatan minus padahal GL-nya udah balance. Saldo
  * kredit itu sendiri gak lagi bisa "dititip" motong invoice lain (dicabut, lihat "Saldo Kredit
  * dari Retur") — resolusinya cuma refund tunai atau warranty replacement.
  * `warranty_replacements.discount_reversed_amount - return_credit_settled_amount` (nested di bawah
- * `ar_credit_notes`) juga di-ADD BACK — `create_warranty_replacement` bikin jurnal Debit Piutang
+ * `ar_returns`) juga di-ADD BACK — `create_warranty_replacement` bikin jurnal Debit Piutang
  * Usaha / Kredit Retur & Potongan Penjualan yang membalikkan diskon retur proporsional ke qty
  * yang ditukar barang (customer gak jadi dapat diskon karena barangnya diganti, bukan direfund).
- * `ar_credit_notes.amount` sendiri immutable (gak berubah pas ada replacement belakangan), jadi
+ * `ar_returns.amount` sendiri immutable (gak berubah pas ada replacement belakangan), jadi
  * tanpa add-back ini invoice yang retur penuh + ganti barang penuh bakal keliatan "lunas" padahal
  * Piutang Usaha di GL udah balik ke penuh. WAJIB di-net-in sama `return_credit_settled_amount` —
  * kalau credit note sumbernya punya `ar_return_credits` aktif, `create_warranty_replacement` bikin
@@ -105,7 +105,7 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
  * yang nunjuk ke invoice.journal_entry_id), karena bukan relasi langsung dari ar_invoices.
  */
 export function invoiceStatus(
-  invoice: Pick<ArInvoice, "amount" | "ar_payments" | "ar_credit_notes" | "ar_deposit_applications">,
+  invoice: Pick<ArInvoice, "amount" | "ar_payments" | "ar_returns" | "ar_deposit_applications">,
   isCancelled = false
 ): {
   status: ArInvoiceStatus;
@@ -115,12 +115,12 @@ export function invoiceStatus(
   outstanding: number;
 } {
   const allocated = invoice.ar_payments.reduce((sum, p) => sum + p.amount, 0);
-  const returned = (invoice.ar_credit_notes ?? []).reduce((sum, c) => sum + c.amount, 0);
-  const returnCreditsSettled = (invoice.ar_credit_notes ?? []).reduce(
+  const returned = (invoice.ar_returns ?? []).reduce((sum, c) => sum + c.amount, 0);
+  const returnCreditsSettled = (invoice.ar_returns ?? []).reduce(
     (sum, c) => sum + (c.ar_return_credits ?? []).reduce((s, rc) => s + rc.amount, 0),
     0
   );
-  const warrantyReplacementReversed = (invoice.ar_credit_notes ?? []).reduce(
+  const warrantyReplacementReversed = (invoice.ar_returns ?? []).reduce(
     (sum, c) =>
       sum +
       (c.warranty_replacements ?? []).reduce(

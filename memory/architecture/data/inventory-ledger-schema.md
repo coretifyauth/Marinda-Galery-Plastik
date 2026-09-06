@@ -69,6 +69,19 @@ halaman `/items/[id]`).
   — `purchase_replacement_line_id` yang sama dipakai di kedua baris (1 qty negatif buat
   barang rusak keluar, 1 qty positif buat barang pengganti masuk), sah karena CHECK
   `num_nonnulls=1` dicek PER BARIS LEDGER, bukan per baris sumber.
+- **Migration `0068` ngurangin jadi 10 kolom** (drop `purchase_writeoff_line_id`, fitur
+  `purchase_writeoffs` dicabut demi simetri AR/AP) — **CHECK constraint ikut hilang diam-diam**
+  bareng drop kolom itu (constraint gabungan, Postgres drop constraint utuh kalau salah 1
+  kolom yang direferensikannya di-drop) dan **gak pernah dipulihkan** — gap dorman, gak
+  ketauan sampai migration `0075` di bawah.
+- **Migration `0075` gabung `inventory_return_line_id`+`purchase_return_line_id` jadi 1
+  kolom `return_line_id`** (efek merge `return_lines`, `returns-schema.md`) — total jadi
+  **9 kolom sumber**. Dibedakan arahnya lewat `return_lines.type` (`INBOUND`=dari customer,
+  `OUTBOUND`=ke supplier), bukan 2 kolom polymorphic terpisah lagi. Nyoba pulihkan CHECK
+  constraint (9 kolom final) di migration yang sama, **GAGAL & DIBATALKAN** — ketauan ada 2
+  baris live yang `num_nonnulls=0` (data historis nyimpang dari luar aplikasi, bukan bug
+  RPC manapun). **CHECK constraint saat ini TIDAK ADA SAMA SEKALI** — status: scope-debt
+  aktif, `memory/scope-debt/inventory-movements-exactly-one-source-constraint.md`.
 
 ## `inventory_balances`
 
@@ -132,8 +145,14 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 1 baris = 1 kejadian mutasi qty 1 item, ditulis sebagai efek samping dari RPC
 transaksi yang sudah ada (bukan RPC baru berdiri sendiri).
 
-DDL di bawah bentuk FINAL (11 kolom, sudah termasuk gap `purchase_replacement_line_id`
-yang ditutup migration `0046`) — bukan snapshot awal `0042` (10 kolom).
+DDL di bawah bentuk FINAL pasca migration `0075` (9 kolom sumber: 10 dari `0042`+`0046`,
+`purchase_writeoff_line_id` di-drop `0068`, `inventory_return_line_id`+
+`purchase_return_line_id` digabung `return_line_id` `0075`). **CHECK `num_nonnulls`
+SENGAJA GAK DITULIS DI BAWAH** — constraint ini gak ada di database live saat ini (hilang
+sejak `0068`, gagal dipulihkan `0075`, lihat "Keputusan" di atas dan
+`memory/scope-debt/inventory-movements-exactly-one-source-constraint.md`). Kolom di bawah
+tetap "tepat 1 terisi per baris" SECARA KONVENSI (semua RPC masih nulis sesuai itu), cuma
+gak ada lagi penjagaan DB-level.
 
 ```sql
 create table inventory_movements (
@@ -145,34 +164,25 @@ create table inventory_movements (
 
   goods_receipt_line_id uuid,
   production_order_id uuid,
-  inventory_return_line_id uuid,
+  return_line_id uuid, -- migration 0075, gantiin inventory_return_line_id+purchase_return_line_id
   stock_opname_line_id uuid,
   goods_issue_line_id uuid,
   pos_sale_line_id uuid,
   production_order_line_id uuid,
-  purchase_return_line_id uuid,
   warranty_replacement_line_id uuid,
   purchase_replacement_line_id uuid, -- migration 0046, lihat "Keputusan" di atas
 
   foreign key (goods_receipt_line_id, item_id) references goods_receipt_lines(id, item_id),
   foreign key (production_order_id, item_id) references production_orders(id, item_id),
-  foreign key (inventory_return_line_id, item_id) references inventory_return_lines(id, item_id),
+  foreign key (return_line_id, item_id) references return_lines(id, item_id),
   foreign key (stock_opname_line_id, item_id) references stock_opname_lines(id, item_id),
   foreign key (goods_issue_line_id, item_id) references goods_issue_lines(id, item_id),
   foreign key (pos_sale_line_id, item_id) references pos_sale_lines(id, item_id),
   foreign key (production_order_line_id, item_id) references production_order_lines(id, item_id),
-  foreign key (purchase_return_line_id, item_id) references purchase_return_lines(id, item_id),
   foreign key (warranty_replacement_line_id, item_id) references warranty_replacement_lines(id, item_id),
-  foreign key (purchase_replacement_line_id, item_id) references purchase_replacement_lines(id, item_id),
+  foreign key (purchase_replacement_line_id, item_id) references purchase_replacement_lines(id, item_id)
 
-  check (
-    num_nonnulls(
-      goods_receipt_line_id, production_order_id, inventory_return_line_id,
-      stock_opname_line_id, goods_issue_line_id, pos_sale_line_id,
-      production_order_line_id, purchase_return_line_id,
-      warranty_replacement_line_id, purchase_replacement_line_id
-    ) = 1
-  )
+  -- TIDAK ADA check(num_nonnulls(...)=1) -- lihat catatan di atas.
 );
 
 create index inventory_movements_item_id_movement_date_id_idx
@@ -182,6 +192,10 @@ create trigger inventory_movements_block_edit_delete
   before update or delete on inventory_movements
   for each row execute function block_edit_delete();
 ```
+
+Baris `return_line_id` dibedakan arahnya lewat `return_lines.type` (join, bukan kolom
+sendiri) — `INBOUND` = retur dari customer (barang masuk), `OUTBOUND` = retur ke supplier
+(barang keluar).
 
 - `movement_date` — tanggal transaksi ASLI dari tabel sumbernya (misal `receipt_date`
   GRN, `production_date`, dst), bukan `created_at` insert — bisa beda kalau ada input
@@ -205,23 +219,24 @@ composite FK di atas. (`production_orders_id_item_id_key` didefinisikan di
 
 ```sql
 alter table goods_receipt_lines add constraint goods_receipt_lines_id_item_id_key unique (id, item_id);
-alter table inventory_return_lines add constraint inventory_return_lines_id_item_id_key unique (id, item_id);
+alter table return_lines add constraint return_lines_id_item_id_key unique (id, item_id); -- migration 0075, gantiin inventory_return_lines+purchase_return_lines
 alter table stock_opname_lines add constraint stock_opname_lines_id_item_id_key unique (id, item_id);
 alter table goods_issue_lines add constraint goods_issue_lines_id_item_id_key unique (id, item_id);
 alter table pos_sale_lines add constraint pos_sale_lines_id_item_id_key unique (id, item_id);
 alter table production_order_lines add constraint production_order_lines_id_item_id_key unique (id, item_id);
-alter table purchase_return_lines add constraint purchase_return_lines_id_item_id_key unique (id, item_id);
 alter table warranty_replacement_lines add constraint warranty_replacement_lines_id_item_id_key unique (id, item_id);
 ```
 
 ## `inventory_movements_with_source` — VIEW join semua tabel sumber
 
 Dipakai halaman kartu stok (`/items/[id]`) buat resolve nama/referensi dokumen sumber
-tanpa client harus tahu 10 tabel sumber. `create or replace` di migration `0070`
-(retarget join `ap_credit_notes` -> `credit_notes` dengan filter
-`acn.type = 'OUTBOUND'`, lihat `credit-notes-schema.md`) — casting `::numeric as
-remaining`/tipe kolom lain dijaga tetap sama, Postgres nolak `CREATE OR REPLACE VIEW`
-yang mengubah typmod kolom.
+tanpa client harus tahu tabel sumbernya. `create or replace` di migration `0070` (retarget
+join `ap_credit_notes` -> `credit_notes` dengan filter `acn.type = 'OUTBOUND'`) → migration
+`0075` (retarget lagi ke `return_lines`/`returns`, 2 kolom polymorphic lama
+`inventory_return_line_id`/`purchase_return_line_id` digabung 1 `return_line_id`, dibedakan
+arahnya lewat `rl.type` — lihat `returns-schema.md`) — casting `::numeric as remaining`/tipe
+kolom lain dijaga tetap sama, Postgres nolak `CREATE OR REPLACE VIEW` yang mengubah typmod
+kolom.
 
 ## RLS & Grant (`inventory_movements`)
 
@@ -253,15 +268,16 @@ bertahap, migration terpisah per RPC (atau kelompok kecil yang berkaitan), direv
 3. `record_stock_opname` (periodik, tapi kompleks — 1 RPC bisa hasilkan movement IN
    maupun OUT tergantung tanda `variance` per baris) — migration
    `0045_inventory_movements_stock_opname.sql`, sudah diapply.
-4. `create_ap_credit_note` + `create_purchase_replacement` (retur ke supplier, 2
-   opsi saling eksklusif) — migration
+4. `create_ap_return` (dulu `create_ap_credit_note`) + `create_purchase_replacement`
+   (retur ke supplier, 2 opsi saling eksklusif) — migration
    `0046_inventory_movements_purchase_return_replacement.sql`, sudah diapply.
    Sekalian nutup gap `purchase_replacement_lines` (kolom ke-11, lihat "Keputusan" di
    atas).
-5. `create_ar_credit_note` (retur dari customer) — migration
-   `0047_inventory_movements_ar_credit_note.sql`, sudah diapply. Cuma kondisi
-   `RESALABLE` yang masuk ledger (konsisten sama `inventory_balances` yang juga cuma
-   disentuh kondisi itu) — baris `DAMAGED` gak pernah insert ke `inventory_movements`.
+5. `create_ar_return` (dulu `create_ar_credit_note`, retur dari customer) — migration
+   `0047_inventory_movements_ar_credit_note.sql`, sudah diapply. **Historis**: dulu cuma
+   kondisi `RESALABLE` yang masuk ledger, baris `DAMAGED` di-skip — klasifikasi ini
+   dicabut total migration `0075` (`returns-schema.md`), sekarang SEMUA baris insert ke
+   `inventory_movements` tanpa kecuali.
 6. `create_goods_receipt` (pembelian, cukup rutin) — migration
    `0048_inventory_movements_goods_receipt.sql`, sudah diapply.
 7. `create_production_order` (paling kompleks — 1 pemanggilan hasilkan 1 baris IN

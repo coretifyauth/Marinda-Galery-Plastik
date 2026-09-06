@@ -75,7 +75,7 @@ $$ language plpgsql;
 - `transactions` (migration `0064`, gantiin `ar_invoices`/`ap_bills`) — `transactions_counterparty_role_guard_inbound`/`_outbound`, dari kolom `type`. Detail: `memory/architecture/data/transactions-schema.md`.
 - `payments` (gantiin `ar_payments`/`ap_payments`), `deposits` (gantiin `ar_deposits`/`ap_deposits`), `return_credits` (gantiin `ar_return_credits`/`ap_return_credits`) — pola identik, masing-masing `<tabel>_counterparty_role_guard_inbound`/`_outbound` dari kolom `type`. Detail: `memory/architecture/data/payments-schema.md`, `deposits-schema.md`, `return-credits-schema.md`.
 
-`credit_notes` sengaja **gak punya kolom `counterparty_id` sama sekali** — pihaknya ditelusuri gak langsung lewat `transaction_id` -> `transactions.counterparty_id`, jadi gak butuh trigger role-guard sendiri (detail: `memory/architecture/data/credit-notes-schema.md`).
+`returns` (dulu `credit_notes`) sengaja **gak punya kolom `counterparty_id` sama sekali** — pihaknya ditelusuri gak langsung lewat `transaction_id` -> `transactions.counterparty_id`, jadi gak butuh trigger role-guard sendiri (detail: `memory/architecture/data/returns-schema.md`).
 
 Sisa **1 tabel** yang masih dijaga pola asli migration `0059` (1 trigger, 1 kolom hardcode via `TG_ARGV`, karena kolomnya emang cuma 1 arah dan nullable):
 

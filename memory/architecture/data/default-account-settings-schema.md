@@ -66,7 +66,7 @@ Seed 2 baris (pasangan yang sudah ada dari `0016_rename_legacy_fixed_asset_accou
 
 ## Kasus khusus — AP Bill retur, akun kredit DERIVED bukan FIXED
 
-Field "Akun Persediaan/Beban (kredit)" di panel Retur AP Bill (`ap-bills/[id]/view.tsx`, RPC `create_ap_credit_note`) — ini persis lokasi bug nyata yang jadi pemicu fitur ini. Gak dijadiin `default_account_settings` baru karena akunnya HARUS sama dengan akun debit asli di bill itu (retur ngurangin persis apa yang tadinya dicatat) — kalau bill punya beberapa baris debit (compounding), akunnya bisa beda-beda per bill, bukan 1 nilai tetap.
+Field "Akun Persediaan/Beban (kredit)" di panel Retur AP Bill (`ap-bills/[id]/view.tsx`, RPC `create_ap_return`, dulu `create_ap_credit_note`) — ini persis lokasi bug nyata yang jadi pemicu fitur ini. Gak dijadiin `default_account_settings` baru karena akunnya HARUS sama dengan akun debit asli di bill itu (retur ngurangin persis apa yang tadinya dicatat) — kalau bill punya beberapa baris debit (compounding), akunnya bisa beda-beda per bill, bukan 1 nilai tetap.
 
 Solusi: field ini dibatasi ke `ap_bill_debit_lines` milik bill yang bersangkutan doang (`select account_id, accounts(code,name) from ap_bill_debit_lines where ap_bill_id = :id and is_tax = false`, di-dedupe) — bukan bebas pilih dari seluruh COA, tapi juga bukan 1 akun terkunci. Kalau cuma 1 baris debit (kasus umum), pilihan efektif cuma 1. Kalau lebih dari 1, user pilih yang mana yang lagi diretur — pilihan yang genuinely perlu dibuat, tapi dibatasi ke akun yang beneran relevan ke bill ini.
 

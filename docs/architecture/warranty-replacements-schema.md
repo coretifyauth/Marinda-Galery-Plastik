@@ -1,12 +1,12 @@
 # Penukaran Barang Pasca-Retur (Garansi) — Struktur Data
 
-Konsep bisnisnya ada di `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)" — customer punya barang cacat dan minta barang pengganti, bukan retur (dapat kredit/diskon). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/warranty-replacements-schema.md`. Ini sisi AR — mirror persis sisi AP-nya ada di `purchase-replacements-schema.md`, dua-duanya tabel fisik terpisah karena beda arah (beda dari `credit_notes`, lihat `credit-notes-schema.md`).
+Konsep bisnisnya ada di `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)" — customer punya barang cacat dan minta barang pengganti, bukan retur (dapat kredit/diskon). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/warranty-replacements-schema.md`. Ini sisi AR — mirror persis sisi AP-nya ada di `purchase-replacements-schema.md`, dua-duanya tabel fisik terpisah karena beda arah (beda dari `returns`, lihat `returns-schema.md`).
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `warranty_replacements` | Header 1 kejadian penukaran barang (bisa lebih dari 1 kali per invoice) | `transactions` (invoice), `credit_notes` (histori doang), `journal_entries` |
+| `warranty_replacements` | Header 1 kejadian penukaran barang (bisa lebih dari 1 kali per invoice) | `transactions` (invoice), `returns` (histori doang), `journal_entries` |
 | `warranty_replacement_lines` | Rincian barang & qty yang ditukar per kejadian | `warranty_replacements`, `items` |
 
 ## Konsep Inti
@@ -23,7 +23,7 @@ Konsep bisnisnya ada di `docs/domain/accounts-receivable.md` bagian "Penukaran B
 | Kolom | Isinya | Catatan |
 |---|---|---|
 | `invoice_id` | Invoice asal barang yang cacat | Rujukan utama — independen dari retur/credit note |
-| `credit_note_id` | Opsional, boleh kosong | Cuma terisi di baris historis lama; baris baru selalu kosong |
+| `return_id` (dulu `credit_note_id`) | Opsional, boleh kosong | Cuma terisi di baris historis lama; baris baru selalu kosong |
 | `journal_entry_id` | Jurnal Debit HPP / Kredit Persediaan Barang Jadi | Satu-satunya jurnal yang tercipta — Piutang Usaha & Pendapatan sama sekali gak disentuh |
 | Kolom pembalikan diskon & penyelesaian saldo kredit retur | Tidak dipakai oleh alur saat ini | Tetap ada di tabel buat baca histori data lama, kejadian baru gak pernah mengisinya (selalu nol/kosong) |
 | `qty_replaced`, `total_cost` (di `_lines`) | Qty barang ditukar & nilai HPP-nya | Dihitung dari harga rata-rata berjalan (Weighted Average) saat kejadian, bukan harga historis |
@@ -45,7 +45,7 @@ RPC-nya sederhana — tidak ada parameter yang berhubungan dengan retur (nunjuk 
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Satu barang, satu jalan kompensasi — qty yang sudah diretur gak bisa lagi diganti barang, dan sebaliknya, berlaku dari arah mana pun duluan diajukan | Fungsi `sales_returned_qty` menjumlah klaim lintas kedua jalur (retur kredit via `credit_notes`/`inventory_returns`, dan ganti barang via `warranty_replacement_lines`), dipakai trigger `warranty_replacement_lines_no_over_replace` |
+| Satu barang, satu jalan kompensasi — qty yang sudah diretur gak bisa lagi diganti barang, dan sebaliknya, berlaku dari arah mana pun duluan diajukan | Fungsi `sales_returned_qty` menjumlah klaim lintas kedua jalur (retur kredit via `return_lines`/`returns`, dan ganti barang via `warranty_replacement_lines`), dipakai trigger `warranty_replacement_lines_no_over_replace` |
 | Ganti barang gak berlaku buat tagihan yang gak pernah punya barang fisik keluar (misal tagihan jasa) | Trigger yang sama menolak (raise exception) kalau item gak ditemukan di catatan barang keluar invoice tersebut |
 | Total qty ditukar (dikurangi yang sudah diretur) gak boleh melebihi qty yang benar-benar terjual | Trigger `warranty_replacement_lines_no_over_replace`, dibandingkan ke qty barang keluar asli dikurangi `sales_returned_qty()` |
 | Piutang Usaha customer gak boleh tersentuh oleh penukaran barang | RPC cuma bikin 1 jurnal (HPP/Persediaan), gak pernah menyentuh akun piutang |
@@ -56,11 +56,11 @@ RPC-nya sederhana — tidak ada parameter yang berhubungan dengan retur (nunjuk 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `warranty_replacements.invoice_id` | banyak-ke-satu | `transactions` (invoice) |
-| `warranty_replacements.credit_note_id` | banyak-ke-satu, nullable, histori doang | `credit_notes` |
+| `warranty_replacements.return_id` (dulu `credit_note_id`) | banyak-ke-satu, nullable, histori doang | `returns` |
 | `warranty_replacements.journal_entry_id` | banyak-ke-satu | `journal_entries` |
 | `warranty_replacement_lines.warranty_replacement_id` | banyak-ke-satu | `warranty_replacements` |
 | `warranty_replacement_lines.item_id` | banyak-ke-satu | `items` |
-| `warranty_replacement_lines` (via `sales_returned_qty`) | dibandingkan dengan | `inventory_return_lines` / `credit_notes` (retur kredit, lihat `credit-notes-schema.md`) |
+| `warranty_replacement_lines` (via `sales_returned_qty`) | dibandingkan dengan | `return_lines` / `returns` (retur kredit, lihat `returns-schema.md`) |
 
 ## Siapa Boleh Apa
 
@@ -68,4 +68,4 @@ RPC-nya sederhana — tidak ada parameter yang berhubungan dengan retur (nunjuk 
 |---|---|
 | Melihat daftar penukaran barang | Semua user yang sudah login |
 | Mencatat penukaran barang baru | Role `admin` atau `accountant` |
-| Mengubah/menghapus penukaran barang yang sudah tercatat | **Tidak ada seorang pun** — immutable, sama seperti pola `credit_notes`/`inventory_returns` (kalau salah input, dikoreksi dengan mencatat kejadian baru, bukan mengedit yang lama) |
+| Mengubah/menghapus penukaran barang yang sudah tercatat | **Tidak ada seorang pun** — immutable, sama seperti pola `returns`/`return_lines` (kalau salah input, dikoreksi dengan mencatat kejadian baru, bukan mengedit yang lama) |

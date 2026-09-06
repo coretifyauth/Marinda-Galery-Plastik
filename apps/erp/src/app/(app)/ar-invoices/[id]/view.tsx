@@ -40,7 +40,6 @@ type ReturnLineInput = {
   uom: string;
   qty_available: number;
   qty_returned: string;
-  condition: "RESALABLE" | "DAMAGED";
   unit_price: number | null;
 };
 type ReplacementLineInput = { item_id: string; name: string; uom: string; qty_remaining: number; qty: string };
@@ -83,16 +82,11 @@ type CreditNoteDetail = {
   source_ref: string;
   amount: number;
   created_at: string;
-  inventory_returns: {
-    id: string;
-    return_date: string;
-    inventory_return_lines: {
-      item_id: string;
-      qty_returned: number;
-      total_cost: number;
-      condition: "RESALABLE" | "DAMAGED";
-      items: { name: string; uom: string };
-    }[];
+  return_lines: {
+    item_id: string;
+    qty_returned: number;
+    total_cost: number;
+    items: { name: string; uom: string };
   }[];
 };
 
@@ -178,10 +172,10 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_credit_notes:credit_notes(amount, ar_return_credits:return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications:deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_returns:returns(amount, ar_return_credits:return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
-      .eq("type", "INBOUND")
+      .eq("type", "OUTBOUND")
       .single();
     if (invErr || !inv) {
       setLoadError(invErr?.message ?? "Invoice gak ditemukan.");
@@ -222,9 +216,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("transaction_id", id)
         .order("payment_date"),
       supabase
-        .from("credit_notes")
+        .from("returns")
         .select(
-          "id, credit_note_date, source_ref, amount, created_at, inventory_returns(id, return_date, inventory_return_lines(item_id, qty_returned, total_cost, condition, items(name, uom)))"
+          "id, credit_note_date, source_ref, amount, created_at, return_lines(item_id, qty_returned, total_cost, items(name, uom))"
         )
         .eq("transaction_id", id)
         .eq("type", "INBOUND")
@@ -259,12 +253,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           "id, customer_id:counterparty_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications:deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices:transactions(source_ref)), ar_deposit_refunds:deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures:deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
         .eq("counterparty_id", loadedInvoice.customer_id)
-        .eq("type", "INBOUND")
+        .eq("type", "OUTBOUND")
         .order("deposit_date"),
       supabase
         .from("return_credits")
         .select(
-          "id, customer_id:counterparty_id, credit_note_id, amount, journal_entry_id, created_at, counterparties(name), ar_credit_notes:credit_notes(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds:return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+          "id, customer_id:counterparty_id, return_id, amount, journal_entry_id, created_at, counterparties(name), ar_returns:returns(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds:return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
         )
         .eq("counterparty_id", loadedInvoice.customer_id)
         .eq("type", "INBOUND")
@@ -335,7 +329,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             uom: l.items.uom,
             qty_available: l.qty_issued,
             qty_returned: "",
-            condition: "RESALABLE" as const,
             unit_price: l.order_lines?.unit_price ?? null,
           }))
         : []
@@ -347,10 +340,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setReturLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, qty_returned: qty } : l)));
   }
 
-  function updateReturLineCondition(itemId: string, condition: "RESALABLE" | "DAMAGED") {
-    setReturLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, condition } : l)));
-  }
-
   async function handleReturSubmit(e: FormEvent) {
     e.preventDefault();
     if (!invoice) return;
@@ -358,7 +347,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
     const activeLines = returLines
       .filter((l) => l.qty_returned.trim() !== "")
-      .map((l) => ({ item_id: l.item_id, qty_returned: l.qty_returned, condition: l.condition }));
+      .map((l) => ({ item_id: l.item_id, qty_returned: l.qty_returned }));
 
     const parsed = createArCreditNoteSchema.safeParse({
       invoice_id: invoice.id,
@@ -370,7 +359,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       hpp_account_id: defaultAccounts["inventory.hpp"]?.id || undefined,
       finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id || undefined,
       return_credit_liability_account_id: defaultAccounts["ar.return_credit_liability"]?.id || undefined,
-      loss_expense_account_id: defaultAccounts["inventory.damage_loss_expense"]?.id || undefined,
     });
     if (!parsed.success) {
       setReturError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -390,7 +378,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       setReturError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("create_ar_credit_note", {
+    const { error } = await supabase.rpc("create_ar_return", {
       p_invoice_id: parsed.data.invoice_id,
       p_credit_note_date: parsed.data.credit_note_date,
       p_source_ref: sourceRef,
@@ -401,7 +389,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       p_hpp_account_id: parsed.data.hpp_account_id ?? null,
       p_finished_good_account_id: parsed.data.finished_good_account_id ?? null,
       p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id ?? null,
-      p_loss_expense_account_id: parsed.data.loss_expense_account_id ?? null,
     });
     setReturSubmitting(false);
     if (error) {
@@ -422,10 +409,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
     const alreadyClaimed = new Map<string, number>();
     for (const cn of creditNotes) {
-      for (const ret of cn.inventory_returns) {
-        for (const l of ret.inventory_return_lines) {
-          alreadyClaimed.set(l.item_id, (alreadyClaimed.get(l.item_id) ?? 0) + l.qty_returned);
-        }
+      for (const l of cn.return_lines) {
+        alreadyClaimed.set(l.item_id, (alreadyClaimed.get(l.item_id) ?? 0) + l.qty_returned);
       }
     }
     for (const r of replacements) {
@@ -619,7 +604,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       return;
     }
     const { error } = await supabase.rpc("record_payment", {
-      p_type: "INBOUND",
+      p_type: "OUTBOUND",
       p_counterparty_id: parsed.data.customer_id,
       p_payment_date: parsed.data.payment_date,
       p_amount: parsed.data.amount,
@@ -707,7 +692,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const canPay = canWrite && !isCancelled && outstanding > 0.005;
   const canRetur = canWrite && !isCancelled;
   const invoiceReturnCredits = customerReturnCredits.filter((rc) =>
-    creditNotes.some((cn) => cn.id === rc.credit_note_id)
+    creditNotes.some((cn) => cn.id === rc.return_id)
   );
   const availableDeposits = customerDeposits.filter(
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
@@ -724,12 +709,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   // Sama pola kayak returExcess di ap-bills/[id]/view.tsx -- excess cuma kejadian kalau
   // nominal retur ngelebihin outstanding invoice saat ini.
   const returExcess = Math.max(0, effectiveReturAmount - Math.max(0, outstanding));
-  const returHasResalable = returLines.some(
-    (l) => l.condition === "RESALABLE" && (Number(l.qty_returned) || 0) > 0
-  );
-  const returHasDamaged = returLines.some(
-    (l) => l.condition === "DAMAGED" && (Number(l.qty_returned) || 0) > 0
-  );
+  const returHasQty = returLines.some((l) => (Number(l.qty_returned) || 0) > 0);
 
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
   // jadi cetak ulang kapan pun otomatis nunjukkan kondisi terkini (retur/write-off/pembatalan
@@ -1080,7 +1060,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               </thead>
               <tbody>
                 {creditNotes.map((cn) => {
-                  const invReturn = cn.inventory_returns[0];
+                  const hasStockReturn = cn.return_lines.length > 0;
                   return (
                     <tr key={cn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
                       <td className="whitespace-nowrap px-4 py-2">{cn.credit_note_date}</td>
@@ -1088,24 +1068,19 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                       <td className="px-4 py-2">
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs ${
-                            invReturn ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
+                            hasStockReturn ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
                           }`}
                         >
-                          {invReturn ? "Full (stok+HPP)" : "Financial-only"}
+                          {hasStockReturn ? "Full (stok+HPP)" : "Financial-only"}
                         </span>
                       </td>
                       <td className="px-4 py-2">
-                        {invReturn ? (
+                        {hasStockReturn ? (
                           <ul className="space-y-0.5">
-                            {invReturn.inventory_return_lines.map((l) => (
+                            {cn.return_lines.map((l) => (
                               <li key={l.item_id}>
                                 {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
                                 {l.total_cost.toLocaleString("id-ID")})
-                                {l.condition === "DAMAGED" && (
-                                  <span className="ml-1 rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">
-                                    Rusak
-                                  </span>
-                                )}
                               </li>
                             ))}
                           </ul>
@@ -1148,7 +1123,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                     const { used, remaining } = returnCreditRemaining(rc);
                     return (
                       <tr key={rc.id} className="border-b border-slate-100 hover:bg-slate-50">
-                        <td className="px-4 py-2">{rc.ar_credit_notes.source_ref}</td>
+                        <td className="px-4 py-2">{rc.ar_returns.source_ref}</td>
                         <td className="px-4 py-2 text-right font-mono">{rc.amount.toLocaleString("id-ID")}</td>
                         <td className="px-4 py-2 text-right font-mono">{used.toLocaleString("id-ID")}</td>
                         <td className="px-4 py-2 text-right font-mono font-medium">
@@ -1419,15 +1394,10 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                 side: "credit",
               },
             ],
-            goodsIssue && (returHasResalable || returHasDamaged) && [
-              returHasResalable && {
-                label: "Akun Persediaan Barang Jadi (debit, baris Layak Jual)",
+            goodsIssue && returHasQty && [
+              {
+                label: "Akun Persediaan Barang Jadi (debit, reversal HPP)",
                 resolved: defaultAccounts["inventory.finished_good"],
-                side: "debit",
-              },
-              returHasDamaged && {
-                label: "Akun Beban Kerugian Barang Rusak (debit, baris Rusak)",
-                resolved: defaultAccounts["inventory.damage_loss_expense"],
                 side: "debit",
               },
               {
@@ -1487,14 +1457,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                     resolved={defaultAccounts["inventory.hpp"]}
                   />
                   <LockedAccountField
-                    label="Akun Persediaan Barang Jadi (debit, baris Layak Jual)"
+                    label="Akun Persediaan Barang Jadi (debit, reversal HPP)"
                     htmlFor="retur_finished_good_account"
                     resolved={defaultAccounts["inventory.finished_good"]}
-                  />
-                  <LockedAccountField
-                    label="Akun Beban Kerugian Barang Rusak (debit, baris Rusak)"
-                    htmlFor="retur_loss_expense_account"
-                    resolved={defaultAccounts["inventory.damage_loss_expense"]}
                   />
                 </>
               )}
@@ -1502,13 +1467,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
             {goodsIssue && (
               <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-[1fr_8rem_10rem] gap-2 text-sm font-medium text-slate-500">
+                <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
                   <span>Item Terjual (qty asli)</span>
                   <span>Qty Retur</span>
-                  <span>Kondisi</span>
                 </div>
                 {returLines.map((line) => (
-                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem_10rem] gap-2">
+                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
                     <span className="flex items-center text-sm text-slate-700">
                       {line.name} ({line.qty_available} {line.uom})
                     </span>
@@ -1519,15 +1483,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                       value={line.qty_returned}
                       onChange={(e) => updateReturLine(line.item_id, e.target.value)}
                     />
-                    <Select
-                      value={line.condition}
-                      onChange={(e) =>
-                        updateReturLineCondition(line.item_id, e.target.value as "RESALABLE" | "DAMAGED")
-                      }
-                    >
-                      <option value="RESALABLE">Layak Jual</option>
-                      <option value="DAMAGED">Rusak</option>
-                    </Select>
                   </div>
                 ))}
               </div>

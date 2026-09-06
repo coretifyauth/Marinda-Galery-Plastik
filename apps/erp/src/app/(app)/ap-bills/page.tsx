@@ -169,7 +169,7 @@ export default function ApBillsPage() {
     mutationFn: async (input: CreateApBillInput) => {
       const sourceRef = await generateDocumentNumber("ap_bills");
       const { error } = await supabase.rpc("create_transaction", {
-        p_type: "OUTBOUND",
+        p_type: "INBOUND",
         p_counterparty_id: input.supplier_id,
         p_date: input.bill_date,
         p_description: input.description || null,

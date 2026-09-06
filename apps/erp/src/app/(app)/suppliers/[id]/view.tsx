@@ -47,9 +47,9 @@ export function SupplierDetailView({ id }: { id: string }) {
       supabase
         .from("transactions")
         .select(
-          "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+          "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
         )
-        .eq("type", "OUTBOUND")
+        .eq("type", "INBOUND")
         .eq("counterparty_id", id)
         .order("date", { ascending: false }),
       supabase
@@ -57,7 +57,7 @@ export function SupplierDetailView({ id }: { id: string }) {
         .select(
           "id, supplier_id:counterparty_id, bill_id:transaction_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ap_bills:transactions(source_ref)"
         )
-        .eq("type", "OUTBOUND")
+        .eq("type", "INBOUND")
         .eq("counterparty_id", id)
         .order("payment_date", { ascending: false }),
       supabase.from("journal_entries").select("reverses_entry_id").not("reverses_entry_id", "is", null),

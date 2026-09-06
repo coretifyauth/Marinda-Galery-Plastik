@@ -66,7 +66,7 @@ type CreditNoteDetail = {
   source_ref: string;
   amount: number;
   created_at: string;
-  purchase_return_lines: {
+  return_lines: {
     item_id: string;
     qty_returned: number;
     total_cost: number;
@@ -168,10 +168,10 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_credit_notes:credit_notes(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
-      .eq("type", "OUTBOUND")
+      .eq("type", "INBOUND")
       .single();
     if (billErr || !b) {
       setLoadError(billErr?.message ?? "Bill gak ditemukan.");
@@ -217,9 +217,9 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("transaction_id", id)
         .order("payment_date"),
       supabase
-        .from("credit_notes")
+        .from("returns")
         .select(
-          "id, credit_note_date, source_ref, amount, created_at, purchase_return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits:return_credits(id, amount, ap_return_credit_refunds:return_credit_refunds(amount))"
+          "id, credit_note_date, source_ref, amount, created_at, return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits:return_credits(id, amount, ap_return_credit_refunds:return_credit_refunds(amount))"
         )
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND")
@@ -246,7 +246,7 @@ export function ApBillDetailView({ id }: { id: string }) {
           "id, supplier_id:counterparty_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_deposit_applications:deposit_applications(id, amount, source_ref, journal_entry_id, ap_bills:transactions(source_ref)), ap_deposit_refunds:deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ap_deposit_forfeitures:deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
         )
         .eq("counterparty_id", loadedBill.supplier_id)
-        .eq("type", "OUTBOUND")
+        .eq("type", "INBOUND")
         .order("deposit_date"),
     ]);
 
@@ -317,7 +317,7 @@ export function ApBillDetailView({ id }: { id: string }) {
   function claimedQtyByItem(): Map<string, number> {
     const map = new Map<string, number>();
     for (const cn of creditNotes) {
-      for (const l of cn.purchase_return_lines) {
+      for (const l of cn.return_lines) {
         map.set(l.item_id, (map.get(l.item_id) ?? 0) + l.qty_returned);
       }
     }
@@ -410,7 +410,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       setReturError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("create_ap_credit_note", {
+    const { error } = await supabase.rpc("create_ap_return", {
       p_bill_id: parsed.data.bill_id,
       p_credit_note_date: parsed.data.credit_note_date,
       p_source_ref: sourceRef,
@@ -622,7 +622,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       return;
     }
     const { error } = await supabase.rpc("record_payment", {
-      p_type: "OUTBOUND",
+      p_type: "INBOUND",
       p_counterparty_id: parsed.data.supplier_id,
       p_payment_date: parsed.data.payment_date,
       p_amount: parsed.data.amount,
@@ -962,7 +962,7 @@ export function ApBillDetailView({ id }: { id: string }) {
               </thead>
               <tbody>
                 {creditNotes.map((cn) => {
-                  const isFull = cn.purchase_return_lines.length > 0;
+                  const isFull = cn.return_lines.length > 0;
                   return (
                     <tr key={cn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
                       <td className="whitespace-nowrap px-4 py-2">{cn.credit_note_date}</td>
@@ -979,7 +979,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                       <td className="px-4 py-2">
                         {isFull ? (
                           <ul className="space-y-0.5">
-                            {cn.purchase_return_lines.map((l) => (
+                            {cn.return_lines.map((l) => (
                               <li key={l.item_id}>
                                 {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
                                 {l.total_cost.toLocaleString("id-ID")})

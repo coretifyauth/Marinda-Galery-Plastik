@@ -15,11 +15,11 @@ export type PosSaleFilters = {
   pageSize: number;
 };
 
-// pos_sales_with_status (migration 0036) -- status/total udah terhitung server-side, jadi list
-// gak perlu lagi fetch nested pos_sale_lines atau query journal_entries.reverses_entry_id
-// terpisah cuma buat dihitung ulang di client.
+// pos_sales_with_status (migration 0036, di-UNION-kan 0076 dengan penjualan pasca-
+// cutover) -- status/total udah terhitung server-side, kolom FLAT (bukan embed relasi,
+// lihat komentar di migration 0076).
 const SELECT_COLUMNS =
-  "id, sale_date, source_ref, revenue_journal_entry_id, total, status, counterparties(name), cash_account:accounts!cash_account_id(code, name)";
+  "id, sale_date, source_ref, revenue_journal_entry_id, total, status, customer_id, customer_name, cash_account_id, cash_account_code, cash_account_name";
 
 export async function fetchPosSales(
   filters: PosSaleFilters

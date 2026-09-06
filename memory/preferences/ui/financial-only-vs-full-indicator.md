@@ -32,7 +32,7 @@ Warna: `amber-50/amber-700` buat financial-only ("orange" preferensi user — co
 
 Tab disaring lewat conditional spread di array `tabs: TabDef[]`, BUKAN disembunyiin via CSS — supaya `activeTab` gak pernah bisa ke-set ke tab yang gak valid buat dokumen itu (user gak bisa klik tab yang gak dirender).
 
-**AP** — disembunyiin kalau `isFinancialOnly`: `tukar` (Tukar Barang). **Tetap tampil**: `jurnal`, `pembayaran`, `dp`, `retur` (Kurangi Utang — satu-satunya opsi retur AP yang punya jalur financial-only, lihat percakapan yang jelasin `create_ap_credit_note`). Tab `writeoff` (Tulis-jadi-Beban, Opsi C) **dicabut total** migration `0068` (2026-09-05) — barang rusak tanpa kompensasi sekarang lewat Stock Opname generic, di luar halaman detail bill ini sama sekali.
+**AP** — disembunyiin kalau `isFinancialOnly`: `tukar` (Tukar Barang). **Tetap tampil**: `jurnal`, `pembayaran`, `dp`, `retur` (Kurangi Utang — satu-satunya opsi retur AP yang punya jalur financial-only, lihat percakapan yang jelasin `create_ap_return`, dulu `create_ap_credit_note`). Tab `writeoff` (Tulis-jadi-Beban, Opsi C) **dicabut total** migration `0068` (2026-09-05) — barang rusak tanpa kompensasi sekarang lewat Stock Opname generic, di luar halaman detail bill ini sama sekali.
 
 **AR** — disembunyiin kalau `isFinancialOnly`: `replacements` (Penggantian Barang/Garansi). **Tetap tampil**: `jurnal`, `pembayaran`, `dp`, `retur`. Tab `writeoff` (Piutang Tak Tertagih) **dicabut total** migration `0064`+`0065` (2026-09-05) bareng penggabungan `ar_invoices`+`ap_bills` jadi `transactions`.
 

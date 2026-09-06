@@ -1,12 +1,12 @@
 # Transaksi (Piutang & Utang) — Struktur Data
 
-Piutang timbul dan utang timbul disimpan di 1 tabel generic `transactions`, dibedakan kolom arah (`type`: `INBOUND` = piutang, `OUTBOUND` = utang). Baca `docs/domain/accounts-receivable.md` (Piutang) dan `docs/domain/accounts-payable.md` (Utang) buat konteks bisnis lengkap; detail teknis penuh (DDL/trigger/RPC persis) ada di `memory/architecture/data/transactions-schema.md`.
+Piutang timbul dan utang timbul disimpan di 1 tabel generic `transactions`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang, `INBOUND` = utang). Baca `docs/domain/accounts-receivable.md` (Piutang) dan `docs/domain/accounts-payable.md` (Utang) buat konteks bisnis lengkap; detail teknis penuh (DDL/trigger/RPC persis) ada di `memory/architecture/data/transactions-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `transactions` | Piutang timbul (`type='INBOUND'`) atau utang timbul (`type='OUTBOUND'`) — 1 baris = 1 invoice/tagihan | `counterparties`, `journal_entries` |
+| `transactions` | Piutang timbul (`type='OUTBOUND'`) atau utang timbul (`type='INBOUND'`) — 1 baris = 1 invoice/tagihan | `counterparties`, `journal_entries` |
 | `transaction_lines` | Baris kategori tambahan (dan PPN) di dalam 1 transaksi | `transactions`, `accounts` |
 | `charge_categories` | Katalog kategori tambahan (kolom `module`: `ar`=pendapatan piutang, `ap`=beban utang, `pos`=checkout kasir) | `accounts` |
 
@@ -23,14 +23,14 @@ Piutang timbul dan utang timbul disimpan di 1 tabel generic `transactions`, dibe
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
-| `type` | `INBOUND` (piutang) / `OUTBOUND` (utang) | Satu-satunya pembeda arah; menentukan debit/kredit mana yang kena Piutang Usaha vs Utang Usaha |
-| `counterparty_id` | Pihak terkait | `INBOUND` wajib pihak berperan pelanggan, `OUTBOUND` wajib pihak berperan pemasok — dicek otomatis, gak bisa salah pilih |
+| `type` | `OUTBOUND` (piutang) / `INBOUND` (utang) | Satu-satunya pembeda arah; menentukan debit/kredit mana yang kena Piutang Usaha vs Utang Usaha |
+| `counterparty_id` | Pihak terkait | `OUTBOUND` wajib pihak berperan pelanggan, `INBOUND` wajib pihak berperan pemasok — dicek otomatis, gak bisa salah pilih |
 | `date` / `due_date` | Tanggal transaksi & jatuh tempo | `due_date` dihitung sekali dari termin pembayaran pihak terkait **saat transaksi dibuat**, disimpan sebagai snapshot — kalau terminnya berubah belakangan, transaksi lama gak ikut geser |
 | `amount` | Nilai total transaksi | Harus lebih dari 0 |
 | `outstanding` / `returned` | Sisa tagihan riil / total nilai retur | Kolom turunan, dihitung ulang otomatis tiap ada kejadian yang mempengaruhi (pembayaran, retur, dst) — gak pernah diisi manual |
 | `status` | lunas / sebagian / belum / dibatalkan | Turunan juga, gak pernah di-set manual |
 | `origin` | `financial_only` / `order` / `goods_movement` | Asal-usul transaksi: murni catatan finansial, lahir dari Order (SO/PO), atau dari pergerakan barang fisik di luar Order |
-| `supplier_document_ref` | Nomor nota asli dari supplier | Cuma keisi kalau `type='OUTBOUND'` — satu-satunya kolom yang cuma relevan untuk salah satu arah, sisanya sama struktur antara piutang dan utang |
+| `supplier_document_ref` | Nomor nota asli dari supplier | Cuma keisi kalau `type='INBOUND'` — satu-satunya kolom yang cuma relevan untuk salah satu arah, sisanya sama struktur antara piutang dan utang |
 | `journal_entry_id` | Jurnal yang tercipta bareng transaksi ini | Setiap transaksi wajib punya 1 jurnal pendamping |
 
 Transaksi **gak bisa diubah atau dihapus** setelah tersimpan (sama seperti Jurnal Umum) — koreksi salah input pakai jurnal pembalik, bukan edit langsung.
@@ -39,8 +39,8 @@ Transaksi **gak bisa diubah atau dihapus** setelah tersimpan (sama seperti Jurna
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Buat piutang baru (invoice ke customer) | `create_transaction('INBOUND', ...)` | Insert 1 baris `transactions` + baris kategori di `transaction_lines` + 1 jurnal (Debit Piutang Usaha, Kredit Pendapatan) sekaligus dalam 1 transaksi database | Minimal 1 baris kategori, tiap baris nilainya harus lebih dari 0; pihak tujuan wajib berperan pelanggan |
-| Buat utang baru (tagihan dari supplier) | `create_transaction('OUTBOUND', ...)` | Sama seperti di atas, arah jurnal kebalik (Debit Beban/Persediaan, Kredit Utang Usaha) | Sama seperti di atas, pihak tujuan wajib berperan pemasok |
+| Buat piutang baru (invoice ke customer) | `create_transaction('OUTBOUND', ...)` | Insert 1 baris `transactions` + baris kategori di `transaction_lines` + 1 jurnal (Debit Piutang Usaha, Kredit Pendapatan) sekaligus dalam 1 transaksi database | Minimal 1 baris kategori, tiap baris nilainya harus lebih dari 0; pihak tujuan wajib berperan pelanggan |
+| Buat utang baru (tagihan dari supplier) | `create_transaction('INBOUND', ...)` | Sama seperti di atas, arah jurnal kebalik (Debit Beban/Persediaan, Kredit Utang Usaha) | Sama seperti di atas, pihak tujuan wajib berperan pemasok |
 | Hitung PPN otomatis | Bagian dari `create_transaction` (kalau diminta) | Tarif PPN diambil dari pengaturan pajak di sistem, ditambahkan ke Piutang/Utang Usaha — gak pernah dipercaya dari input form | — |
 | Batalkan piutang yang salah input | `cancel_ar_invoice` | Bikin jurnal pembalik (akun sama, debit/kredit ketuker) + otomatis membalik jurnal uang muka yang masih aktif ke invoice itu | Ditolak kalau invoice udah punya pembayaran apa pun — gak bisa dibatalkan lewat jalur ini, harus jalur lain |
 | Batalkan utang yang salah input | `cancel_ap_bill` | Bikin jurnal pembalik (akun sama, debit/kredit ketuker) | Ditolak kalau tagihan udah punya pembayaran ATAU udah punya retur (credit note) apa pun |
@@ -51,7 +51,7 @@ Transaksi **gak bisa diubah atau dihapus** setelah tersimpan (sama seperti Jurna
 |---|---|
 | Piutang timbul = 1 jurnal Debit Piutang Usaha / Kredit Pendapatan; utang timbul = kebalikannya | `create_transaction`, arah ditentukan parameter `p_type` |
 | Jatuh tempo dihitung sekali dari termin pihak terkait saat transaksi dibuat, gak ikut berubah kalau termin berubah belakangan | Kolom `due_date` diisi sebagai snapshot oleh RPC, bukan dihitung ulang tiap dibaca |
-| Salah pilih pihak (pilih pemasok di form piutang, atau sebaliknya) gak boleh lolos | Guard peran pihak (`counterparty_role_guard`) — INBOUND wajib pelanggan, OUTBOUND wajib pemasok, dicek di level database |
+| Salah pilih pihak (pilih pemasok di form piutang, atau sebaliknya) gak boleh lolos | Guard peran pihak (`counterparty_role_guard`) — OUTBOUND wajib pelanggan, INBOUND wajib pemasok, dicek di level database |
 | Tidak ada mekanisme Credit Hold (tolak invoice baru kalau customer kelewat batas kredit) | Gak ada pengecekan ini di `create_transaction`; gak ada kolom batas kredit di data pelanggan |
 | Tidak ada mekanisme Piutang Tak Tertagih (write-off) | Gak ada jalur RPC untuk ini di sistem |
 | Staf gak bebas pilih akun pembukuan buat kategori tambahan, harus dari daftar yang disiapkan admin | Katalog `charge_categories` (lihat submodule "Kategori Tambahan & PPN") |
@@ -67,7 +67,7 @@ Transaksi **gak bisa diubah atau dihapus** setelah tersimpan (sama seperti Jurna
 | `transaction_lines.transaction_id` | banyak-ke-satu | `transactions` |
 | `transaction_lines.account_id` | banyak-ke-satu | `accounts` |
 | `payments.transaction_id` (`payments-schema.md`) | banyak-ke-satu | `transactions` |
-| `credit_notes.transaction_id` (`credit-notes-schema.md`) | banyak-ke-satu | `transactions` |
+| `returns.transaction_id` (`returns-schema.md`) | banyak-ke-satu | `transactions` |
 | `deposit_applications.transaction_id` (`deposits-schema.md`) | banyak-ke-satu | `transactions` |
 
 ## Kategori Tambahan & PPN
@@ -125,8 +125,8 @@ Gak ada tabel baru — bagian ini menjelaskan bagaimana kolom turunan `transacti
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `recompute_transaction_status` | dipicu oleh insert di | `payments`, `credit_notes`, `deposit_applications`, `warranty_replacements`, `goods_issues`, `goods_receipt_notes` |
-| `ar_invoice_remaining`/`ap_bill_remaining` | membaca | `transactions`, `payments`, `credit_notes`, `deposit_applications`, `return_credits` |
+| `recompute_transaction_status` | dipicu oleh insert di | `payments`, `returns`, `deposit_applications`, `warranty_replacements`, `goods_issues`, `goods_receipt_notes` |
+| `ar_invoice_remaining`/`ap_bill_remaining` | membaca | `transactions`, `payments`, `returns`, `deposit_applications`, `return_credits` |
 
 ## Tampilan Terpisah untuk Piutang & Utang
 

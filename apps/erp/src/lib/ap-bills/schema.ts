@@ -26,7 +26,7 @@ export type ApBill = {
   created_at: string;
   counterparties: { name: string };
   ap_payments: { amount: number }[];
-  ap_credit_notes?: { amount: number; ap_return_credits?: { amount: number }[] }[];
+  ap_returns?: { amount: number; ap_return_credits?: { amount: number }[] }[];
   ap_deposit_applications?: { amount: number }[];
 };
 
@@ -62,7 +62,7 @@ export type ApBillListRow = {
 export type ApBillStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
 
 /**
- * Status derived dari SUM(ap_payments) - SUM(retur/ap_credit_notes) - SUM(DP application) +
+ * Status derived dari SUM(ap_payments) - SUM(retur/ap_returns) - SUM(DP application) +
  * SUM(ap_return_credits) vs amount, plus cek reversal — bukan kolom, ref ap-schema.md. Mirror
  * `invoiceStatus()` di ar-invoices/schema.ts, dan mirror `ap_bill_remaining()` di database —
  * kalau ada reducer baru ditambah server-side, tambahin di sini juga. Reducer
@@ -70,7 +70,7 @@ export type ApBillStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
  * `ar_deposit_applications` di AR. Reducer return-credit applications dicabut migration 0009
  * bareng fitur "dipakai motong bill lain" (bukan fondasi AP). Reducer add-back
  * `ap_return_credits` ditambah migration `0010_ap_bill_remaining_return_credit_fix.sql` —
- * ngebatalin over-subtraction dari `ap_credit_notes` waktu sebagian/semua nominal retur itu
+ * ngebatalin over-subtraction dari `ap_returns` waktu sebagian/semua nominal retur itu
  * excess yang direklasifikasi keluar dari Utang Usaha ke Piutang Retur Supplier (bukan beneran
  * ngurangin Utang Usaha lagi), tanpa ini outstanding bisa keliatan minus walau GL udah balance.
  * Sejak migration 0011, `ap_payments` nunjuk `bill_id` langsung (gak lewat tabel jembatan
@@ -80,7 +80,7 @@ export type ApBillStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
  * nunjuk ke bill.journal_entry_id), karena bukan relasi langsung dari ap_bills.
  */
 export function billStatus(
-  bill: Pick<ApBill, "amount" | "ap_payments" | "ap_credit_notes" | "ap_deposit_applications">,
+  bill: Pick<ApBill, "amount" | "ap_payments" | "ap_returns" | "ap_deposit_applications">,
   isCancelled = false
 ): {
   status: ApBillStatus;
@@ -90,9 +90,9 @@ export function billStatus(
   outstanding: number;
 } {
   const allocated = bill.ap_payments.reduce((sum, a) => sum + a.amount, 0);
-  const returned = (bill.ap_credit_notes ?? []).reduce((sum, c) => sum + c.amount, 0);
+  const returned = (bill.ap_returns ?? []).reduce((sum, c) => sum + c.amount, 0);
   const depositApplied = (bill.ap_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const returnCreditExcess = (bill.ap_credit_notes ?? []).reduce(
+  const returnCreditExcess = (bill.ap_returns ?? []).reduce(
     (sum, c) => sum + (c.ap_return_credits ?? []).reduce((s, r) => s + r.amount, 0),
     0
   );

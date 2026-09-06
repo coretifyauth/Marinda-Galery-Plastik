@@ -39,7 +39,7 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `counterparty-schema.md` — gabungan pelanggan+pemasok jadi `counterparties`.
 - `transactions-schema.md` — gabungan invoice AR + bill AP.
 - `payments-schema.md` — gabungan pembayaran AR + AP.
-- `credit-notes-schema.md` — gabungan nota kredit retur AR + AP.
+- `returns-schema.md` — gabungan nota kredit retur AR + AP (dulu `credit-notes-schema.md`).
 - `return-credits-schema.md` — gabungan saldo kredit retur AR + AP.
 - `deposits-schema.md` — gabungan uang muka AR + AP.
 - `warranty-replacements-schema.md` — sisi AR tukar barang garansi (retur Opsi B).

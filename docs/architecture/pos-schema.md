@@ -2,6 +2,8 @@
 
 Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/pos-schema.md`.
 
+**Belum sinkron dengan migration `0076`/`0077`** (POS diunifikasi ke `transactions`/`goods_issues`) — ada juga rencana simplifikasi lanjutan yang ditunda, lihat `memory/scope-debt/pos-sales-simplify-rely-on-goods-issue.md`.
+
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |

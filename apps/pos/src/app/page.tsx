@@ -170,22 +170,26 @@ async function fetchCompanyName(): Promise<string | null> {
   return ((data as { name: string } | null) ?? null)?.name ?? null;
 }
 
+// pos_sales (migration 0076) sekarang cuma penanda tipis (transaction_id/goods_issue_id/
+// payment_id/cash_account_id) -- sale_date/source_ref/customer pindah ke transactions
+// (embed lewat FK transaction_id -> transactions.id), pos_sale_lines/
+// pos_sale_extra_credit_lines TETAP ada (nama dipakai ulang) tapi sekarang FK ke
+// pos_sales(transaction_id), murni salinan buat struk (bukan sumber kebenaran akuntansi).
 async function fetchRecentSales(date: string): Promise<SaleHistoryItem[]> {
   const { data, error } = await supabase
     .from("pos_sales")
     .select(
-      "id, source_ref, created_at, cash_account_id, counterparties(name, contact), pos_sale_lines(qty_sold, unit_price, line_amount, items(name, uom)), pos_sale_extra_credit_lines(amount, is_tax)"
+      "transaction_id, created_at, cash_account_id, transactions!inner(source_ref, date, counterparties(name, contact)), pos_sale_lines(qty_sold, unit_price, line_amount, items(name, uom)), pos_sale_extra_credit_lines(amount, is_tax)"
     )
-    .eq("sale_date", date)
+    .eq("transactions.date", date)
     .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
 
   type Row = {
-    id: string;
-    source_ref: string;
+    transaction_id: string;
     created_at: string;
     cash_account_id: string;
-    counterparties: { name: string; contact: string | null } | null;
+    transactions: { source_ref: string; date: string; counterparties: { name: string; contact: string | null } | null } | null;
     pos_sale_lines: {
       qty_sold: number;
       unit_price: number;
@@ -196,11 +200,11 @@ async function fetchRecentSales(date: string): Promise<SaleHistoryItem[]> {
   };
 
   return ((data ?? []) as unknown as Row[]).map((row) => ({
-    id: row.id,
-    sourceRef: row.source_ref,
+    id: row.transaction_id,
+    sourceRef: row.transactions?.source_ref ?? "",
     createdAt: row.created_at,
-    customerName: row.counterparties?.name ?? null,
-    customerContact: row.counterparties?.contact ?? null,
+    customerName: row.transactions?.counterparties?.name ?? null,
+    customerContact: row.transactions?.counterparties?.contact ?? null,
     cashAccountId: row.cash_account_id,
     lines: row.pos_sale_lines.map((l) => ({
       name: l.items?.name ?? "-",

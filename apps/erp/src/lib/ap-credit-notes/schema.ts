@@ -9,8 +9,8 @@ export const purchaseReturnLineSchema = z.object({
  * Opsi A (Kurangi Utang) — mirror createArCreditNoteSchema di ar-credit-notes/schema.ts.
  * `lines` kosong = jalur financial-only (p_amount dipakai apa adanya). `lines` terisi =
  * jalur full (bill wajib punya goods_receipt_notes) — `amount` di sini cuma placeholder
- * client-side, RPC create_ap_credit_note DIABAIKAN dan diganti hasil consume_weighted_average
- * server-side (ref 0035 komentar RPC). `return_credit_asset_account_id` optional di schema,
+ * client-side, RPC create_ap_return (dulu create_ap_credit_note) DIABAIKAN dan diganti hasil
+ * consume_weighted_average server-side (ref 0035 komentar RPC). `return_credit_asset_account_id` optional di schema,
  * tapi wajib diisi kalau retur bikin Utang Usaha jadi minus (server yang nolak kalau kosong).
  */
 export const createApCreditNoteSchema = z.object({

@@ -12,12 +12,12 @@ export type RefundApReturnCreditInput = z.infer<typeof refundApReturnCreditSchem
 export type ApReturnCredit = {
   id: string;
   supplier_id: string;
-  credit_note_id: string;
+  return_id: string;
   amount: number;
   journal_entry_id: string;
   created_at: string;
   counterparties: { name: string };
-  ap_credit_notes: { source_ref: string; credit_note_date: string };
+  ap_returns: { source_ref: string; credit_note_date: string };
   ap_return_credit_refunds: {
     id: string;
     amount: number;

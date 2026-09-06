@@ -2,6 +2,8 @@
 
 Konsep: `memory/domain/pos.md`. Naratif: `docs/architecture/pos-schema.md`. Migration: `supabase/migrations/0009_pos_schema.sql`.
 
+**Belum sinkron dengan migration `0076`/`0077`** (POS diunifikasi ke `transactions`/`goods_issues` — lihat `memory/scope-debt/pos-unify-transactions.md` buat histori keputusannya) — file ini masih mendeskripsikan bentuk pra-unifikasi di bawah. Ada pula rencana simplifikasi lanjutan yang ditunda: `memory/scope-debt/pos-sales-simplify-rely-on-goods-issue.md` (drop `pos_sales`/`pos_sale_lines`/`pos_sale_extra_credit_lines`, rely ke `goods_issue_lines`+`transaction_lines`).
+
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
+import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
 import type { Customer } from "@/lib/customers/schema";
 import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
@@ -87,11 +88,14 @@ export default function SalesOrdersPage() {
   const total = ordersQuery.data?.total ?? 0;
 
   const loadCustomers = useCallback(async () => {
-    const { data } = await supabase
+    const walkInCustomerId = await fetchWalkInCustomerId();
+    let query = supabase
       .from("counterparties")
       .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
       .eq("counterparty_type_mapping.role", "customer")
       .order("name");
+    if (walkInCustomerId) query = query.neq("id", walkInCustomerId);
+    const { data } = await query;
     setCustomers((data ?? []) as unknown as Customer[]);
   }, []);
 

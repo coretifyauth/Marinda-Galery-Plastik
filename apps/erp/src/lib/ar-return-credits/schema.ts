@@ -12,12 +12,12 @@ export type RefundArReturnCreditInput = z.infer<typeof refundArReturnCreditSchem
 export type ArReturnCredit = {
   id: string;
   customer_id: string;
-  credit_note_id: string;
+  return_id: string;
   amount: number;
   journal_entry_id: string;
   created_at: string;
   counterparties: { name: string };
-  ar_credit_notes: {
+  ar_returns: {
     source_ref: string;
     credit_note_date: string;
     warranty_replacements: {
@@ -45,9 +45,9 @@ export type ArReturnCredit = {
  * cancel_ar_invoice), jadi gak butuh exclude berdasar reversedEntryIds.
  */
 export function returnCreditRemaining(
-  credit: Pick<ArReturnCredit, "amount" | "ar_credit_notes" | "ar_return_credit_refunds">
+  credit: Pick<ArReturnCredit, "amount" | "ar_returns" | "ar_return_credit_refunds">
 ): { used: number; remaining: number } {
-  const settledAmount = credit.ar_credit_notes.warranty_replacements.reduce(
+  const settledAmount = credit.ar_returns.warranty_replacements.reduce(
     (sum, w) => sum + w.return_credit_settled_amount,
     0
   );

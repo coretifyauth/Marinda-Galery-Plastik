@@ -8,11 +8,11 @@ waktu unifikasi AR/AP). Ref konsep bisnis: `docs/domain/accounts-payable.md` bag
 
 ## Keputusan
 
-- **Gak pernah nunjuk ke `credit_notes`** — berbeda dari `warranty_replacements` (AR)
-  yang wajib punya `credit_note_id` (nullable-historis). Jurnalnya Debit Persediaan
-  (barang baru) / Kredit Persediaan (barang rusak) — **akun yang sama di 2 baris**, net
-  nol, dokumentasi/audit trail doang.
-- **2 resolusi retur (Opsi A "kurangi utang" via `credit_notes`, Opsi B "tukar barang"
+- **Gak pernah nunjuk ke `returns`** (dulu `credit_notes`) — berbeda dari
+  `warranty_replacements` (AR) yang wajib punya `return_id` (dulu `credit_note_id`,
+  nullable-historis). Jurnalnya Debit Persediaan (barang baru) / Kredit Persediaan (barang
+  rusak) — **akun yang sama di 2 baris**, net nol, dokumentasi/audit trail doang.
+- **2 resolusi retur (Opsi A "kurangi utang" via `returns`, Opsi B "tukar barang"
   di sini) saling EKSKLUSIF**, dipilih manual, bukan additive kayak AR sebelum `0057`.
   Ketauan lewat proses ngajarin fitur ini bahwa `warranty_replacement` di AR justru
   punya cacat desain (kompensasi ganda) — sudah diperbaiki lewat migration
@@ -51,12 +51,14 @@ create table purchase_replacement_lines (
 
 Item Weighted Average gak punya proteksi otomatis per-lot (FIFO sudah dihapus total,
 migration `0038_remove_fifo_costing.sql`) — stoknya udah nyampur begitu diterima. Guard
-ini jumlahin klaim dari **2 tabel** (`purchase_return_lines` — lihat `credit-notes-schema.md`
-— via `credit_notes.bill_id`, `purchase_replacement_lines` via `purchase_replacements.bill_id`
-— reducer ke-3, `purchase_writeoff_lines`, dicabut `0068` bareng tabelnya) dan
-dibandingin ke `goods_receipt_lines.qty_received` (`goods-receipt-schema.md`) — fisiknya
-cuma ada 1 pool qty yang bisa diklaim, mau lewat jalur mana pun. `create or replace` —
-signature gak berubah, jadi 2 trigger existing (`purchase_return_lines_no_over_return_trigger`,
+ini jumlahin klaim dari **2 tabel** (`return_lines` — dulu `purchase_return_lines`, digabung
+migration `0075`, lihat `returns-schema.md` — via `returns.transaction_id`,
+`purchase_replacement_lines` via `purchase_replacements.bill_id` — reducer ke-3,
+`purchase_writeoff_lines`, dicabut `0068` bareng tabelnya) dan dibandingin ke
+`goods_receipt_lines.qty_received` (`goods-receipt-schema.md`) — fisiknya cuma ada 1 pool
+qty yang bisa diklaim, mau lewat jalur mana pun. `create or replace` — signature gak
+berubah, jadi 2 trigger existing (`return_lines_no_over_return_outbound_trigger` — dulu
+`purchase_return_lines_no_over_return_trigger`, di-rename+retarget migration `0075`;
 `purchase_replacement_lines_no_over_return_trigger`) otomatis kepake definisi baru tanpa
 perlu di-drop/recreate. Ini yang bikin Opsi A/B partial-capable "gratis" (batasnya di
 level fisik qty diterima, bukan per-mekanisme) — gak butuh fungsi `*_remaining()`
@@ -66,9 +68,9 @@ terpisah kayak `deposit_remaining()`.
 create or replace function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns numeric as $$
   select
     coalesce((
-      select sum(prl.qty_returned) from purchase_return_lines prl
-      join credit_notes acn on acn.id = prl.credit_note_id
-      where acn.transaction_id = p_bill_id and acn.type = 'OUTBOUND' and prl.item_id = p_item_id
+      select sum(rl.qty_returned) from return_lines rl
+      join returns r on r.id = rl.return_id
+      where r.transaction_id = p_bill_id and rl.type = 'OUTBOUND' and rl.item_id = p_item_id
     ), 0)
     +
     coalesce((
@@ -79,10 +81,12 @@ create or replace function purchase_returned_qty(p_bill_id uuid, p_item_id uuid)
 $$ language sql stable;
 ```
 
-Join `credit_notes` (dulu `ap_credit_notes`) sejak migration `0070`. Dipakai 2 trigger
-insert (`purchase_return_lines_no_over_return_trigger`, `purchase_replacement_lines_no_over_return_trigger`)
-yang semuanya juga nge-lookup `goods_receipt_lines.qty_received` lewat
-`goods_receipt_notes.bill_id` (`goods-receipt-schema.md`).
+Join `returns` (dulu `ap_credit_notes` → `credit_notes` sejak `0070` → `returns` sejak `0075`)
+lewat `return_lines` (1-hop, dulu `purchase_return_lines` langsung join `credit_notes`).
+Dipakai 2 trigger insert (`return_lines_no_over_return_outbound_trigger`,
+`purchase_replacement_lines_no_over_return_trigger`) yang semuanya juga nge-lookup
+`goods_receipt_lines.qty_received` lewat `goods_receipt_notes.bill_id`
+(`goods-receipt-schema.md`).
 
 ## RPC `create_purchase_replacement` (Opsi B)
 
@@ -93,7 +97,8 @@ rata-rata otomatis balik ke `avg_cost` semula (murni aljabar:
 `((qty_before - qty)*avg + qty*avg) / qty_before = avg`), konsisten sama klaim "net nol"
 di dokumentasi bisnis.
 
-Full body: `supabase/migrations/0035_ap_credit_notes_schema.sql`.
+Body asli: `supabase/migrations/0035_ap_credit_notes_schema.sql`. Final (retarget
+`return_lines`/`returns`): `0075_rename_returns_and_merge_return_lines.sql`.
 
 ## RLS & Grant
 

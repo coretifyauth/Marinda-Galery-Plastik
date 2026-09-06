@@ -55,7 +55,7 @@ Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng Piutang (AR)
 | `orders.counterparty_id` | pelanggan (arah jual) atau pemasok (arah beli) | Kolom `direction` di baris yang sama |
 | `pos_sales.customer_id` (opsional) | pelanggan | Tetap (tabel ini cuma 1 arah) |
 
-`credit_notes` sengaja **tidak** punya kolom pihak sendiri — pihaknya ditelusuri gak langsung lewat `transaction_id` ke `transactions.counterparty_id`, jadi gak butuh pengaman perannya sendiri (peran udah tervalidasi waktu `transactions`-nya dibuat).
+`returns` (dulu `credit_notes`) sengaja **tidak** punya kolom pihak sendiri — pihaknya ditelusuri gak langsung lewat `transaction_id` ke `transactions.counterparty_id`, jadi gak butuh pengaman perannya sendiri (peran udah tervalidasi waktu `transactions`-nya dibuat).
 
 **Alur Teknis (RPC)**
 

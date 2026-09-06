@@ -7,6 +7,14 @@ jadi 2 tabel generic: `return_credits`, `return_credit_refunds`, migration `0072
 berubah: `docs/domain/accounts-receivable.md` bagian "Retur Barang (Credit Note)" >
 "Saldo Kredit dari Retur", pasangan AP di `docs/domain/accounts-payable.md`.
 
+**Migration `0075` (2026-09-06)**: `credit_notes` di-rename `returns`, kolom FK
+`credit_note_id` di tabel ini di-rename `return_id` (retarget, bukan perubahan makna).
+Nilai `return_credits.type` **TIDAK ikut dibalik** waktu `transactions.type` dibalik di
+migration yang sama fase (`0074`) — lihat `returns-schema.md` > "Keputusan" buat penjelasan
+lengkap kenapa retur beda perlakuan dari `transactions`/`payments`/`deposits`. Sisa dokumen
+di bawah historis (nama `credit_notes`/`credit_note_id` merujuk ke masa migration `0072`
+ditulis) — DDL final di paling bawah tiap section sudah pakai nama baru.
+
 ## Keputusan
 
 - **`return_credits` gak pernah punya RPC "create" sendiri** — beda dari `payments`/
@@ -63,14 +71,14 @@ create table return_credits (
   id uuid primary key default gen_random_uuid(),
   type text not null check (type in ('INBOUND', 'OUTBOUND')),
   counterparty_id uuid not null references counterparties(id),
-  credit_note_id uuid not null references credit_notes(id),
+  return_id uuid not null references returns(id), -- dulu credit_note_id -> credit_notes(id), rename 0075
   amount numeric(14,2) not null check (amount > 0),
   journal_entry_id uuid not null references journal_entries(id),
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now()
 );
 
-create index return_credits_credit_note_id_idx on return_credits(credit_note_id);
+create index return_credits_return_id_idx on return_credits(return_id);
 create index return_credits_counterparty_id_idx on return_credits(counterparty_id);
 ```
 
@@ -116,23 +124,23 @@ create trigger return_credits_counterparty_role_guard_outbound
   execute function counterparty_role_guard('counterparty_id', 'supplier');
 ```
 
-`return_credits_type_matches_credit_note` (before insert) — cek `new.type` sama dengan
-`credit_notes.type` (via `new.credit_note_id`), raise exception kalau beda. Dicek aman
-dari race/urutan: `create_ar_credit_note`/`create_ap_credit_note` selalu insert
-`credit_notes` (udah divalidasi `credit_notes_type_matches_transaction`, `0070`) SEBELUM
-insert `return_credits` — jadi `credit_notes.type` yang dibaca di sini udah pasti valid.
+`return_credits_type_matches_credit_note` (before insert, nama fungsi TETAP nama lama
+pasca `0075`) — cek `new.type` sama dengan `returns.type` (via `new.return_id`, dulu
+`new.credit_note_id`), raise exception kalau beda. Dicek aman dari race/urutan:
+`create_ar_return`/`create_ap_return` (dulu `create_ar_credit_note`/`create_ap_credit_note`)
+selalu insert `returns` (udah divalidasi `credit_notes_type_matches_transaction`) SEBELUM
+insert `return_credits` — jadi `returns.type` yang dibaca di sini udah pasti valid.
 
-`return_credits_sync_transaction_status` (after insert) — beda dari `payments`/
-`credit_notes`/`deposit_applications` yang lookup langsung ke `transaction_id` kolom
-sendiri, `return_credits` HARUS lookup dulu lewat `credit_notes` (gak ada FK langsung ke
-`transactions`):
+`return_credits_sync_transaction_status` (after insert) — beda dari `payments`/`returns`/
+`deposit_applications` yang lookup langsung ke `transaction_id` kolom sendiri,
+`return_credits` HARUS lookup dulu lewat `returns` (gak ada FK langsung ke `transactions`):
 
 ```sql
 create function return_credits_sync_transaction_status() returns trigger as $$
 declare
   v_transaction_id uuid;
 begin
-  select transaction_id into v_transaction_id from credit_notes where id = new.credit_note_id;
+  select transaction_id into v_transaction_id from returns where id = new.return_id;
   if v_transaction_id is not null then
     perform recompute_transaction_status(v_transaction_id);
   end if;
@@ -176,7 +184,7 @@ create function return_credit_remaining(p_credit_id uuid) returns numeric as $$
     - coalesce((
         select sum(wr.return_credit_settled_amount)
         from warranty_replacements wr
-        where wr.credit_note_id = c.credit_note_id
+        where wr.return_id = c.return_id
       ), 0)
     - coalesce((select sum(amount) from return_credit_refunds where credit_id = p_credit_id), 0)
   from return_credits c
@@ -205,13 +213,13 @@ INBOUND:  Debit return_credit_account (liability) / Kredit Kas
 OUTBOUND: Debit Kas / Kredit return_credit_account (asset)
 ```
 
-Full body: `supabase/migrations/0072_unify_return_credits_schema.sql`.
+Body asli: `supabase/migrations/0072_unify_return_credits_schema.sql`.
 
 ## Fungsi lain yang ikut diretarget (`create or replace`, gak ada perubahan perilaku)
 
-- `create_ar_credit_note`/`create_ap_credit_note` (`0070`, TETAP 2 fungsi) — cuma baris
-  `insert into ar_return_credits(...)`/`insert into ap_return_credits(...)` yang berubah
-  jadi `insert into return_credits (type, counterparty_id, ...)`.
+- `create_ar_return`/`create_ap_return` (dulu `create_ar_credit_note`/`create_ap_credit_note`,
+  rename `0075`, TETAP 2 fungsi) — insert `return_credits (type, counterparty_id, return_id, ...)`
+  (kolom `return_id`, dulu `credit_note_id`).
 - `ar_invoice_remaining`/`ap_bill_remaining` — reducer add-back target `return_credits`.
 - `warranty_replacements_no_over_settle_return_credit` — lookup `id`/`source_ref` dari
   `return_credits` (dulu `ar_return_credits`).
@@ -244,14 +252,20 @@ site **TIDAK BERUBAH SAMA SEKALI** (nama/param/signature identik, konsisten sama
 | Fase | Migration | Tabel digabung | RPC |
 |---|---|---|---|
 | 1 | `0069` | `payments` | Digabung — `record_payment` |
-| 2 | `0070` | `credit_notes` | TETAP 2 — `create_ar_credit_note`/`create_ap_credit_note` |
+| 2 | `0070` | `credit_notes` (→ `returns`, rename `0075`) | TETAP 2 — `create_ar_credit_note`/`create_ap_credit_note` (→ `create_ar_return`/`create_ap_return`, rename `0075`) |
 | 3 | `0071` | `deposits`+`deposit_applications`+`deposit_refunds`+`deposit_forfeitures` | Digabung — `create_deposit`/`apply_deposit`/`refund_deposit`/`forfeit_deposit` |
 | 4 | `0072` | `return_credits`+`return_credit_refunds` | Digabung — `refund_return_credit` (create inline di `create_*_credit_note`) |
 
 Prinsip yang konsisten dipegang sepanjang 4 fase: **tabel digabung kalau strukturnya
 identik, RPC digabung KALAU DAN CUMA KALAU logic bisnisnya juga near-exact mirror**
 (payments, deposits, return_credits refund — semua cuma debit/kredit ketuker) — RPC
-TETAP terpisah kalau logic-nya beneran beda bentuk (credit_notes create — AR bisa 2
-jurnal dengan klasifikasi RESALABLE/DAMAGED yang restock, AP cuma 1 jurnal yang
-consume/reduce stok). Maksa gabung RPC yang beda bentuk cuma nambah percabangan tanpa
-ngurangin kompleksitas riil — dipegang konsisten dari fase 2 sampai akhir.
+TETAP terpisah kalau logic-nya beneran beda bentuk (retur create — AR bisa 2 jurnal, AP
+cuma 1 jurnal yang consume/reduce stok). Maksa gabung RPC yang beda bentuk cuma nambah
+percabangan tanpa ngurangin kompleksitas riil — dipegang konsisten dari fase 2 sampai
+akhir.
+
+**Update `0075`** (di luar 4 fase awal, dianggap "Fase 5" gak resmi): rename
+`credit_notes`→`returns`, merge `inventory_returns`+`inventory_return_lines`+
+`purchase_return_lines` jadi `return_lines`, cabut klasifikasi RESALABLE/DAMAGED dari alur
+retur AR (dialihkan ke `stock_opname`, mirror keputusan `0068` di AP). Detail lengkap:
+`returns-schema.md`.

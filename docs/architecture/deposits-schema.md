@@ -2,13 +2,13 @@
 
 Konsep bisnisnya adalah uang muka (DP) — uang yang berpindah tangan sebelum tagihannya sendiri ada. Sisi AR (DP diterima dari customer) ada di `docs/domain/accounts-receivable.md` bagian "Uang Muka / DP (Deposit)", sisi AP (DP dibayar ke supplier) di `docs/domain/accounts-payable.md` bagian "Uang Muka / DP ke Supplier". Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/deposits-schema.md`.
 
-Sama seperti `return-credits-schema.md` dan `credit-notes-schema.md`, ini bagian dari tabel anak AR/AP yang generic — 4 tabel (`deposits` + `deposit_applications`/`deposit_refunds`/`deposit_forfeitures`) yang menampung kedua arah, dibedakan lewat kolom `type` (`INBOUND` = DP dari customer/liability, `OUTBOUND` = DP ke supplier/asset). Beda dari `credit_notes` (RPC tetap 2 fungsi karena logic beda bentuk), di sini ke-4 operasi (create/apply/refund/forfeit) logic-nya near-exact mirror kedua arah — cuma akun & arah debit/kredit ketuker — jadi RPC-nya juga 1 fungsi per operasi untuk kedua arah.
+Sama seperti `return-credits-schema.md` dan `returns-schema.md`, ini bagian dari tabel anak AR/AP yang generic — 4 tabel (`deposits` + `deposit_applications`/`deposit_refunds`/`deposit_forfeitures`) yang menampung kedua arah, dibedakan lewat kolom `type` (`OUTBOUND` = DP dari customer/liability, `INBOUND` = DP ke supplier/asset). Beda dari `returns` (RPC tetap 2 fungsi karena logic beda bentuk), di sini ke-4 operasi (create/apply/refund/forfeit) logic-nya near-exact mirror kedua arah — cuma akun & arah debit/kredit ketuker — jadi RPC-nya juga 1 fungsi per operasi untuk kedua arah.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `deposits` | Saldo DP itu sendiri — `INBOUND` diterima dari customer (liability), `OUTBOUND` dibayar ke supplier (asset). Punya kolom cache `remaining`/`status` | `counterparties` |
+| `deposits` | Saldo DP itu sendiri — `OUTBOUND` diterima dari customer (liability), `INBOUND` dibayar ke supplier (asset). Punya kolom cache `remaining`/`status` | `counterparties` |
 | `deposit_applications` | DP yang diterapkan (dipotongkan) ke sebuah invoice/bill | `deposits`, `transactions` |
 | `deposit_refunds` | DP yang dicairkan/dikembalikan tunai | `deposits` |
 | `deposit_forfeitures` | DP yang hangus (gak dibalikin) | `deposits` |
@@ -27,7 +27,7 @@ Kolom penting: `type` (`INBOUND`/`OUTBOUND`), `counterparty_id`, `amount`, `rema
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Terima DP dari customer / bayar DP ke supplier | `create_deposit` | INBOUND: Debit Kas / Kredit akun DP (liability). OUTBOUND: Debit akun DP (asset) / Kredit Kas. Insert 1 baris `deposits`, `remaining` otomatis `= amount` | Trigger `deposits_counterparty_role_guard_inbound`/`_outbound` (customer wajib untuk INBOUND, supplier wajib untuk OUTBOUND); RLS insert admin/accountant |
+| Terima DP dari customer / bayar DP ke supplier | `create_deposit` | OUTBOUND: Debit Kas / Kredit akun DP (liability). INBOUND: Debit akun DP (asset) / Kredit Kas. Insert 1 baris `deposits`, `remaining` otomatis `= amount` | Trigger `deposits_counterparty_role_guard_inbound`/`_outbound` (supplier wajib untuk INBOUND, customer wajib untuk OUTBOUND); RLS insert admin/accountant |
 
 **Aturan Bisnis → RPC**
 
@@ -51,13 +51,13 @@ Kolom penting: `type` (`INBOUND`/`OUTBOUND`), `counterparty_id`, `amount`, `rema
 |---|---|---|
 | `deposit_applications` | 1 baris = 1 kali DP dipotongkan ke 1 invoice/bill | `deposits.id`, `transactions.id` (lihat `transactions-schema.md`) |
 
-Kolom penting: `deposit_id`, `transaction_id`, `amount`. Tabel ini **gak punya kolom `type` sendiri** (beda dari `payments`/`credit_notes`) — konsistensi arah dicek langsung di fungsi guard lewat 2 lookup, bukan lewat kolom denormalisasi.
+Kolom penting: `deposit_id`, `transaction_id`, `amount`. Tabel ini **gak punya kolom `type` sendiri** (beda dari `payments`/`returns`) — konsistensi arah dicek langsung di fungsi guard lewat 2 lookup, bukan lewat kolom denormalisasi.
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Terapkan DP ke invoice/bill yang sudah terbit | `apply_deposit` | INBOUND: Debit akun DP (liability) / Kredit Piutang Usaha. OUTBOUND: Debit Utang Usaha / Kredit akun DP (asset). Insert 1 baris `deposit_applications`, mengurangi sisa tagihan invoice/bill itu | Fungsi guard `deposit_applications_guard`: (1) `amount` gak boleh melebihi sisa DP, (2) arah DP harus sama dengan arah transaksi tujuan, (3) DP dan transaksi harus milik counterparty yang sama, (4) transaksi tujuan belum dibatalkan, (5) `amount` gak boleh melebihi sisa outstanding transaksi tujuan |
+| Terapkan DP ke invoice/bill yang sudah terbit | `apply_deposit` | OUTBOUND: Debit akun DP (liability) / Kredit Piutang Usaha. INBOUND: Debit Utang Usaha / Kredit akun DP (asset). Insert 1 baris `deposit_applications`, mengurangi sisa tagihan invoice/bill itu | Fungsi guard `deposit_applications_guard`: (1) `amount` gak boleh melebihi sisa DP, (2) arah DP harus sama dengan arah transaksi tujuan, (3) DP dan transaksi harus milik counterparty yang sama, (4) transaksi tujuan belum dibatalkan, (5) `amount` gak boleh melebihi sisa outstanding transaksi tujuan |
 | Status DP & status transaksi ikut ter-refresh | Trigger `deposit_applications_sync_deposit_status` (after insert) | `recompute_deposit_status(deposit_id)` + `recompute_transaction_status(transaction_id)` | Otomatis |
 | Invoice/bill yang DP-nya sudah diterapkan dibatalkan | Bagian dari `cancel_ar_invoice`/`cancel_ap_bill` (lihat `transactions-schema.md`) | Penerapan DP ikut otomatis dibalik — DP balik jadi belum dipakai | Loop unwind atas `deposit_applications` di dalam RPC pembatalan |
 
@@ -92,8 +92,8 @@ Struktur kedua tabel identik dari awal — gak ada kolom yang cuma relevan 1 ara
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Cairkan DP jadi tunai (refund) | `refund_deposit` | INBOUND: Debit akun DP (liability) / Kredit Kas. OUTBOUND: Debit Kas / Kredit akun DP (asset). Gak ada dampak Laba Rugi | Trigger guard: `amount` gak boleh melebihi sisa DP |
-| DP dinyatakan hangus (forfeit) | `forfeit_deposit` | INBOUND: Debit akun DP (liability) / Kredit Pendapatan Lain-lain. OUTBOUND: Debit Beban Kerugian Uang Muka / Kredit akun DP (asset). Ada dampak Laba Rugi | Trigger guard: `amount` gak boleh melebihi sisa DP |
+| Cairkan DP jadi tunai (refund) | `refund_deposit` | OUTBOUND: Debit akun DP (liability) / Kredit Kas. INBOUND: Debit Kas / Kredit akun DP (asset). Gak ada dampak Laba Rugi | Trigger guard: `amount` gak boleh melebihi sisa DP |
+| DP dinyatakan hangus (forfeit) | `forfeit_deposit` | OUTBOUND: Debit akun DP (liability) / Kredit Pendapatan Lain-lain. INBOUND: Debit Beban Kerugian Uang Muka / Kredit akun DP (asset). Ada dampak Laba Rugi | Trigger guard: `amount` gak boleh melebihi sisa DP |
 | Status DP ikut ter-refresh | Trigger sync status masing-masing (after insert) | `recompute_deposit_status(deposit_id)` — **tidak** menyentuh status transaksi (beda dari `apply_deposit`) | Otomatis |
 
 **Aturan Bisnis → RPC**

@@ -32,6 +32,7 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { Pagination } from "@/components/ui/pagination";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
 
 // Input kecil buat baris filter di header tabel -- Input/Select biasa terlalu besar buat
 // muat di dalam <th>, jadi dibikin versi compact lokal (pola sama journal-entries/page.tsx).
@@ -111,11 +112,14 @@ export default function ArInvoicesPage() {
   const total = invoicesQuery.data?.total ?? 0;
 
   const loadCustomers = useCallback(async () => {
-    const { data } = await supabase
+    const walkInCustomerId = await fetchWalkInCustomerId();
+    let query = supabase
       .from("counterparties")
       .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
       .eq("counterparty_type_mapping.role", "customer")
       .order("name");
+    if (walkInCustomerId) query = query.neq("id", walkInCustomerId);
+    const { data } = await query;
     setCustomers((data ?? []) as unknown as Customer[]);
   }, []);
 
@@ -166,7 +170,7 @@ export default function ArInvoicesPage() {
     mutationFn: async (input: CreateArInvoiceInput) => {
       const sourceRef = await generateDocumentNumber("ar_invoices");
       const { error } = await supabase.rpc("create_transaction", {
-        p_type: "INBOUND",
+        p_type: "OUTBOUND",
         p_counterparty_id: input.customer_id,
         p_date: input.invoice_date,
         p_description: input.description || null,

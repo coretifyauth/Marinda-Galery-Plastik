@@ -70,7 +70,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
         "id, customer_id:counterparty_id, deposit_date, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_deposit_applications:deposit_applications(id, amount, source_ref, journal_entry_id, ar_invoices:transactions(source_ref)), ar_deposit_refunds:deposit_refunds(id, amount, refund_date, source_ref, journal_entry_id), ar_deposit_forfeitures:deposit_forfeitures(id, amount, forfeiture_date, source_ref, journal_entry_id)"
       )
       .eq("id", id)
-      .eq("type", "INBOUND")
+      .eq("type", "OUTBOUND")
       .single();
     if (depErr || !dep) {
       setLoadError(depErr?.message ?? "Deposit gak ditemukan.");

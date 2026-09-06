@@ -8,12 +8,12 @@ Kios Toko Plastik Makmur Jaya (`apps/pos`) jual barang plastik rumah tangga tuna
 
 ## Kenapa ini grey area, bukan scope-debt
 
-Beda dari item scope-debt biasa (yang nunggu tekanan/bukti kebutuhan teknis buat mulai dikerjakan), ini bukan soal kesiapan teknis — bikin retur POS secara teknis gak sulit (tinggal reuse pola `ar_credit_note`, klasifikasi kondisi RESALABLE/DAMAGED yang udah ada di AR, lihat `memory/domain/accounts-receivable.md` submodule "Retur Barang"). Yang belum ada itu **keputusan kebijakan bisnisnya sendiri** — apakah Pak Herman mau kios-nya punya kebijakan "barang yang sudah dibeli tidak dapat dikembalikan" (umum di retail kecil, transaksi tatap muka) atau mau kasih fleksibilitas retur. Ini keputusan yang cuma bisa diambil owner, bukan sesuatu yang bisa diasumsikan/dibangun duluan.
+Beda dari item scope-debt biasa (yang nunggu tekanan/bukti kebutuhan teknis buat mulai dikerjakan), ini bukan soal kesiapan teknis — bikin retur POS secara teknis gak sulit (tinggal reuse pola `create_ar_return`, `memory/domain/accounts-receivable.md` submodule "Retur Barang" — **catatan: klasifikasi kondisi RESALABLE/DAMAGED yang dulu ada di pola ini sudah dicabut total migration `0075`**, semua retur sekarang selalu restock, barang rusak ditangani terpisah lewat Stock Opname). Yang belum ada itu **keputusan kebijakan bisnisnya sendiri** — apakah Pak Herman mau kios-nya punya kebijakan "barang yang sudah dibeli tidak dapat dikembalikan" (umum di retail kecil, transaksi tatap muka) atau mau kasih fleksibilitas retur. Ini keputusan yang cuma bisa diambil owner, bukan sesuatu yang bisa diasumsikan/dibangun duluan.
 
 ## Opsi yang dipertimbangkan
 
 - **Tidak boleh retur sama sekali** — kebijakan retail umum, paling sederhana buat kios kecil transaksi tatap muka (beda dari AR: barang dikirim ke warung langganan, retur karena masalah di jalan/waktu itu wajar; kios beli-bayar-bawa langsung, masalah biasanya ketauan di tempat sebelum bayar).
-- **Retur diperbolehkan dengan syarat** (misal: hari yang sama, struk masih ada, barang belum dikonsumsi) — POS butuh mekanisme retur sendiri, kemungkinan reuse pola `ar_credit_note` (kontra-revenue + klasifikasi kondisi RESALABLE/DAMAGED).
+- **Retur diperbolehkan dengan syarat** (misal: hari yang sama, struk masih ada, barang belum dikonsumsi) — POS butuh mekanisme retur sendiri, kemungkinan reuse pola `create_ar_return` (kontra-revenue, semua barang restock — gak ada lagi klasifikasi kondisi per baris).
 
 ## Sikap sementara (sampai diputuskan)
 

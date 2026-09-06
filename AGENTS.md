@@ -97,7 +97,7 @@ teknis (boleh nyebut RPC/tabel/kolom/DDL/trigger langsung) — bukan ditulis ula
 **Gak lagi wajib mirror ke `memory/architecture/data`** (yang sekarang di-organize per
 spine, bukan per modul) — referensi silang cukup lewat link ke file spine yang relevan,
 bisa lebih dari 1 file spine per submodule domain kalau modul bisnisnya nyentuh beberapa
-tabel spine sekaligus (mis. submodule "Retur Barang" AR nunjuk `credit-notes-schema.md`
+tabel spine sekaligus (mis. submodule "Retur Barang" AR nunjuk `returns-schema.md`
 + `return-credits-schema.md`).
 
 **Gak ada section "Belum Termasuk" di keempat lokasi** — item yang sengaja ditunda dilacak lewat `memory/scope-debt/*.md` (lihat "Aturan siklus hidup: scope-debt" di bawah), disebut inline di prosa/tabel kalau relevan konteksnya, bukan section terpisah tiap file.

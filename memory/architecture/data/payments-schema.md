@@ -9,6 +9,12 @@ AP di `docs/domain/accounts-payable.md`.
 
 ## Keputusan
 
+- **Arah `type` DIBALIK migration `0074`** (2026-09-06) — ikut keluarga `transactions`
+  (`transactions-schema.md`): AR sekarang `OUTBOUND`, AP sekarang `INBOUND`. `payments` gak
+  pernah punya barang fisik sendiri (murni event uang), jadi cuma ikut label keluarga
+  transaksi induknya — trigger role-guard & literal `type` di semua reducer ikut dibalik,
+  tapi logic `payments_type_matches_transaction` (cek SAMA dengan `transactions.type`) TIDAK
+  berubah (dua-duanya ikut dibalik bareng, jadi tetap harus sama).
 - **Struktur DDL identik `ar_payments`/`ap_payments` lama** — cuma `customer_id`/`supplier_id`
   jadi `counterparty_id`, `invoice_id`/`bill_id` jadi `transaction_id`, ditambah kolom
   `type`. Guard overpay/cicil, immutability, RLS — semua perilaku bisnis IDENTIK, murni
@@ -33,7 +39,7 @@ AP di `docs/domain/accounts-payable.md`.
 
 ## DDL
 
-### `payments` — piutang berkurang (`type='INBOUND'`) & utang berkurang (`type='OUTBOUND'`)
+### `payments` — piutang berkurang (`type='OUTBOUND'`) & utang berkurang (`type='INBOUND'`)
 
 ```sql
 create table payments (
@@ -79,13 +85,15 @@ create trigger payments_block_edit_delete
 create trigger payments_counterparty_role_guard_inbound
   before insert on payments
   for each row when (new.type = 'INBOUND')
-  execute function counterparty_role_guard('counterparty_id', 'customer');
+  execute function counterparty_role_guard('counterparty_id', 'supplier');
 
 create trigger payments_counterparty_role_guard_outbound
   before insert on payments
   for each row when (new.type = 'OUTBOUND')
-  execute function counterparty_role_guard('counterparty_id', 'supplier');
+  execute function counterparty_role_guard('counterparty_id', 'customer');
 ```
+
+Role dibalik migration `0074` (INBOUND sekarang AP→supplier, OUTBOUND sekarang AR→customer).
 
 ### Konsistensi `type` vs `transactions.type` (baru, `payments` gak punya padanan di `transactions`)
 
@@ -143,41 +151,42 @@ runtime di SEMUA trigger `AFTER INSERT` lain yang manggil fungsi ini (`ar_credit
 
 ```sql
 create function record_payment(
-  p_type text,                  -- 'INBOUND' | 'OUTBOUND'
+  p_type text,                  -- 'INBOUND' (AP) | 'OUTBOUND' (AR) -- dibalik 0074
   p_counterparty_id uuid,
   p_payment_date date,
   p_amount numeric,
   p_source_ref text,
   p_cash_account_id uuid,
-  p_control_account_id uuid,    -- INBOUND: Piutang Usaha, OUTBOUND: Utang Usaha
+  p_control_account_id uuid,    -- OUTBOUND: Piutang Usaha, INBOUND: Utang Usaha
   p_transaction_id uuid
 ) returns uuid
 ```
 
 `security invoker`, reuse `create_journal_entry` — gak pernah insert manual ke
 `journal_entries`/`journal_lines`. Guard overpay: `p_amount` gak boleh melebihi
-`ar_invoice_remaining(p_transaction_id)` (INBOUND) atau `ap_bill_remaining(p_transaction_id)`
-(OUTBOUND) — `raise exception` sebelum jurnal apa pun dibuat. Jurnal dibangun 2 arah:
+`ar_invoice_remaining(p_transaction_id)` (OUTBOUND) atau `ap_bill_remaining(p_transaction_id)`
+(INBOUND) — `raise exception` sebelum jurnal apa pun dibuat. Jurnal dibangun 2 arah:
 
 ```
-INBOUND:  Debit Kas/Bank            / Kredit p_control_account_id (Piutang Usaha)
-OUTBOUND: Debit p_control_account_id (Utang Usaha) / Kredit Kas/Bank
+OUTBOUND: Debit Kas/Bank            / Kredit p_control_account_id (Piutang Usaha)
+INBOUND:  Debit p_control_account_id (Utang Usaha) / Kredit Kas/Bank
 ```
 
-Full body: `supabase/migrations/0069_unify_payments_schema.sql`.
+Body asli: `supabase/migrations/0069_unify_payments_schema.sql`. Final (branch literal
+`p_type` dibalik 0074): `0074_flip_transactions_type_direction.sql`.
 
 ## `ar_invoice_remaining`/`ap_bill_remaining` — reducer #1 target `payments`
 
 Signature & fungsi gak berubah, cuma `from ar_payments`/`ap_payments where invoice_id/
-bill_id = ...` diganti `from payments where transaction_id = ... and type = 'INBOUND'/
-'OUTBOUND'`. Detail reducer lengkap tetap di `transactions-schema.md` submodule
-`ar_invoice_remaining`/`ap_bill_remaining`.
+bill_id = ...` diganti `from payments where transaction_id = ... and type = 'OUTBOUND'/
+'INBOUND'` (arah dibalik 0074, AR=OUTBOUND/AP=INBOUND). Detail reducer lengkap tetap di
+`transactions-schema.md` submodule `ar_invoice_remaining`/`ap_bill_remaining`.
 
 ## `cancel_ar_invoice`/`cancel_ap_bill` — guard payment-count target `payments`
 
 Signature & fungsi gak berubah, cuma `count(*) from ar_payments/ap_payments where
 invoice_id/bill_id = ...` diganti `count(*) from payments where transaction_id = ... and
-type = 'INBOUND'/'OUTBOUND'`.
+type = 'OUTBOUND'/'INBOUND'` (arah dibalik 0074).
 
 ## Histori: `ap_payment_allocations` many-to-many dicabut (migration `0011_ap_payment_single_bill.sql`)
 

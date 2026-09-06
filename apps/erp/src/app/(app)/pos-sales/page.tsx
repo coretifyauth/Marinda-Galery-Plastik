@@ -192,8 +192,8 @@ export default function PosSalesPage() {
               >
                 <td className="whitespace-nowrap px-4 py-2">{s.sale_date}</td>
                 <td className="px-4 py-2">{s.source_ref}</td>
-                <td className="px-4 py-2">{s.counterparties?.name ?? "Walk-in"}</td>
-                <td className="px-4 py-2">{s.cash_account?.name ?? "—"}</td>
+                <td className="px-4 py-2">{s.customer_name ?? "Walk-in"}</td>
+                <td className="px-4 py-2">{s.cash_account_name ?? "—"}</td>
                 <td className="px-4 py-2 text-right font-mono">{s.total.toLocaleString("id-ID")}</td>
                 <td className="px-4 py-2">
                   {s.status === "dibatalkan" ? (

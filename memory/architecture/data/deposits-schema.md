@@ -10,6 +10,12 @@ bagian "Uang Muka / DP ke Supplier".
 
 ## Keputusan
 
+- **Arah `type` DIBALIK migration `0074`** (2026-09-06) — ikut keluarga `transactions`
+  (`transactions-schema.md`): AR sekarang `OUTBOUND`, AP sekarang `INBOUND`. `deposits` gak
+  pernah punya barang fisik sendiri (murni event uang, barangnya malah belum ada pas DP
+  dibayar), jadi cuma ikut label keluarga transaksi induknya — trigger role-guard dan
+  branch literal di ke-4 RPC (`create_deposit`/`apply_deposit`/`refund_deposit`/
+  `forfeit_deposit`) ikut dibalik, isi tiap branch (jurnal, deskripsi) TIDAK berubah.
 - **RPC DIGABUNG jadi 1 per operasi** (`create_deposit`, `apply_deposit`, `refund_deposit`,
   `forfeit_deposit`) — beda dari `credit_notes` (`0070`, RPC tetap 2 fungsi karena logic
   beda bentuk). Di sini ke-8 RPC lama (`create_ar_deposit`/`create_ap_deposit`, dst) itu
@@ -43,7 +49,7 @@ bagian "Uang Muka / DP ke Supplier".
 
 ## DDL
 
-### `deposits` — uang muka diterima (`type='INBOUND'`) / dibayar (`type='OUTBOUND'`)
+### `deposits` — uang muka diterima (`type='OUTBOUND'`, AR) / dibayar (`type='INBOUND'`, AP)
 
 ```sql
 create table deposits (
@@ -121,13 +127,15 @@ Struktur identik kedua sisi AR/AP dari awal (gak ada kolom yang cuma relevan 1 a
 create trigger deposits_counterparty_role_guard_inbound
   before insert on deposits
   for each row when (new.type = 'INBOUND')
-  execute function counterparty_role_guard('counterparty_id', 'customer');
+  execute function counterparty_role_guard('counterparty_id', 'supplier');
 
 create trigger deposits_counterparty_role_guard_outbound
   before insert on deposits
   for each row when (new.type = 'OUTBOUND')
-  execute function counterparty_role_guard('counterparty_id', 'supplier');
+  execute function counterparty_role_guard('counterparty_id', 'customer');
 ```
+
+Role dibalik migration `0074` (INBOUND sekarang AP→supplier, OUTBOUND sekarang AR→customer).
 
 `deposits_set_defaults` (`new.remaining := new.amount`) + `deposits_block_edit_delete_or_sync`
 (pola `_or_sync` sejak `0053` — kolom bisnis asli immutable, `remaining`/`status` boleh
@@ -212,24 +220,26 @@ forfeit_deposit(p_deposit_id, p_amount, p_forfeiture_date, p_source_ref, p_depos
 ```
 
 `security invoker`, reuse `create_journal_entry`. `p_deposit_account_id` generic —
-INBOUND: Uang Muka Penjualan (liability), OUTBOUND: Uang Muka Pembelian (asset).
-`p_control_account_id` (apply doang) — INBOUND: Piutang Usaha, OUTBOUND: Utang Usaha.
-`p_offset_account_id` (forfeit doang) — INBOUND: Pendapatan Lain-lain (kredit),
-OUTBOUND: Beban Kerugian Uang Muka (debit). Arah jurnal per operasi:
+OUTBOUND (AR): Uang Muka Penjualan (liability), INBOUND (AP): Uang Muka Pembelian (asset).
+`p_control_account_id` (apply doang) — OUTBOUND: Piutang Usaha, INBOUND: Utang Usaha.
+`p_offset_account_id` (forfeit doang) — OUTBOUND: Pendapatan Lain-lain (kredit),
+INBOUND: Beban Kerugian Uang Muka (debit). Arah jurnal per operasi (literal `type` dibalik
+migration `0074`, isi tiap baris jurnal TIDAK berubah):
 
 ```
-create_deposit  INBOUND:  Debit Kas            / Kredit deposit_account
-create_deposit  OUTBOUND: Debit deposit_account / Kredit Kas
-apply_deposit   INBOUND:  Debit deposit_account / Kredit control_account
-apply_deposit   OUTBOUND: Debit control_account / Kredit deposit_account
-refund_deposit  INBOUND:  Debit deposit_account / Kredit Kas
-refund_deposit  OUTBOUND: Debit Kas            / Kredit deposit_account
-forfeit_deposit INBOUND:  Debit deposit_account / Kredit offset_account
-forfeit_deposit OUTBOUND: Debit offset_account  / Kredit deposit_account
+create_deposit  OUTBOUND (AR): Debit Kas            / Kredit deposit_account
+create_deposit  INBOUND  (AP): Debit deposit_account / Kredit Kas
+apply_deposit   OUTBOUND (AR): Debit deposit_account / Kredit control_account
+apply_deposit   INBOUND  (AP): Debit control_account / Kredit deposit_account
+refund_deposit  OUTBOUND (AR): Debit deposit_account / Kredit Kas
+refund_deposit  INBOUND  (AP): Debit Kas            / Kredit deposit_account
+forfeit_deposit OUTBOUND (AR): Debit deposit_account / Kredit offset_account
+forfeit_deposit INBOUND  (AP): Debit offset_account  / Kredit deposit_account
 ```
 
-Full body: `supabase/migrations/0071_unify_deposits_schema.sql`. RPC lama (8 fungsi)
-di-drop total, hard cutover (gak ada compatibility wrapper), konsisten pola `0065`/`0069`.
+Body asli: `supabase/migrations/0071_unify_deposits_schema.sql`. Final (branch literal
+dibalik 0074): `0074_flip_transactions_type_direction.sql`. RPC lama (8 fungsi) di-drop
+total, hard cutover (gak ada compatibility wrapper), konsisten pola `0065`/`0069`.
 
 ## Fungsi lain yang ikut diretarget (`create or replace`, gak ada perubahan perilaku)
 
@@ -237,11 +247,12 @@ di-drop total, hard cutover (gak ada compatibility wrapper), konsisten pola `006
   target `deposit_applications.transaction_id`.
 - `cancel_ar_invoice`/`cancel_ap_bill` — auto-unwind loop target `deposit_applications`.
 - `recompute_transaction_status` — reducer `v_deposit_applied` (KEDUA cabang) target
-  `deposit_applications`. **Asimetri lama dipertahankan apa adanya**: cabang INBOUND
-  gak exclude application yang reversed dari `v_deposit_applied`, cabang OUTBOUND
-  exclude — beda ini udah ada SEBELUM migrasi ini (disalin dari `recompute_ap_bill_status`
-  lama), bukan hasil bug baru, `schema-reviewer` diminta khusus cross-check ini gak
-  ke-"perbaiki"/dihomogenkan gak sengaja.
+  `deposit_applications`. **Asimetri lama dipertahankan apa adanya**: cabang AR (dulu
+  dipilih `type='INBOUND'`, sejak `0074` dipilih `type='OUTBOUND'`) gak exclude application
+  yang reversed dari `v_deposit_applied`, cabang AP (dulu `'OUTBOUND'`, sejak `0074`
+  `'INBOUND'`) exclude — beda ini udah ada SEBELUM migrasi `0071`/`0074` (disalin dari
+  `recompute_ap_bill_status` lama), bukan hasil bug baru, `schema-reviewer` diminta khusus
+  cross-check ini gak ke-"perbaiki"/dihomogenkan gak sengaja di kedua migrasi.
 - `journal_entries_sync_reversal_status` (trigger gabungan di `journal_entries`, dipakai
   bareng `transactions`/`pos_sales`) — 4 loop terpisah (2 arah x cek-transaksi +
   cek-deposit) disederhanain jadi 2 loop atas `deposit_applications` yang udah gabungan,

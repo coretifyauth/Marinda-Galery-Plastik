@@ -66,7 +66,7 @@ Goods Issue adalah kebalikan dari Goods Receipt — barang jadi **keluar** dari 
 | `goods_issue_lines.item_id` | banyak-ke-satu | `items` |
 | `goods_issue_lines` (tiap insert) | memicu konsumsi | Saldo stok barang jadi (`inventory-ledger-schema.md`) |
 
-Catatan lintas modul: kalau barang yang keluar lewat Goods Issue ini diretur customer, pembalikan stok+HPP-nya (proporsional, pakai harga pokok snapshot asli, bukan harga sekarang) didokumentasikan di modul Piutang Usaha — lihat `credit-notes-schema.md`/`return-credits-schema.md`, bukan di sini.
+Catatan lintas modul: kalau barang yang keluar lewat Goods Issue ini diretur customer, pembalikan stok+HPP-nya (proporsional, pakai harga pokok snapshot asli, bukan harga sekarang) didokumentasikan di modul Piutang Usaha — lihat `returns-schema.md`/`return-credits-schema.md`, bukan di sini.
 
 ## Siapa Boleh Apa
 

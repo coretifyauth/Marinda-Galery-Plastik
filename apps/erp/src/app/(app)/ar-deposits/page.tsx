@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
+import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
 import type { Customer } from "@/lib/customers/schema";
 import { createArDepositSchema, type ArDepositStatus, type CreateArDepositInput } from "@/lib/ar-deposits/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useArDeposits } from "@/lib/ar-deposits/queries";
@@ -86,11 +87,14 @@ export default function ArDepositsPage() {
   const total = depositsQuery.data?.total ?? 0;
 
   const loadCustomers = useCallback(async () => {
-    const { data } = await supabase
+    const walkInCustomerId = await fetchWalkInCustomerId();
+    let query = supabase
       .from("counterparties")
       .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
       .eq("counterparty_type_mapping.role", "customer")
       .order("name");
+    if (walkInCustomerId) query = query.neq("id", walkInCustomerId);
+    const { data } = await query;
     setCustomers((data ?? []) as unknown as Customer[]);
   }, []);
 
@@ -123,7 +127,7 @@ export default function ArDepositsPage() {
     mutationFn: async (input: CreateArDepositInput) => {
       const sourceRef = await generateDocumentNumber("ar_deposits");
       const { error } = await supabase.rpc("create_deposit", {
-        p_type: "INBOUND",
+        p_type: "OUTBOUND",
         p_counterparty_id: input.customer_id,
         p_deposit_date: input.deposit_date,
         p_source_ref: sourceRef,
