@@ -2,88 +2,84 @@
 
 Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/pos-schema.md`.
 
-**Belum sinkron dengan migration `0076`/`0077`** (POS diunifikasi ke `transactions`/`goods_issues`) — ada juga rencana simplifikasi lanjutan yang ditunda, lihat `memory/scope-debt/pos-sales-simplify-rely-on-goods-issue.md`.
+Sejak migration `0076`/`0077`, POS diunifikasi ke `transactions`/`goods_issues`/`payments` (mesin yang sama dipakai AR Invoice/AP Bill) — bukan lagi tabel berdiri sendiri. `pos_sales` sekarang cuma penanda tipis, bukan header transaksi. Ada rencana simplifikasi lanjutan yang ditunda (drop `pos_sales`/`pos_sale_lines`/`pos_sale_extra_credit_lines`, rely penuh ke `goods_issue_lines`+`transaction_lines`) — lihat `memory/scope-debt/pos-sales-simplify-rely-on-goods-issue.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `pos_sales` | 1 transaksi kasir tunai di kios — header, gak pernah nyentuh Piutang Usaha | `counterparties` (opsional), `accounts` (akun kas & pendapatan), 2 transaksi jurnal (Kas/Pendapatan dan HPP/Persediaan) |
-| `pos_sale_lines` | Baris item per transaksi (barang, qty, harga, biaya pokok) | `pos_sales`, `items` |
-| `pos_sale_extra_credit_lines` | Rincian baris kredit tambahan (biaya packing/ongkir + PPN) 1 transaksi, kalau ada | `pos_sales` (banyak-ke-satu) |
-| `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan yang bisa dipilih kasir saat checkout — master data, disiapkan admin. Tabel yang sama dipakai AR/AP (`module='ar'`/`'ap'`), lihat `transactions-schema.md` | `accounts` |
-| `tax_settings` | Pengaturan PPN — 1 baris untuk seluruh sistem, dipakai bareng AP/AR, didefinisikan penuh di `docs/architecture/tax-settings-schema.md` | `accounts` |
+| `pos_sales` | Penanda "transaksi ini lahir dari kasir POS" + pointer ke 3 baris yang harus dibatalkan bareng — BUKAN header finansial | `transactions` (1-ke-1), `goods_issues`, `payments`, `accounts` (akun kas) |
+| `pos_sale_lines` | Salinan item buat cetak struk (harga jual per baris) — bukan sumber kebenaran akuntansi | `pos_sales`, `items` |
+| `pos_sale_extra_credit_lines` | Salinan baris kredit tambahan (biaya packing/ongkir + PPN) buat struk | `pos_sales` (banyak-ke-satu) |
+| `pos_settings` | Singleton — nyimpen ID counterparty "Pelanggan Umum" (fallback pelanggan walk-in) | `counterparties` |
+| `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan yang bisa dipilih kasir saat checkout — master data, disiapkan admin | `accounts` |
+| `tax_settings` | Pengaturan PPN — 1 baris untuk seluruh sistem, dipakai bareng AP/AR | `accounts` |
 
 ## Konsep Inti
 
-**Peta Data (ERD)**
+**Kenapa berubah**: struktur jurnal POS ternyata identik penjualan termin ("debit 1 akun kontrol, kredit N baris variabel + PPN opsional") — bedanya cuma POS lunas seketika, gak pernah nyisa piutang outstanding. Daripada dipertahankan sebagai mesin terpisah, `create_pos_sale` sekarang jadi orkestrator 2 langkah resmi yang sudah ada di sistem: bikin transaksi keluar barang (jurnal Piutang↔Pendapatan + HPP↔Persediaan), lalu langsung lunasi penuh (jurnal Kas↔Piutang). Dari sisi kasir, alur checkout **sama sekali gak berubah** — tombol dan form yang sama, cuma mesin di baliknya yang beda.
 
-| Tabel | Fungsi | Terhubung ke |
-|---|---|---|
-| `pos_sales` | Penjualan tunai kios | `counterparties` (opsional), `accounts`, transaksi jurnal |
-| `pos_sale_lines` | Rincian barang per transaksi | `pos_sales`, `items` |
+**Konsekuensi konseptual penting**: penjualan kios sekarang SECARA TEKNIS numpang lewat Piutang Usaha sesaat sebelum langsung dilunasi RPC yang sama — beda dari desain awal (debit Kas langsung, gak pernah nyentuh Piutang sama sekali). Efek akhir buat pemilik usaha tetap sama (gak pernah kelihatan piutang outstanding dari kios), ini murni detail mesin di balik layar.
 
-**Struktur `pos_sales`**
+**Pelanggan "walk-in" jadi 1 baris customer resmi.** Karena tiap transaksi tetap wajib terhubung ke 1 customer (aturan umum yang berlaku semua modul), kios butuh 1 customer default buat pembeli yang gak disebut identitasnya — namanya "Pelanggan Umum", disiapkan otomatis, kasir gak perlu pilih apa-apa kalau pembelinya anonim. Baris ini sengaja gak dibedakan tampilannya dari customer biasa (biar tetap kelihatan di daftar customer buat audit), tapi disembunyikan dari dropdown pilih customer di form transaksi kredit sungguhan (biar gak kepilih gak sengaja buat invoice termin beneran).
 
-| Kolom | Isinya | Catatan |
-|---|---|---|
-| pelanggan | Opsional — boleh dikaitkan ke pelanggan AR existing (buat riwayat), boleh kosong (walk-in anonim) | Gak pernah bikin baris di `ar_invoices` apa pun isinya |
-| tanggal, akun kas | Kapan transaksi terjadi, akun mana yang kena debit | Akun beda tergantung metode bayar — tunai fisik vs QRIS/transfer masuk akun berbeda |
-| akun pendapatan | Kredit selalu ke akun "Pendapatan Penjualan Toko" — terpisah dari akun grosir yang dipakai AR | |
-| total | **Tidak disimpan sebagai parameter dari client** — dihitung server-side dari jumlah semua baris item (qty × harga satuan) | Beda dari pola AR+Goods Issue yang masih nerima total mentah dari pemanggil. Biaya tambahan & PPN (lihat submodule "Kategori Biaya Tambahan & PPN" di bawah) di luar angka ini, ditambahkan terpisah |
-
-**Struktur `pos_sale_lines`**
+**Struktur `pos_sales`, `pos_sale_lines`, `pos_sale_extra_credit_lines`**
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
-| barang, qty, harga satuan | Rincian per jenis barang dalam 1 transaksi | 1 transaksi boleh banyak baris (keranjang) |
-| biaya pokok | Dihitung dari Rata-Rata Tertimbang barang itu, saat transaksi terjadi | Sumber baris HPP di jurnal kedua |
+| pointer ke transaksi/goods issue/payment | Nunjuk ke 3 baris resmi yang menyimpan angka sebenarnya | Dipakai buat tahu apa yang harus dibalik bareng kalau dibatalkan |
+| barang, qty, harga satuan | Rincian per jenis barang, disalin buat cetak struk | Angka aslinya tetap di `transaction_lines`/`goods_issue_lines`, ini cuma salinan tampilan |
+| biaya tambahan & PPN | Salinan baris kredit tambahan, buat struk juga | Angka aslinya tetap di `transaction_lines` |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Buat penjualan | `create_pos_sale` | Konsumsi stok tiap barang (Rata-Rata Tertimbang), 2 jurnal sekaligus (Kas/Bank↔Pendapatan, HPP↔Persediaan), insert header+baris | Stok gak cukup → transaksi gagal total, gak ada yang tercatat sebagian (no partial write) |
-| Batalkan (Void) | `void_pos_sale` | Membalikkan KEDUA jurnal, stok balik ke posisi semula | Ditolak kalau udah pernah dibatalkan, atau tanggalnya masuk periode yang sudah ditutup |
+| Buat penjualan | `create_pos_sale` | Bikin transaksi keluar barang (konsumsi stok + jurnal Piutang↔Pendapatan + HPP↔Persediaan), lalu lunasi penuh seketika (jurnal Kas↔Piutang) — alur checkout kasir gak berubah | Stok gak cukup → transaksi gagal total, gak ada yang tercatat sebagian |
+| Batalkan (Void) | `void_pos_transaction` | Membalikkan KETIGA jurnal (pelunasan, keluar barang, transaksi), stok balik | Ditolak kalau udah pernah dibatalkan, atau transaksinya bukan penjualan POS |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Piutang Usaha gak pernah kesentuh | `create_pos_sale` gak pernah insert ke `ar_invoices` |
+| Piutang gak pernah outstanding (walau numpang sesaat) | `create_pos_sale` selalu lunasin penuh di RPC yang sama, gak pernah nyisa |
 | Stok wajib akurat real-time, gak boleh oversell | Fungsi konsumsi stok yang sama dipakai modul Inventory — raise error kalau stok kurang, SEBELUM jurnal apa pun dibuat |
-| Pembatalan cuma lewat jurnal pembalik | `void_pos_sale` — reuse mekanisme pembalik jurnal yang sama dipakai AR |
-| Transaksi ke periode tertutup ditolak | Reuse aturan umum integritas pembukuan (berlaku otomatis ke semua modul, gak ada aturan baru) |
+| Pembatalan cuma lewat jurnal pembalik | `void_pos_transaction` — reuse mekanisme pembalik jurnal yang sama dipakai AR, ditambah restore stok |
+| Transaksi ke periode tertutup ditolak | Reuse aturan umum integritas pembukuan |
 | Penjualan kios & penjualan grosir kelihatan terpisah di laporan | Akun pendapatan beda — POS selalu ke "Pendapatan Penjualan Toko" |
 
 **Interaksi Antar Tabel**
 
-- `pos_sales` opsional menunjuk `counterparties` — kalau diisi, murni riwayat/traceability, gak pernah memicu pengecekan Tahan Kredit (itu cuma berlaku buat `ar_invoices`).
-- `pos_sale_lines` menunjuk `items`, pakai fungsi konsumsi stok yang sama dengan modul Inventory (Produksi, Penjualan via invoice) — 1 sumber kebenaran stok buat semua jalur keluar barang.
-- Role baru "kasir" ditambahkan khusus buat modul ini — cuma bisa bikin transaksi lewat jalur resmi (`create_pos_sale`), gak punya akses langsung ke pencatatan jurnal umum.
+- `pos_sales` gak lagi opsional menunjuk customer — sekarang WAJIB (fallback "Pelanggan Umum" kalau kasir gak pilih), tapi ini tetap gak pernah memicu Tahan Kredit (guard itu cuma jalan buat invoice termin, bukan penjualan yang lunas seketika).
+- Konsumsi stok lewat fungsi yang sama dengan modul Inventory (Produksi, Penjualan via invoice) — 1 sumber kebenaran stok buat semua jalur keluar barang.
+- Role "kasir" gak berubah — cuma bisa bikin transaksi lewat jalur resmi (`create_pos_sale`), gak punya akses langsung ke pencatatan jurnal umum.
 
 ## Pembatalan (Void)
 
 **Peta Data (ERD)**
 
-Gak ada tabel baru — status "dibatalkan" jadi kolom tersendiri di `pos_sales`, diupdate otomatis begitu ada jurnal pembalik masuk (bukan diedit manual), pola sama seperti status invoice AR.
+Gak ada tabel status baru — status "dibatalkan" nempel di kolom `transactions.status` (mesin yang sama dipakai semua jenis transaksi), `pos_sales_with_status` tinggal baca kolom itu.
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Batalkan transaksi | `void_pos_sale` | Balikin jurnal Kas/Pendapatan dan HPP/Persediaan, stok balik | Gak ada guard "sudah ada pembayaran" (beda dari AR) — penjualan kios lunas seketika di titik transaksi dibuat |
+| Batalkan transaksi | `void_pos_transaction` | Balikin jurnal pelunasan, keluar barang, dan transaksi — stok balik, Kartu Stok ikut kecatat kompensasinya | Gak ada guard "sudah ada pembayaran" (beda dari AR) — penjualan kios lunas seketika di titik transaksi dibuat, jadi RPC pembatalan yang dipakai memang beda dari invoice termin |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Transaksi asli gak pernah diedit/dihapus | RLS tanpa policy update/delete + trigger penjaga (reuse pola tabel transaksional lain) |
-| Gak bisa dibatalkan dua kali | `void_pos_sale` cek dulu ada-tidaknya jurnal pembalik sebelum lanjut |
+| Transaksi asli gak pernah diedit/dihapus | RLS tanpa policy update/delete + trigger penjaga |
+| Gak bisa dibatalkan dua kali | `void_pos_transaction` cek dulu ada-tidaknya jurnal pembalik sebelum lanjut |
 
 **Interaksi Antar Tabel**
 
-- Pembatalan memengaruhi 2 transaksi jurnal sekaligus (beda dari AR yang biasanya cuma 1), karena 1 penjualan POS dari awal memang selalu punya 2 jurnal.
+- Pembatalan memengaruhi 3 jurnal sekaligus (pelunasan, keluar barang, transaksi) — lebih banyak dari AR biasa (1 jurnal) karena penjualan kios dari awal memang selalu langsung lunas dalam RPC yang sama.
+
+## Riwayat Penjualan Sebelum Unifikasi (Pra-`0076`)
+
+Penjualan kios yang tercatat sebelum migration unifikasi **dihapus permanen** dari sistem (bukan diarsipkan) — struktur jurnalnya beda bentuk dari desain baru dan gak bisa "dipecah" tanpa mengubah riwayat pembukuan yang sudah immutable. Laporan keuangan (Neraca, Laba Rugi, dst) sama sekali gak terdampak (jurnalnya tetap utuh di tempat lain) — yang hilang cuma kemampuan melihat rincian per-item transaksi kios lama dan membatalkannya lewat aplikasi (koreksi transaksi lama, kalau dibutuhkan, harus manual lewat Jurnal Umum). Daftar penjualan kios di aplikasi sekarang hanya menampilkan transaksi setelah unifikasi ini berjalan.
 
 ## Kategori Biaya Tambahan & PPN
 
@@ -91,7 +87,7 @@ Gak ada tabel baru — status "dibatalkan" jadi kolom tersendiri di `pos_sales`,
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `pos_sale_extra_credit_lines` | Rincian baris kredit tambahan (biaya packing/ongkir + PPN) 1 transaksi kasir | `pos_sales` (banyak-ke-satu) |
+| `pos_sale_extra_credit_lines` | Salinan baris kredit tambahan (biaya packing/ongkir + PPN) buat tampilan struk | `pos_sales` (banyak-ke-satu) |
 | `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan — master data, disiapkan admin | `accounts` |
 | `tax_settings` | Pengaturan PPN, sama tabel dengan AP/AR (`docs/architecture/tax-settings-schema.md`) | `accounts` |
 
@@ -99,17 +95,17 @@ Gak ada tabel baru — status "dibatalkan" jadi kolom tersendiri di `pos_sales`,
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Checkout dengan biaya tambahan | `create_pos_sale` (`p_extra_credit_lines`, opsional) | Baris kredit tambahan di jurnal Kas↔Pendapatan yang sama, insert `pos_sale_extra_credit_lines` | Boleh kosong — mayoritas transaksi gak punya biaya tambahan |
+| Checkout dengan biaya tambahan | `create_pos_sale` (`p_extra_credit_lines`, opsional) | Baris kredit tambahan di jurnal yang sama, disalin ke `pos_sale_extra_credit_lines` buat struk | Boleh kosong — mayoritas transaksi gak punya biaya tambahan |
 | Checkout dengan PPN | `create_pos_sale` (`p_apply_tax=true`) | Tambahan 1 baris kredit PPN Keluaran, dihitung otomatis dari basket + biaya tambahan | Ditolak kalau `tax_settings.is_active=false` atau akun PPN Keluaran belum diset |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Kasir gak pernah pilih akun pembukuan bebas | Kasir cuma pilih dari daftar `charge_categories` (`module='pos'`) aktif — RPC tetap terima `account_id` mentah, tapi UI checkout gak pernah kasih kasir akses ke seluruh daftar akun |
-| PPN gak boleh diketik kasir | `create_pos_sale` menghitung sendiri dari `tax_settings`, bukan dari input checkout |
-| Basket item tetap gak bisa dimanipulasi klien | `p_revenue_account_id`/total item TETAP dihitung server dari `p_lines`, gak berubah oleh fitur ini |
-| Biaya tambahan & PPN ikut kebalik kalau transaksi dibatalkan | Sama jurnal (`revenue_journal_entry_id`) dengan basket item — `void_pos_sale` reverse semua baris sekaligus, gak perlu diubah |
+| Kasir gak pernah pilih akun pembukuan bebas | Kasir cuma pilih dari daftar `charge_categories` (`module='pos'`) aktif |
+| PPN gak boleh diketik kasir | Dihitung otomatis dari `tax_settings`, bukan dari input checkout |
+| Basket item tetap gak bisa dimanipulasi klien | Total item dihitung server dari baris keranjang, gak berubah oleh fitur ini |
+| Biaya tambahan & PPN ikut kebalik kalau transaksi dibatalkan | Nempel di jurnal yang sama dengan basket item — `void_pos_transaction` reverse semua baris sekaligus |
 
 **Interaksi Antar Tabel**
 

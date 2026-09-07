@@ -1,6 +1,6 @@
 # Sederhanakan `pos_sales`/`pos_sale_lines`/`pos_sale_extra_credit_lines` — Rely ke `goods_issue_lines`+`transaction_lines`
 
-**Modul asal:** POS, lanjutan unifikasi `pos-unify-transactions.md` (migration `0076`/`0077`, sudah live). **Status:** Ditunda.
+**Modul asal:** POS, lanjutan unifikasi POS ke `transactions` (migration `0076`/`0077`, sudah live — histori keputusan di `memory/architecture/data/pos-schema.md`). **Status:** Ditunda.
 
 ## Kasus
 
@@ -35,6 +35,5 @@ Diskusi terkait yang MUNCUL dari sini tapi scope-nya lebih besar (mekanisme reve
 
 - `supabase/migrations/0076_pos_unify_transactions.sql`, `0077_pos_permanently_delete_legacy_data.sql` — bentuk `pos_sales`/`pos_sale_lines`/`pos_sale_extra_credit_lines` yang mau disederhanakan lebih lanjut di sini.
 - `memory/architecture/data/pos-schema.md` — schema doc (perlu diupdate menyeluruh begitu rencana ini dieksekusi, saat ini masih mendeskripsikan bentuk pra-`0076`).
-- `memory/scope-debt/pos-unify-transactions.md` — histori keputusan unifikasi sebelumnya (closed, tapi konteksnya relevan).
 - `apps/erp/src/app/(app)/ar-invoices/[id]/view.tsx` — pola pembanding cara baca item+harga dari `goods_issue_lines`+`order_lines.unit_price`.
 - `memory/scope-debt/generic-transaction-reversal.md` — ide lanjutan yang muncul dari diskusi ini.
