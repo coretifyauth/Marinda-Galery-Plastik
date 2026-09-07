@@ -1,10 +1,10 @@
 # Fungsi Reverse Generik di Level `transactions`
 
-**Modul asal:** cross-cutting (AR/AP/POS), muncul dari diskusi `memory/scope-debt/pos-sales-simplify-rely-on-goods-issue.md`. **Status:** Ditunda.
+**Modul asal:** cross-cutting (AR/AP/POS), muncul dari diskusi simplifikasi POS (2026-09-06, dieksekusi migration `0078`/`0079` — lihat `memory/architecture/data/pos-schema.md`). **Status:** Ditunda.
 
 ## Kasus
 
-Mekanisme "batalkan/reverse" transaksi sekarang tersebar di beberapa fungsi terpisah yang masing-masing hafal caranya sendiri: `cancel_ar_invoice`, `cancel_ap_bill`, dan RPC pembatalan POS yang direncanakan di `pos-sales-simplify-rely-on-goods-issue.md` (poin 7 — cari `goods_issues`/`payments` manual lewat FK, reverse 3 jurnal + balikin stok). User mengusulkan idealnya ada **1 fungsi generik** `reverse_transaction(transaction_id)` di level `transactions` yang membalikkan SEMUA jurnal yang terkait 1 transaksi, gantiin fungsi-fungsi terpisah di atas.
+Mekanisme "batalkan/reverse" transaksi sekarang tersebar di beberapa fungsi terpisah yang masing-masing hafal caranya sendiri: `cancel_ar_invoice`, `cancel_ap_bill`, dan `void_pos_transaction` (POS — cari `goods_issues`/`payments` lewat FK, reverse 3 jurnal + balikin stok, SUDAH LIVE lewat migration `0078`). User mengusulkan idealnya ada **1 fungsi generik** `reverse_transaction(transaction_id)` di level `transactions` yang membalikkan SEMUA jurnal yang terkait 1 transaksi, gantiin fungsi-fungsi terpisah di atas.
 
 ## Kenapa ditunda
 
@@ -15,9 +15,9 @@ Bukan technical debt kecil — butuh desain sendiri, bukan sekadar "loop semua `
 
 ## Kapan perlu digarap
 
-Sesi desain terpisah, idealnya **setelah** `pos-sales-simplify-rely-on-goods-issue.md` dieksekusi lebih dulu — RPC pembatalan POS di situ (kasus paling sederhana: 1 invoice + 1 goods_issue + 1 payment, gak ada retur/DP) bisa jadi preseden konkret buat basis desain versi generiknya, daripada mendesain abstraksi dari nol.
+Sesi desain terpisah. Preseden konkret yang direkomendasikan sebagai basis desain **SUDAH ADA** (`void_pos_transaction`, migration `0078` — kasus paling sederhana: 1 invoice + 1 goods_issue + 1 payment, gak ada retur/DP, cari lewat FK langsung tanpa tabel penanda) — sesi desain generik ini bisa mulai kapan pun, gak lagi nunggu prasyarat lain.
 
 ## Referensi
 
 - `memory/architecture/data/transactions-schema.md` — RPC `cancel_ar_invoice`/`cancel_ap_bill` existing beserta guard-nya.
-- `memory/scope-debt/pos-sales-simplify-rely-on-goods-issue.md` — sumber diskusi & preseden konkret yang direkomendasikan dikerjakan lebih dulu.
+- `memory/architecture/data/pos-schema.md` — `void_pos_transaction`, preseden konkret pola "cari pendamping transaksi lewat FK, reverse N jurnal + efek samping".

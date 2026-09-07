@@ -69,7 +69,7 @@ Dua hal yang sering ketukar tapi beda fungsi: **saldo stok berjalan** (`inventor
 |---|---|---|
 | `qty` | Bertanda — positif = masuk, negatif = keluar | Bukan kolom `direction` terpisah, supaya `SUM(qty)` langsung jadi saldo, gak perlu `CASE WHEN` di tiap query |
 | `movement_date` | Tanggal transaksi ASLI dari tabel sumbernya (mis. tanggal terima barang, tanggal produksi) | Bukan `created_at` — bisa beda kalau ada input mundur; ini kolom yang dipakai query saldo pembuka & pengurutan histori |
-| 9 kolom penunjuk sumber (nullable, tepat 1 terisi per baris secara konvensi) | Jenis mutasinya ditentukan dari kolom mana yang terisi | **Catatan penting**: check constraint yang dulu menjamin ini (`num_nonnulls(...) = 1`) sedang TIDAK AKTIF di database saat ini — hilang gak sengaja sejak penghapusan salah satu jalur retur lama, gagal dipulihkan karena ada 2 baris data lama yang menyimpang. Semua RPC tetap menulis sesuai aturan "tepat 1 kolom", tapi database sendiri untuk sementara tidak lagi menjamin itu. Status: item yang belum selesai, lihat `memory/scope-debt/inventory-movements-exactly-one-source-constraint.md` |
+| 8 kolom penunjuk sumber (nullable, tepat 1 terisi per baris secara konvensi) | Jenis mutasinya ditentukan dari kolom mana yang terisi | **Catatan penting**: check constraint yang dulu menjamin ini (`num_nonnulls(...) = 1`) sedang TIDAK AKTIF di database saat ini — hilang gak sengaja sejak penghapusan salah satu jalur retur lama, gagal dipulihkan karena ada 2 baris data lama yang menyimpang. Semua RPC tetap menulis sesuai aturan "tepat 1 kolom", tapi database sendiri untuk sementara tidak lagi menjamin itu. Status: item yang belum selesai, lihat `memory/scope-debt/inventory-movements-exactly-one-source-constraint.md` |
 | Saldo berjalan | **TIDAK disimpan** sebagai kolom | Dihitung ulang tiap kali dibaca (saldo pembuka + akumulasi baris di halaman itu) demi akurasi — gak ada risiko nilai tersimpan diam-diam menyimpang dari data mutasi asli |
 
 **Kenapa tabel ledger terpusat, bukan view gabungan** — keputusan arsitektur eksplisit: baca riwayat lebih cepat & konsisten jangka panjang (1 tabel rapi, gak perlu buka ±10 tabel tiap kartu stok dibuka), ditukar biaya awal lebih besar (harus ubah ±9-10 RPC transaksi yang sudah ada + backfill data historis).
@@ -83,7 +83,7 @@ Sumber dari `purchase-replacements-schema.md` (opsi "tukar barang" pada retur ke
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Tiap transaksi yang menggerakkan stok (Terima Barang, Produksi, Jual/Goods Issue, POS, retur dari customer, retur ke pemasok, tulis-jadi-beban, penggantian garansi, tukar barang, opname) | Seluruh RPC transaksi yang **sudah ada** di modul-modul terkait (`goods-receipt-schema.md`, `production-orders-schema.md`, Goods Issue, `stock-opname-schema.md`, `warranty-replacements-schema.md`, `purchase-replacements-schema.md`, `pos-schema.md`) — **tidak ada RPC baru berdiri sendiri** | Selain efek aslinya (jurnal, update `inventory_balances`), tiap RPC itu JUGA insert 1 (atau lebih, khusus kasus tukar barang) baris ke `inventory_movements` — otomatis, tidak butuh langkah tambahan dari user | Baris wajib nunjuk ke SATU dokumen sumber yang benar-benar ada DAN `item_id`-nya cocok — dijamin composite FK + `check num_nonnulls` di level database, gak bisa lolos walau ada salah ketik di kode RPC |
-| Pembatalan transaksi POS | `void_pos_sale` | Insert baris KOMPENSASI (qty positif = pemulihan) yang menunjuk ke baris sumber POS yang SAMA dengan baris keluar aslinya — ini bukan mencatat mutasi baru, tapi membatalkan efek mutasi lama | Polanya sama seperti tukar barang: 1 dokumen sumber bisa punya lebih dari 1 baris di Kartu Stok |
+| Pembatalan transaksi POS | `void_pos_transaction` | Insert baris KOMPENSASI (qty positif = pemulihan) yang menunjuk ke baris Goods Issue yang SAMA dengan baris keluar aslinya (sejak POS diunifikasi ke mesin Goods Issue umum — `pos-schema.md`, gak ada lagi kolom sumber POS tersendiri) — ini bukan mencatat mutasi baru, tapi membatalkan efek mutasi lama | Polanya sama seperti tukar barang: 1 dokumen sumber bisa punya lebih dari 1 baris di Kartu Stok |
 | Lihat riwayat 1 barang (halaman Kartu Stok) | — (query baca, lewat view join yang me-resolve nama dokumen sumber) | Saldo pembuka halaman dihitung sekali (total `SUM(qty)` sampai titik cutoff), baris-baris di halaman itu ditambah/dikurangi dari situ — supaya buka halaman manapun (baru atau lama) tetap cepat walau riwayat barangnya sudah sangat panjang | — |
 
 **Aturan Bisnis → RPC**
@@ -91,7 +91,7 @@ Sumber dari `purchase-replacements-schema.md` (opsi "tukar barang" pada retur ke
 | Aturan (dari `docs/domain`) | Dijaga oleh |
 |---|---|
 | Kartu Stok gak pernah jadi sumber kebenaran baru — `inventory_balances` tetap yang utama | Baris `inventory_movements` murni catatan pendamping, gak pernah dibaca balik buat menghitung ulang qty/HPP di RPC manapun |
-| Cakupan mencakup SEMUA jalur yang menggerakkan stok, bukan cuma jalur inti (beli/produksi/jual) | 9 kolom sumber mencakup juga retur (dari customer maupun ke pemasok, 1 kolom gabungan dibedakan arahnya), penggantian garansi, dan tukar barang |
+| Cakupan mencakup SEMUA jalur yang menggerakkan stok, bukan cuma jalur inti (beli/produksi/jual) | 8 kolom sumber mencakup juga retur (dari customer maupun ke pemasok, 1 kolom gabungan dibedakan arahnya), penggantian garansi, dan tukar barang |
 | Tiap baris riwayat tertelusur ke 1 dokumen sumber yang valid dan barangnya cocok | Composite FK `(source_id, item_id)` + `check num_nonnulls(...) = 1` — dijamin di level database, bukan cuma disiplin kode |
 | Riwayat tidak boleh diedit/dihapus | Trigger `block_edit_delete` — 2 lapis proteksi bareng RLS default-deny |
 
@@ -100,7 +100,7 @@ Sumber dari `purchase-replacements-schema.md` (opsi "tukar barang" pada retur ke
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `inventory_movements` | banyak-ke-satu | `items` |
-| `inventory_movements` | tiap baris nunjuk ke TEPAT SATU dari 10 kemungkinan | penerimaan barang, produksi (hasil & konsumsi), retur dari customer, opname, goods issue, POS, retur ke pemasok, penggantian garansi, tukar barang ke pemasok |
+| `inventory_movements` | tiap baris nunjuk ke TEPAT SATU dari 8 kemungkinan | penerimaan barang, produksi (hasil & konsumsi), retur dari customer, opname, goods issue (termasuk POS, sejak diunifikasi ke mesin Goods Issue umum), retur ke pemasok, penggantian garansi, tukar barang ke pemasok |
 | Tukar barang ke pemasok (`purchase-replacements-schema.md`, opsi "tukar barang") | SATU-SATUNYA kasus 1 dokumen sumber = 2 baris ledger sekaligus | `inventory_movements` |
 
 ## Siapa Boleh Apa

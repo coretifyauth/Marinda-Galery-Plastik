@@ -22,12 +22,13 @@ type SaleLine = { id: string; itemName: string; uom: string; qty: number; unitPr
 
 type CategoryLine = { id: string; accountName: string; amount: number; isTax: boolean };
 
-// pos_sales (migration 0076) cuma penanda tipis (transaction_id/goods_issue_id/
-// payment_id/cash_account_id) -- data finansial asli ada di transactions/
-// transaction_lines/goods_issues/goods_issue_lines/payments. pos_sale_lines/
-// pos_sale_extra_credit_lines (nama dipakai ulang) murni salinan buat tampilan struk.
-// Riwayat pra-unifikasi (pos_sales bentuk lama) DIHAPUS PERMANEN (keputusan user,
-// memory/scope-debt/pos-unify-transactions.md) -- gak ada jalur "legacy" lagi di sini.
+// Sejak migration pos-sales-simplify: pos_sales/pos_sale_lines/pos_sale_extra_credit_lines
+// DIHAPUS TOTAL -- gak ada lagi tabel penanda. goods_issue/payment dicari LANGSUNG lewat
+// FK yang udah ada (goods_issues.invoice_id, payments.transaction_id), pola sama
+// void_pos_transaction. Item dari goods_issue_lines (qty_issued+unit_price baru), kategori
+// tambahan+PPN dari transaction_lines -- baris basket item dikeluarkan dari tab "Kategori"
+// lewat MEMBERSHIP ke charge_categories (module 'pos'), bukan amount-matching, pola sama
+// ar-invoices/[id]/view.tsx (chargeLabelByAccountId).
 type PosSaleDetail = {
   id: string; // = transaction_id, dipakai buat void_pos_transaction
   saleDate: string;
@@ -43,37 +44,14 @@ type PosSaleDetail = {
 };
 
 async function loadDetail(id: string): Promise<PosSaleDetail | null> {
-  const { data: pos, error: posErr } = await supabase
-    .from("pos_sales")
-    .select("transaction_id, goods_issue_id, payment_id, cash_account:accounts!cash_account_id(name)")
-    .eq("transaction_id", id)
+  const { data: t, error: tErr } = await supabase
+    .from("transactions")
+    .select("id, date, source_ref, journal_entry_id, amount, status, counterparties(name)")
+    .eq("id", id)
+    .eq("type", "OUTBOUND")
     .maybeSingle();
-  if (posErr) throw new Error(posErr.message);
-  if (!pos) return null;
-  const row = pos as unknown as {
-    transaction_id: string;
-    goods_issue_id: string;
-    payment_id: string;
-    cash_account: { name: string } | null;
-  };
-
-  const [{ data: t, error: tErr }, { data: gi, error: giErr }, { data: pay, error: payErr }] = await Promise.all([
-    supabase
-      .from("transactions")
-      .select("id, date, source_ref, journal_entry_id, amount, status, counterparties(name)")
-      .eq("id", id)
-      .single(),
-    supabase
-      .from("goods_issues")
-      .select("id, journal_entry_id, goods_issue_lines(total_cost)")
-      .eq("id", row.goods_issue_id)
-      .single(),
-    supabase.from("payments").select("id, journal_entry_id").eq("id", row.payment_id).single(),
-  ]);
   if (tErr) throw new Error(tErr.message);
-  if (giErr) throw new Error(giErr.message);
-  if (payErr) throw new Error(payErr.message);
-
+  if (!t) return null;
   const transaction = t as unknown as {
     id: string;
     date: string;
@@ -83,32 +61,53 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
     status: string;
     counterparties: { name: string } | null;
   };
-  const goodsIssue = gi as unknown as { id: string; journal_entry_id: string; goods_issue_lines: { total_cost: number }[] };
-  const payment = pay as unknown as { id: string; journal_entry_id: string };
 
-  const [{ data: saleLines }, { data: categoryLinesRaw }, { data: entries }] = await Promise.all([
-    supabase.from("pos_sale_lines").select("id, qty_sold, unit_price, line_amount, items(name, uom)").eq("transaction_id", id),
+  const [{ data: gi, error: giErr }, { data: pay, error: payErr }] = await Promise.all([
     supabase
-      .from("pos_sale_extra_credit_lines")
-      .select("id, amount, is_tax, accounts(name)")
-      .eq("transaction_id", id),
+      .from("goods_issues")
+      .select("id, journal_entry_id, goods_issue_lines(id, qty_issued, unit_price, total_cost, items(name, uom))")
+      .eq("invoice_id", id)
+      .maybeSingle(),
+    supabase.from("payments").select("id, journal_entry_id").eq("transaction_id", id).eq("type", "OUTBOUND").maybeSingle(),
+  ]);
+  if (giErr) throw new Error(giErr.message);
+  if (payErr) throw new Error(payErr.message);
+  if (!gi) return null;
+
+  const goodsIssue = gi as unknown as {
+    id: string;
+    journal_entry_id: string;
+    goods_issue_lines: { id: string; qty_issued: number; unit_price: number | null; total_cost: number; items: { name: string; uom: string } | null }[];
+  };
+  const payment = pay as unknown as { id: string; journal_entry_id: string } | null;
+
+  const journalEntryIds = [transaction.journal_entry_id, goodsIssue.journal_entry_id];
+  if (payment) journalEntryIds.push(payment.journal_entry_id);
+
+  const [{ data: categoryLinesRaw }, { data: chargeTypes }, { data: cashDebitLine }, { data: entries }] = await Promise.all([
+    supabase.from("transaction_lines").select("id, account_id, amount, is_tax, accounts(name)").eq("transaction_id", id),
+    supabase.from("charge_categories").select("account_id").eq("module", "pos"),
+    payment
+      ? supabase.from("journal_lines").select("account_id, accounts(name)").eq("journal_entry_id", payment.journal_entry_id).gt("debit", 0).maybeSingle()
+      : Promise.resolve({ data: null }),
     supabase
       .from("journal_entries")
       .select("id, entry_date, description, source_ref, journal_lines(id, debit, credit, accounts(code, name))")
-      .in("id", [transaction.journal_entry_id, goodsIssue.journal_entry_id, payment.journal_entry_id])
+      .in("id", journalEntryIds)
       .order("entry_date"),
   ]);
 
-  type SaleLineRow = { id: string; qty_sold: number; unit_price: number; line_amount: number; items: { name: string; uom: string } | null };
-  type CategoryLineRow = { id: string; amount: number; is_tax: boolean; accounts: { name: string } | null };
+  type CategoryLineRow = { id: string; account_id: string; amount: number; is_tax: boolean; accounts: { name: string } | null };
 
-  const lines: SaleLine[] = ((saleLines ?? []) as unknown as SaleLineRow[]).map((l) => ({
+  const chargeAccountIds = new Set(((chargeTypes ?? []) as { account_id: string }[]).map((c) => c.account_id));
+
+  const lines: SaleLine[] = goodsIssue.goods_issue_lines.map((l) => ({
     id: l.id,
     itemName: l.items?.name ?? "-",
     uom: l.items?.uom ?? "",
-    qty: l.qty_sold,
-    unitPrice: l.unit_price,
-    lineAmount: l.line_amount,
+    qty: l.qty_issued,
+    unitPrice: l.unit_price ?? 0,
+    lineAmount: (l.unit_price ?? 0) * l.qty_issued,
   }));
 
   return {
@@ -116,17 +115,19 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
     saleDate: transaction.date,
     sourceRef: transaction.source_ref,
     customerName: transaction.counterparties?.name ?? null,
-    cashAccountName: row.cash_account?.name ?? null,
+    cashAccountName: (cashDebitLine as unknown as { accounts: { name: string } | null } | null)?.accounts?.name ?? null,
     isCancelled: transaction.status === "dibatalkan",
     total: transaction.amount,
     totalCost: goodsIssue.goods_issue_lines.reduce((sum, l) => sum + l.total_cost, 0),
     lines,
-    categoryLines: ((categoryLinesRaw ?? []) as unknown as CategoryLineRow[]).map((l) => ({
-      id: l.id,
-      accountName: l.accounts?.name ?? "-",
-      amount: l.amount,
-      isTax: l.is_tax,
-    })),
+    categoryLines: ((categoryLinesRaw ?? []) as unknown as CategoryLineRow[])
+      .filter((l) => l.is_tax || chargeAccountIds.has(l.account_id))
+      .map((l) => ({
+        id: l.id,
+        accountName: l.accounts?.name ?? "-",
+        amount: l.amount,
+        isTax: l.is_tax,
+      })),
     journalEntries: (entries ?? []) as unknown as JournalEntryDetail[],
   };
 }

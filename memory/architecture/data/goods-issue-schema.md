@@ -39,13 +39,21 @@ create table goods_issue_lines (
   item_id uuid not null references items(id),
   qty_issued numeric(14,3) not null check (qty_issued > 0),
   total_cost numeric(14,2) not null check (total_cost > 0),
-  order_line_id uuid references order_lines(id) -- nullable, migration 0024 (so_line_id), rename dari `sales_order_lines(id)` migration 0060, lihat `orders-schema.md`
+  order_line_id uuid references order_lines(id), -- nullable, migration 0024 (so_line_id), rename dari `sales_order_lines(id)` migration 0060, lihat `orders-schema.md`
+  unit_price numeric(14,2) check (unit_price is null or unit_price >= 0) -- migration 0078, lihat submodule di bawah
 );
+
+alter table goods_issue_lines add constraint goods_issue_lines_unit_price_xor_order_line
+  check (unit_price is null or order_line_id is null); -- migration 0078
 
 create trigger goods_issue_lines_block_edit_delete
   before update or delete on goods_issue_lines
   for each row execute function block_edit_delete();
 ```
+
+### `unit_price` — migration `0078_pos_sales_simplify_rely_on_goods_issue.sql`
+
+Nullable, mutual exclusivity dengan `order_line_id` (constraint eksplisit, bukan cuma konvensi caller). Muncul dari simplifikasi `pos_sales`/`pos_sale_lines`/`pos_sale_extra_credit_lines` (drop total, `memory/architecture/data/pos-schema.md`) — harga jual per baris item POS SATU-SATUNYA data yang genuinely gak ada tempat lain nyimpennya (beda dari `qty_issued`/`item_id` yang emang duplikat), jadi dipindah ke sini alih-alih tabel salinan terpisah. Cuma keisi kalau `order_line_id` NULL (jalur POS/walk-in tanpa SO) — kalau ada `order_line_id`, harga tetap bersumber dari `order_lines.unit_price` (1 sumber kebenaran, pola sama `ar-invoices/[id]/view.tsx`). `create_goods_issue` nerima lewat `p_lines` (key opsional `"unit_price"`, `jsonb ->> 'unit_price'` = NULL kalau caller gak kirim — non-POS caller, mis. modul goods-issues manual, otomatis dapet NULL tanpa perubahan apa pun di sisi mereka).
 
 ## Trigger `goods_issue_lines_order_direction_guard` (baru, migration `0060`)
 

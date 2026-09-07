@@ -23,17 +23,19 @@ Migration `0075` sengaja TIDAK menunggu keputusan ini — scope-nya udah cukup b
 
 ## Kapan perlu digarap
 
-Setelah pemilik data mengonfirmasi asal-usul 2 baris "Ember Plastik 10L" di atas dan cara penyelesaiannya. Begitu keputusan diambil, constraint final (9 kolom pasca-`0075`: `goods_receipt_line_id`, `production_order_id`, `return_line_id`, `stock_opname_line_id`, `goods_issue_line_id`, `pos_sale_line_id`, `production_order_line_id`, `warranty_replacement_line_id`, `purchase_replacement_line_id`) bisa ditambahkan lewat migration terpisah:
+Setelah pemilik data mengonfirmasi asal-usul 2 baris "Ember Plastik 10L" di atas dan cara penyelesaiannya. Begitu keputusan diambil, constraint final (**8 kolom pasca-`0078`** — `pos_sale_line_id` didrop total migration itu, kolomnya udah gak ada; POS sekarang konsumsi stok lewat `goods_issue_line_id` yang SAMA dipakai semua goods issue lain: `goods_receipt_line_id`, `production_order_id`, `return_line_id`, `stock_opname_line_id`, `goods_issue_line_id`, `production_order_line_id`, `warranty_replacement_line_id`, `purchase_replacement_line_id`) bisa ditambahkan lewat migration terpisah:
 
 ```sql
 alter table inventory_movements add constraint inventory_movements_exactly_one_source check (
   num_nonnulls(
     goods_receipt_line_id, production_order_id, return_line_id,
-    stock_opname_line_id, goods_issue_line_id, pos_sale_line_id,
+    stock_opname_line_id, goods_issue_line_id,
     production_order_line_id, warranty_replacement_line_id, purchase_replacement_line_id
   ) = 1
 );
 ```
+
+**Catatan (`0078`, ketauan review `schema-reviewer`):** sebelum `pos_sale_line_id` didrop, sejumlah baris historis pra-`0076` (POS lama) punya kolom itu terisi TANPA `goods_issue_line_id` ikut terisi (invariant "tepat 1 sumber" emang berlaku gitu di titik insert dulu — bukan pelanggaran seperti 2 baris "Ember Plastik" di atas). Begitu kolomnya kehapus, baris-baris itu otomatis jadi `num_nonnulls = 0` (semua 8 kolom sisa kosong) — SAH secara historis (mutasi itu beneran terjadi, tercatat di GL), tapi bakal ikut melanggar constraint final di atas kalau/pas dipulihkan. Constraint final nanti mungkin perlu partial exception buat baris pra-`0076` ini juga, bukan cuma 2 baris "Ember Plastik" — cek dulu jumlah barisnya (`select count(*) from inventory_movements where movement_date < '2026-09-06'` sekitar cutover `0076`, atau cek langsung baris mana yang `num_nonnulls=0` begitu constraint mau ditambahkan) sebelum eksekusi.
 
 ## Referensi
 
@@ -42,3 +44,4 @@ alter table inventory_movements add constraint inventory_movements_exactly_one_s
 - `supabase/migrations/0046_inventory_movements_purchase_return_replacement.sql` — constraint diupdate (11 kolom).
 - `supabase/migrations/0068_drop_purchase_writeoffs.sql` — titik constraint hilang (drop column tanpa restore).
 - `supabase/migrations/0075_rename_returns_and_merge_return_lines.sql` — titik gap ini ketauan.
+- `supabase/migrations/0078_pos_sales_simplify_rely_on_goods_issue.sql` — drop `pos_sale_line_id` (9 kolom -> 8), ketauan tambahan risiko baris historis pra-`0076`.

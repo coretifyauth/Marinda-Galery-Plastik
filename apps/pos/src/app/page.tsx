@@ -74,7 +74,7 @@ type TaxSettings = {
 
 type ExtraLine = { category_id: string; amount: string };
 
-// Riwayat singkat buat panel "Transaksi Terakhir" + cetak ulang/kirim WA -- pos_sale_lines
+// Riwayat singkat buat panel "Transaksi Terakhir" + cetak ulang/kirim WA -- goods_issue_lines
 // nyimpen qty/harga dalam SATUAN DASAR selalu (create_pos_sale konversi sebelum insert),
 // jadi unit_label transaksi asli (kalau dari scan satuan bukan-dasar) gak tersimpan --
 // riwayat nampilin qty x harga dalam satuan dasar item, bukan satuan yang dipilih pas jual.
@@ -170,52 +170,77 @@ async function fetchCompanyName(): Promise<string | null> {
   return ((data as { name: string } | null) ?? null)?.name ?? null;
 }
 
-// pos_sales (migration 0076) sekarang cuma penanda tipis (transaction_id/goods_issue_id/
-// payment_id/cash_account_id) -- sale_date/source_ref/customer pindah ke transactions
-// (embed lewat FK transaction_id -> transactions.id), pos_sale_lines/
-// pos_sale_extra_credit_lines TETAP ada (nama dipakai ulang) tapi sekarang FK ke
-// pos_sales(transaction_id), murni salinan buat struk (bukan sumber kebenaran akuntansi).
-async function fetchRecentSales(date: string): Promise<SaleHistoryItem[]> {
+// Sejak migration pos-sales-simplify: pos_sales/pos_sale_lines/pos_sale_extra_credit_lines
+// (tabel salinan struk) DIHAPUS TOTAL -- gak ada lagi tabel penanda POS sama sekali.
+// Item dibaca langsung dari goods_issues->goods_issue_lines (qty_issued+unit_price baru,
+// harga jual per baris, ditambahkan RPC create_goods_issue), kategori tambahan+PPN dari
+// transaction_lines langsung. transaction_lines berisi SEMUA baris kredit (basket item +
+// extra + PPN) tanpa pembeda kolom -- baris basket item dibedakan dari baris extra BUKAN
+// lewat amount (bisa kebetulan sama) tapi lewat MEMBERSHIP ke charge_categories (module
+// 'pos') -- akun basket item gak pernah ada di katalog itu (LockedAccountField, bukan
+// pilihan kasir), pola sama ar-invoices/[id]/view.tsx (chargeLabelByAccountId).
+async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Promise<SaleHistoryItem[]> {
   const { data, error } = await supabase
-    .from("pos_sales")
+    .from("transactions")
     .select(
-      "transaction_id, created_at, cash_account_id, transactions!inner(source_ref, date, counterparties(name, contact)), pos_sale_lines(qty_sold, unit_price, line_amount, items(name, uom)), pos_sale_extra_credit_lines(amount, is_tax)"
+      "id, source_ref, date, counterparties(name, contact), goods_issues!inner(goods_issue_lines(qty_issued, unit_price, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
     )
-    .eq("transactions.date", date)
-    .order("created_at", { ascending: false });
+    .eq("type", "OUTBOUND")
+    .eq("date", date)
+    .order("id", { ascending: false });
   if (error) throw new Error(error.message);
 
   type Row = {
-    transaction_id: string;
-    created_at: string;
-    cash_account_id: string;
-    transactions: { source_ref: string; date: string; counterparties: { name: string; contact: string | null } | null } | null;
-    pos_sale_lines: {
-      qty_sold: number;
-      unit_price: number;
-      line_amount: number;
-      items: { name: string; uom: string } | null;
-    }[];
-    pos_sale_extra_credit_lines: { amount: number; is_tax: boolean }[];
+    id: string;
+    source_ref: string;
+    date: string;
+    counterparties: { name: string; contact: string | null } | null;
+    goods_issues: { goods_issue_lines: { qty_issued: number; unit_price: number | null; items: { name: string; uom: string } | null }[] }[];
+    payments: { id: string; journal_entry_id: string }[];
+    transaction_lines: { account_id: string; amount: number; is_tax: boolean }[];
   };
 
-  return ((data ?? []) as unknown as Row[]).map((row) => ({
-    id: row.transaction_id,
-    sourceRef: row.transactions?.source_ref ?? "",
-    createdAt: row.created_at,
-    customerName: row.transactions?.counterparties?.name ?? null,
-    customerContact: row.transactions?.counterparties?.contact ?? null,
-    cashAccountId: row.cash_account_id,
-    lines: row.pos_sale_lines.map((l) => ({
-      name: l.items?.name ?? "-",
-      uom: l.items?.uom ?? "",
-      qty: l.qty_sold,
-      unitPrice: l.unit_price,
-      amount: l.line_amount,
-    })),
-    extraTotal: row.pos_sale_extra_credit_lines.filter((l) => !l.is_tax).reduce((s, l) => s + l.amount, 0),
-    taxTotal: row.pos_sale_extra_credit_lines.filter((l) => l.is_tax).reduce((s, l) => s + l.amount, 0),
-  }));
+  const rows = (data ?? []) as unknown as Row[];
+
+  // Cari akun kas per transaksi dari baris debit jurnal pelunasan (record_payment selalu
+  // tulis persis 2 baris: debit akun kas, kredit akun kontrol) -- query terpisah (bukan
+  // embed 2-level payments->journal_entries->journal_lines lewat PostgREST), pola sama
+  // "loadAux" terpisah di apps/erp/pos-sales/page.tsx.
+  const journalEntryIds = rows.flatMap((r) => r.payments.map((p) => p.journal_entry_id));
+  const cashAccountByEntry = new Map<string, string>();
+  if (journalEntryIds.length > 0) {
+    const { data: jlData, error: jlError } = await supabase
+      .from("journal_lines")
+      .select("journal_entry_id, account_id")
+      .in("journal_entry_id", journalEntryIds)
+      .gt("debit", 0);
+    if (jlError) throw new Error(jlError.message);
+    for (const l of jlData ?? []) cashAccountByEntry.set(l.journal_entry_id as string, l.account_id as string);
+  }
+
+  return rows.map((row) => {
+    const goodsIssueLines = row.goods_issues.flatMap((gi) => gi.goods_issue_lines);
+    const paymentEntryId = row.payments[0]?.journal_entry_id ?? "";
+    return {
+      id: row.id,
+      sourceRef: row.source_ref,
+      createdAt: row.date,
+      customerName: row.counterparties?.name ?? null,
+      customerContact: row.counterparties?.contact ?? null,
+      cashAccountId: cashAccountByEntry.get(paymentEntryId) ?? "",
+      lines: goodsIssueLines.map((l) => ({
+        name: l.items?.name ?? "-",
+        uom: l.items?.uom ?? "",
+        qty: l.qty_issued,
+        unitPrice: l.unit_price ?? 0,
+        amount: (l.unit_price ?? 0) * l.qty_issued,
+      })),
+      extraTotal: row.transaction_lines
+        .filter((l) => !l.is_tax && chargeAccountIds.has(l.account_id))
+        .reduce((s, l) => s + l.amount, 0),
+      taxTotal: row.transaction_lines.filter((l) => l.is_tax).reduce((s, l) => s + l.amount, 0),
+    };
+  });
 }
 
 function mapItemRowsToCatalog(rows: ItemRow[]): CatalogItem[] {
@@ -428,10 +453,11 @@ export default function CheckoutPage() {
   });
   // Key ikut `historyDate` -- ganti tanggal di drawer otomatis refetch, gak perlu
   // panggil manual.
+  const chargeAccountIds = new Set((chargeTypesQuery.data ?? []).map((c) => c.account_id));
   const recentSalesQuery = useQuery({
-    queryKey: ["pos_sales", historyDate],
-    queryFn: () => fetchRecentSales(historyDate),
-    enabled: !checkingSession,
+    queryKey: ["pos_sales", historyDate, chargeTypesQuery.data],
+    queryFn: () => fetchRecentSales(historyDate, chargeAccountIds),
+    enabled: !checkingSession && !!chargeTypesQuery.data,
     staleTime: 10_000,
   });
 

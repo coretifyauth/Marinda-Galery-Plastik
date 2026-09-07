@@ -145,9 +145,12 @@ Detail lengkap: `supabase/migrations/0012_inventory_schema.sql`.
 1 baris = 1 kejadian mutasi qty 1 item, ditulis sebagai efek samping dari RPC
 transaksi yang sudah ada (bukan RPC baru berdiri sendiri).
 
-DDL di bawah bentuk FINAL pasca migration `0075` (9 kolom sumber: 10 dari `0042`+`0046`,
+DDL di bawah bentuk FINAL pasca migration `0078` (8 kolom sumber: 10 dari `0042`+`0046`,
 `purchase_writeoff_line_id` di-drop `0068`, `inventory_return_line_id`+
-`purchase_return_line_id` digabung `return_line_id` `0075`). **CHECK `num_nonnulls`
+`purchase_return_line_id` digabung `return_line_id` `0075`, `pos_sale_line_id` didrop total
+`0078` — POS sekarang konsumsi stok lewat `goods_issue_line_id` yang SAMA dipakai semua
+goods issue lain, `pos_sales`/`pos_sale_lines` gak ada lagi, lihat `pos-schema.md`).
+**CHECK `num_nonnulls`
 SENGAJA GAK DITULIS DI BAWAH** — constraint ini gak ada di database live saat ini (hilang
 sejak `0068`, gagal dipulihkan `0075`, lihat "Keputusan" di atas dan
 `memory/scope-debt/inventory-movements-exactly-one-source-constraint.md`). Kolom di bawah
@@ -167,7 +170,6 @@ create table inventory_movements (
   return_line_id uuid, -- migration 0075, gantiin inventory_return_line_id+purchase_return_line_id
   stock_opname_line_id uuid,
   goods_issue_line_id uuid,
-  pos_sale_line_id uuid,
   production_order_line_id uuid,
   warranty_replacement_line_id uuid,
   purchase_replacement_line_id uuid, -- migration 0046, lihat "Keputusan" di atas
@@ -177,7 +179,6 @@ create table inventory_movements (
   foreign key (return_line_id, item_id) references return_lines(id, item_id),
   foreign key (stock_opname_line_id, item_id) references stock_opname_lines(id, item_id),
   foreign key (goods_issue_line_id, item_id) references goods_issue_lines(id, item_id),
-  foreign key (pos_sale_line_id, item_id) references pos_sale_lines(id, item_id),
   foreign key (production_order_line_id, item_id) references production_order_lines(id, item_id),
   foreign key (warranty_replacement_line_id, item_id) references warranty_replacement_lines(id, item_id),
   foreign key (purchase_replacement_line_id, item_id) references purchase_replacement_lines(id, item_id)
@@ -201,7 +202,7 @@ sendiri) — `INBOUND` = retur dari customer (barang masuk), `OUTBOUND` = retur 
   GRN, `production_date`, dst), bukan `created_at` insert — bisa beda kalau ada input
   mundur. Ini kolom yang dipakai opening-balance query, bukan `created_at`.
 - Composite FK otomatis "lolos" (skip validasi) kalau salah satu kolom pasangannya
-  `NULL` (perilaku default `MATCH SIMPLE` Postgres) — jadi 9 dari 10 FK selalu
+  `NULL` (perilaku default `MATCH SIMPLE` Postgres) — jadi 7 dari 8 FK selalu
   trivially satisfied per baris, cuma 1 FK yang kolom penunjuknya terisi yang benar-benar
   divalidasi. Dikombinasikan sama `check(num_nonnulls(...)=1)`, ini yang jamin tepat 1
   FK "aktif" per baris — dikonfirmasi `schema-reviewer` valid secara semantik Postgres.
@@ -210,19 +211,20 @@ sendiri) — `INBOUND` = retur dari customer (barang masuk), `OUTBOUND` = retur 
   WHERE item_id=...`), kolom `id` ikut buat tie-break deterministik kalau ada >1
   mutasi item yang sama di tanggal yang sama.
 
-## Unique `(id, item_id)` di 10 tabel sumber — prasyarat composite FK
+## Unique `(id, item_id)` di tabel sumber — prasyarat composite FK
 
 `id` di tiap tabel sumber sudah unique (PK) — menambah `item_id` sebagai kolom kedua
 gak mungkin memunculkan duplikat baru, cuma menyediakan target yang bisa ditunjuk
 composite FK di atas. (`production_orders_id_item_id_key` didefinisikan di
-`production-orders-schema.md` bareng kolom `item_id`-nya sendiri.)
+`production-orders-schema.md` bareng kolom `item_id`-nya sendiri.) `pos_sale_lines_id_item_id_key`
+(dulu di sini buat `pos_sale_line_id`) ikut hilang otomatis migration `0078` — tabelnya
+di-drop total (constraint-nya nempel di tabel itu, bukan objek berdiri sendiri).
 
 ```sql
 alter table goods_receipt_lines add constraint goods_receipt_lines_id_item_id_key unique (id, item_id);
 alter table return_lines add constraint return_lines_id_item_id_key unique (id, item_id); -- migration 0075, gantiin inventory_return_lines+purchase_return_lines
 alter table stock_opname_lines add constraint stock_opname_lines_id_item_id_key unique (id, item_id);
 alter table goods_issue_lines add constraint goods_issue_lines_id_item_id_key unique (id, item_id);
-alter table pos_sale_lines add constraint pos_sale_lines_id_item_id_key unique (id, item_id);
 alter table production_order_lines add constraint production_order_lines_id_item_id_key unique (id, item_id);
 alter table warranty_replacement_lines add constraint warranty_replacement_lines_id_item_id_key unique (id, item_id);
 ```
