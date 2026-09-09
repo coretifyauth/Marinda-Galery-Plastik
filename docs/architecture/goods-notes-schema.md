@@ -88,8 +88,7 @@ cuma tabel penyimpanannya.
 
 Catatan lintas modul: retur customer (pembalikan stok+HPP dari OUTBOUND) dan retur ke supplier
 (pembalikan dari INBOUND) didokumentasikan di `returns-schema.md`/`return-credits-schema.md`, bukan
-di sini. Tukar barang pasca-retur (Opsi B, kedua arah) di `warranty-replacements-schema.md` (AR) dan
-`purchase-replacements-schema.md` (AP).
+di sini. Tukar/ganti barang pasca-retur (Opsi B, kedua arah) di `replacements-schema.md`.
 
 ## Siapa Boleh Apa
 

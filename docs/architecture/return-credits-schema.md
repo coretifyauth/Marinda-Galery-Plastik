@@ -46,9 +46,6 @@ Kolom penting: `type` (`INBOUND`/`OUTBOUND`, ikut arah retur asalnya), `counterp
 | `return_credits.return_id` | banyak-ke-satu | `returns` |
 | `return_credits.counterparty_id` | banyak-ke-satu | `counterparties` |
 | `return_credits` (lewat `returns.transaction_id`) | tidak langsung, dipakai buat sinkron status | `transactions` |
-| `warranty_replacements.return_id` | historis (cuma jalur AR lama, dipakai reducer `return_credit_remaining`) | `returns` → `return_credits` |
-
-Catatan gap yang sengaja dicatat (bukan bug): FK `warranty_replacements.return_id` (dulu `credit_note_id`) bisa menunjuk ke `returns` arah mana pun (`INBOUND` atau `OUTBOUND`), tapi yang mencegah baris OUTBOUND kesambung ke situ murni "gak ada RPC yang nulis kolom itu untuk arah OUTBOUND", bukan constraint database — kalau suatu saat ada fitur baru yang menulis ke kolom itu untuk arah OUTBOUND, butuh guard eksplisit baru.
 
 ## Pencairan Saldo Kredit (Refund Tunai)
 
@@ -65,7 +62,7 @@ Kolom penting: `credit_id`, `amount`, `source_ref` (di sini baru ada dokumen sum
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Cairkan saldo kredit jadi tunai | `refund_return_credit` | `type` dilihat otomatis dari `return_credits` (caller gak perlu kirim). INBOUND: Debit akun saldo kredit (liability) / Kredit Kas. OUTBOUND: Debit Kas / Kredit akun saldo kredit (asset) | Trigger `return_credit_refunds_guard` menolak kalau `amount` melebihi sisa saldo (`return_credit_remaining`); RLS insert admin/accountant |
-| Saldo kredit sisa dihitung | Fungsi `return_credit_remaining(credit_id)` | `amount` awal dikurangi total yang sudah dipakai jalur lain (mis. penukaran barang lewat `warranty_replacements`) dan total refund yang sudah dicairkan — dihitung on-the-fly, gak disimpan sebagai kolom | Dipakai bareng oleh trigger guard di atas |
+| Saldo kredit sisa dihitung | Fungsi `return_credit_remaining(credit_id)` | `amount` awal dikurangi total refund yang sudah dicairkan — dihitung on-the-fly, gak disimpan sebagai kolom. Satu-satunya disposisi aktif cuma refund tunai (jalur "settle lewat ganti barang" sudah dicabut, lihat `replacements-schema.md`) | Dipakai bareng oleh trigger guard di atas |
 
 **Aturan Bisnis → RPC**
 

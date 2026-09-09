@@ -8,9 +8,10 @@ export const purchaseReplacementLineSchema = z.object({
 /**
  * Opsi B (Tukar Barang) — mirror createWarrantyReplacementSchema di
  * ar-warranty-replacements/schema.ts. SELALU full-jalur (bill wajib punya
- * goods_receipt_notes, gak ada variant financial-only — ref 0035 komentar
- * create_purchase_replacement). `inventory_account_id` dipakai RPC dua kali (debit barang
- * masuk / kredit barang keluar, akun yang sama) — bukan 2 field terpisah.
+ * goods_receipt_notes, gak ada variant financial-only — ref komentar RPC
+ * create_replacement di 0027_replacements_schema.sql). `inventory_account_id` dikirim sebagai
+ * p_debit_account_id DAN p_credit_account_id ke create_replacement (akun yang sama) — bukan 2
+ * field terpisah.
  */
 export const createPurchaseReplacementSchema = z.object({
   bill_id: z.string().uuid("Pilih bill"),
@@ -27,7 +28,7 @@ export type PurchaseReplacement = {
   replacement_date: string;
   source_ref: string;
   created_at: string;
-  purchase_replacement_lines: {
+  replacement_lines: {
     item_id: string;
     qty_replaced: number;
     total_cost: number;

@@ -21,7 +21,7 @@ export type WarrantyReplacement = {
   replacement_date: string;
   source_ref: string;
   created_at: string;
-  warranty_replacement_lines: {
+  replacement_lines: {
     item_id: string;
     qty_replaced: number;
     total_cost: number;

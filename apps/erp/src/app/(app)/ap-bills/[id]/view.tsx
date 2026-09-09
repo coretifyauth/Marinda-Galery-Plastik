@@ -84,7 +84,7 @@ type ReplacementDetail = {
   replacement_date: string;
   source_ref: string;
   created_at: string;
-  purchase_replacement_lines: {
+  replacement_lines: {
     item_id: string;
     qty_replaced: number;
     total_cost: number;
@@ -225,11 +225,12 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("type", "OUTBOUND")
         .order("credit_note_date"),
       supabase
-        .from("purchase_replacements")
+        .from("replacements")
         .select(
-          "id, replacement_date, source_ref, created_at, purchase_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
+          "id, replacement_date, source_ref, created_at, replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
         )
-        .eq("bill_id", id)
+        .eq("transaction_id", id)
+        .eq("type", "OUTBOUND")
         .order("replacement_date"),
       supabase
         .from("goods_notes")
@@ -310,7 +311,7 @@ export function ApBillDetailView({ id }: { id: string }) {
 
   /**
    * Qty per item yang udah "diklaim" dari bill ini, GABUNGAN Opsi A (purchase_return_lines)
-   * + Opsi B (purchase_replacement_lines) — mirror purchase_returned_qty() di database
+   * + Opsi B (replacement_lines type=OUTBOUND) — mirror purchase_returned_qty() di database
    * (0035, disederhanakan lagi setelah Opsi C dicabut). Fisiknya cuma ada 1 pool
    * qty_received per item yang bisa diklaim, mau lewat jalur mana pun. Dipakai buat cap qty
    * input di kedua form biar gak nembus batas sebelum kena guard server.
@@ -323,7 +324,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       }
     }
     for (const r of replacements) {
-      for (const l of r.purchase_replacement_lines) {
+      for (const l of r.replacement_lines) {
         map.set(l.item_id, (map.get(l.item_id) ?? 0) + l.qty_replaced);
       }
     }
@@ -489,12 +490,14 @@ export function ApBillDetailView({ id }: { id: string }) {
       setReplaceError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("create_purchase_replacement", {
-      p_bill_id: parsed.data.bill_id,
+    const { error } = await supabase.rpc("create_replacement", {
+      p_type: "OUTBOUND",
+      p_transaction_id: parsed.data.bill_id,
       p_replacement_date: parsed.data.replacement_date,
       p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
-      p_inventory_account_id: parsed.data.inventory_account_id,
+      p_debit_account_id: parsed.data.inventory_account_id,
+      p_credit_account_id: parsed.data.inventory_account_id,
     });
     setReplaceSubmitting(false);
     if (error) {
@@ -735,7 +738,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur — Kurangi Utang", badge: creditNotes.length },
-    // Tukar Barang wajib qty fisik + goods receipt (create_purchase_replacement nolak
+    // Tukar Barang wajib qty fisik + goods receipt (create_replacement nolak
     // kalau gak ada) -- gak ada gunanya ditampilin buat bill financial-only, submit-nya bakal
     // ketolak RPC. Lihat docs/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
     // Opsi C (Tulis-jadi-Beban / purchase_writeoffs) DICABUT -- barang rusak yang supplier
@@ -1078,7 +1081,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                     <td className="px-4 py-2">{r.source_ref}</td>
                     <td className="px-4 py-2">
                       <ul className="space-y-0.5">
-                        {r.purchase_replacement_lines.map((l) => (
+                        {r.replacement_lines.map((l) => (
                           <li key={l.item_id}>
                             {l.items.name} — {l.qty_replaced} {l.items.uom}
                           </li>
@@ -1086,7 +1089,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                       </ul>
                     </td>
                     <td className="px-4 py-2 text-right font-mono">
-                      {r.purchase_replacement_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
+                      {r.replacement_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
                     </td>
                   </tr>
                 ))}

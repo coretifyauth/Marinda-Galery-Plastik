@@ -20,12 +20,6 @@ export type ArReturnCredit = {
   ar_returns: {
     source_ref: string;
     credit_note_date: string;
-    warranty_replacements: {
-      id: string;
-      replacement_date: string;
-      source_ref: string;
-      return_credit_settled_amount: number;
-    }[];
   };
   ar_return_credit_refunds: {
     id: string;
@@ -37,21 +31,16 @@ export type ArReturnCredit = {
 };
 
 /**
- * Sisa saldo kredit retur derived dari settlement (warranty_replacement via barang) +
- * refunds — bukan kolom. Cuma 2 cara nyelesain (refund kas atau ganti barang), gak ada
- * lagi jalur "dipakai motong invoice lain" (memory/scope-debt/ar-return-credit-resolution.md,
- * sudah diimplementasi). Baik settlement maupun refund gak pernah punya jalur reversal di
- * fitur ini (beda dari deposit/write-off application yang bisa di-unwind lewat
- * cancel_ar_invoice), jadi gak butuh exclude berdasar reversedEntryIds.
+ * Sisa saldo kredit retur derived dari refunds — bukan kolom. Cuma 1 disposisi (refund tunai),
+ * gak ada lagi jalur "dipakai motong invoice lain" (memory/scope-debt/ar-return-credit-resolution.md,
+ * sudah diimplementasi) maupun "diselesaikan lewat ganti barang" (dilarang eksplisit, lihat
+ * docs/domain/accounts-receivable.md). Mirror `ap-return-credits/schema.ts`. Refund gak pernah
+ * punya jalur reversal di fitur ini (beda dari deposit/write-off application yang bisa di-unwind
+ * lewat cancel_ar_invoice), jadi gak butuh exclude berdasar reversedEntryIds.
  */
 export function returnCreditRemaining(
-  credit: Pick<ArReturnCredit, "amount" | "ar_returns" | "ar_return_credit_refunds">
+  credit: Pick<ArReturnCredit, "amount" | "ar_return_credit_refunds">
 ): { used: number; remaining: number } {
-  const settledAmount = credit.ar_returns.warranty_replacements.reduce(
-    (sum, w) => sum + w.return_credit_settled_amount,
-    0
-  );
-  const refundedAmount = credit.ar_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
-  const used = settledAmount + refundedAmount;
+  const used = credit.ar_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
   return { used, remaining: credit.amount - used };
 }

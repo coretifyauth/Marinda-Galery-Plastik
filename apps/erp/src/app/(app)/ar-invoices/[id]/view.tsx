@@ -172,7 +172,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_returns:returns(amount, ar_return_credits:return_credits(amount), warranty_replacements(discount_reversed_amount, return_credit_settled_amount)), ar_deposit_applications:deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -224,11 +224,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("type", "INBOUND")
         .order("credit_note_date"),
       supabase
-        .from("warranty_replacements")
+        .from("replacements")
         .select(
-          "id, invoice_id, replacement_date, source_ref, created_at, warranty_replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
+          "id, invoice_id:transaction_id, replacement_date, source_ref, created_at, replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
         )
-        .eq("invoice_id", id)
+        .eq("transaction_id", id)
+        .eq("type", "INBOUND")
         .order("replacement_date"),
       supabase
         .from("goods_notes")
@@ -259,7 +260,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       supabase
         .from("return_credits")
         .select(
-          "id, customer_id:counterparty_id, return_id, amount, journal_entry_id, created_at, counterparties(name), ar_returns:returns(source_ref, credit_note_date, warranty_replacements(return_credit_settled_amount)), ar_return_credit_refunds:return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
+          "id, customer_id:counterparty_id, return_id, amount, journal_entry_id, created_at, counterparties(name), ar_returns:returns(source_ref, credit_note_date), ar_return_credit_refunds:return_credit_refunds(id, amount, source_ref, journal_entry_id, created_at)"
         )
         .eq("counterparty_id", loadedInvoice.customer_id)
         .eq("type", "INBOUND")
@@ -415,7 +416,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       }
     }
     for (const r of replacements) {
-      for (const l of r.warranty_replacement_lines) {
+      for (const l of r.replacement_lines) {
         alreadyClaimed.set(l.item_id, (alreadyClaimed.get(l.item_id) ?? 0) + l.qty_replaced);
       }
     }
@@ -470,13 +471,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       setReplaceError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
       return;
     }
-    const { error } = await supabase.rpc("create_warranty_replacement", {
-      p_invoice_id: parsed.data.invoice_id,
+    const { error } = await supabase.rpc("create_replacement", {
+      p_type: "INBOUND",
+      p_transaction_id: parsed.data.invoice_id,
       p_replacement_date: parsed.data.replacement_date,
       p_source_ref: sourceRef,
       p_lines: parsed.data.lines,
-      p_hpp_account_id: parsed.data.hpp_account_id,
-      p_finished_good_account_id: parsed.data.finished_good_account_id,
+      p_debit_account_id: parsed.data.hpp_account_id,
+      p_credit_account_id: parsed.data.finished_good_account_id,
     });
     setReplaceSubmitting(false);
     if (error) {
@@ -701,7 +703,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const canApplyDeposit = canWrite && !isCancelled && outstanding > 0 && availableDeposits.length > 0;
   const selectedDeposit = availableDeposits.find((dep) => dep.id === applyDepositId) ?? null;
   const selectedDepositRemaining = selectedDeposit ? depositStatus(selectedDeposit, reversedEntryIds).remaining : 0;
-  // Ganti Barang independen dari credit note sekarang (mirror create_purchase_replacement AP) --
+  // Ganti Barang independen dari credit note sekarang (mirror create_replacement type=OUTBOUND AP) --
   // cuma butuh goods_issue ada (invoice financial-only gak punya barang fisik buat ditukar).
   const canReplace = canWrite && !isCancelled && !!goodsIssue;
   // Jurnal HPP/Persediaan cuma kejadian kalau ada qty yang beneran diisi.
@@ -857,9 +859,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur", badge: creditNotes.length },
-    // Penggantian Barang (warranty replacement) wajib nunjuk credit note yang punya retur fisik
-    // (inventory_returns), yang cuma mungkin ada kalau invoice ini punya goods_issue -- create_warranty_replacement
-    // nolak kalau retur-nya financial-only. Gak ada gunanya ditampilin buat invoice financial-only.
+    // Penggantian Barang (replacement type=INBOUND) wajib ada goods_issue di invoice ini --
+    // create_replacement nolak kalau invoice-nya financial-only (gak ada barang fisik keluar).
+    // Gak ada gunanya ditampilin buat invoice financial-only.
     ...(!isFinancialOnly ? [{ key: "replacements", label: "Penggantian Barang", badge: replacements.length }] : []),
   ];
 
@@ -1165,7 +1167,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                   <td className="px-4 py-2">{r.source_ref}</td>
                   <td className="px-4 py-2">
                     <ul className="space-y-0.5">
-                      {r.warranty_replacement_lines.map((l) => (
+                      {r.replacement_lines.map((l) => (
                         <li key={l.item_id}>
                           {l.items.name} — {l.qty_replaced} {l.items.uom}
                         </li>
@@ -1173,7 +1175,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                     </ul>
                   </td>
                   <td className="px-4 py-2 text-right font-mono">
-                    {r.warranty_replacement_lines
+                    {r.replacement_lines
                       .reduce((sum, l) => sum + l.total_cost, 0)
                       .toLocaleString("id-ID")}
                   </td>

@@ -27,7 +27,6 @@ export type ArInvoice = {
   ar_returns?: {
     amount: number;
     ar_return_credits?: { amount: number }[];
-    warranty_replacements?: { discount_reversed_amount: number; return_credit_settled_amount: number }[];
   }[];
   ar_deposit_applications?: { amount: number }[];
 };
@@ -79,21 +78,8 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
  * `0020_ar_invoice_remaining_return_credit_fix.sql`), bukan cuma ngurangin lewat `ar_returns`
  * doang. Tanpa add-back ini outstanding bisa keliatan minus padahal GL-nya udah balance. Saldo
  * kredit itu sendiri gak lagi bisa "dititip" motong invoice lain (dicabut, lihat "Saldo Kredit
- * dari Retur") — resolusinya cuma refund tunai atau warranty replacement.
- * `warranty_replacements.discount_reversed_amount - return_credit_settled_amount` (nested di bawah
- * `ar_returns`) juga di-ADD BACK — `create_warranty_replacement` bikin jurnal Debit Piutang
- * Usaha / Kredit Retur & Potongan Penjualan yang membalikkan diskon retur proporsional ke qty
- * yang ditukar barang (customer gak jadi dapat diskon karena barangnya diganti, bukan direfund).
- * `ar_returns.amount` sendiri immutable (gak berubah pas ada replacement belakangan), jadi
- * tanpa add-back ini invoice yang retur penuh + ganti barang penuh bakal keliatan "lunas" padahal
- * Piutang Usaha di GL udah balik ke penuh. WAJIB di-net-in sama `return_credit_settled_amount` —
- * kalau credit note sumbernya punya `ar_return_credits` aktif, `create_warranty_replacement` bikin
- * jurnal KETIGA (Debit return_credit_liability / Kredit Piutang Usaha) yang nyettle saldo kredit
- * retur itu pakai barang, nominalnya SELALU sama persis dengan `discount_reversed_amount` pas
- * kasus ini — net efeknya ke Piutang Usaha invoice = 0 (reversal & settlement saling
- * menetralkan). Add-back mentah tanpa net-in bikin outstanding kelebihan hitung persis sejumlah
- * `return_credit_settled_amount` (mirror fix server-side
- * `0028_ar_invoice_remaining_warranty_replacement_fix.sql`).
+ * dari Retur") — resolusinya cuma refund tunai (ganti barang pasca-retur/garansi berdiri sendiri,
+ * gak nyentuh Piutang Usaha sama sekali — lihat `replacements-schema.md`).
  * `ar_deposit_applications` selalu aktif kalau invoice-nya masih hidup (belum
  * dibatalkan) — begitu invoice dibatalkan, `cancel_ar_invoice` nolak keras kalau udah ada
  * write-off (gak bisa dibatalkan lewat jalur itu), jadi gak perlu exclude yang di-reverse
@@ -120,18 +106,8 @@ export function invoiceStatus(
     (sum, c) => sum + (c.ar_return_credits ?? []).reduce((s, rc) => s + rc.amount, 0),
     0
   );
-  const warrantyReplacementReversed = (invoice.ar_returns ?? []).reduce(
-    (sum, c) =>
-      sum +
-      (c.warranty_replacements ?? []).reduce(
-        (s, wr) => s + (wr.discount_reversed_amount - wr.return_credit_settled_amount),
-        0
-      ),
-    0
-  );
   const depositApplied = (invoice.ar_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const outstanding =
-    invoice.amount - allocated - returned - depositApplied + returnCreditsSettled + warrantyReplacementReversed;
+  const outstanding = invoice.amount - allocated - returned - depositApplied + returnCreditsSettled;
   if (isCancelled) {
     return { status: "dibatalkan", allocated, returned, depositApplied, outstanding: 0 };
   }

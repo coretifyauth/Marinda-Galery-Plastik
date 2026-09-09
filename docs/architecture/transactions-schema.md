@@ -127,7 +127,7 @@ Gak ada tabel baru — bagian ini menjelaskan bagaimana kolom turunan `transacti
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `recompute_transaction_status` | dipicu oleh insert di | `payments`, `returns`, `deposit_applications`, `warranty_replacements`, `goods_notes`, `goods_note_lines` |
+| `recompute_transaction_status` | dipicu oleh insert di | `payments`, `returns`, `deposit_applications`, `goods_notes`, `goods_note_lines` (`replacements` TIDAK memicu ini — ganti/tukar barang gak pernah menyentuh status/outstanding transaksi asalnya sama sekali, lihat `replacements-schema.md`) |
 | `ar_invoice_remaining`/`ap_bill_remaining` | membaca | `transactions`, `payments`, `returns`, `deposit_applications`, `return_credits` |
 
 ## Tampilan Terpisah untuk Piutang & Utang

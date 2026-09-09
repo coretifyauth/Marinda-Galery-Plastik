@@ -41,8 +41,7 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `returns-schema.md` — gabungan nota kredit retur AR + AP (dulu `credit-notes-schema.md`).
 - `return-credits-schema.md` — gabungan saldo kredit retur AR + AP.
 - `deposits-schema.md` — gabungan uang muka AR + AP.
-- `warranty-replacements-schema.md` — sisi AR tukar barang garansi (retur Opsi B).
-- `purchase-replacements-schema.md` — sisi AP tukar barang ke pemasok (retur Opsi B).
+- `replacements-schema.md` — gabungan ganti barang garansi AR + tukar barang ke pemasok AP (retur Opsi B), 2026-09-09.
 - `tax-settings-schema.md` — Pengaturan PPN, 1 baris dipakai bareng AR/AP/POS.
 - `items-schema.md` — master barang, satuan jual/harga, Kode Scan Barang.
 - `orders-schema.md` — gabungan Purchase Order + Sales Order.

@@ -65,7 +65,7 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo 
 - Total retur (akumulasi) terhadap 1 invoice gak boleh ngelebihin nilai invoice itu (jalur financial-only) atau qty yang beneran terjual (jalur full).
 - Retur harus tetap bisa dibuat walau invoice udah lunas/ada pembayaran — beda dari pembatalan invoice biasa yang menolak kalau udah ada pembayaran.
 - Retur gak boleh dicatat ke periode yang sudah ditutup.
-- Saldo kredit retur cuma boleh diselesaikan lewat refund tunai atau ganti barang — gak boleh dipakai motong invoice lain.
+- Saldo kredit retur cuma boleh diselesaikan lewat refund tunai — gak boleh dipakai motong invoice lain, dan gak berhubungan sama penukaran barang pasca-retur (2 mekanisme independen, lihat submodule "Penukaran Barang Pasca-Retur").
 - Total yang dicairkan/disettle dari saldo kredit retur gak boleh melebihi nominal saldo yang tersisa.
 
 **Skenario**
