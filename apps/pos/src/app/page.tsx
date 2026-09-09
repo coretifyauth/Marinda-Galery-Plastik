@@ -183,7 +183,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "id, source_ref, date, counterparties(name, contact), goods_issues!inner(goods_issue_lines(qty_issued, unit_price, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
+      "id, source_ref, date, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
     )
     .eq("type", "OUTBOUND")
     .eq("date", date)
@@ -195,7 +195,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
     source_ref: string;
     date: string;
     counterparties: { name: string; contact: string | null } | null;
-    goods_issues: { goods_issue_lines: { qty_issued: number; unit_price: number | null; items: { name: string; uom: string } | null }[] }[];
+    goods_notes: { goods_note_lines: { qty: number; unit_price: number | null; items: { name: string; uom: string } | null }[] }[];
     payments: { id: string; journal_entry_id: string }[];
     transaction_lines: { account_id: string; amount: number; is_tax: boolean }[];
   };
@@ -219,7 +219,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
   }
 
   return rows.map((row) => {
-    const goodsIssueLines = row.goods_issues.flatMap((gi) => gi.goods_issue_lines);
+    const goodsIssueLines = row.goods_notes.flatMap((gi) => gi.goods_note_lines);
     const paymentEntryId = row.payments[0]?.journal_entry_id ?? "";
     return {
       id: row.id,
@@ -231,9 +231,9 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
       lines: goodsIssueLines.map((l) => ({
         name: l.items?.name ?? "-",
         uom: l.items?.uom ?? "",
-        qty: l.qty_issued,
+        qty: l.qty,
         unitPrice: l.unit_price ?? 0,
-        amount: (l.unit_price ?? 0) * l.qty_issued,
+        amount: (l.unit_price ?? 0) * l.qty,
       })),
       extraTotal: row.transaction_lines
         .filter((l) => !l.is_tax && chargeAccountIds.has(l.account_id))

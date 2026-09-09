@@ -64,9 +64,10 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
 
   const [{ data: gi, error: giErr }, { data: pay, error: payErr }] = await Promise.all([
     supabase
-      .from("goods_issues")
-      .select("id, journal_entry_id, goods_issue_lines(id, qty_issued, unit_price, total_cost, items(name, uom))")
-      .eq("invoice_id", id)
+      .from("goods_notes")
+      .select("id, journal_entry_id, goods_note_lines(id, qty, unit_price, total_cost, items(name, uom))")
+      .eq("transaction_id", id)
+      .eq("type", "OUTBOUND")
       .maybeSingle(),
     supabase.from("payments").select("id, journal_entry_id").eq("transaction_id", id).eq("type", "OUTBOUND").maybeSingle(),
   ]);
@@ -77,7 +78,7 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
   const goodsIssue = gi as unknown as {
     id: string;
     journal_entry_id: string;
-    goods_issue_lines: { id: string; qty_issued: number; unit_price: number | null; total_cost: number; items: { name: string; uom: string } | null }[];
+    goods_note_lines: { id: string; qty: number; unit_price: number | null; total_cost: number; items: { name: string; uom: string } | null }[];
   };
   const payment = pay as unknown as { id: string; journal_entry_id: string } | null;
 
@@ -101,13 +102,13 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
 
   const chargeAccountIds = new Set(((chargeTypes ?? []) as { account_id: string }[]).map((c) => c.account_id));
 
-  const lines: SaleLine[] = goodsIssue.goods_issue_lines.map((l) => ({
+  const lines: SaleLine[] = goodsIssue.goods_note_lines.map((l) => ({
     id: l.id,
     itemName: l.items?.name ?? "-",
     uom: l.items?.uom ?? "",
-    qty: l.qty_issued,
+    qty: l.qty,
     unitPrice: l.unit_price ?? 0,
-    lineAmount: (l.unit_price ?? 0) * l.qty_issued,
+    lineAmount: (l.unit_price ?? 0) * l.qty,
   }));
 
   return {
@@ -118,7 +119,7 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
     cashAccountName: (cashDebitLine as unknown as { accounts: { name: string } | null } | null)?.accounts?.name ?? null,
     isCancelled: transaction.status === "dibatalkan",
     total: transaction.amount,
-    totalCost: goodsIssue.goods_issue_lines.reduce((sum, l) => sum + l.total_cost, 0),
+    totalCost: goodsIssue.goods_note_lines.reduce((sum, l) => sum + l.total_cost, 0),
     lines,
     categoryLines: ((categoryLinesRaw ?? []) as unknown as CategoryLineRow[])
       .filter((l) => l.is_tax || chargeAccountIds.has(l.account_id))

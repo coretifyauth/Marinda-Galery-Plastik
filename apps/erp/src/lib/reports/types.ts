@@ -62,7 +62,7 @@ export type CashFlow = {
   /**
    * Delta tiap akun neraca operasional (asset/liability selain Kas, Aset Tetap,
    * dan akun Financing hardcode) yang bergerak di periode ini — auto-discover
-   * dari `accounts`, BUKAN daftar kode akun hardcode. Ref: `memory/architecture/data/financial-reports-schema.md`.
+   * dari `accounts`, BUKAN daftar kode akun hardcode. Ref: `docs/architecture/financial-reports-schema.md`.
    */
   operatingWorkingCapital: OperatingWorkingCapitalLine[];
   operating: number;

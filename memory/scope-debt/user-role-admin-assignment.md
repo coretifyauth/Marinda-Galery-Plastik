@@ -8,7 +8,7 @@ Sekarang assign role ke user (`user_roles`) cuma bisa manual/lewat migration lan
 
 ## Kenapa ditunda
 
-`user_roles_select_self` (`memory/architecture/data/coa-schema.md`) cuma ngizinin user liat role dirinya sendiri. Bikin policy INSERT/UPDATE buat admin assign role user lain butuh `security definer` function — kalau langsung pakai RLS policy biasa yang subquery ke `user_roles` buat cek "apakah pemanggil admin", itu circular-check (nge-cek tabel yang lagi mau di-insert/update pakai tabel yang sama).
+`user_roles_select_self` (`docs/architecture/coa-schema.md`) cuma ngizinin user liat role dirinya sendiri. Bikin policy INSERT/UPDATE buat admin assign role user lain butuh `security definer` function — kalau langsung pakai RLS policy biasa yang subquery ke `user_roles` buat cek "apakah pemanggil admin", itu circular-check (nge-cek tabel yang lagi mau di-insert/update pakai tabel yang sama).
 
 ## Kapan perlu digarap
 
@@ -16,4 +16,4 @@ Begitu ada kebutuhan screen "User Management" di UI — sampai sekarang role mas
 
 ## Referensi
 
-- `memory/architecture/data/coa-schema.md` (bagian "Belum termasuk")
+- `docs/architecture/coa-schema.md` (bagian "Belum termasuk")

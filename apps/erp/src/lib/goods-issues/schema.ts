@@ -23,16 +23,16 @@ export type CreateGoodsIssueInput = z.infer<typeof createGoodsIssueSchema>;
 
 export type GoodsIssue = {
   id: string;
-  invoice_id: string;
+  transaction_id: string;
   journal_entry_id: string;
-  issue_date: string;
+  note_date: string;
   source_ref: string;
   created_at: string;
   ar_invoices: { source_ref: string; amount: number; counterparties: { name: string } };
-  goods_issue_lines: {
+  goods_note_lines: {
     id: string;
     item_id: string;
-    qty_issued: number;
+    qty: number;
     total_cost: number;
     order_line_id: string | null;
     items: { name: string; uom: string };

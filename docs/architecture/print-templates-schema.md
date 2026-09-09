@@ -1,6 +1,6 @@
 # Cetak Dokumen Fisik — Struktur Data & Teknis
 
-Konsep bisnisnya ada di `docs/domain/print-templates.md`. Detail teknis penuh (DDL/RLS): `memory/architecture/data/print-templates-schema.md`. Cross-cutting, murni config presentasi — tidak ada relasi (FK) dari tabel transaksional manapun ke tabel-tabel di sini, dan sebaliknya. Bagian cetak dokumen itu sendiri (AR Invoice, Purchase Order, dst) tidak punya tabel sendiri sama sekali — dirender langsung dari data yang sudah dimuat halaman detailnya masing-masing, ditambah 2 tabel konfigurasi di bawah ini.
+Konsep bisnisnya ada di `docs/domain/print-templates.md`. Detail teknis penuh (DDL/RLS): `supabase/migrations/0009_print_templates_schema.sql`. Cross-cutting, murni config presentasi — tidak ada relasi (FK) dari tabel transaksional manapun ke tabel-tabel di sini, dan sebaliknya. Bagian cetak dokumen itu sendiri (AR Invoice, Purchase Order, dst) tidak punya tabel sendiri sama sekali — dirender langsung dari data yang sudah dimuat halaman detailnya masing-masing, ditambah 2 tabel konfigurasi di bawah ini.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -8,6 +8,8 @@ Konsep bisnisnya ada di `docs/domain/print-templates.md`. Detail teknis penuh (D
 |---|---|---|
 | Identitas Perusahaan | Nama, alamat, NPWP, dan link logo untuk kop surat — 1 baris tunggal untuk seluruh sistem | — |
 | Daftar Penandatangan | Katalog jabatan yang perlu tanda tangan manual di kolom bawah cetakan, beserta urutan tampilnya | — |
+
+> **Migration final (2026-09-07):** `supabase/migrations/0009_print_templates_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Kop Surat & Blok Tanda Tangan
 

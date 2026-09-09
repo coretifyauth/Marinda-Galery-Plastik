@@ -7,6 +7,8 @@
 | Default Akun | Master mapping "peran akun" (mis. Piutang Usaha, Kas Toko) ke 1 akun tetap di Chart of Accounts — dipakai form transaksi supaya user gak perlu milih akun bebas. |
 | Preset Akun Aset Tetap | Master paket 3 akun sekaligus (Aset/Akumulasi Penyusutan/Beban Penyusutan) per jenis aset tetap. |
 
+> **Migration final (2026-09-07):** `supabase/migrations/0008_default_account_settings_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
+
 ## Masalah yang Diselesaikan
 
 Untuk sebagian besar field akun di form transaksi (AR Invoice, AP Bill, Goods Issue, Goods Receipt, Production Order, Sales Order, AR/AP Deposit, Items, Stock Opname, dan sebagian besar aksi di halaman detail seperti retur/write-off/pembayaran/refund), jawabannya SELALU sama — "Akun Piutang Usaha" di form AR Invoice akan selalu akun yang sama setiap kali, gak pernah beda-beda per transaksi. Kalau field ini dibiarkan jadi dropdown bebas berisi seluruh Chart of Accounts, user (yang belum tentu paham debit/kredit) harus milih sendiri akun mana yang benar — rawan salah pilih, dan salah pilih akun di sini bikin jurnalnya salah arah.

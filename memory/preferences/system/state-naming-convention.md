@@ -15,7 +15,7 @@ Berlaku ke `items`/`customers`/`suppliers`/`accounts` (master data yang punya to
 
 - Kalau record itu belum pernah direferensikan di tabel lain mana pun (dicek lewat percobaan `DELETE` beneran + tangkap `foreign_key_violation` dari Postgres sendiri, bukan enumerasi manual) → **dihapus permanen** dari DB.
 - Kalau udah pernah direferensikan (ada transaksi/riwayat yang nunjuk ke situ) → **diarsipkan** (`archived_at = now()`) sebagai fallback, bukan ditolak/gagal.
-- Mekanisme lengkap (RPC `delete_item`/`delete_customer`/`delete_supplier`/`delete_account`, kenapa gak perlu enumerasi tabel referensi manual, 2 bug yang ketemu & diperbaiki pas dibangun): `memory/architecture/data/coa-schema.md` submodule "Smart Delete Master Data".
+- Mekanisme lengkap (RPC `delete_item`/`delete_customer`/`delete_supplier`/`delete_account`, kenapa gak perlu enumerasi tabel referensi manual, 2 bug yang ketemu & diperbaiki pas dibangun): `docs/architecture/coa-schema.md` submodule "Smart Delete Master Data".
 - Kebijakan LAMA (sebelum ini) sengaja nutup total hard-delete lewat RLS default-deny di keempat tabel ini ("cegah hard delete" — kalimat itu sekarang gak berlaku lagi apa adanya, direvisi lewat diskusi sama user). RLS-nya sendiri gak berubah (tetap gak ada grant/policy `DELETE` langsung ke tabel) — yang baru adalah 1 RPC `security definer` per entity yang jadi pintu sempit terkontrol buat kasus "belum pernah dipakai".
 
 **`published`** (bukan kolom tersimpan — derived state)

@@ -7,6 +7,8 @@
 | Daftar Jenis Dokumen | Master 29 jenis dokumen transaksional di seluruh sistem, masing-masing dengan kode singkat (prefix) sendiri — contoh AP Bill = `APB`, AR Invoice = `ARI`. Plus 1 jenis ke-30 yang bukan dokumen transaksional (Kode Scan Barang, `SKU`) — nebeng mekanisme yang sama biar formatnya konsisten, lihat submodule "Kode Scan Barang" di `docs/architecture/items-schema.md`. |
 | Penghitung Nomor | Menyimpan angka urutan terakhir yang sudah dipakai, per jenis dokumen per tahun. Sumber dari nomor berikutnya yang akan diberikan. |
 
+> **Migration final (2026-09-07):** `supabase/migrations/0007_document_numbering_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
+
 ## Generate Nomor Otomatis
 
 **Peta Data (ERD)**

@@ -1,6 +1,6 @@
 # Nomor Dokumen: Tampil di List & di Sebelah Heading Detail
 
-Diputuskan 2026-08-13 (preferensi user). Berlaku ke semua modul yang punya `doc_type` di `document_number_types` (lihat `memory/architecture/data/document-numbering-schema.md`).
+Diputuskan 2026-08-13 (preferensi user). Berlaku ke semua modul yang punya `doc_type` di `document_number_types` (lihat `docs/architecture/document-numbering-schema.md`).
 
 ## List Table
 
@@ -28,7 +28,7 @@ Baru — sebelum ini nomor dokumen cuma keliatan di baris "Rujukan Dokumen" dala
 
 Diterapkan ke 12 detail page yang punya `source_ref` sendiri: `ap-bills`, `ar-invoices`, `purchase-orders`, `sales-orders`, `ap-deposits`, `ar-deposits`, `stock-opnames`, `production-orders`, `journal-entries`, `goods-issues`, `pos-sales` (semua di `apps/erp/src/app/(app)/`).
 
-**Kasus khusus — `goods-receipts/[id]/view.tsx`:** tabel `goods_receipt_notes` gak punya `doc_type`/`source_ref` sendiri (bukan salah satu dari 29 jenis dokumen, lihat schema doc). Badge-nya nampilin nomor AP Bill yang dibuat bareng GRN itu (`grn.ap_bills.source_ref`), dikasih `title` attribute penjelas kenapa nomornya "APB-..." bukan format GRN sendiri.
+**Kasus khusus — `goods-receipts/[id]/view.tsx`:** `goods_notes` (`type='INBOUND'`, dulu tabel terpisah `goods_receipt_notes`, digabung migration `0080`-`0083`) gak punya `doc_type`/`source_ref` sendiri (bukan salah satu dari 29 jenis dokumen, lihat schema doc — cuma sisi `OUTBOUND` yang punya `source_ref`, `goods-notes-schema.md`). Badge-nya nampilin nomor AP Bill yang dibuat bareng GRN itu (`grn.ap_bills.source_ref`), dikasih `title` attribute penjelas kenapa nomornya "APB-..." bukan format GRN sendiri.
 
 **Dikecualikan (gak dikasih badge):** `fixed-assets/[id]/view.tsx` — fixed asset itu master data, bukan salah satu dari 29 `doc_type`. Nomor `DEPR-...` untuk depresiasi ada di `journal_entries.source_ref` per postingan, bukan di record fixed asset itu sendiri — nampilinnya butuh join per baris riwayat depresiasi, bukan 1 badge di heading.
 
@@ -38,4 +38,4 @@ Diterapkan ke 12 detail page yang punya `source_ref` sendiri: `ap-bills`, `ar-in
 
 ## Referensi
 
-`memory/architecture/data/document-numbering-schema.md` submodule "Data Lama — Gak Dibackfill" — data lama (pre-`0011_document_numbering.sql`) tetap nampilin `source_ref` manual lama di kedua lokasi ini (list & badge), gak ada indikator visual pembeda dari dokumen baru yang bernomor resmi. Kalau suatu saat mau dibedain visualnya (misal badge abu-abu utk dokumen lama vs badge biru utk yang bernomor resmi), itu belum diputuskan.
+`docs/architecture/document-numbering-schema.md` submodule "Data Lama — Gak Dibackfill" — data lama (pre-`0011_document_numbering.sql`) tetap nampilin `source_ref` manual lama di kedua lokasi ini (list & badge), gak ada indikator visual pembeda dari dokumen baru yang bernomor resmi. Kalau suatu saat mau dibedain visualnya (misal badge abu-abu utk dokumen lama vs badge biru utk yang bernomor resmi), itu belum diputuskan.

@@ -1,6 +1,6 @@
 # POS — Kebijakan Retur Barang di Kios
 
-**Modul asal:** POS/Jualan Eceran (sudah dibangun & jalan per 2026-08-09, `apps/pos` — lihat `memory/domain/pos.md`; retur belum termasuk di build ini). **Status:** Grey area — menunggu keputusan owner.
+**Modul asal:** POS/Jualan Eceran (sudah dibangun & jalan per 2026-08-09, `apps/pos` — lihat `docs/domain/pos.md`; retur belum termasuk di build ini). **Status:** Grey area — menunggu keputusan owner.
 
 ## Kondisi
 
@@ -8,7 +8,7 @@ Kios Toko Plastik Makmur Jaya (`apps/pos`) jual barang plastik rumah tangga tuna
 
 ## Kenapa ini grey area, bukan scope-debt
 
-Beda dari item scope-debt biasa (yang nunggu tekanan/bukti kebutuhan teknis buat mulai dikerjakan), ini bukan soal kesiapan teknis — bikin retur POS secara teknis gak sulit (tinggal reuse pola `create_ar_return`, `memory/domain/accounts-receivable.md` submodule "Retur Barang" — **catatan: klasifikasi kondisi RESALABLE/DAMAGED yang dulu ada di pola ini sudah dicabut total migration `0075`**, semua retur sekarang selalu restock, barang rusak ditangani terpisah lewat Stock Opname). Yang belum ada itu **keputusan kebijakan bisnisnya sendiri** — apakah Pak Herman mau kios-nya punya kebijakan "barang yang sudah dibeli tidak dapat dikembalikan" (umum di retail kecil, transaksi tatap muka) atau mau kasih fleksibilitas retur. Ini keputusan yang cuma bisa diambil owner, bukan sesuatu yang bisa diasumsikan/dibangun duluan.
+Beda dari item scope-debt biasa (yang nunggu tekanan/bukti kebutuhan teknis buat mulai dikerjakan), ini bukan soal kesiapan teknis — bikin retur POS secara teknis gak sulit (tinggal reuse pola `create_ar_return`, `docs/domain/accounts-receivable.md` submodule "Retur Barang" — **catatan: klasifikasi kondisi RESALABLE/DAMAGED yang dulu ada di pola ini sudah dicabut total migration `0075`**, semua retur sekarang selalu restock, barang rusak ditangani terpisah lewat Stock Opname). Yang belum ada itu **keputusan kebijakan bisnisnya sendiri** — apakah Pak Herman mau kios-nya punya kebijakan "barang yang sudah dibeli tidak dapat dikembalikan" (umum di retail kecil, transaksi tatap muka) atau mau kasih fleksibilitas retur. Ini keputusan yang cuma bisa diambil owner, bukan sesuatu yang bisa diasumsikan/dibangun duluan.
 
 ## Opsi yang dipertimbangkan
 
@@ -21,8 +21,8 @@ POS v1 dibangun **tanpa** mekanisme retur — bukan berarti "tidak boleh retur" 
 
 ## Kapan perlu diputuskan
 
-Sebelum atau saat POS mulai dipakai beneran di kios — Pak Herman perlu eksplisit menentukan kebijakan retur kiosnya. Begitu diputuskan (arah manapun), keputusan itu masuk jadi Aturan Bisnis permanen di `docs/domain/pos.md` + `memory/domain/pos.md`, dan file ini dihapus (siklus hidup sama seperti scope-debt, lihat `memory/brief.md` > "Aturan siklus hidup dokumen").
+Sebelum atau saat POS mulai dipakai beneran di kios — Pak Herman perlu eksplisit menentukan kebijakan retur kiosnya. Begitu diputuskan (arah manapun), keputusan itu masuk jadi Aturan Bisnis permanen di `docs/domain/pos.md` + `docs/domain/pos.md`, dan file ini dihapus (siklus hidup sama seperti scope-debt, lihat `memory/brief.md` > "Aturan siklus hidup dokumen").
 
 ## Referensi
 
-- `memory/domain/accounts-receivable.md` submodule "Retur Barang (Credit Note)" — pola teknis yang bisa di-reuse kalau nanti diputuskan boleh retur.
+- `docs/domain/accounts-receivable.md` submodule "Retur Barang (Credit Note)" — pola teknis yang bisa di-reuse kalau nanti diputuskan boleh retur.

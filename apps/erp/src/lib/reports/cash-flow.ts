@@ -9,7 +9,7 @@ import type { CashFlow, EntryLine, OperatingWorkingCapitalLine, TrialBalance } f
 /**
  * Kode akun Beban Penyusutan yang di-add-back di Operating — hardcode,
  * bukan derive generik (belum ada flag `is_depreciation` di `accounts`).
- * Ref: `memory/architecture/data/financial-reports-schema.md` bagian "Belum termasuk".
+ * Ref: `docs/architecture/financial-reports-schema.md` bagian "Belum termasuk".
  */
 const DEPRECIATION_ACCOUNT_CODES = ["5600", "5610"];
 /** Kode akun utang jangka panjang (di luar Utang Usaha) yang mutasinya diklasifikasikan Financing. */

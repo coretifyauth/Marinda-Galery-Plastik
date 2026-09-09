@@ -232,9 +232,10 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("bill_id", id)
         .order("replacement_date"),
       supabase
-        .from("goods_receipt_notes")
-        .select("id, goods_receipt_lines(item_id, qty_received, unit_cost, items(name, uom))")
-        .eq("bill_id", id)
+        .from("goods_notes")
+        .select("id, goods_note_lines(item_id, qty, unit_cost, items(name, uom))")
+        .eq("transaction_id", id)
+        .eq("type", "INBOUND")
         .maybeSingle(),
       supabase
         .from("deposit_applications")
@@ -349,13 +350,13 @@ export function ApBillDetailView({ id }: { id: string }) {
     const claimed = claimedQtyByItem();
     setReturLines(
       goodsReceipt
-        ? goodsReceipt.goods_receipt_lines
+        ? goodsReceipt.goods_note_lines
             .map((l) => ({
               item_id: l.item_id,
               name: l.items.name,
               uom: l.items.uom,
               unit_cost: l.unit_cost,
-              qty_available: l.qty_received - (claimed.get(l.item_id) ?? 0),
+              qty_available: l.qty - (claimed.get(l.item_id) ?? 0),
               qty_returned: "",
             }))
             .filter((l) => l.qty_available > 0)
@@ -436,12 +437,12 @@ export function ApBillDetailView({ id }: { id: string }) {
     const claimed = claimedQtyByItem();
     setReplaceLines(
       goodsReceipt
-        ? goodsReceipt.goods_receipt_lines
+        ? goodsReceipt.goods_note_lines
             .map((l) => ({
               item_id: l.item_id,
               name: l.items.name,
               uom: l.items.uom,
-              qty_available: l.qty_received - (claimed.get(l.item_id) ?? 0),
+              qty_available: l.qty - (claimed.get(l.item_id) ?? 0),
               qty: "",
             }))
             .filter((l) => l.qty_available > 0)
@@ -734,9 +735,9 @@ export function ApBillDetailView({ id }: { id: string }) {
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur — Kurangi Utang", badge: creditNotes.length },
-    // Tukar Barang wajib qty fisik + goods_receipt_notes (create_purchase_replacement nolak
+    // Tukar Barang wajib qty fisik + goods receipt (create_purchase_replacement nolak
     // kalau gak ada) -- gak ada gunanya ditampilin buat bill financial-only, submit-nya bakal
-    // ketolak RPC. Lihat memory/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
+    // ketolak RPC. Lihat docs/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
     // Opsi C (Tulis-jadi-Beban / purchase_writeoffs) DICABUT -- barang rusak yang supplier
     // tolak kompensasi sekarang lewat stock_opname generic, bukan RPC khusus AP.
     ...(!isFinancialOnly ? [{ key: "tukar", label: "Tukar Barang", badge: replacements.length }] : []),
@@ -795,8 +796,8 @@ export function ApBillDetailView({ id }: { id: string }) {
             }`}
             title={
               isFinancialOnly
-                ? "Gak ada goods_receipt_notes -- bill ini gak punya barang fisik tercatat"
-                : "Ada goods_receipt_notes -- bill ini punya barang fisik tercatat"
+                ? "Gak ada goods receipt -- bill ini gak punya barang fisik tercatat"
+                : "Ada goods receipt -- bill ini punya barang fisik tercatat"
             }
           >
             {isFinancialOnly ? "Financial-Only" : "Full — Barang Fisik"}

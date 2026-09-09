@@ -1,6 +1,4 @@
--- Journal Entry & General Ledger schema.
--- Konsolidasi dari migration historis 0004 + 0006 — lihat git log untuk riwayat evolusi.
--- Ref: docs/architecture/journal-entry-schema.md
+-- Journal Entry & General Ledger. Ref: memory/architecture/data/journal-entry-schema.md.
 
 create table journal_entries (
   id uuid primary key default gen_random_uuid(),
@@ -24,8 +22,7 @@ create table journal_lines (
 create index journal_lines_journal_entry_id_idx on journal_lines(journal_entry_id);
 create index journal_lines_account_id_idx on journal_lines(account_id);
 
--- Trigger: cuma leaf account yang boleh diposting.
-
+-- journal_lines_leaf_only -- cuma leaf account (gak punya child) yang boleh diposting.
 create function journal_lines_leaf_only() returns trigger as $$
 begin
   if exists (select 1 from accounts where parent_id = new.account_id) then
@@ -39,10 +36,8 @@ create trigger journal_lines_leaf_only_trigger
   before insert on journal_lines
   for each row execute function journal_lines_leaf_only();
 
--- Trigger: SUM(debit)=SUM(credit) dan minimal 2 baris per entry.
--- Deferred sampai COMMIT, karena baris pertama sebuah entry pasti "kelihatan" gak balance
--- sebelum baris pasangannya masuk (RPC create_journal_entry masukin semua baris 1 transaksi).
-
+-- journal_lines_balance_check -- deferred constraint trigger, dicek pas COMMIT (bukan per
+-- baris) karena baris pertama 1 entry selalu "kelihatan" gak balance sebelum pasangannya masuk.
 create function journal_lines_balance_check() returns trigger as $$
 declare
   v_entry_id uuid := coalesce(new.journal_entry_id, old.journal_entry_id);
@@ -71,16 +66,6 @@ create constraint trigger journal_lines_balance_check_trigger
   deferrable initially deferred
   for each row execute function journal_lines_balance_check();
 
--- Trigger: journal_entries/journal_lines gak pernah bisa diedit/dihapus (jaring kedua
--- selain RLS yang sengaja gak ada policy UPDATE/DELETE). Koreksi cuma via reversing entry.
--- block_edit_delete dipakai ulang oleh tabel-tabel append-only di modul lain juga.
-
-create function block_edit_delete() returns trigger as $$
-begin
-  raise exception 'journal_entries/journal_lines gak pernah bisa diedit/dihapus — cuma reversing entry (lihat general-ledger.md)';
-end;
-$$ language plpgsql;
-
 create trigger journal_entries_block_edit_delete
   before update or delete on journal_entries
   for each row execute function block_edit_delete();
@@ -89,9 +74,10 @@ create trigger journal_lines_block_edit_delete
   before update or delete on journal_lines
   for each row execute function block_edit_delete();
 
--- Trigger di accounts (modul COA): published lock, taruh di sini karena butuh journal_lines.
--- Begitu akun dipakai di journal_lines, code/category/normal_balance/parent_id/is_contra terkunci.
-
+-- accounts_published_lock -- begitu akun dipakai journal_lines, code/category/normal_balance/
+-- parent_id/is_contra terkunci. name/archived_at tetap bebas. (is_contra ikut sejak awal di
+-- sini -- file ini final state, beda dari riwayat asli yang nambah is_contra belakangan lewat
+-- migration fixed-assets.)
 create function accounts_published_lock() returns trigger as $$
 begin
   if (old.code, old.category, old.normal_balance, old.parent_id, old.is_contra)
@@ -108,9 +94,8 @@ create trigger accounts_published_lock_trigger
   before update on accounts
   for each row execute function accounts_published_lock();
 
--- Trigger di accounts: cegah akun yang udah keposting diam-diam jadi header
--- lewat child baru (edge case yang ketemu pas desain Fase 2).
-
+-- accounts_no_retroactive_header -- akun leaf yang udah keposting gak boleh diam-diam jadi
+-- header lewat child baru (ngelanggar leaf-only-posting retroaktif buat histori yang ada).
 create function accounts_no_retroactive_header() returns trigger as $$
 begin
   if new.parent_id is not null and exists (
@@ -126,8 +111,36 @@ create trigger accounts_no_retroactive_header_trigger
   before insert on accounts
   for each row execute function accounts_no_retroactive_header();
 
--- RPC atomik (security invoker -> RLS insert tetap berlaku normal, ini cuma buat atomicity).
+-- delete_account -- Smart Delete Master Data (coa-schema.md submodule). security definer,
+-- gak ada grant/policy DELETE ke authenticated di accounts sama sekali -- ini satu-satunya
+-- jalur hapus, fallback arsip kalau masih dipakai (foreign_key_violation).
+create function delete_account(p_account_id uuid) returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if not exists (
+    select 1 from user_roles ur
+    where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant')
+  ) then
+    raise exception 'Cuma admin/accountant yang boleh menghapus akun';
+  end if;
 
+  begin
+    delete from accounts where id = p_account_id;
+    return 'deleted';
+  exception when foreign_key_violation then
+    update accounts set archived_at = now() where id = p_account_id;
+    return 'archived';
+  end;
+end;
+$$;
+
+grant execute on function delete_account(uuid) to authenticated;
+
+-- create_journal_entry -- RPC yang dipanggil ULANG semua modul lain buat nyatet efek
+-- jurnalnya, gak ada modul yang insert manual ke journal_entries/journal_lines.
 create function create_journal_entry(
   p_entry_date date,
   p_description text,
@@ -160,6 +173,8 @@ begin
 end;
 $$;
 
+-- reverse_journal_entry -- satu-satunya cara "koreksi", bikin entry pembalik (debit/kredit
+-- ketuker), link balik lewat reverses_entry_id.
 create function reverse_journal_entry(
   p_original_entry_id uuid,
   p_entry_date date,
@@ -184,17 +199,6 @@ begin
 end;
 $$;
 
--- Grant: "Automatically expose new tables" dimatikan di project settings,
--- jadi tabel baru butuh grant eksplisit sebelum RLS bisa kepakai PostgREST.
-
-grant select, insert on journal_entries to authenticated;
-grant select, insert on journal_lines to authenticated;
-
-grant execute on function create_journal_entry(date, text, text, jsonb) to authenticated;
-grant execute on function reverse_journal_entry(uuid, date, text) to authenticated;
-
--- RLS
-
 alter table journal_entries enable row level security;
 
 create policy journal_entries_select on journal_entries
@@ -217,3 +221,6 @@ create policy journal_lines_insert on journal_lines
             where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
   );
 -- sengaja gak ada policy UPDATE/DELETE -> RLS default deny
+
+grant select, insert on journal_entries to authenticated;
+grant select, insert on journal_lines to authenticated;

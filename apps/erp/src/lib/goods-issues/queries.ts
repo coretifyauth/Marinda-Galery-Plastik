@@ -14,7 +14,7 @@ export type GoodsIssueFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, counterparties(name)), goods_issue_lines(id, item_id, qty_issued, total_cost, items(name, uom))";
+  "id, transaction_id, journal_entry_id, note_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, counterparties(name)), goods_note_lines(id, item_id, qty, total_cost, items(name, uom))";
 
 export async function fetchGoodsIssues(
   filters: GoodsIssueFilters
@@ -23,13 +23,14 @@ export async function fetchGoodsIssues(
   const to = from + filters.pageSize - 1;
 
   let query = supabase
-    .from("goods_issues")
+    .from("goods_notes")
     .select(SELECT_COLUMNS, { count: "exact" })
-    .order("issue_date", { ascending: false })
+    .eq("type", "OUTBOUND")
+    .order("note_date", { ascending: false })
     .range(from, to);
 
-  if (filters.dateFrom) query = query.gte("issue_date", filters.dateFrom);
-  if (filters.dateTo) query = query.lte("issue_date", filters.dateTo);
+  if (filters.dateFrom) query = query.gte("note_date", filters.dateFrom);
+  if (filters.dateTo) query = query.lte("note_date", filters.dateTo);
 
   const sourceRefTerm = filters.sourceRefSearch.trim();
   if (sourceRefTerm) query = query.ilike("source_ref", `%${sourceRefTerm}%`);

@@ -34,7 +34,7 @@ export type ArInvoice = {
 
 export type ArInvoiceOrigin = "order" | "goods_movement" | "financial_only";
 
-/** Invoice lahir dari 3 jalur beda (`memory/domain/inventory.md` submodule "Sales Order &
+/** Invoice lahir dari 3 jalur beda (`docs/domain/inventory.md` submodule "Sales Order &
  * Pemenuhan Bertahap"): (1) `order` — pemenuhan Sales Order, ada `goods_issues` yang salah
  * satu baris-nya nunjuk balik ke `order_lines` (`order_line_id` keisi); (2) `goods_movement`
  * — Goods Issue langsung (jual spontan, kios walk-in), ada `goods_issues` tapi `order_line_id`

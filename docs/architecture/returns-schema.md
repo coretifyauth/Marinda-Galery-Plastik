@@ -1,17 +1,20 @@
 # Retur (Returns) — Struktur Data
 
-Retur barang — baik customer mengembalikan barang yang sudah diinvoice (AR) maupun kita mengembalikan bahan baku ke supplier (AP). Konsep bisnisnya ada di `docs/domain/accounts-receivable.md` bagian "Retur Barang (Credit Note)" untuk sisi AR, dan `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier" untuk sisi AP. Detail teknis penuh (DDL, RPC lengkap) ada di `memory/architecture/data/returns-schema.md`.
+Retur barang — baik customer mengembalikan barang yang sudah diinvoice (AR) maupun kita mengembalikan bahan baku ke supplier (AP). Konsep bisnisnya ada di `docs/domain/accounts-receivable.md` bagian "Retur Barang (Credit Note)" untuk sisi AR, dan `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier" untuk sisi AP. Detail teknis penuh (DDL, RPC lengkap) ada di `supabase/migrations/0019_returns_schema.sql`.
 
 Tabel ini adalah spine gabungan untuk kedua arah retur: 1 tabel `returns` (dulu `credit_notes`, di-rename biar lebih jelas) dengan kolom `type` (`INBOUND` untuk retur dari customer, `OUTBOUND` untuk retur ke supplier). RPC-nya tetap 2 fungsi terpisah (`create_ar_return`/`create_ap_return`, dulu `create_ar_credit_note`/`create_ap_credit_note`) karena logic bisnisnya beneran beda bentuk, meskipun tempat penyimpanannya sama. Rincian item retur (kedua arah) juga sudah digabung jadi 1 tabel generic `return_lines` — dulu 3 tabel terpisah (`inventory_returns` + `inventory_return_lines` sisi AR, `purchase_return_lines` sisi AP).
 
 **Perubahan penting**: klasifikasi kondisi barang (layak jual/rusak) per baris retur sisi AR **sudah dihapus** — sekarang semua barang retur selalu balik masuk stok. Kalau ada barang yang ternyata rusak, itu ditangani belakangan lewat penyesuaian Stock Opname, bukan bagian dari alur retur lagi (mirror sisi AP yang dari awal memang tidak pernah punya klasifikasi ini).
+
+**Migration final (2026-09-07):** `supabase/migrations/0019_returns_schema.sql` — konsolidasi
+dari migration incremental lama (sudah dihapus, historinya ada di `git log`).
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `returns` | Spine — 1 baris = 1 kejadian retur (AR atau AP), nunjuk ke jurnal kontra/pengurang | `transactions` (invoice/bill asal), `journal_entries` |
-| `return_lines` | Rincian item retur, kedua arah (AR & AP) — dibedakan kolom `type`, sama seperti `returns` | `returns`, `items`, `goods_issues` (cuma sisi AR) |
+| `return_lines` | Rincian item retur, kedua arah (AR & AP) — dibedakan kolom `type`, sama seperti `returns` | `returns`, `items`, `goods_notes` (`type='OUTBOUND'`, cuma sisi AR) |
 
 ## Retur Barang dari Customer (AR)
 
@@ -20,7 +23,7 @@ Tabel ini adalah spine gabungan untuk kedua arah retur: 1 tabel `returns` (dulu 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `returns` (`type='INBOUND'`) | 1 baris = 1 retur ke customer, nunjuk invoice asal lewat `transaction_id` | `transactions` (invoice), `journal_entries` (jurnal kontra-revenue) |
-| `return_lines` (`type='INBOUND'`) | Rincian per item yang diretur fisik — cuma ada kalau invoice-nya lahir dari `create_goods_issue` (lihat `goods-issue-schema.md`) | `returns`, `items`, `goods_issues` (rujukan snapshot cost) |
+| `return_lines` (`type='INBOUND'`) | Rincian per item yang diretur fisik — cuma ada kalau invoice-nya lahir dari `create_goods_issue` (lihat `goods-notes-schema.md`) | `returns`, `items`, `goods_notes` (`type='OUTBOUND'`, rujukan snapshot cost) |
 
 **Struktur `returns` (kolom yang penting buat dipahami)**
 
@@ -36,17 +39,17 @@ Tabel ini adalah spine gabungan untuk kedua arah retur: 1 tabel `returns` (dulu 
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
-| `qty_returned` | Qty barang yang balik | Dicek gak boleh melebihi qty yang dulu keluar (`goods_issue_lines.qty_issued`) secara akumulatif |
-| `total_cost` | Cost barang yang diretur | Dihitung dari **snapshot** unit cost pas barang itu keluar (`goods_issue_lines.total_cost / qty_issued`), bukan harga sekarang |
+| `qty_returned` | Qty barang yang balik | Dicek gak boleh melebihi qty yang dulu keluar (`goods_note_lines.qty`) secara akumulatif |
+| `total_cost` | Cost barang yang diretur | Dihitung dari **snapshot** unit cost pas barang itu keluar (`goods_note_lines.total_cost / qty`), bukan harga sekarang |
 | `condition` | Selalu `RESALABLE` buat baris baru | Kolom historis — dulu bisa `DAMAGED` (barang gak balik masuk stok, cost jadi Beban Kerugian Barang Rusak), klasifikasi ini **sudah dihapus**; baris lama yang masih `DAMAGED` tetap tersimpan apa adanya (data gak diubah), tapi RPC gak pernah menulisnya lagi |
-| `goods_issue_id` | Rujukan `goods_issues` asal | Cuma keisi baris `type='INBOUND'` — dipakai buat tau snapshot cost mana yang dibalik |
+| `goods_issue_id` | Rujukan `goods_notes` (`type='OUTBOUND'`) asal | Cuma keisi baris `type='INBOUND'` — dipakai buat tau snapshot cost mana yang dibalik |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Retur invoice financial-only (barang gak dilacak stok) | `create_ar_return` (param `p_lines` kosong/null) | 1 jurnal: Debit Retur & Potongan Penjualan, Kredit Piutang Usaha, sejumlah `p_amount` (input eksplisit caller) | Trigger `credit_notes_no_over_return` (nama fungsi belum di-rename) — total retur akumulatif gak boleh lebihi `transactions.amount` |
-| Retur invoice yang stoknya dilacak (jalur full) | `create_ar_return` (param `p_lines` terisi) | 2 jurnal: kontra-revenue (nominal dari caller) + reversal HPP (nominal dihitung server dari snapshot cost). **Semua baris** masuk lagi ke `inventory_balances` (blend rata-rata tertimbang) — tidak ada lagi baris yang dikecualikan | RPC `raise exception` kalau invoice gak punya `goods_issues` sama sekali, atau item yang diretur gak ketemu di `goods_issue_lines`-nya |
+| Retur invoice yang stoknya dilacak (jalur full) | `create_ar_return` (param `p_lines` terisi) | 2 jurnal: kontra-revenue (nominal dari caller) + reversal HPP (nominal dihitung server dari snapshot cost). **Semua baris** masuk lagi ke `inventory_balances` (blend rata-rata tertimbang) — tidak ada lagi baris yang dikecualikan | RPC `raise exception` kalau invoice gak punya `goods_notes` (`type='OUTBOUND'`) sama sekali, atau item yang diretur gak ketemu di `goods_note_lines`-nya |
 | Retur yang bikin sisa tagihan invoice jadi negatif (excess) | Bagian dari `create_ar_return`, otomatis | Porsi excess (bukan seluruh nominal retur) direklasifikasi: Debit Piutang Usaha, Kredit Saldo Kredit Retur Customer; insert baris ke `return_credits` (`return-credits-schema.md`) | Dihitung dari sisa tagihan SEBELUM insert retur; wajib isi `p_return_credit_liability_account_id` kalau excess-nya > 0 |
 | Cek retur udah pernah "diklaim" lewat penukaran garansi atau sebaliknya | Fungsi bantu (dipakai `warranty_replacements`, lihat `warranty-replacements-schema.md`) | Menjumlahkan qty dari `return_lines` + `warranty_replacements` supaya gak dobel klaim | `sales_returned_qty` join `returns` filter `type='INBOUND'` |
 
@@ -55,9 +58,9 @@ Tabel ini adalah spine gabungan untuk kedua arah retur: 1 tabel `returns` (dulu 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Total retur akumulatif gak boleh lebihi nilai invoice (financial-only) | Trigger `credit_notes_no_over_return` (cap ke `transactions.amount`, bukan sisa outstanding — gak peduli status bayar) |
-| Total qty retur gak boleh lebihi qty yang beneran keluar (jalur full) | Trigger `return_lines_no_over_return_inbound` (akumulasi `qty_returned` per item per goods_issue vs `goods_issue_lines.qty_issued`) |
+| Total qty retur gak boleh lebihi qty yang beneran keluar (jalur full) | Trigger `return_lines_no_over_return_inbound` (akumulasi `qty_returned` per item per goods note vs `goods_note_lines.qty`) |
 | Retur tetap boleh dibuat walau invoice udah lunas | Tidak ada guard status-bayar sama sekali di RPC/trigger — retur independen dari status pembayaran |
-| Reversal HPP pakai harga snapshot asli, bukan harga sekarang | RPC menghitung `v_unit_cost` dari `goods_issue_lines.total_cost / qty_issued`, bukan query harga terkini |
+| Reversal HPP pakai harga snapshot asli, bukan harga sekarang | RPC menghitung `v_unit_cost` dari `goods_note_lines.total_cost / qty`, bukan query harga terkini |
 | Semua barang retur balik masuk stok tanpa kecuali | RPC gak lagi punya percabangan kondisi — baris rusak ditangani terpisah lewat Stock Opname |
 | Excess retur dicairkan otomatis jadi saldo kredit terpisah, bukan dibiarkan jadi angka minus | Hitung `v_excess` dari sisa tagihan sebelum insert, insert `return_credits` kalau > 0 |
 | Excess dihitung dari porsi yang beneran melebihi sisa tagihan, bukan seluruh nominal retur | `v_excess := greatest(0, p_amount - greatest(0, v_remaining_before))` |
@@ -73,7 +76,7 @@ Tabel ini adalah spine gabungan untuk kedua arah retur: 1 tabel `returns` (dulu 
 | `returns.journal_entry_id` | banyak-ke-satu | `journal_entries` |
 | `return_lines.return_id` | banyak-ke-satu | `returns` |
 | `return_lines.item_id` | banyak-ke-satu | `items` |
-| `return_lines.goods_issue_id` (type INBOUND) | banyak-ke-satu | `goods_issues` (1 goods issue bisa diretur bertahap) |
+| `return_lines.goods_issue_id` (type INBOUND) | banyak-ke-satu | `goods_notes` (`type='OUTBOUND'`, 1 goods note bisa diretur bertahap) |
 | `return_lines.hpp_reversal_journal_entry_id` (type INBOUND) | banyak-ke-satu | `journal_entries` (jurnal reversal HPP, terpisah dari jurnal di `returns`) |
 | `returns` (excess) | memicu insert ke | `return_credits` (`return-credits-schema.md`) |
 | `returns` | dijadikan basis oleh | `warranty_replacements` (`warranty-replacements-schema.md`) — baris historis nunjuk balik ke sini sebagai bukti fisik barang cacat, baris baru independen |
@@ -101,7 +104,7 @@ Beda dari sisi AR: baris `type='OUTBOUND'` gak pernah punya `goods_issue_id`/`hp
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Retur ke supplier, financial-only (`p_lines` kosong) | `create_ap_return` | 1 jurnal: Debit Utang Usaha, Kredit akun (Persediaan/Beban tergantung akun bill asal), pakai `p_amount` apa adanya | — |
-| Retur ke supplier, Opsi A jalur full (`p_lines` terisi) | `create_ap_return` | Stok dikonsumsi dulu (`consume_weighted_average` per baris, urutan JALAN DULUAN sebelum jurnal dibuat) — `p_amount` dari caller **diabaikan**, diganti hasil penjumlahan cost fisik. 1 jurnal saja: Debit Utang Usaha, Kredit Persediaan Bahan Baku — tidak ada akun kontra karena sisi kredit adalah akun neraca | RPC `raise exception` kalau bill gak punya `goods_receipt_notes` |
+| Retur ke supplier, Opsi A jalur full (`p_lines` terisi) | `create_ap_return` | Stok dikonsumsi dulu (`consume_weighted_average` per baris, urutan JALAN DULUAN sebelum jurnal dibuat) — `p_amount` dari caller **diabaikan**, diganti hasil penjumlahan cost fisik. 1 jurnal saja: Debit Utang Usaha, Kredit Persediaan Bahan Baku — tidak ada akun kontra karena sisi kredit adalah akun neraca | RPC `raise exception` kalau bill gak punya `goods_notes` (`type='INBOUND'`) |
 | Retur bikin outstanding bill jadi negatif (excess) | Bagian dari `create_ap_return`, otomatis | Debit akun asset baru "Piutang Retur Supplier" / Kredit Utang Usaha; insert `return_credits` (`type='OUTBOUND'`) | Dihitung dari `ap_bill_remaining()` sebelum proses; wajib isi `p_return_credit_asset_account_id` kalau excess > 0 |
 | Tukar barang ke supplier (Opsi B) | Bukan bagian file ini — lihat `purchase-replacements-schema.md` | Berdiri sendiri, gak pernah insert ke `returns` | — |
 

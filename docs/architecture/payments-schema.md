@@ -1,6 +1,8 @@
 # Pembayaran — Struktur Data
 
-Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang berkurang, `INBOUND` = utang berkurang) — mirror pola tabel induknya, `transactions` (lihat `docs/architecture/transactions-schema.md`). Baca `docs/domain/accounts-receivable.md` (bagian "AR Payment") dan `docs/domain/accounts-payable.md` (bagian pelunasan utang) buat konteks lengkap. Detail teknis penuh (DDL/trigger/RPC persis) ada di `memory/architecture/data/payments-schema.md`.
+Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang berkurang, `INBOUND` = utang berkurang) — mirror pola tabel induknya, `transactions` (lihat `docs/architecture/transactions-schema.md`). Baca `docs/domain/accounts-receivable.md` (bagian "AR Payment") dan `docs/domain/accounts-payable.md` (bagian pelunasan utang) buat konteks lengkap. Detail teknis penuh (DDL/trigger/RPC persis) ada di `supabase/migrations/0016_payments_schema.sql`.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0016_payments_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

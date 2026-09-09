@@ -13,13 +13,13 @@ Operasionalisasi rule di `memory/brief.md` / `AGENTS.md`: item scope-debt yang s
 
 2. **Verifikasi bukti selesai.** Jangan percaya klaim "udah selesai" begitu saja:
    - Apakah ada migration SQL yang mengimplementasikan keputusan di file itu (`supabase/migrations/*.sql`)?
-   - Apakah `memory/architecture/data/*.md` yang relevan sudah mendokumentasikan hasil finalnya?
+   - Apakah `docs/architecture/*.md` yang relevan sudah mendokumentasikan hasil finalnya?
    - Kalau gak ketemu buktinya, jangan lanjut — tanya user migration/kode mana yang menutup ini.
 
 3. **Tampilkan ringkasan ke user, WAJIB MINTA KONFIRMASI dulu** sebelum menghapus apa pun:
    - Nama file scope-debt yang mau dihapus
    - Bukti selesainya (migration/kode terkait)
-   - Daftar file lain yang mereferensikan file scope-debt ini (grep nama filenya di seluruh `memory/` dan `docs/`) beserta preview perubahan yang akan dibuat di masing-masing (link mati dihapus dari kalimat, ringkasan keputusan tetap ada inline di prosa sekitarnya — jangan hapus seluruh kalimat)
+   - Daftar file lain yang mereferensikan file scope-debt ini (grep nama filenya di seluruh `docs/` dan sisa `memory/`) beserta preview perubahan yang akan dibuat di masing-masing (link mati dihapus dari kalimat, ringkasan keputusan tetap ada inline di prosa sekitarnya — jangan hapus seluruh kalimat)
 
    Ini **wajib nunggu user bilang ya** — jangan hapus otomatis meski buktinya kelihatan jelas.
 

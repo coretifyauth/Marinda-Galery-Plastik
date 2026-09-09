@@ -23,14 +23,14 @@
 **Why:**
 - App POS perlu ramping (bundle kecil, load cepat) buat kasir yang kerja cepat di titik jual — gak numpang di build app admin yang berat (sidebar banyak modul, tabel padat).
 - Deployment independen — app POS bisa dideploy/diakses terpisah dari app admin (URL beda), kasir gak perlu buka seluruh app admin cuma buat checkout.
-- **Invariant yang TETAP dijaga** (rationale penuh: `memory/domain/pos.md` submodule "Konsep Inti", poin no-oversell): 2 app terpisah itu soal organisasi KODE/deployment doang — datanya TETAP 1 sumber kebenaran tunggal (Supabase project yang sama, real-time, gak ada cache stok lokal permanen di app POS). Kalau data ikut dipisah, itu balik lagi ke risiko oversell yang udah sengaja ditolak.
+- **Invariant yang TETAP dijaga** (rationale penuh: `docs/domain/pos.md` submodule "Konsep Inti", poin no-oversell): 2 app terpisah itu soal organisasi KODE/deployment doang — datanya TETAP 1 sumber kebenaran tunggal (Supabase project yang sama, real-time, gak ada cache stok lokal permanen di app POS). Kalau data ikut dipisah, itu balik lagi ke risiko oversell yang udah sengaja ditolak.
 
 **Impact on future modules:**
 - Migration SQL tetap 1 folder `supabase/migrations/` di root, dipakai kedua app — jangan bikin folder migration per-app.
 - Kode yang dipakai 2 app (init Supabase client, Zod schema yang overlap, dst) dipindah ke package bersama (misal `packages/shared`) **kalau nanti kebukti banyak duplikasi** — belum didesain strukturnya sekarang, spekulatif kalau dipaksa duluan.
 - Restrukturisasi fisik (pindah `src/` existing ke `apps/erp/`, bikin `apps/pos/` baru) dikerjakan pas POS masuk tahap implementasi (schema→API→UI), bukan di tahap desain/brainstorming.
 
-**Common mistake to avoid:** Bikin app POS akses Supabase project/database BEDA dari app ERP, atau nyimpen cache stok lokal permanen di app POS — dua-duanya ngelanggar invariant no-oversell (checkout POS sengaja gak dibuat offline-capable, keputusan final — `memory/domain/pos.md`).
+**Common mistake to avoid:** Bikin app POS akses Supabase project/database BEDA dari app ERP, atau nyimpen cache stok lokal permanen di app POS — dua-duanya ngelanggar invariant no-oversell (checkout POS sengaja gak dibuat offline-capable, keputusan final — `docs/domain/pos.md`).
 
 ## Data-fetching POS: TanStack React Query v5 (2026-08-16)
 
@@ -85,6 +85,6 @@
 - RPC bisa terima parameter (`asOfDate`, `startDate`/`endDate`, dst) dan encode business rule di SQL-nya sendiri (mis. exclude closing entry buat Income Statement) — aggregate-select PostgREST cuma bisa nge-group/sum apa adanya, gak ada tempat nyisipin logic tambahan.
 - Konsisten sama pola yang udah dipakai buat SEMUA hal yang harus benar (bukan cuma ditampilkan): `close_period` (write, SECURITY DEFINER), `create_pos_sale` (write, validasi stok server-side) — RPC read-only buat agregat saldo ngikutin filosofi yang sama: jangan percaya angka dihitung di client buat apa pun yang harus akurat secara finansial.
 
-**Impact on future modules:** modul baru mana pun yang butuh saldo/total dari tabel ledger-style HARUS mulai dari RPC ini sejak awal, JANGAN fetch+reduce dulu "karena datanya masih dikit" — itu persis kesalahan yang bikin `journal_lines` numpuk debt serupa dulu (sudah diperbaiki 2026-08-17, lihat `memory/architecture/data/financial-reports-schema.md`). Kalau butuh RPC generik yang reusable lintas modul (bukan 1 RPC per laporan), desain signature-nya nerima nama tabel/filter secara parametrized — TAPI itu baru dikerjakan pas ada kebutuhan RPC kedua/ketiga (belum sekarang, `journal_lines` masih 1 kandidat).
+**Impact on future modules:** modul baru mana pun yang butuh saldo/total dari tabel ledger-style HARUS mulai dari RPC ini sejak awal, JANGAN fetch+reduce dulu "karena datanya masih dikit" — itu persis kesalahan yang bikin `journal_lines` numpuk debt serupa dulu (sudah diperbaiki 2026-08-17, lihat `docs/architecture/financial-reports-schema.md`). Kalau butuh RPC generik yang reusable lintas modul (bukan 1 RPC per laporan), desain signature-nya nerima nama tabel/filter secara parametrized — TAPI itu baru dikerjakan pas ada kebutuhan RPC kedua/ketiga (belum sekarang, `journal_lines` masih 1 kandidat).
 
 **Common mistake to avoid:** Nyalain `db-aggregates-enabled` di Dashboard sebagai jalan pintas. Kelihatannya lebih sedikit kode (ganti `.select()` doang, gak perlu migration baru), tapi nyimpen dependency ke setting yang invisible dari kode — orang lain (atau kamu sendiri nanti) gak akan tau ini harus dinyalain manual sampai fiturnya tiba-tiba error di environment baru.

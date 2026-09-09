@@ -1,6 +1,10 @@
-# Docs Brief — Entry Point (untuk Kamu)
+# Docs Brief — Entry Point (untuk Kamu & Claude)
 
-Peta seluruh `/docs`. Ini adalah knowledge base kamu — media informasi bisnis/akuntansi & jejak pembangunan project, ditulis naratif dan non-teknis. Bahasa program (RPC, trigger, DDL) sengaja dihindari di sini; kalau butuh itu, itu ada di `/memory` (context Claude, bukan buat dibaca manual).
+Peta seluruh `/docs`. Ini adalah SATU-SATUNYA sumber knowledge bisnis/akuntansi & struktur data project — dipakai baik oleh kamu maupun Claude, gak ada lagi salinan compact di `/memory` (dihapus 2026-09-08, lihat `AGENTS.md` > "Docs Structure Overview" buat alasannya). Ditulis naratif dan non-teknis — bahasa program (RPC, trigger, DDL mentah) sengaja dihindari; kalau butuh syntax SQL persis, itu ada di `supabase/migrations/*.sql` (ground truth yang aktif di database, tiap file `docs/architecture/*.md` nunjuk ke migration pasangannya).
+
+`/memory` masih ada, tapi sekarang isinya CUMA konten yang emang gak punya bentuk naratif buat manusia: preferensi kode/UI, mental model wajib sebelum bangun fitur, dan ledger keputusan yang sengaja ditunda (scope-debt/special-case). Lihat `memory/brief.md`.
+
+Gak ada lagi viewer web app buat `/docs` (route `/docs` di `apps/erp` dihapus 2026-09-08) — dibaca langsung sebagai file `.md`.
 
 ## Struktur
 
@@ -8,17 +12,12 @@ Peta seluruh `/docs`. Ini adalah knowledge base kamu — media informasi bisnis/
 /docs
   brief.md               <- file ini
   /domain                 <- knowledge bisnis/akuntansi, naratif, buat belajar
-  /architecture
-    /data                 <- ERD & struktur data tiap modul, dijelasin non-teknis (tabel, bukan DDL)
+  /architecture            <- ERD & struktur data tiap tabel spine, dijelasin non-teknis (tabel, bukan DDL)
   /tutorial                <- user guide operasional per task/workflow ("klik di mana, isi apa")
     /<modul>               <- 1 subfolder per modul (chart-of-accounts, general-ledger, accounts-receivable, dst — lihat isi di bawah), dibangun/diupdate lewat skill `/tutorial`
 ```
 
-Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor. Nama file sama antara `docs/domain/*.md` dan `memory/domain/*.md` (padanan naratif vs compact — lihat `memory/brief.md` kalau butuh versi teknis/RPC/trigger). `docs/tutorial/` beda pola — disegmentasi 2 level (`<modul>/<task>.md`), bukan 1 file per modul kayak `domain`/`architecture`, karena granularity-nya per task/workflow, bukan per modul (lihat `.claude/skills/tutorial/SKILL.md`).
-
-## Docs viewer di web app
-
-Seluruh isi `/docs` direpresentasikan juga di web app-nya sendiri, di routing `/docs` (`apps/erp/src/app/docs/`) — halaman dokumentasi produk biar gak perlu buka file `.md` manual. Baca file langsung dari folder ini lewat `apps/erp/src/lib/docs/fs.ts` (server-side, gak ada duplikasi konten), render markdown (termasuk fence ```mermaid dan cross-reference link relatif antar tutorial) lewat `apps/erp/src/components/docs/`. Gerbang login sama seperti halaman ERP lain (`useRequireAuth`). Kategori `domain`/`architecture` flat (`/docs/<category>/<slug>`); kategori `tutorial` grouped per modul (`/docs/tutorial/<modul>/<slug>`) — daftar kategori mana yang grouped ada di `apps/erp/src/lib/docs/categories.ts` (`isGroupedCategory`), bukan hardcode per halaman.
+Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor. `docs/tutorial/` beda pola — disegmentasi 2 level (`<modul>/<task>.md`), bukan 1 file per modul kayak `domain`/`architecture`, karena granularity-nya per task/workflow, bukan per modul (lihat `.claude/skills/tutorial/SKILL.md`).
 
 ## Isi saat ini
 
@@ -33,7 +32,7 @@ Seluruh isi `/docs` direpresentasikan juga di web app-nya sendiri, di routing `/
 - `document-numbering.md` — cross-cutting, menggantikan field "Rujukan Dokumen" isi-manual dengan nomor otomatis format PREFIX-TAHUN-URUTAN (reset tiap tahun) di semua dokumen transaksional. Kasus khusus AP Bill (dokumen eksternal, nota supplier) — nomor asli direkam terpisah di field "Nomor Nota Supplier".
 
 ### architecture/
-ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan bahas RPC/trigger secara kode). Spine-based — 1 file `.md` per tabel spine/root yang beneran ada di Supabase, bukan per modul bisnis (tabel yang dipakai bareng lintas modul, mis. transaksi AR & AP, tetap 1 file). Daftar resmi & pengelompokan file: `memory/brief.md` bagian `architecture/data/` — itu yang jadi acuan.
+ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan bahas RPC/trigger secara kode — buat syntax SQL persis, tiap file nunjuk ke migration pasangannya di `supabase/migrations/`). Spine-based — 1 file `.md` per tabel spine/root yang beneran ada di Supabase, bukan per modul bisnis (tabel yang dipakai bareng lintas modul, mis. transaksi AR & AP, tetap 1 file). Daftar resmi & pengelompokan file: daftar di bawah ini adalah acuannya.
 
 - `coa-schema.md`, `journal-entry-schema.md`, `fixed-assets-schema.md`, `financial-reports-schema.md`, `pos-schema.md` — gak berubah, gak kena unifikasi.
 - `counterparty-schema.md` — gabungan pelanggan+pemasok jadi `counterparties`.
@@ -47,8 +46,7 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `tax-settings-schema.md` — Pengaturan PPN, 1 baris dipakai bareng AR/AP/POS.
 - `items-schema.md` — master barang, satuan jual/harga, Kode Scan Barang.
 - `orders-schema.md` — gabungan Purchase Order + Sales Order.
-- `goods-receipt-schema.md` — penerimaan barang dari pemasok (3-Way Matching).
-- `goods-issue-schema.md` — penjualan/keluar barang ke pelanggan, titik HPP diakui.
+- `goods-notes-schema.md` (dulu `goods-receipt-schema.md`+`goods-issue-schema.md`, digabung 2026-09-07) — penerimaan barang dari pemasok (3-Way Matching, INBOUND) dan penjualan/keluar barang ke pelanggan (OUTBOUND, titik HPP diakui), 1 tabel generic dibedakan `type`.
 - `bom-schema.md` — resep produksi (Bill of Materials).
 - `production-orders-schema.md` — order produksi, konsumsi bahan baku jadi barang jadi.
 - `stock-opname-schema.md` — penyesuaian stok fisik.

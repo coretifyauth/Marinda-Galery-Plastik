@@ -1,6 +1,8 @@
 # Bill of Materials — Struktur Data
 
-Resep produksi: barang jadi apa yang dihasilkan, dari bahan baku apa saja, dan berapa takarannya per 1 batch. Konsep bisnisnya ada di `docs/domain/inventory.md` bagian "Produksi (Bill of Materials & Production Order)" — file ini fokus ke bagaimana datanya disimpan. Kejadian produksi nyata yang menjalankan resep ini ada di `docs/architecture/production-orders-schema.md`. Detail teknis (SQL, nama fungsi persis): `memory/architecture/data/bom-schema.md`.
+Resep produksi: barang jadi apa yang dihasilkan, dari bahan baku apa saja, dan berapa takarannya per 1 batch. Konsep bisnisnya ada di `docs/domain/inventory.md` bagian "Produksi (Bill of Materials & Production Order)" — file ini fokus ke bagaimana datanya disimpan. Kejadian produksi nyata yang menjalankan resep ini ada di `docs/architecture/production-orders-schema.md`. Detail teknis (SQL, nama fungsi persis): `supabase/migrations/0010_bom_schema.sql`.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0010_bom_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

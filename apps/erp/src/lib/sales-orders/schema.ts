@@ -21,7 +21,7 @@ export type SalesOrderLine = {
   qty_ordered: number;
   unit_price: number;
   items: { name: string; uom: string };
-  goods_issue_lines: { qty_issued: number }[];
+  goods_note_lines: { qty: number }[];
 };
 
 export type SalesOrder = {
@@ -60,13 +60,13 @@ export type SalesOrderListRow = {
 /**
  * Status derived: `cancelled_at` menang duluan (state terminal, lihat
  * cancel_order di inventory-schema.md), baru dihitung dari
- * SUM(goods_issue_lines.qty_issued) per line vs qty_ordered.
+ * SUM(goods_note_lines.qty) per line vs qty_ordered.
  */
 export function soStatus(so: Pick<SalesOrder, "order_lines" | "cancelled_at">): SoStatus {
   if (so.cancelled_at) return "CANCELLED";
   const totals = so.order_lines.map((line) => ({
     ordered: line.qty_ordered,
-    issued: line.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0),
+    issued: line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0),
   }));
   const allIssued = totals.every((t) => t.issued >= t.ordered - 0.0005);
   const noneIssued = totals.every((t) => t.issued <= 0.0005);
@@ -75,7 +75,7 @@ export function soStatus(so: Pick<SalesOrder, "order_lines" | "cancelled_at">): 
   return "PARTIALLY_FULFILLED";
 }
 
-export function lineRemaining(line: Pick<SalesOrderLine, "qty_ordered" | "goods_issue_lines">): number {
-  const issued = line.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0);
+export function lineRemaining(line: Pick<SalesOrderLine, "qty_ordered" | "goods_note_lines">): number {
+  const issued = line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
   return Math.max(0, line.qty_ordered - issued);
 }

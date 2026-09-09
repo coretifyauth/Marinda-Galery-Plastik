@@ -14,7 +14,7 @@ export type GoodsReceiptFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, order_id, bill_id, delivery_note_ref, receipt_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, counterparties(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))";
+  "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))";
 
 export async function fetchGoodsReceipts(
   filters: GoodsReceiptFilters
@@ -23,13 +23,14 @@ export async function fetchGoodsReceipts(
   const to = from + filters.pageSize - 1;
 
   let query = supabase
-    .from("goods_receipt_notes")
+    .from("goods_notes")
     .select(SELECT_COLUMNS, { count: "exact" })
-    .order("receipt_date", { ascending: false })
+    .eq("type", "INBOUND")
+    .order("note_date", { ascending: false })
     .range(from, to);
 
-  if (filters.dateFrom) query = query.gte("receipt_date", filters.dateFrom);
-  if (filters.dateTo) query = query.lte("receipt_date", filters.dateTo);
+  if (filters.dateFrom) query = query.gte("note_date", filters.dateFrom);
+  if (filters.dateTo) query = query.lte("note_date", filters.dateTo);
 
   if (filters.purchaseOrderId) query = query.eq("order_id", filters.purchaseOrderId);
 

@@ -30,9 +30,9 @@ export type ArCreditNote = {
 
 export type GoodsIssueForInvoice = {
   id: string;
-  goods_issue_lines: {
+  goods_note_lines: {
     item_id: string;
-    qty_issued: number;
+    qty: number;
     items: { name: string; uom: string };
     // Cuma keisi kalau line ini fulfillment dari Sales Order -- itu satu-satunya tempat harga
     // jual per item ketracking (order_lines.unit_price). Jalur jual langsung (walk-in,

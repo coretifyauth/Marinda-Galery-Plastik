@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Satuan jual per item (Multi Unit of Measure). Baris is_base=true wajib
 // conversion_factor=1 dan unit_label sama persis items.uom (konvensi input,
-// dijaga di UI — bukan trigger cross-table, lihat memory/domain/inventory.md).
+// dijaga di UI — bukan trigger cross-table, lihat docs/domain/inventory.md).
 export const createItemUnitSchema = z.object({
   item_id: z.string().uuid("Pilih item"),
   unit_label: z.string().min(1, "Nama satuan wajib diisi"),

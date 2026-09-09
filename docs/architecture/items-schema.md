@@ -1,6 +1,6 @@
 # Master Barang (Items) — Struktur Data
 
-Master data barang yang dilacak modul Inventory — bahan baku maupun barang jadi. Konsep bisnisnya ada di `docs/domain/inventory.md` (bagian "Kategori & Brand Barang", "Satuan Jual & Harga (Multi Unit of Measure)", dan "Kode Scan Barang"). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/items-schema.md`. Posisi stok & mutasi per item ada di `inventory-ledger-schema.md`, bukan di sini — file ini murni master data barang.
+Master data barang yang dilacak modul Inventory — bahan baku maupun barang jadi. Konsep bisnisnya ada di `docs/domain/inventory.md` (bagian "Kategori & Brand Barang", "Satuan Jual & Harga (Multi Unit of Measure)", dan "Kode Scan Barang"). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0005_items_schema.sql`. Posisi stok & mutasi per item ada di `inventory-ledger-schema.md`, bukan di sini — file ini murni master data barang.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -10,6 +10,8 @@ Master data barang yang dilacak modul Inventory — bahan baku maupun barang jad
 | `item_categories` | Katalog kategori barang (opsional) | `items` |
 | `item_brands` | Katalog merek/brand barang (opsional) | `items` |
 | `item_units` | Satuan jual per barang (bisa lebih dari 1), tiap satuan punya harga & kode scan sendiri | `items` |
+
+> **Migration final (2026-09-07):** `supabase/migrations/0005_items_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Konsep Inti
 

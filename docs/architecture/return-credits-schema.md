@@ -1,8 +1,11 @@
 # Saldo Kredit Retur (Return Credits) — Struktur Data
 
-Konsep bisnisnya adalah "kelebihan retur" — kalau barang yang diretur nilainya lebih besar dari sisa tagihan invoice/bill yang ada, kelebihan itu gak boleh bikin tagihan minus, jadi otomatis direklasifikasi jadi saldo kredit resmi. Sisi AR ada di `docs/domain/accounts-receivable.md` bagian "Retur Barang (Credit Note)" > "Saldo Kredit dari Retur", pasangan AP-nya di `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier". Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/return-credits-schema.md`.
+Konsep bisnisnya adalah "kelebihan retur" — kalau barang yang diretur nilainya lebih besar dari sisa tagihan invoice/bill yang ada, kelebihan itu gak boleh bikin tagihan minus, jadi otomatis direklasifikasi jadi saldo kredit resmi. Sisi AR ada di `docs/domain/accounts-receivable.md` bagian "Retur Barang (Credit Note)" > "Saldo Kredit dari Retur", pasangan AP-nya di `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier". Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0020_return_credits_schema.sql`.
 
 Tabel ini adalah salah satu dari 4 tabel anak AR/AP yang berbentuk generic (lihat juga `payments-schema.md`, `returns-schema.md`, `deposits-schema.md`) — 1 pasang tabel `return_credits`+`return_credit_refunds` yang menampung kedua arah, dibedakan lewat kolom `type` (`INBOUND` = AR/customer, `OUTBOUND` = AP/supplier). Nilai `type` di sini **TIDAK ikut dibalik** waktu arah `type` di `transactions`/`payments`/`deposits` dibalik maknanya — retur (dan saldo kredit turunannya) tetap dinilai dari arah fisiknya sendiri, bukan ikut label keluarga transaksi induknya. Detail: `returns-schema.md`.
+
+**Migration final (2026-09-07):** `supabase/migrations/0020_return_credits_schema.sql` —
+konsolidasi dari migration incremental lama (sudah dihapus, historinya ada di `git log`).
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

@@ -10,15 +10,15 @@ import { Tabs, type TabDef } from "@/components/ui/tabs";
 
 type GoodsIssueDetail = {
   id: string;
-  invoice_id: string;
+  transaction_id: string;
   journal_entry_id: string;
-  issue_date: string;
+  note_date: string;
   source_ref: string;
   created_at: string;
   ar_invoices: { source_ref: string; amount: number; counterparties: { name: string } };
-  goods_issue_lines: {
+  goods_note_lines: {
     id: string;
-    qty_issued: number;
+    qty: number;
     total_cost: number;
     items: { name: string; uom: string };
   }[];
@@ -42,11 +42,12 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: gi, error: giErr } = await supabase
-      .from("goods_issues")
+      .from("goods_notes")
       .select(
-        "id, invoice_id, journal_entry_id, issue_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, counterparties(name)), goods_issue_lines(id, qty_issued, total_cost, items(name, uom))"
+        "id, transaction_id, journal_entry_id, note_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, counterparties(name)), goods_note_lines(id, qty, total_cost, items(name, uom))"
       )
       .eq("id", id)
+      .eq("type", "OUTBOUND")
       .single();
     if (giErr || !gi) {
       setLoadError(giErr?.message ?? "Goods issue gak ditemukan.");
@@ -89,7 +90,7 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
     return <FormError>{loadError ?? "Goods issue gak ditemukan."}</FormError>;
   }
 
-  const totalHpp = issue.goods_issue_lines.reduce((sum, l) => sum + l.total_cost, 0);
+  const totalHpp = issue.goods_note_lines.reduce((sum, l) => sum + l.total_cost, 0);
 
   const detailGroups = [
     {
@@ -97,14 +98,14 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
       rows: [
         { label: "Customer", value: issue.ar_invoices.counterparties.name },
         { label: "Rujukan Dokumen", value: issue.source_ref },
-        { label: "Tanggal", value: issue.issue_date },
+        { label: "Tanggal", value: issue.note_date },
         {
           label: "Invoice Terkait",
           value: (
             <button
               type="button"
               className="text-blue-600 hover:underline"
-              onClick={() => router.push(`/ar-invoices/${issue.invoice_id}`)}
+              onClick={() => router.push(`/ar-invoices/${issue.transaction_id}`)}
             >
               {issue.ar_invoices.source_ref}
             </button>
@@ -121,7 +122,7 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
 
   const tabs: TabDef[] = [
     { key: "jurnal", label: "Jurnal HPP Terkait", badge: journalEntries.length },
-    { key: "lines", label: "Barang Keluar", badge: issue.goods_issue_lines.length },
+    { key: "lines", label: "Barang Keluar", badge: issue.goods_note_lines.length },
   ];
 
   return (
@@ -196,16 +197,16 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
             </tr>
           </thead>
           <tbody>
-            {issue.goods_issue_lines.map((l) => (
+            {issue.goods_note_lines.map((l) => (
               <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-2">{l.items.name}</td>
                 <td className="px-4 py-2 text-right font-mono">
-                  {l.qty_issued} {l.items.uom}
+                  {l.qty} {l.items.uom}
                 </td>
                 <td className="px-4 py-2 text-right font-mono">{l.total_cost.toLocaleString("id-ID")}</td>
               </tr>
             ))}
-            {issue.goods_issue_lines.length === 0 && (
+            {issue.goods_note_lines.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
                   Belum ada baris.

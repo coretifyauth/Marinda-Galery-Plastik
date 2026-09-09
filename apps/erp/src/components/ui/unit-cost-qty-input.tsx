@@ -37,7 +37,7 @@ const SYNTHETIC_BASE_ID = "__base__";
  * Pilih 1 satuan + qty + harga beli manual per satuan itu -- pola sama UomPriceQtyInput
  * (sisi jual), tapi harganya TETAP diketik manual, gak difilter/diambil dari item_units.price.
  * Dipakai di Purchase Order & Goods Receipt, gantiin MultiUomQtyInput (isi qty campur
- * beberapa satuan sekaligus) yang tadinya dipasang di 2 form ini. Ref: memory/domain/inventory.md
+ * beberapa satuan sekaligus) yang tadinya dipasang di 2 form ini. Ref: docs/domain/inventory.md
  * submodule "Satuan Jual & Harga".
  */
 export function UnitCostQtyInput({

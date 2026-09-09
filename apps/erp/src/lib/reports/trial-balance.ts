@@ -4,7 +4,7 @@ import type { ReportLine, TrialBalance } from "./types";
 
 /**
  * Trial Balance murni pure — dipisah dari `getTrialBalance` biar bisa
- * dites tanpa network (`memory/architecture/data/financial-reports-schema.md`).
+ * dites tanpa network (`docs/architecture/financial-reports-schema.md`).
  */
 export function computeTrialBalance(
   accounts: Account[],

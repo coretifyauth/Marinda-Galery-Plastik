@@ -1,8 +1,10 @@
 # Order (Purchase Order & Sales Order) — Struktur Data
 
-Konsep bisnisnya (kenapa order cuma "komitmen" dan belum bikin jurnal, kenapa opsional, aturan pembatalan) ada di `docs/domain/inventory.md` bagian "Purchase Order & Sales Order (Order) & Penerimaan Barang (3-Way Matching)". File ini fokus ke struktur datanya. Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/orders-schema.md`.
+Konsep bisnisnya (kenapa order cuma "komitmen" dan belum bikin jurnal, kenapa opsional, aturan pembatalan) ada di `docs/domain/inventory.md` bagian "Purchase Order & Sales Order (Order) & Penerimaan Barang (3-Way Matching)". File ini fokus ke struktur datanya. Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0014_orders_schema.sql`.
 
-`orders` + `order_lines` menyimpan baik Purchase Order maupun Sales Order dalam 1 spine, dibedakan cuma dari kolom `direction` (`PURCHASE`/`SALE`). Keduanya struktur & aturannya kembar (sama-sama komitmen, sama-sama opsional, sama-sama batal sebelum ada realisasi fisik) — konsisten dengan pemasok/customer yang juga 1 konsep "pihak" (lihat `counterparty-schema.md`). Yang **tetap** 2 alur berbeda adalah realisasi fisiknya: `goods-receipt-schema.md` (sisi beli) dan `goods-issue-schema.md` (sisi jual) — karena efek jurnalnya beda total.
+`orders` + `order_lines` menyimpan baik Purchase Order maupun Sales Order dalam 1 spine, dibedakan cuma dari kolom `direction` (`PURCHASE`/`SALE`). Keduanya struktur & aturannya kembar (sama-sama komitmen, sama-sama opsional, sama-sama batal sebelum ada realisasi fisik) — konsisten dengan pemasok/customer yang juga 1 konsep "pihak" (lihat `counterparty-schema.md`). Realisasi fisiknya sendiri sekarang tersimpan di 1 tabel generic, `goods-notes-schema.md` (`goods_notes`, dibedakan `type` `INBOUND`/`OUTBOUND`) — tapi **alurnya (RPC)** tetap 2 beda: `create_goods_receipt` (sisi beli) dan `create_goods_issue` (sisi jual), karena efek jurnalnya beda total.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0014_orders_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -42,7 +44,7 @@ Konsep bisnisnya (kenapa order cuma "komitmen" dan belum bikin jurnal, kenapa op
 |---|---|---|---|
 | Buat order baru (PO atau SO) | `create_order` | Insert 1 header `orders` + baris-baris `order_lines` sekaligus. **Gak bikin jurnal apa pun** — order murni rencana | Cuma terima `direction` `PURCHASE`/`SALE`; pihak yang dipilih harus terdaftar dengan role yang sesuai (`supplier` buat beli, `customer` buat jual) |
 | Batalkan order | `cancel_order` | Set `status='CANCELLED'` + `cancelled_at` terisi. **Gak ada jurnal pembalik** (order emang gak pernah punya jurnal) | Ditolak kalau udah ada realisasi fisik apa pun terhadap order itu (minimal 1 GRN buat PO, minimal 1 Goods Issue buat SO) |
-| Terima barang / kirim barang atas order ini | `create_goods_receipt` / `create_goods_issue` | Update status order otomatis (dihitung ulang tiap ada baris realisasi baru) | Lihat `goods-receipt-schema.md` / `goods-issue-schema.md` |
+| Terima barang / kirim barang atas order ini | `create_goods_receipt` / `create_goods_issue` | Update status order otomatis (dihitung ulang tiap ada baris realisasi baru) | Lihat `goods-notes-schema.md` |
 
 **Aturan Bisnis → RPC**
 
@@ -63,8 +65,7 @@ Konsep bisnisnya (kenapa order cuma "komitmen" dan belum bikin jurnal, kenapa op
 | `orders.counterparty_id` | banyak-ke-satu | `counterparties` |
 | `order_lines.order_id` | banyak-ke-satu | `orders` |
 | `order_lines.item_id` | banyak-ke-satu | `items` |
-| `order_lines` (via `order_line_id`) | satu-ke-banyak (opsional) | `goods_receipt_lines` (kalau `direction='PURCHASE'`) |
-| `order_lines` (via `order_line_id`) | satu-ke-banyak (opsional) | `goods_issue_lines` (kalau `direction='SALE'`) |
+| `order_lines` (via `order_line_id`) | satu-ke-banyak (opsional) | `goods_note_lines` (`goods_notes.type='INBOUND'` kalau `direction='PURCHASE'`, `'OUTBOUND'` kalau `direction='SALE'`) |
 
 Catatan tampilan: di aplikasi, Purchase Order dan Sales Order tetap tampil sebagai 2 halaman/menu terpisah (`/purchase-orders`, `/sales-orders`) — ini keputusan UI yang sengaja dipertahankan, bukan cerminan bahwa datanya masih 2 tabel berbeda.
 

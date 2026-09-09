@@ -21,7 +21,7 @@ export type PurchaseOrderLine = {
   qty_ordered: number;
   unit_price: number;
   items: { name: string; uom: string };
-  goods_receipt_lines: { qty_received: number }[];
+  goods_note_lines: { qty: number }[];
 };
 
 export type PurchaseOrder = {
@@ -60,13 +60,13 @@ export type PurchaseOrderListRow = {
 /**
  * Status derived: `cancelled_at` menang duluan (state terminal, lihat
  * cancel_order di inventory-schema.md), baru dihitung dari
- * SUM(goods_receipt_lines.qty_received) per line vs qty_ordered.
+ * SUM(goods_note_lines.qty) per line vs qty_ordered.
  */
 export function poStatus(po: Pick<PurchaseOrder, "order_lines" | "cancelled_at">): PoStatus {
   if (po.cancelled_at) return "CANCELLED";
   const totals = po.order_lines.map((line) => ({
     ordered: line.qty_ordered,
-    received: line.goods_receipt_lines.reduce((sum, r) => sum + r.qty_received, 0),
+    received: line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0),
   }));
   const allReceived = totals.every((t) => t.received >= t.ordered - 0.0005);
   const noneReceived = totals.every((t) => t.received <= 0.0005);
@@ -75,7 +75,7 @@ export function poStatus(po: Pick<PurchaseOrder, "order_lines" | "cancelled_at">
   return "PARTIALLY_RECEIVED";
 }
 
-export function lineRemaining(line: Pick<PurchaseOrderLine, "qty_ordered" | "goods_receipt_lines">): number {
-  const received = line.goods_receipt_lines.reduce((sum, r) => sum + r.qty_received, 0);
+export function lineRemaining(line: Pick<PurchaseOrderLine, "qty_ordered" | "goods_note_lines">): number {
+  const received = line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
   return Math.max(0, line.qty_ordered - received);
 }

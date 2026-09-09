@@ -1,6 +1,8 @@
 # Fixed Assets — Struktur Data
 
-Konsep bisnisnya ada di `docs/domain/fixed-assets.md`. Konsep akun kontra: `docs/domain/chart-of-accounts.md` bagian "Akun Kontra". Detail teknis: `memory/architecture/data/fixed-assets-schema.md`.
+Konsep bisnisnya ada di `docs/domain/fixed-assets.md`. Konsep akun kontra: `docs/domain/chart-of-accounts.md` bagian "Akun Kontra". Detail teknis: `supabase/migrations/0013_fixed_assets_schema.sql`.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0013_fixed_assets_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

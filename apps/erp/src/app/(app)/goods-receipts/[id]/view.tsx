@@ -27,11 +27,12 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: grnData, error: grnErr } = await supabase
-      .from("goods_receipt_notes")
+      .from("goods_notes")
       .select(
-        "id, order_id, bill_id, delivery_note_ref, receipt_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, journal_entry_id, counterparties(name)), goods_receipt_lines(id, item_id, qty_received, unit_cost, items(name, uom))"
+        "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, journal_entry_id, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))"
       )
       .eq("id", id)
+      .eq("type", "INBOUND")
       .single();
     if (grnErr || !grnData) {
       setLoadError(grnErr?.message ?? "Goods receipt gak ditemukan.");
@@ -78,7 +79,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     {
       title: "Informasi Penerimaan",
       rows: [
-        { label: "Tanggal Terima", value: grn.receipt_date },
+        { label: "Tanggal Terima", value: grn.note_date },
         { label: "No. Surat Jalan", value: grn.delivery_note_ref ?? "-" },
         {
           label: "Purchase Order",
@@ -104,7 +105,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
             <button
               type="button"
               className="text-blue-600 hover:underline"
-              onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}
+              onClick={() => router.push(`/ap-bills/${grn.transaction_id}`)}
             >
               {grn.ap_bills.source_ref} — {grn.ap_bills.amount.toLocaleString("id-ID")}
             </button>
@@ -115,7 +116,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   ];
 
   const tabs: TabDef[] = [
-    { key: "lines", label: "Item Diterima", badge: grn.goods_receipt_lines.length },
+    { key: "lines", label: "Item Diterima", badge: grn.goods_note_lines.length },
     { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
   ];
 
@@ -151,16 +152,16 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
               </tr>
             </thead>
             <tbody>
-              {grn.goods_receipt_lines.map((l) => (
+              {grn.goods_note_lines.map((l) => (
                 <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2 font-medium text-black">
                     {l.items.name} ({l.items.uom})
                   </td>
-                  <td className="px-4 py-2 text-right font-mono">{l.qty_received}</td>
+                  <td className="px-4 py-2 text-right font-mono">{l.qty}</td>
                   <td className="px-4 py-2 text-right font-mono">{l.unit_cost.toLocaleString("id-ID")}</td>
                 </tr>
               ))}
-              {grn.goods_receipt_lines.length === 0 && (
+              {grn.goods_note_lines.length === 0 && (
                 <tr>
                   <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
                     Belum ada baris item.

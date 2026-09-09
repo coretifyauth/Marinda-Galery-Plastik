@@ -1,6 +1,6 @@
 # General Ledger & Journal Entry — Struktur Data
 
-Konsep bisnisnya ada di `docs/domain/general-ledger.md` — file ini fokus ke struktur data & aturan otomatis. Detail teknis: `memory/architecture/data/journal-entry-schema.md`. Akun yang dipakai bergantung ke `docs/architecture/coa-schema.md`.
+Konsep bisnisnya ada di `docs/domain/general-ledger.md` — file ini fokus ke struktur data & aturan otomatis. Detail teknis: `supabase/migrations/0003_journal_entry_schema.sql`. Akun yang dipakai bergantung ke `docs/architecture/coa-schema.md`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -8,6 +8,8 @@ Konsep bisnisnya ada di `docs/domain/general-ledger.md` — file ini fokus ke st
 |---|---|---|
 | `journal_entries` | Header 1 transaksi (tanggal, keterangan, dokumen sumber) | Bisa menunjuk ke entry lain yang dibalikkannya (reversing entry) |
 | `journal_lines` | Baris debit/kredit dalam 1 transaksi | Setiap baris menunjuk ke 1 akun di Chart of Accounts |
+
+> **Migration final (2026-09-07):** `supabase/migrations/0003_journal_entry_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Konsep Inti
 

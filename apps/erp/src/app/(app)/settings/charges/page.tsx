@@ -526,7 +526,7 @@ function FixedAssetPresetsManager({ accounts, canWrite }: { accounts: Account[];
 }
 
 /** Kelola company_settings — singleton (pola sama TaxSettingsCard di bawah), dibaca live
- * buat kop surat cetakan AR Invoice/PO (memory/domain/print-templates.md). */
+ * buat kop surat cetakan AR Invoice/PO (docs/domain/print-templates.md). */
 function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
   const [settings, setSettings] = useState<CompanySettings | null>(null);
   const [name, setName] = useState("");

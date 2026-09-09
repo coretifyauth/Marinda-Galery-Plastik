@@ -1,15 +1,19 @@
 # POS / Jualan Eceran — Struktur Data & Teknis
 
-Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger): `memory/architecture/data/pos-schema.md`.
+Konsep bisnisnya ada di `docs/domain/pos.md`. Detail teknis penuh (DDL/trigger): `supabase/migrations/0024_pos_schema.sql`.
 
-Sejak migration `0078`, POS gak punya tabel sendiri sama sekali lagi — penjualan kios murni komposisi tabel generic yang udah dipakai modul lain (`transactions`, `goods_issues`, `payments`). Tabel penanda sementara yang sempat ada (`pos_sales`/`pos_sale_lines`/`pos_sale_extra_credit_lines`, hasil unifikasi migration `0076`) dihapus total — ternyata isinya sebagian besar duplikasi data yang udah ada di tempat lain.
+Sejak migration `0078`, POS gak punya tabel sendiri sama sekali lagi — penjualan kios murni komposisi tabel generic yang udah dipakai modul lain (`transactions`, `goods_notes`, `payments`). Tabel penanda sementara yang sempat ada (`pos_sales`/`pos_sale_lines`/`pos_sale_extra_credit_lines`, hasil unifikasi migration `0076`) dihapus total — ternyata isinya sebagian besar duplikasi data yang udah ada di tempat lain.
+
+**Migration final (2026-09-07):** `supabase/migrations/0024_pos_schema.sql` — konsolidasi dari
+migration incremental lama (sudah dihapus, historinya ada di `git log`). Nomor migration `00XX`
+yang disebut di dokumen ini historis.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi buat POS | Terhubung ke |
 |---|---|---|
 | `transactions`/`transaction_lines` | Jurnal Piutang↔Pendapatan (+kategori tambahan+PPN) | `counterparties`, `accounts` |
-| `goods_issues`/`goods_issue_lines` | Konsumsi stok + jurnal HPP↔Persediaan + harga jual per barang | `items` |
+| `goods_notes` (`type='OUTBOUND'`)/`goods_note_lines` | Konsumsi stok + jurnal HPP↔Persediaan + harga jual per barang | `items` |
 | `payments` | Pelunasan — jurnal Kas↔Piutang, selalu lunas penuh seketika | `accounts` |
 | `pos_settings` | Singleton — ID customer default "Pelanggan Umum" (fallback pembeli anonim) | `counterparties` |
 | `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan yang bisa dipilih kasir saat checkout | `accounts` |

@@ -34,16 +34,16 @@ export type CreateGoodsReceiptInput = z.infer<typeof createGoodsReceiptSchema>;
 export type GoodsReceiptNote = {
   id: string;
   order_id: string | null;
-  bill_id: string;
+  transaction_id: string;
   delivery_note_ref: string | null;
-  receipt_date: string;
+  note_date: string;
   created_at: string;
   orders: { source_ref: string; counterparties: { name: string } } | null;
   ap_bills: { source_ref: string; amount: number; counterparties: { name: string } };
-  goods_receipt_lines: {
+  goods_note_lines: {
     id: string;
     item_id: string;
-    qty_received: number;
+    qty: number;
     unit_cost: number;
     items: { name: string; uom: string };
   }[];

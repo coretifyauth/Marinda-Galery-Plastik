@@ -1,6 +1,8 @@
 # Stock Opname — Struktur Data
 
-Penyesuaian stok berdasarkan hasil hitung fisik gudang — beda mendasar dari submodule Inventory lain: gak menempel ke 1 transaksi tertentu (retur/write-off selalu nunjuk balik ke dokumen sumbernya), dokumen sumbernya di sini justru sesi hitung fisik itu sendiri. Konsep bisnisnya ada di `docs/domain/inventory.md` bagian "Stock Opname (Penyesuaian Stok Fisik)". Detail teknis: `memory/architecture/data/stock-opname-schema.md`.
+Penyesuaian stok berdasarkan hasil hitung fisik gudang — beda mendasar dari submodule Inventory lain: gak menempel ke 1 transaksi tertentu (retur/write-off selalu nunjuk balik ke dokumen sumbernya), dokumen sumbernya di sini justru sesi hitung fisik itu sendiri. Konsep bisnisnya ada di `docs/domain/inventory.md` bagian "Stock Opname (Penyesuaian Stok Fisik)". Detail teknis: `supabase/migrations/0012_stock_opname_schema.sql`.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0012_stock_opname_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

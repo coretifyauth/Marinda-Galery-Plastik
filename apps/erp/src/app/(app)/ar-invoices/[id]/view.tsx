@@ -231,11 +231,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("invoice_id", id)
         .order("replacement_date"),
       supabase
-        .from("goods_issues")
+        .from("goods_notes")
         .select(
-          "id, goods_issue_lines(item_id, qty_issued, order_line_id, items(name, uom), order_lines(unit_price))"
+          "id, goods_note_lines(item_id, qty, order_line_id, items(name, uom), order_lines(unit_price))"
         )
-        .eq("invoice_id", id)
+        .eq("transaction_id", id)
+        .eq("type", "OUTBOUND")
         .maybeSingle(),
       supabase
         .from("transaction_lines")
@@ -323,11 +324,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setReturAmount("");
     setReturLines(
       goodsIssue
-        ? goodsIssue.goods_issue_lines.map((l) => ({
+        ? goodsIssue.goods_note_lines.map((l) => ({
             item_id: l.item_id,
             name: l.items.name,
             uom: l.items.uom,
-            qty_available: l.qty_issued,
+            qty_available: l.qty,
             qty_returned: "",
             unit_price: l.order_lines?.unit_price ?? null,
           }))
@@ -422,12 +423,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setReplaceError(null);
     setReplaceDate("");
     setReplaceLines(
-      goodsIssue.goods_issue_lines
+      goodsIssue.goods_note_lines
         .map((l) => ({
           item_id: l.item_id,
           name: l.items.name,
           uom: l.items.uom,
-          qty_remaining: l.qty_issued - (alreadyClaimed.get(l.item_id) ?? 0),
+          qty_remaining: l.qty - (alreadyClaimed.get(l.item_id) ?? 0),
           qty: "",
         }))
         .filter((l) => l.qty_remaining > 0)
@@ -722,20 +723,20 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     // unit_price ketracking) -- jalur jual langsung gak punya harga per item di mana pun,
     // invoice-nya cuma nyimpen total lump-sum per kategori. Kalau gak ada satu pun line yang
     // punya harga, tabel item cukup qty (jangan pura-pura ada kolom harga kosong).
-    const hasItemPrice = !!goodsIssue?.goods_issue_lines.some((l) => l.order_lines);
+    const hasItemPrice = !!goodsIssue?.goods_note_lines.some((l) => l.order_lines);
     const itemRows = goodsIssue
-      ? goodsIssue.goods_issue_lines
+      ? goodsIssue.goods_note_lines
           .map((l) => {
             const unitPrice = l.order_lines?.unit_price;
-            const subtotal = unitPrice != null ? unitPrice * l.qty_issued : null;
+            const subtotal = unitPrice != null ? unitPrice * l.qty : null;
             return hasItemPrice
               ? `<tr>
                   <td>${escapeHtml(l.items.name)}</td>
-                  <td class="num">${l.qty_issued} ${escapeHtml(l.items.uom)}</td>
+                  <td class="num">${l.qty} ${escapeHtml(l.items.uom)}</td>
                   <td class="num">${unitPrice != null ? `Rp${unitPrice.toLocaleString("id-ID")}` : "-"}</td>
                   <td class="num">${subtotal != null ? `Rp${subtotal.toLocaleString("id-ID")}` : "-"}</td>
                 </tr>`
-              : `<tr><td>${escapeHtml(l.items.name)}</td><td class="num">${l.qty_issued} ${escapeHtml(l.items.uom)}</td></tr>`;
+              : `<tr><td>${escapeHtml(l.items.name)}</td><td class="num">${l.qty} ${escapeHtml(l.items.uom)}</td></tr>`;
           })
           .join("")
       : "";

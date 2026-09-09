@@ -1,16 +1,16 @@
 # Retur AP/AR: Badge Financial-Only vs Full, Tab Disaring Sesuai
 
-Diputuskan 2026-08-13 (preferensi user), diterapkan di `ap-bills/[id]/view.tsx` dan `ar-invoices/[id]/view.tsx`. Konteks bisnis lengkap: `memory/domain/accounts-payable.md` & `memory/domain/accounts-receivable.md` submodule "Retur Barang ke Supplier"/"Retur Barang dari Customer".
+Diputuskan 2026-08-13 (preferensi user), diterapkan di `ap-bills/[id]/view.tsx` dan `ar-invoices/[id]/view.tsx`. Konteks bisnis lengkap: `docs/domain/accounts-payable.md` & `docs/domain/accounts-receivable.md` submodule "Retur Barang ke Supplier"/"Retur Barang dari Customer".
 
 ## Kenapa
 
-Sebagian bill/invoice gak punya barang fisik tercatat (debit langsung ke akun Beban, bukan lewat PO→Goods Receipt / gak ada Goods Issue) — buat dokumen kayak gitu, opsi retur yang butuh qty fisik (Tukar Barang, Tulis-jadi-Beban di AP; Penggantian Barang/Garansi di AR) **selalu ketolak RPC** (`raise exception 'Bill % gak punya goods_receipt_notes...'` dst) kalau dipaksa dicoba. Sebelum ini, tab-nya tetap tampil apa adanya — user baru tau gak bisa dipakai setelah submit gagal. Sekarang gak ditampilin sama sekali kalau emang gak mungkin dipakai.
+Sebagian bill/invoice gak punya barang fisik tercatat (debit langsung ke akun Beban, bukan lewat PO→Goods Receipt / gak ada Goods Issue) — buat dokumen kayak gitu, opsi retur yang butuh qty fisik (Tukar Barang, Tulis-jadi-Beban di AP; Penggantian Barang/Garansi di AR) **selalu ketolak RPC** (`raise exception 'Bill % gak punya goods receipt...'` dst — cek `goods_notes` `type='INBOUND'`/`'OUTBOUND'`, dulu tabel terpisah `goods_receipt_notes`/`goods_issues`) kalau dipaksa dicoba. Sebelum ini, tab-nya tetap tampil apa adanya — user baru tau gak bisa dipakai setelah submit gagal. Sekarang gak ditampilin sama sekali kalau emang gak mungkin dipakai.
 
 ## Definisi "Financial-Only" vs "Full"
 
 Per dokumen (bukan per baris retur), dari ada-gaknya record fisik yang udah di-fetch di view:
-- **AP** (`ap-bills/[id]/view.tsx`): `isFinancialOnly = !goodsReceipt` (state `goodsReceipt`, dari query `goods_receipt_notes` yang match `bill_id`).
-- **AR** (`ar-invoices/[id]/view.tsx`): `isFinancialOnly = !goodsIssue` (state `goodsIssue`, dari query `goods_issues` yang match `invoice_id`).
+- **AP** (`ap-bills/[id]/view.tsx`): `isFinancialOnly = !goodsReceipt` (state `goodsReceipt`, dari query `goods_notes` filter `type='INBOUND'` yang match `transaction_id` — dulu tabel terpisah `goods_receipt_notes` filter `bill_id`, digabung migration `0080`-`0083`, `goods-notes-schema.md`).
+- **AR** (`ar-invoices/[id]/view.tsx`): `isFinancialOnly = !goodsIssue` (state `goodsIssue`, dari query `goods_notes` filter `type='OUTBOUND'` yang match `transaction_id` — dulu tabel terpisah `goods_issues` filter `invoice_id`, digabung migration `0080`-`0083`).
 
 ## Badge di Heading
 

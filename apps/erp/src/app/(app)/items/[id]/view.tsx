@@ -254,7 +254,7 @@ export function ItemDetailView({ id }: { id: string }) {
     if (!item) return;
     if (!hasBaseUnit) {
       // Belum ada satuan dasar -- paksa baris pertama jadi satuan dasar, unit_label
-      // dikunci sama items.uom (konvensi, ref memory/domain/inventory.md).
+      // dikunci sama items.uom (konvensi, ref docs/domain/inventory.md).
       setUnitIsBase(true);
       setUnitLabel(item.uom);
       setConversionFactor("1");

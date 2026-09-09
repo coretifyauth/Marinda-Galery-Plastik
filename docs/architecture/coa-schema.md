@@ -1,6 +1,6 @@
 # Chart of Accounts — Struktur Data
 
-Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Kalau butuh detail teknis (kode SQL, nama fungsi persis), itu ada di `memory/architecture/data/coa-schema.md`.
+Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Kalau butuh detail teknis (kode SQL, nama fungsi persis), itu ada di `supabase/migrations/0002_coa_schema.sql`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -9,6 +9,8 @@ Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke
 | `roles` | Daftar peran yang dikenal sistem: `admin`, `accountant`, `viewer` | — |
 | `user_roles` | Peran yang dipegang tiap user (1 user boleh punya lebih dari 1 peran) | `roles`, user login |
 | `accounts` | Daftar akun (Chart of Accounts itu sendiri) | Bisa nunjuk ke akun lain sebagai "induk" (struktur header/leaf) |
+
+> **Migration final (2026-09-07):** `supabase/migrations/0002_coa_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Konsep Inti
 

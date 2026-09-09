@@ -1,8 +1,11 @@
 # Financial Reports — Struktur Data
 
-Konsep bisnisnya ada di `docs/domain/financial-reports.md`. Detail teknis: `memory/architecture/data/financial-reports-schema.md`.
+Konsep bisnisnya ada di `docs/domain/financial-reports.md`. Detail teknis: `supabase/migrations/0025_financial_reports_schema.sql`.
 
-Struktur module → submodule di file ini SAMA urutannya dengan `docs/domain/financial-reports.md` dan `memory/domain/financial-reports.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
+Struktur module → submodule di file ini SAMA urutannya dengan `docs/domain/financial-reports.md` (lihat `AGENTS.md` > "Format Baku: Struktur Module → Submodule").
+
+**Migration final (2026-09-07):** `supabase/migrations/0025_financial_reports_schema.sql` —
+konsolidasi dari migration incremental lama (sudah dihapus, historinya ada di `git log`).
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel & Fungsi Laporan
 

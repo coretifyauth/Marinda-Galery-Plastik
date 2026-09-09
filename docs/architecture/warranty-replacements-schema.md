@@ -1,6 +1,9 @@
 # Penukaran Barang Pasca-Retur (Garansi) — Struktur Data
 
-Konsep bisnisnya ada di `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)" — customer punya barang cacat dan minta barang pengganti, bukan retur (dapat kredit/diskon). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/warranty-replacements-schema.md`. Ini sisi AR — mirror persis sisi AP-nya ada di `purchase-replacements-schema.md`, dua-duanya tabel fisik terpisah karena beda arah (beda dari `returns`, lihat `returns-schema.md`).
+Konsep bisnisnya ada di `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)" — customer punya barang cacat dan minta barang pengganti, bukan retur (dapat kredit/diskon). File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0021_warranty_replacements_schema.sql`. Ini sisi AR — mirror persis sisi AP-nya ada di `purchase-replacements-schema.md`, dua-duanya tabel fisik terpisah karena beda arah (beda dari `returns`, lihat `returns-schema.md`).
+
+**Migration final (2026-09-07):** `supabase/migrations/0021_warranty_replacements_schema.sql`
+— konsolidasi dari migration incremental lama (sudah dihapus, historinya ada di `git log`).
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

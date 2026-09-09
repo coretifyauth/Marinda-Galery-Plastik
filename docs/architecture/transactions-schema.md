@@ -1,6 +1,8 @@
 # Transaksi (Piutang & Utang) — Struktur Data
 
-Piutang timbul dan utang timbul disimpan di 1 tabel generic `transactions`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang, `INBOUND` = utang). Baca `docs/domain/accounts-receivable.md` (Piutang) dan `docs/domain/accounts-payable.md` (Utang) buat konteks bisnis lengkap; detail teknis penuh (DDL/trigger/RPC persis) ada di `memory/architecture/data/transactions-schema.md`.
+Piutang timbul dan utang timbul disimpan di 1 tabel generic `transactions`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang, `INBOUND` = utang). Baca `docs/domain/accounts-receivable.md` (Piutang) dan `docs/domain/accounts-payable.md` (Utang) buat konteks bisnis lengkap; detail teknis penuh (DDL/trigger/RPC persis) ada di `supabase/migrations/0015_transactions_schema.sql`.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0015_transactions_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -125,7 +127,7 @@ Gak ada tabel baru — bagian ini menjelaskan bagaimana kolom turunan `transacti
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `recompute_transaction_status` | dipicu oleh insert di | `payments`, `returns`, `deposit_applications`, `warranty_replacements`, `goods_issues`, `goods_receipt_notes` |
+| `recompute_transaction_status` | dipicu oleh insert di | `payments`, `returns`, `deposit_applications`, `warranty_replacements`, `goods_notes`, `goods_note_lines` |
 | `ar_invoice_remaining`/`ap_bill_remaining` | membaca | `transactions`, `payments`, `returns`, `deposit_applications`, `return_credits` |
 
 ## Tampilan Terpisah untuk Piutang & Utang

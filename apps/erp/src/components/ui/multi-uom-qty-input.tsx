@@ -27,7 +27,7 @@ const SYNTHETIC_BASE_ID = "__base__";
 /**
  * Input qty simultan per satuan (pcs, pack, box, dst) untuk 1 item -- dijumlah ke qty
  * satuan dasar via item_units.conversion_factor sebelum dilaporkan ke parent (RPC tetap
- * terima qty satuan dasar apa adanya, 0 perubahan -- lihat memory/domain/inventory.md
+ * terima qty satuan dasar apa adanya, 0 perubahan -- lihat docs/domain/inventory.md
  * submodule "Satuan Jual & Harga"). Item tanpa item_units tetap dapat 1 kolom (satuan
  * dasar sintetis), jadi gak butuh cabang UI terpisah buat kasus "belum ada satuan".
  */

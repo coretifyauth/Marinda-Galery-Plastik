@@ -1,13 +1,18 @@
 # Inventory Ledger — Struktur Data
 
-Dua hal yang sering ketukar tapi beda fungsi: **saldo stok berjalan** (`inventory_balances` — qty & harga rata-rata SAAT INI per barang) dan **Kartu Stok/riwayat mutasi** (`inventory_movements` — histori kronologis tiap kejadian yang menggerakkan qty). Cross-cutting — dibaca/ditulis dari hampir semua RPC transaksi Inventory (Terima Barang, Produksi, Jual, Retur, Opname, POS). Konsep bisnis metode costing ada di `docs/domain/inventory.md` bagian "Kenapa Butuh Metode Costing", riwayat mutasi ada di bagian "Kartu Stok / Riwayat Mutasi per Item". Detail teknis: `memory/architecture/data/inventory-ledger-schema.md`.
+Dua hal yang sering ketukar tapi beda fungsi: **saldo stok berjalan** (`inventory_balances` — qty & harga rata-rata SAAT INI per barang) dan **Kartu Stok/riwayat mutasi** (`inventory_movements` — histori kronologis tiap kejadian yang menggerakkan qty). Cross-cutting — dibaca/ditulis dari hampir semua RPC transaksi Inventory (Terima Barang, Produksi, Jual, Retur, Opname, POS). Konsep bisnis metode costing ada di `docs/domain/inventory.md` bagian "Kenapa Butuh Metode Costing", riwayat mutasi ada di bagian "Kartu Stok / Riwayat Mutasi per Item". Detail teknis: `supabase/migrations/0023_inventory_ledger_schema.sql`.
+
+**Migration final (2026-09-07):** `supabase/migrations/0023_inventory_ledger_schema.sql`
+(+ `0026_inventory_movements_exactly_one_source_constraint.sql`) — konsolidasi dari migration
+incremental lama (sudah dihapus, historinya ada di `git log`). Nomor migration `00XX` yang
+disebut di dokumen ini historis.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `inventory_balances` | Saldo stok tersimpan per barang — qty tersedia + harga rata-rata berjalan (Weighted Average), satu-satunya state costing yang hidup di modul ini | `items` (satu-ke-satu) |
-| `inventory_movements` | Kartu Stok — riwayat kronologis tiap mutasi qty 1 barang, 1 baris = 1 kejadian, nunjuk balik ke TEPAT SATU dari 9 kemungkinan dokumen sumber (per konvensi — lihat catatan constraint di bawah) | `items`, dan satu dari 9 tabel sumber transaksi |
+| `inventory_movements` | Kartu Stok — riwayat kronologis tiap mutasi qty 1 barang, 1 baris = 1 kejadian, nunjuk balik ke TEPAT SATU dari 7 kemungkinan dokumen sumber (dijamin database) | `items`, dan satu dari 7 tabel sumber transaksi |
 
 ## Saldo Berjalan (Weighted Average Costing)
 
@@ -61,7 +66,7 @@ Dua hal yang sering ketukar tapi beda fungsi: **saldo stok berjalan** (`inventor
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `inventory_movements` | 1 baris = 1 kejadian mutasi qty 1 barang, ditulis sebagai efek samping RPC transaksi yang sudah ada (bukan RPC baru berdiri sendiri) | `items`, dan tepat 1 dari 9 tabel sumber transaksi (penerimaan barang, produksi — hasil & konsumsi, retur — dari customer maupun ke pemasok, digabung 1 kolom dibedakan lewat arahnya, opname, goods issue, POS, penggantian garansi, tukar barang ke pemasok) |
+| `inventory_movements` | 1 baris = 1 kejadian mutasi qty 1 barang, ditulis sebagai efek samping RPC transaksi yang sudah ada (bukan RPC baru berdiri sendiri) | `items`, dan tepat 1 dari 7 tabel sumber transaksi (penerimaan barang & goods issue & POS — 1 kolom sama, dibedakan arahnya; produksi — hasil & konsumsi, 2 kolom terpisah; retur — dari customer maupun ke pemasok, digabung 1 kolom dibedakan lewat arahnya; opname; penggantian garansi; tukar barang ke pemasok) |
 
 **Struktur (kolom yang penting buat dipahami)**
 
@@ -69,7 +74,7 @@ Dua hal yang sering ketukar tapi beda fungsi: **saldo stok berjalan** (`inventor
 |---|---|---|
 | `qty` | Bertanda — positif = masuk, negatif = keluar | Bukan kolom `direction` terpisah, supaya `SUM(qty)` langsung jadi saldo, gak perlu `CASE WHEN` di tiap query |
 | `movement_date` | Tanggal transaksi ASLI dari tabel sumbernya (mis. tanggal terima barang, tanggal produksi) | Bukan `created_at` — bisa beda kalau ada input mundur; ini kolom yang dipakai query saldo pembuka & pengurutan histori |
-| 8 kolom penunjuk sumber (nullable, tepat 1 terisi per baris secara konvensi) | Jenis mutasinya ditentukan dari kolom mana yang terisi | **Catatan penting**: check constraint yang dulu menjamin ini (`num_nonnulls(...) = 1`) sedang TIDAK AKTIF di database saat ini — hilang gak sengaja sejak penghapusan salah satu jalur retur lama, gagal dipulihkan karena ada 2 baris data lama yang menyimpang. Semua RPC tetap menulis sesuai aturan "tepat 1 kolom", tapi database sendiri untuk sementara tidak lagi menjamin itu. Status: item yang belum selesai, lihat `memory/scope-debt/inventory-movements-exactly-one-source-constraint.md` |
+| 7 kolom penunjuk sumber (nullable, tepat 1 terisi per baris) | Jenis mutasinya ditentukan dari kolom mana yang terisi | Dijamin `check(num_nonnulls(...) = 1)` di level database. Sempat tidak aktif untuk sementara (hilang gak sengaja sejak penghapusan salah satu jalur retur lama, gagal dipulihkan karena ada 2 baris data lama yang menyimpang) — sudah dipulihkan setelah data historis dibersihkan total. |
 | Saldo berjalan | **TIDAK disimpan** sebagai kolom | Dihitung ulang tiap kali dibaca (saldo pembuka + akumulasi baris di halaman itu) demi akurasi — gak ada risiko nilai tersimpan diam-diam menyimpang dari data mutasi asli |
 
 **Kenapa tabel ledger terpusat, bukan view gabungan** — keputusan arsitektur eksplisit: baca riwayat lebih cepat & konsisten jangka panjang (1 tabel rapi, gak perlu buka ±10 tabel tiap kartu stok dibuka), ditukar biaya awal lebih besar (harus ubah ±9-10 RPC transaksi yang sudah ada + backfill data historis).

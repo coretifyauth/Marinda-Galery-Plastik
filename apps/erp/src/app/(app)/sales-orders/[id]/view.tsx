@@ -30,11 +30,11 @@ import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accoun
 type FulfillmentRow = {
   id: string;
   item_id: string;
-  qty_issued: number;
+  qty: number;
   total_cost: number;
   order_line_id: string | null;
   items: { name: string; uom: string };
-  goods_issues: { id: string; invoice_id: string; issue_date: string; ar_invoices: { source_ref: string; amount: number } };
+  goods_notes: { id: string; transaction_id: string; note_date: string; ar_invoices: { source_ref: string; amount: number } };
 };
 
 type FulfillLineInput = { order_line_id: string; item_id: string; item_label: string; qty_issued: string; unit_price: number };
@@ -73,7 +73,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     const { data: soData, error: soErr } = await supabase
       .from("orders")
       .select(
-        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_issue_lines(qty_issued))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty))"
       )
       .eq("id", id)
       .eq("direction", "SALE")
@@ -88,9 +88,9 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     const orderLineIds = typedSo.order_lines.map((l) => l.id);
     if (orderLineIds.length > 0) {
       const { data: fulfillData } = await supabase
-        .from("goods_issue_lines")
+        .from("goods_note_lines")
         .select(
-          "id, item_id, qty_issued, total_cost, order_line_id, items(name, uom), goods_issues(id, invoice_id, issue_date, ar_invoices:transactions(source_ref, amount))"
+          "id, item_id, qty, total_cost, order_line_id, items(name, uom), goods_notes(id, transaction_id, note_date, ar_invoices:transactions(source_ref, amount))"
         )
         .in("order_line_id", orderLineIds)
         .order("id");
@@ -320,7 +320,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
             </thead>
             <tbody>
               {so.order_lines.map((l) => {
-                const issued = l.goods_issue_lines.reduce((sum, r) => sum + r.qty_issued, 0);
+                const issued = l.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
                 return (
                   <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium text-black">
@@ -361,25 +361,25 @@ export function SalesOrderDetailView({ id }: { id: string }) {
                   <tr
                     key={f.id}
                     className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
-                    onClick={() => router.push(`/goods-issues/${f.goods_issues.id}`)}
+                    onClick={() => router.push(`/goods-issues/${f.goods_notes.id}`)}
                   >
-                    <td className="px-4 py-2 text-blue-600">{f.goods_issues.issue_date}</td>
+                    <td className="px-4 py-2 text-blue-600">{f.goods_notes.note_date}</td>
                     <td className="px-4 py-2">
                       <button
                         type="button"
                         className="text-blue-600 hover:underline"
                         onClick={(e) => {
                           e.stopPropagation();
-                          router.push(`/ar-invoices/${f.goods_issues.invoice_id}`);
+                          router.push(`/ar-invoices/${f.goods_notes.transaction_id}`);
                         }}
                       >
-                        {f.goods_issues.ar_invoices.source_ref}
+                        {f.goods_notes.ar_invoices.source_ref}
                       </button>
                     </td>
                     <td className="px-4 py-2">
                       {f.items.name} ({f.items.uom})
                     </td>
-                    <td className="px-4 py-2 text-right font-mono">{f.qty_issued}</td>
+                    <td className="px-4 py-2 text-right font-mono">{f.qty}</td>
                   </tr>
                 ))}
                 {fulfillments.length === 0 && (

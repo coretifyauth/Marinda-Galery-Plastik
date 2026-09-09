@@ -28,7 +28,7 @@ type Props = {
  * Pilih 1 satuan (yang punya harga) + qty, harga muncul otomatis dari item_units.price --
  * pola sama pemilih satuan di apps/pos (bukan MultiUomQtyInput yang isi qty campur beberapa
  * satuan sekaligus). Dipakai di form sisi jual (Sales Order, Goods Issue) supaya harga gak
- * lagi diketik manual. Ref: memory/domain/inventory.md submodule "Satuan Jual & Harga".
+ * lagi diketik manual. Ref: docs/domain/inventory.md submodule "Satuan Jual & Harga".
  */
 export function UomPriceQtyInput({ units, disabled, onChange }: Props) {
   const ordered = [...units].sort((a, b) => Number(b.is_base) - Number(a.is_base));

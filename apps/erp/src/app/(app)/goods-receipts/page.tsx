@@ -107,7 +107,7 @@ export default function GoodsReceiptsPage() {
     const { data } = await supabase
       .from("orders")
       .select(
-        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty))"
       )
       .eq("direction", "PURCHASE")
       .order("order_date", { ascending: false });
@@ -416,12 +416,12 @@ export default function GoodsReceiptsPage() {
                     <span className="text-slate-400">— (langsung)</span>
                   )}
                 </td>
-                <td className="whitespace-nowrap px-4 py-2">{grn.receipt_date}</td>
+                <td className="whitespace-nowrap px-4 py-2">{grn.note_date}</td>
                 <td className="px-4 py-2">
                   <ul className="space-y-0.5">
-                    {grn.goods_receipt_lines.map((l) => (
+                    {grn.goods_note_lines.map((l) => (
                       <li key={l.id}>
-                        {l.items.name} — {l.qty_received} {l.items.uom} @ {l.unit_cost.toLocaleString("id-ID")}
+                        {l.items.name} — {l.qty} {l.items.uom} @ {l.unit_cost.toLocaleString("id-ID")}
                       </li>
                     ))}
                   </ul>

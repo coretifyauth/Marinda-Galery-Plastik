@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Selisih dihitung server-side (qty_actual - qty_system yang berlaku SAAT RPC dipanggil) --
 // UI cuma kirim qty_actual, bukan variance yang udah dihitung, biar gak ada celah race
-// condition antara UI baca vs RPC eksekusi (ref memory/domain/inventory.md submodule
+// condition antara UI baca vs RPC eksekusi (ref docs/domain/inventory.md submodule
 // "Stock Opname").
 export const stockOpnameLineSchema = z.object({
   item_id: z.string().uuid("Pilih item"),

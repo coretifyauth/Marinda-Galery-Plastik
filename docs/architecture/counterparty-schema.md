@@ -1,6 +1,6 @@
 # Counterparty — Struktur Data & Teknis
 
-Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng Piutang (AR), Utang (AP), Inventory (Order beli/jual), dan Kios (POS). Gak ada `docs/domain/counterparty.md` tersendiri — konsep bisnis "pelanggan" dan "pemasok" tetap dijelaskan di `docs/domain/accounts-receivable.md` dan `docs/domain/accounts-payable.md` masing-masing; halaman ini murni menjelaskan bagaimana KEDUANYA sekarang disimpan di 1 struktur data yang sama di baliknya. Detail teknis penuh (DDL/trigger/RPC): `memory/architecture/data/counterparty-schema.md`.
+Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng Piutang (AR), Utang (AP), Inventory (Order beli/jual), dan Kios (POS). Gak ada `docs/domain/counterparty.md` tersendiri — konsep bisnis "pelanggan" dan "pemasok" tetap dijelaskan di `docs/domain/accounts-receivable.md` dan `docs/domain/accounts-payable.md` masing-masing; halaman ini murni menjelaskan bagaimana KEDUANYA sekarang disimpan di 1 struktur data yang sama di baliknya. Detail teknis penuh (DDL/trigger/RPC): `supabase/migrations/0004_counterparty_schema.sql`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -8,6 +8,8 @@ Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng Piutang (AR)
 |---|---|---|
 | `counterparties` | Master data 1 pihak — pelanggan dan pemasok dalam 1 tabel yang sama | — |
 | `counterparty_type_mapping` | Peran pihak itu (pelanggan dan/atau pemasok) — 1 pihak boleh punya lebih dari 1 peran sekaligus | `counterparties` |
+
+> **Migration final (2026-09-07):** `supabase/migrations/0004_counterparty_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Konsep Inti
 

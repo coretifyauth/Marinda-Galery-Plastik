@@ -1,6 +1,6 @@
 # Pengaturan PPN (Tax Settings) — Struktur Data
 
-Konsep bisnisnya adalah PPN (Pajak Pertambahan Nilai) — dipungut sistem otomatis dari tarif yang diset admin, bukan diketik manual oleh staf, biar gak ada resiko salah hitung atau lupa dicatat. Dipakai di 2 tempat: sisi AP (PPN Masukan, saat bisnis beli dari supplier) dibahas di `docs/domain/accounts-payable.md` bagian "Kategori Campur & PPN"; sisi AR (PPN Keluaran, saat bisnis jual ke customer) di `docs/domain/accounts-receivable.md` bagian yang sama; sisi kasir (POS) di `docs/domain/pos.md` bagian "Kategori Biaya Tambahan & PPN". Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/tax-settings-schema.md`.
+Konsep bisnisnya adalah PPN (Pajak Pertambahan Nilai) — dipungut sistem otomatis dari tarif yang diset admin, bukan diketik manual oleh staf, biar gak ada resiko salah hitung atau lupa dicatat. Dipakai di 2 tempat: sisi AP (PPN Masukan, saat bisnis beli dari supplier) dibahas di `docs/domain/accounts-payable.md` bagian "Kategori Campur & PPN"; sisi AR (PPN Keluaran, saat bisnis jual ke customer) di `docs/domain/accounts-receivable.md` bagian yang sama; sisi kasir (POS) di `docs/domain/pos.md` bagian "Kategori Biaya Tambahan & PPN". Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0006_tax_settings_schema.sql`.
 
 Tabel ini **bukan child dari modul manapun** — dia konfigurasi lintas-modul (dipakai `transactions` dan `pos_sales` sekaligus), makanya berdiri sendiri sebagai 1 file spine, bukan ditumpangkan ke `transactions-schema.md` atau `pos-schema.md`.
 
@@ -9,6 +9,8 @@ Tabel ini **bukan child dari modul manapun** — dia konfigurasi lintas-modul (d
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `tax_settings` | Konfigurasi tunggal (singleton) tarif PPN & akun-akun pajaknya, dipakai lintas modul | `accounts` (akun PPN Keluaran & PPN Masukan) |
+
+> **Migration final (2026-09-07):** `supabase/migrations/0006_tax_settings_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Konsep Inti
 

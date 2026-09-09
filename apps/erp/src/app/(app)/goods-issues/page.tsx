@@ -180,7 +180,7 @@ export default function GoodsIssuesPage() {
   }
 
   // Total pendapatan = Σ(qty x item_units.price) tiap baris, otomatis dari UomPriceQtyInput
-  // -- gak ada lagi input manual (ref memory/domain/inventory.md submodule "Satuan Jual & Harga").
+  // -- gak ada lagi input manual (ref docs/domain/inventory.md submodule "Satuan Jual & Harga").
   const totalAmount = lines.reduce((sum, l) => sum + l.amount, 0);
 
   const createMutation = useMutation({
@@ -225,7 +225,7 @@ export default function GoodsIssuesPage() {
 
     // UomPriceQtyInput udah ngonversi qty satuan terpilih -> qty satuan dasar (l.qty).
     // create_goods_issue tetap terima qty di satuan dasar, sama kayak sebelum fitur ini ada
-    // (ref memory/domain/inventory.md submodule "Satuan Jual & Harga").
+    // (ref docs/domain/inventory.md submodule "Satuan Jual & Harga").
     const convertedLines = activeLines.map((l) => ({
       item_id: l.item_id,
       qty_issued: Number(l.qty),
@@ -262,7 +262,7 @@ export default function GoodsIssuesPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   // Cuma barang yang punya minimal 1 item_units berharga yang bisa dijual lewat form ini --
   // harga wajib otomatis dari item_units.price, gak ada lagi jalur input manual (lihat
-  // memory/domain/inventory.md submodule "Satuan Jual & Harga").
+  // docs/domain/inventory.md submodule "Satuan Jual & Harga").
   const sellableItems = items.filter((item) =>
     itemUnits.some((u) => u.item_id === item.id && u.price != null)
   );
@@ -346,7 +346,7 @@ export default function GoodsIssuesPage() {
           </thead>
           <tbody>
             {issues.map((gi) => {
-              const totalHpp = gi.goods_issue_lines.reduce((sum, l) => sum + l.total_cost, 0);
+              const totalHpp = gi.goods_note_lines.reduce((sum, l) => sum + l.total_cost, 0);
               return (
                 <tr
                   key={gi.id}
@@ -355,12 +355,12 @@ export default function GoodsIssuesPage() {
                 >
                   <td className="px-4 py-2 font-medium text-black">{gi.ar_invoices.counterparties.name}</td>
                   <td className="px-4 py-2">{gi.ar_invoices.source_ref}</td>
-                  <td className="whitespace-nowrap px-4 py-2">{gi.issue_date}</td>
+                  <td className="whitespace-nowrap px-4 py-2">{gi.note_date}</td>
                   <td className="px-4 py-2">
                     <ul className="space-y-0.5">
-                      {gi.goods_issue_lines.map((l) => (
+                      {gi.goods_note_lines.map((l) => (
                         <li key={l.id}>
-                          {l.items.name} — {l.qty_issued} {l.items.uom} = {l.total_cost.toLocaleString("id-ID")}
+                          {l.items.name} — {l.qty} {l.items.uom} = {l.total_cost.toLocaleString("id-ID")}
                         </li>
                       ))}
                     </ul>

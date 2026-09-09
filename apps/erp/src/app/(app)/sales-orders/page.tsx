@@ -206,7 +206,7 @@ export default function SalesOrdersPage() {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   // Cuma barang yang punya minimal 1 item_units berharga yang bisa dipesan lewat form ini --
   // harga wajib otomatis dari item_units.price, gak ada lagi jalur input manual (lihat
-  // memory/domain/inventory.md submodule "Satuan Jual & Harga").
+  // docs/domain/inventory.md submodule "Satuan Jual & Harga").
   const sellableItems = items.filter((item) =>
     itemUnits.some((u) => u.item_id === item.id && u.price != null)
   );

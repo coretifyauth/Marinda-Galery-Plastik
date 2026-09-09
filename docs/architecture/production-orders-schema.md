@@ -1,6 +1,8 @@
 # Production Order — Struktur Data
 
-Kejadian produksi beneran — menjalankan resep dari `docs/architecture/bom-schema.md`: mengonsumsi bahan baku sesuai takaran, menghasilkan barang jadi, dan mencatat jurnal transfer aset sekaligus. Konsep bisnisnya ada di `docs/domain/inventory.md` bagian "Produksi (Bill of Materials & Production Order)". Detail teknis: `memory/architecture/data/production-orders-schema.md`.
+Kejadian produksi beneran — menjalankan resep dari `docs/architecture/bom-schema.md`: mengonsumsi bahan baku sesuai takaran, menghasilkan barang jadi, dan mencatat jurnal transfer aset sekaligus. Konsep bisnisnya ada di `docs/domain/inventory.md` bagian "Produksi (Bill of Materials & Production Order)". Detail teknis: `supabase/migrations/0011_production_orders_schema.sql`.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0011_production_orders_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 

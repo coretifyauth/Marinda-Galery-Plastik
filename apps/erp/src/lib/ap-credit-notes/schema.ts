@@ -36,9 +36,9 @@ export type ApCreditNote = {
 
 export type GoodsReceiptForBill = {
   id: string;
-  goods_receipt_lines: {
+  goods_note_lines: {
     item_id: string;
-    qty_received: number;
+    qty: number;
     unit_cost: number;
     items: { name: string; uom: string };
   }[];

@@ -13,7 +13,7 @@ import { buildLetterheadHtml, buildSignatureBlockHtml, escapeHtml, openPrintWind
 import { fetchCompanySettings, type CompanySettings } from "@/lib/company-settings/schema";
 import { fetchActiveSignatoryLabels } from "@/lib/document-signatories/schema";
 
-type GrnRef = { id: string; receipt_date: string; delivery_note_ref: string | null };
+type GrnRef = { id: string; note_date: string; delivery_note_ref: string | null };
 
 const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
@@ -39,7 +39,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     const { data: poData, error: poErr } = await supabase
       .from("orders")
       .select(
-        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_receipt_lines(qty_received))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty))"
       )
       .eq("id", id)
       .eq("direction", "PURCHASE")
@@ -51,10 +51,11 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     setPo(poData as unknown as PurchaseOrder);
 
     const { data: grnData } = await supabase
-      .from("goods_receipt_notes")
-      .select("id, receipt_date, delivery_note_ref")
+      .from("goods_notes")
+      .select("id, note_date, delivery_note_ref")
       .eq("order_id", id)
-      .order("receipt_date");
+      .eq("type", "INBOUND")
+      .order("note_date");
     setGrns((grnData ?? []) as GrnRef[]);
     setLoadError(null);
   }, [id]);
@@ -222,7 +223,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
             </thead>
             <tbody>
               {po.order_lines.map((l) => {
-                const received = l.goods_receipt_lines.reduce((sum, r) => sum + r.qty_received, 0);
+                const received = l.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
                 return (
                   <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium text-black">
@@ -264,7 +265,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
                   className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                   onClick={() => router.push(`/goods-receipts/${g.id}`)}
                 >
-                  <td className="px-4 py-2 text-blue-600">{g.receipt_date}</td>
+                  <td className="px-4 py-2 text-blue-600">{g.note_date}</td>
                   <td className="px-4 py-2">{g.delivery_note_ref ?? "-"}</td>
                 </tr>
               ))}

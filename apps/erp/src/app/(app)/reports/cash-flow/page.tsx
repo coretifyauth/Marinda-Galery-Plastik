@@ -170,7 +170,7 @@ export default function CashFlowPage() {
       <FormHint>
         Investing/Financing di sini diklasifikasikan dari akun lawan (Aset Tetap non-kontra = Investing,
         Ekuitas/Utang Bank = Financing) — mekanisme terbatas, belum generik. Detail:
-        `memory/architecture/data/financial-reports-schema.md`.
+        `docs/architecture/financial-reports-schema.md`.
       </FormHint>
     </div>
   );

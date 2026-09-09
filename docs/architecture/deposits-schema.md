@@ -1,8 +1,10 @@
 # Uang Muka / DP (Deposits) — Struktur Data
 
-Konsep bisnisnya adalah uang muka (DP) — uang yang berpindah tangan sebelum tagihannya sendiri ada. Sisi AR (DP diterima dari customer) ada di `docs/domain/accounts-receivable.md` bagian "Uang Muka / DP (Deposit)", sisi AP (DP dibayar ke supplier) di `docs/domain/accounts-payable.md` bagian "Uang Muka / DP ke Supplier". Detail teknis (SQL, nama fungsi persis) ada di `memory/architecture/data/deposits-schema.md`.
+Konsep bisnisnya adalah uang muka (DP) — uang yang berpindah tangan sebelum tagihannya sendiri ada. Sisi AR (DP diterima dari customer) ada di `docs/domain/accounts-receivable.md` bagian "Uang Muka / DP (Deposit)", sisi AP (DP dibayar ke supplier) di `docs/domain/accounts-payable.md` bagian "Uang Muka / DP ke Supplier". Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0017_deposits_schema.sql`.
 
 Sama seperti `return-credits-schema.md` dan `returns-schema.md`, ini bagian dari tabel anak AR/AP yang generic — 4 tabel (`deposits` + `deposit_applications`/`deposit_refunds`/`deposit_forfeitures`) yang menampung kedua arah, dibedakan lewat kolom `type` (`OUTBOUND` = DP dari customer/liability, `INBOUND` = DP ke supplier/asset). Beda dari `returns` (RPC tetap 2 fungsi karena logic beda bentuk), di sini ke-4 operasi (create/apply/refund/forfeit) logic-nya near-exact mirror kedua arah — cuma akun & arah debit/kredit ketuker — jadi RPC-nya juga 1 fungsi per operasi untuk kedua arah.
+
+> **Migration final (2026-09-07):** `supabase/migrations/0017_deposits_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
