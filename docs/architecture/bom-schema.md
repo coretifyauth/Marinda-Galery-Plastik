@@ -29,12 +29,13 @@ Resep produksi: barang jadi apa yang dihasilkan, dari bahan baku apa saja, dan b
 | `bom_headers.is_active` | Resep masih dipakai atau sudah pensiun | Nonaktifin resep lama cukup update kolom ini, gak perlu hapus baris — resep lama tetap bisa dilihat buat riwayat |
 | `bom_lines.raw_material_item_id` | Bahan baku yang dikonsumsi | |
 | `bom_lines.qty_per_batch` | Takaran bahan baku itu per 1 batch resep | |
+| `bom_headers.created_by`, `bom_lines.created_at`/`created_by` | Email pembuat baris (snapshot, bukan FK) + kapan | `created_by` nullable, `NULL` = data lama/insert di luar jalur aplikasi. Konvensi sama dipakai `items`/`counterparties`/`accounts`, lihat `items-schema.md` |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Tambah/ubah resep (header) | — (insert/update langsung ke `bom_headers`, bukan financial write jadi gak lewat RPC) | Insert baris baru atau update kolom yang ada | RLS `insert`/`update` cuma role `admin`/`accountant` |
+| Tambah/ubah resep (header) | — (insert/update langsung ke `bom_headers`, bukan financial write jadi gak lewat RPC) | Insert baris baru atau update kolom yang ada | RLS `insert`/`update` cuma role `admin` |
 | Ubah komposisi resep (ganti/tambah bahan) | — (delete + insert langsung ke `bom_lines`) | Baris lama dihapus, baris baru ditambah — bebas diubah kapan saja | RLS `delete` cuma ada di `bom_lines` (beda dari hampir semua tabel transaksional lain di modul Inventory yang immutable) |
 | Nonaktifkan resep lama | — (update `is_active`) | Resep gak dipakai buat produksi baru lagi; histori produksi yang sudah pakai resep ini gak berubah sama sekali | — |
 
@@ -59,5 +60,5 @@ Resep produksi: barang jadi apa yang dihasilkan, dari bahan baku apa saja, dan b
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat resep (termasuk yang sudah nonaktif) | Semua user yang sudah login |
-| Menambah/mengubah header resep (`bom_headers`) | Role `admin` atau `accountant` |
-| Menambah/mengubah/menghapus baris resep (`bom_lines`) | Role `admin` atau `accountant` |
+| Menambah/mengubah header resep (`bom_headers`) | Role `admin` |
+| Menambah/mengubah/menghapus baris resep (`bom_lines`) | Role `admin` |

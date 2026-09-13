@@ -10,7 +10,9 @@ import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { Button } from "@/components/ui/button";
 import { DetailRows } from "@/components/ui/detail-rows";
+import { formatCreatedBy } from "@/lib/created-by";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -41,7 +43,7 @@ export function SupplierDetailView({ id }: { id: string }) {
     ] = await Promise.all([
       supabase
         .from("counterparties")
-        .select("id, name, contact, payment_term_days, archived_at")
+        .select("id, name, contact, payment_term_days, archived_at, created_by, created_at")
         .eq("id", id)
         .single(),
       supabase
@@ -129,7 +131,7 @@ export function SupplierDetailView({ id }: { id: string }) {
   }
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!supplier) {
@@ -151,6 +153,10 @@ export function SupplierDetailView({ id }: { id: string }) {
         { label: "Kontak", value: supplier.contact ?? "-" },
         { label: "Termin", value: `net-${supplier.payment_term_days}` },
         { label: "Status", value: supplier.archived_at ? "Diarsipkan" : "Aktif" },
+        {
+          label: "Dibuat oleh",
+          value: supplier.created_at ? formatCreatedBy(supplier.created_by ?? null, supplier.created_at) : "-",
+        },
       ],
     },
     {
@@ -160,15 +166,15 @@ export function SupplierDetailView({ id }: { id: string }) {
   ];
 
   const tabs: TabDef[] = [
-    { key: "bills", label: "AP Bills", badge: bills.length },
-    { key: "payments", label: "AP Payments", badge: payments.length },
+    { key: "bills", label: "Tagihan", badge: bills.length },
+    { key: "payments", label: "Pembayaran", badge: payments.length },
   ];
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/suppliers" label="Kembali ke Suppliers" />
+      <BackLink href="/suppliers" label="Kembali ke Supplier" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">Supplier Details</h1>
+        <h1 className="text-xl font-semibold text-black">Detail Supplier</h1>
         {canWrite && (
           <div className="flex gap-2">
             {supplier.archived_at ? (
@@ -198,7 +204,7 @@ export function SupplierDetailView({ id }: { id: string }) {
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
                 <th className="px-4 py-2">Jatuh Tempo</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2 text-right">Jumlah</th>
                 <th className="px-4 py-2 text-right">Outstanding</th>
                 <th className="px-4 py-2">Status</th>
@@ -250,7 +256,7 @@ export function SupplierDetailView({ id }: { id: string }) {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2 text-right">Jumlah</th>
                 <th className="px-4 py-2">Bill</th>
               </tr>

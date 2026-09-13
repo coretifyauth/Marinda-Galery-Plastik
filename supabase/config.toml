@@ -172,7 +172,11 @@ enable_refresh_token_rotation = true
 # Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.
 # Requires enable_refresh_token_rotation = true.
 refresh_token_reuse_interval = 10
-# Allow/disallow new user signups to your project.
+# Allow/disallow new user signups to your project. TRUE -- /signup digerbangi whitelist
+# (supabase/migrations/0002_coa_schema.sql, submodule "Registrasi & Manajemen User"),
+# bukan admin-invite email. Config lokal ini gak otomatis kepush ke project live-linked
+# -- nyalain juga manual di dashboard live (Authentication > Settings > "Allow new users
+# to sign up").
 enable_signup = true
 # Allow/disallow anonymous sign-ins to your project.
 enable_anonymous_sign_ins = false
@@ -183,6 +187,14 @@ minimum_password_length = 6
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
 password_requirements = ""
+
+# Signup whitelist -- nolak signup buat email yang belum di-whitelist (supabase/migrations/
+# 0002_coa_schema.sql, submodule "Registrasi & Manajemen User"). Config lokal ini gak
+# otomatis kepush ke project live-linked -- hook di dashboard live (Authentication > Hooks
+# > Before User Created) perlu diaktifkan manual sekali nunjuk ke function yang sama.
+[auth.hook.before_user_created]
+enabled = true
+uri = "pg-functions://postgres/public/before_user_created_hook"
 
 # Configure passkey sign-ins.
 # [auth.passkey]

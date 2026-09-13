@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes } from "react";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "toolbar" | "toolbar-primary";
+  variant?: "primary" | "secondary" | "toolbar" | "toolbar-primary" | "danger";
 };
 
 const variantClasses = {
@@ -9,6 +9,7 @@ const variantClasses = {
   secondary: "rounded-lg px-4 py-2 border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
   toolbar: "rounded-md px-2.5 py-1 border border-slate-200 bg-white text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white",
   "toolbar-primary": "rounded-md px-2.5 py-1 bg-blue-600 text-xs text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed",
+  danger: "rounded-lg px-4 py-2 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed",
 };
 
 export function Button({ variant = "primary", className = "", ...props }: ButtonProps) {

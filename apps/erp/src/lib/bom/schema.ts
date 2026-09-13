@@ -19,6 +19,7 @@ export type BomHeader = {
   output_qty: number;
   is_active: boolean;
   created_at: string;
+  created_by: string | null;
   items: { name: string; uom: string };
   bom_lines: {
     id: string;

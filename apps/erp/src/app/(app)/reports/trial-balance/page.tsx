@@ -10,6 +10,7 @@ import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { FormError } from "@/components/ui/form-message";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -53,14 +54,14 @@ export default function TrialBalancePage() {
   }, [router]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const isBalanced = report ? report.totalDebit === report.totalCredit : false;
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/reports" label="Kembali ke Financial Reports" />
+      <BackLink href="/reports" label="Kembali ke Laporan Keuangan" />
       <div>
         <h1 className="text-xl font-semibold text-black">Trial Balance</h1>
         <p className="text-sm text-slate-500">

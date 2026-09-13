@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Scale, TrendingUp, Landmark, Waves, Lock } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 const reports = [
   {
@@ -59,13 +60,13 @@ export default function ReportsPage() {
   }, [router]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Financial Reports</h1>
+        <h1 className="text-xl font-semibold text-black">Laporan Keuangan</h1>
         <p className="text-sm text-slate-500">
           4 laporan pertama murni agregasi read-only. Tutup Buku beda — itu tindakan menulis
           (nol-in Pendapatan/Beban, kunci periode dari transaksi baru).

@@ -54,7 +54,7 @@ export function CashMethodField({
           {resolved.code} — {resolved.name}
         </p>
       ) : (
-        <p className="text-xs text-red-600">⚠ Akun belum diset admin — atur di Settings → Default Akun.</p>
+        <p className="text-xs text-red-600">⚠ Akun belum diset admin — atur di Pengaturan → Default Akun.</p>
       )}
     </div>
   );

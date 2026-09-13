@@ -10,8 +10,11 @@ create table counterparties (
   payment_term_days int not null check (payment_term_days > 0),
   archived_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  created_by text default (auth.jwt() ->> 'email')
 );
+
+comment on column counterparties.created_by is 'Email snapshot saat insert (bukan FK) -- konvensi master data (items/counterparties/accounts/bom), beda dari created_by uuid FK di tabel transaksional sejak 0011+. NULL = data lama / insert di luar jalur aplikasi.';
 
 create trigger counterparties_set_updated_at
   before update on counterparties
@@ -85,9 +88,9 @@ as $$
 begin
   if not exists (
     select 1 from user_roles ur
-    where ur.user_id = auth.uid() and ur.role_name in ('admin', 'accountant')
+    where ur.user_id = auth.uid() and ur.role_name = 'admin'
   ) then
-    raise exception 'Cuma admin/accountant yang boleh menghapus counterparty';
+    raise exception 'Cuma admin yang boleh menghapus counterparty';
   end if;
 
   begin
@@ -111,13 +114,13 @@ create policy counterparties_select on counterparties
 create policy counterparties_insert on counterparties
   for insert with check (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy counterparties_update on counterparties
   for update using (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 -- sengaja gak ada policy DELETE -> arsip lewat archived_at + delete_counterparty() security definer
 
@@ -131,7 +134,7 @@ create policy counterparty_type_mapping_select on counterparty_type_mapping
 create policy counterparty_type_mapping_insert on counterparty_type_mapping
   for insert with check (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 -- role sekali ditetapkan gak berubah lagi -- gak ada policy UPDATE, delete lewat delete_counterparty()
 

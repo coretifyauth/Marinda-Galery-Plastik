@@ -12,6 +12,7 @@ import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { buildLetterheadHtml, buildSignatureBlockHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
 import { fetchCompanySettings, type CompanySettings } from "@/lib/company-settings/schema";
 import { fetchActiveSignatoryLabels } from "@/lib/document-signatories/schema";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type GrnRef = { id: string; note_date: string; delivery_note_ref: string | null };
 
@@ -20,6 +21,13 @@ const statusStyle: Record<string, string> = {
   PARTIALLY_RECEIVED: "bg-amber-50 text-amber-700",
   FULLY_RECEIVED: "bg-emerald-50 text-emerald-700",
   CANCELLED: "bg-slate-100 text-slate-400 line-through",
+};
+
+const statusLabel: Record<string, string> = {
+  OPEN: "Terbuka",
+  PARTIALLY_RECEIVED: "Diterima Sebagian",
+  FULLY_RECEIVED: "Diterima Penuh",
+  CANCELLED: "Dibatalkan",
 };
 
 export function PurchaseOrderDetailView({ id }: { id: string }) {
@@ -103,7 +111,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   }
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!po) {
@@ -113,6 +121,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
   const status = poStatus(po);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canCancel = canWrite && status === "OPEN";
+  const canReceive = canWrite && status !== "FULLY_RECEIVED" && status !== "CANCELLED";
 
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
   // jadi cetak ulang kapan pun otomatis nunjukkan qty diterima terkini. Kop surat (company_settings)
@@ -170,7 +179,11 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
         { label: "Rujukan Dokumen", value: po.source_ref },
         {
           label: "Status",
-          value: <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>{status}</span>,
+          value: (
+            <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>
+              {statusLabel[status] ?? status}
+            </span>
+          ),
         },
       ],
     },
@@ -178,15 +191,15 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
 
   const tabs: TabDef[] = [
     { key: "lines", label: "Item Dipesan", badge: po.order_lines.length },
-    { key: "grns", label: "Goods Receipts", badge: grns.length },
+    { key: "grns", label: "Barang Masuk", badge: grns.length },
   ];
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/purchase-orders" label="Kembali ke Purchase Orders" />
+      <BackLink href="/purchase-orders" label="Kembali ke Purchase Order" />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">Purchase Order Details</h1>
+          <h1 className="text-xl font-semibold text-black">Detail Purchase Order</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {po.source_ref}
           </span>
@@ -250,7 +263,15 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
       )}
 
       {activeTab === "grns" && (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3">
+          {canReceive && (
+            <div className="flex justify-end">
+              <Button variant="toolbar-primary" onClick={() => router.push(`/purchase-orders/${id}/receive`)}>
+                Terima Barang
+              </Button>
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
@@ -278,6 +299,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
               )}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

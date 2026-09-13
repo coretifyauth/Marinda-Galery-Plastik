@@ -1,22 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { forfeitArDepositSchema, refundArDepositSchema, depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
-import { generateDocumentNumber } from "@/lib/document-numbers";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import { depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
-import { LockedAccountField } from "@/components/ui/locked-account-field";
-import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
-import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
-import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type JournalEntryDetail = {
   id: string;
@@ -43,25 +36,11 @@ export function ArDepositDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [deposit, setDeposit] = useState<ArDeposit | null>(null);
-  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("jurnal");
-
-  const [showRefundForm, setShowRefundForm] = useState(false);
-  const [refundAmount, setRefundAmount] = useState("");
-  const [refundDate, setRefundDate] = useState("");
-  const [refundCashMethod, setRefundCashMethod] = useState<CashMethod>("TUNAI");
-  const [refundError, setRefundError] = useState<string | null>(null);
-  const [refundSubmitting, setRefundSubmitting] = useState(false);
-
-  const [showForfeitForm, setShowForfeitForm] = useState(false);
-  const [forfeitAmount, setForfeitAmount] = useState("");
-  const [forfeitDate, setForfeitDate] = useState("");
-  const [forfeitError, setForfeitError] = useState<string | null>(null);
-  const [forfeitSubmitting, setForfeitSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     const { data: dep, error: depErr } = await supabase
@@ -73,14 +52,13 @@ export function ArDepositDetailView({ id }: { id: string }) {
       .eq("type", "OUTBOUND")
       .single();
     if (depErr || !dep) {
-      setLoadError(depErr?.message ?? "Deposit gak ditemukan.");
+      setLoadError(depErr?.message ?? "Uang Muka gak ditemukan.");
       return;
     }
     const loadedDeposit = dep as unknown as ArDeposit;
     setDeposit(loadedDeposit);
 
-    const [resolvedDefaultAccounts, { data: reversedRows }, { data: entries, error: entriesErr }] = await Promise.all([
-      fetchDefaultAccounts(),
+    const [{ data: reversedRows }, { data: entries, error: entriesErr }] = await Promise.all([
       supabase
         .from("journal_entries")
         .select("reverses_entry_id")
@@ -94,7 +72,6 @@ export function ArDepositDetailView({ id }: { id: string }) {
         .order("entry_date"),
     ]);
 
-    setDefaultAccounts(resolvedDefaultAccounts);
     setReversedEntryIds(
       new Set(((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
     );
@@ -123,115 +100,12 @@ export function ArDepositDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  function openRefundForm() {
-    setRefundError(null);
-    setRefundAmount("");
-    setRefundDate("");
-    setRefundCashMethod("TUNAI");
-    setShowRefundForm(true);
-  }
-
-  async function handleRefundSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!deposit) return;
-    setRefundError(null);
-
-    const parsed = refundArDepositSchema.safeParse({
-      deposit_id: deposit.id,
-      amount: refundAmount,
-      refund_date: refundDate,
-      deposit_liability_account_id: defaultAccounts["ar.deposit_liability"]?.id ?? "",
-      cash_account_id: resolveCashAccount(refundCashMethod, defaultAccounts)?.id ?? "",
-    });
-    if (!parsed.success) {
-      setRefundError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setRefundSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_deposit_refunds");
-    } catch (err) {
-      setRefundSubmitting(false);
-      setRefundError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("refund_deposit", {
-      p_deposit_id: parsed.data.deposit_id,
-      p_amount: parsed.data.amount,
-      p_refund_date: parsed.data.refund_date,
-      p_source_ref: sourceRef,
-      p_deposit_account_id: parsed.data.deposit_liability_account_id,
-      p_cash_account_id: parsed.data.cash_account_id,
-    });
-    setRefundSubmitting(false);
-    if (error) {
-      setRefundError(error.message);
-      return;
-    }
-
-    setShowRefundForm(false);
-    await load();
-  }
-
-  function openForfeitForm() {
-    setForfeitError(null);
-    setForfeitAmount("");
-    setForfeitDate("");
-    setShowForfeitForm(true);
-  }
-
-  async function handleForfeitSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!deposit) return;
-    setForfeitError(null);
-
-    const parsed = forfeitArDepositSchema.safeParse({
-      deposit_id: deposit.id,
-      amount: forfeitAmount,
-      forfeiture_date: forfeitDate,
-      deposit_liability_account_id: defaultAccounts["ar.deposit_liability"]?.id ?? "",
-      other_revenue_account_id: defaultAccounts["ar.other_revenue"]?.id ?? "",
-    });
-    if (!parsed.success) {
-      setForfeitError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setForfeitSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_deposit_forfeitures");
-    } catch (err) {
-      setForfeitSubmitting(false);
-      setForfeitError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("forfeit_deposit", {
-      p_deposit_id: parsed.data.deposit_id,
-      p_amount: parsed.data.amount,
-      p_forfeiture_date: parsed.data.forfeiture_date,
-      p_source_ref: sourceRef,
-      p_deposit_account_id: parsed.data.deposit_liability_account_id,
-      p_offset_account_id: parsed.data.other_revenue_account_id,
-    });
-    setForfeitSubmitting(false);
-    if (error) {
-      setForfeitError(error.message);
-      return;
-    }
-
-    setShowForfeitForm(false);
-    await load();
-  }
-
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!deposit) {
-    return <FormError>{loadError ?? "Deposit gak ditemukan."}</FormError>;
+    return <FormError>{loadError ?? "Uang Muka gak ditemukan."}</FormError>;
   }
 
   const { status, applied, refunded, forfeited, remaining } = depositStatus(deposit, reversedEntryIds);
@@ -246,11 +120,11 @@ export function ArDepositDetailView({ id }: { id: string }) {
 
   const detailGroups = [
     {
-      title: "Informasi Deposit",
+      title: "Informasi Uang Muka",
       rows: [
-        { label: "Customer", value: deposit.counterparties.name },
+        { label: "Pelanggan", value: deposit.counterparties.name },
         { label: "Rujukan Dokumen", value: deposit.source_ref },
-        { label: "Tanggal Deposit", value: deposit.deposit_date },
+        { label: "Tanggal Uang Muka", value: deposit.deposit_date },
         {
           label: "Status",
           value: <span className={`rounded-full px-2 py-0.5 text-xs ${statusStyle[status]}`}>{statusLabel[status]}</span>,
@@ -260,7 +134,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
     {
       title: "Ringkasan",
       rows: [
-        { label: "Jumlah Deposit", value: deposit.amount.toLocaleString("id-ID") },
+        { label: "Jumlah Uang Muka", value: deposit.amount.toLocaleString("id-ID") },
         { label: "Diterapkan", value: applied.toLocaleString("id-ID") },
         { label: "Direfund", value: refunded.toLocaleString("id-ID") },
         { label: "Hangus", value: forfeited.toLocaleString("id-ID") },
@@ -278,10 +152,10 @@ export function ArDepositDetailView({ id }: { id: string }) {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/ar-deposits" label="Kembali ke AR Deposits" />
+      <BackLink href="/ar-deposits" label="Kembali ke Uang Muka AR" />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">AR Deposit Details</h1>
+          <h1 className="text-xl font-semibold text-black">Detail Uang Muka AR</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {deposit.source_ref}
           </span>
@@ -301,7 +175,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
                 <th className="px-4 py-2">Deskripsi</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2">Baris</th>
               </tr>
             </thead>
@@ -313,7 +187,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
                     {entry.description}
                     {entry.reverses_entry_id && (
                       <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
-                        Reversal
+                        Pembalikan
                       </span>
                     )}
                   </td>
@@ -349,7 +223,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2">Invoice</th>
                 <th className="px-4 py-2 text-right">Nominal</th>
                 <th className="px-4 py-2">Status</th>
@@ -396,7 +270,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
         <div className="flex flex-col gap-3">
           {canSpend && (
             <div className="flex justify-end">
-              <Button variant="toolbar" onClick={openRefundForm}>
+              <Button variant="toolbar" onClick={() => router.push(`/ar-deposits/${id}/refund`)}>
                 Refund Tunai
               </Button>
             </div>
@@ -406,7 +280,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                   <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Rujukan Dokumen</th>
                   <th className="px-4 py-2 text-right">Nominal</th>
                 </tr>
               </thead>
@@ -435,7 +309,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
         <div className="flex flex-col gap-3">
           {canSpend && (
             <div className="flex justify-end">
-              <Button variant="toolbar" onClick={openForfeitForm}>
+              <Button variant="toolbar" onClick={() => router.push(`/ar-deposits/${id}/hanguskan`)}>
                 Hanguskan
               </Button>
             </div>
@@ -445,7 +319,7 @@ export function ArDepositDetailView({ id }: { id: string }) {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                   <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Rujukan Dokumen</th>
                   <th className="px-4 py-2 text-right">Nominal</th>
                 </tr>
               </thead>
@@ -470,149 +344,6 @@ export function ArDepositDetailView({ id }: { id: string }) {
         </div>
       )}
 
-      <Modal
-        open={showRefundForm}
-        onClose={() => setShowRefundForm(false)}
-        title="Refund Tunai Uang Muka"
-        maxWidth="max-w-xl"
-      >
-        <p className="mb-4 text-sm text-slate-600">
-          Balikin sisa deposit ini ke customer dalam bentuk kas/bank — gak ada dampak Laba
-          Rugi, murni reklasifikasi aset. Boleh sebagian (sisanya bisa diterapkan/direfund
-          lagi/hangus belakangan).
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Uang Muka Penjualan (debit)",
-                resolved: defaultAccounts["ar.deposit_liability"],
-                side: "debit",
-              },
-              {
-                label: "Akun Kas/Bank (kredit)",
-                resolved: resolveCashAccount(refundCashMethod, defaultAccounts),
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleRefundSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="refund_amount">Nominal Refund (maks {remaining.toLocaleString("id-ID")})</Label>
-              <Input
-                id="refund_amount"
-                type="number"
-                min="0"
-                placeholder="0"
-                value={refundAmount}
-                onChange={(e) => setRefundAmount(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="refund_date">Tanggal</Label>
-              <Input id="refund_date" type="date" value={refundDate} onChange={(e) => setRefundDate(e.target.value)} />
-            </div>
-          </div>
-          <LockedAccountField
-            label="Akun Uang Muka Penjualan (debit)"
-            htmlFor="refund_deposit_liability_account"
-            resolved={defaultAccounts["ar.deposit_liability"]}
-          />
-          <CashMethodField
-            label="Akun Kas/Bank (kredit)"
-            htmlFor="refund_cash_account"
-            method={refundCashMethod}
-            onChange={setRefundCashMethod}
-            defaultAccounts={defaultAccounts}
-          />
-
-          {refundError && <FormError>{refundError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowRefundForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={refundSubmitting}>
-              {refundSubmitting ? "Menyimpan..." : "Refund"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
-        open={showForfeitForm}
-        onClose={() => setShowForfeitForm(false)}
-        title="Hanguskan Deposit"
-        maxWidth="max-w-xl"
-      >
-        <p className="mb-4 text-sm text-slate-600">
-          Sisa deposit dihanguskan — jadi Pendapatan Lain-lain, bukan Pendapatan Penjualan.
-          Boleh sebagian.
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Uang Muka Penjualan (debit)",
-                resolved: defaultAccounts["ar.deposit_liability"],
-                side: "debit",
-              },
-              {
-                label: "Akun Pendapatan Lain-lain (kredit)",
-                resolved: defaultAccounts["ar.other_revenue"],
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleForfeitSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="forfeit_amount">Nominal Hangus (maks {remaining.toLocaleString("id-ID")})</Label>
-              <Input
-                id="forfeit_amount"
-                type="number"
-                min="0"
-                placeholder="0"
-                value={forfeitAmount}
-                onChange={(e) => setForfeitAmount(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="forfeit_date">Tanggal</Label>
-              <Input
-                id="forfeit_date"
-                type="date"
-                value={forfeitDate}
-                onChange={(e) => setForfeitDate(e.target.value)}
-              />
-            </div>
-          </div>
-          <LockedAccountField
-            label="Akun Uang Muka Penjualan (debit)"
-            htmlFor="forfeit_deposit_liability_account"
-            resolved={defaultAccounts["ar.deposit_liability"]}
-          />
-          <LockedAccountField
-            label="Akun Pendapatan Lain-lain (kredit)"
-            htmlFor="forfeit_other_revenue_account"
-            resolved={defaultAccounts["ar.other_revenue"]}
-          />
-
-          {forfeitError && <FormError>{forfeitError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowForfeitForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={forfeitSubmitting}>
-              {forfeitSubmitting ? "Memproses..." : "Hanguskan"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

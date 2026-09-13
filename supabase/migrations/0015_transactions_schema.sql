@@ -268,12 +268,22 @@ begin
 end;
 $$;
 
+-- cancel_ap_bill juga nolak kalau bill berasal dari penerimaan barang (GRN) yang barangnya
+-- udah masuk stok -- kalau lolos, jurnal pembalik menghapus utang + efek Dr Inventory/Cr AP
+-- di buku, tapi stok fisik (inventory_movements/qty_on_hand) TETAP ada. Gap ini sebelumnya
+-- cuma dicatat sebagai peringatan manual di docs/tutorial/accounts-payable/batalkan-bill-ap.md,
+-- sekarang ditegakkan sistem. Jalur yang benar buat kasus ini: Retur AP
+-- (docs/tutorial/accounts-payable/retur-barang-ap.md) yang membalik stok DAN jurnal/utang
+-- sekaligus. Referensi ke goods_notes (0018, sama seperti referensi returns di bawah ke 0019)
+-- forward-reference aman -- lihat catatan generate_item_unit_barcode di 0005. TIDAK unwind
+-- deposit_applications kayak cancel_ar_invoice di atas -- gap terpisah, lihat
+-- memory/scope-debt/cancel-ap-bill-deposit-unwind.md.
 create function cancel_ap_bill(
   p_bill_id uuid, p_entry_date date, p_source_ref text
 ) returns uuid language plpgsql security invoker as $$
 declare
-  v_allocated_count int; v_return_count int; v_original_entry_id uuid;
-  v_new_entry_id uuid; v_bill_ref text;
+  v_allocated_count int; v_return_count int; v_goods_receipt_count int;
+  v_original_entry_id uuid; v_new_entry_id uuid; v_bill_ref text;
 begin
   select count(*) into v_allocated_count
   from payments where transaction_id = p_bill_id and type = 'INBOUND';
@@ -289,6 +299,16 @@ begin
   if v_return_count > 0 then
     select source_ref into v_bill_ref from transactions where id = p_bill_id;
     raise exception 'Bill % udah punya % retur -- gak bisa dibatalkan lewat jalur ini', v_bill_ref, v_return_count;
+  end if;
+
+  select count(*) into v_goods_receipt_count
+  from goods_notes where transaction_id = p_bill_id and type = 'INBOUND';
+
+  if v_goods_receipt_count > 0 then
+    select source_ref into v_bill_ref from transactions where id = p_bill_id;
+    raise exception
+      'Bill % berasal dari penerimaan barang (GRN) -- barang udah masuk stok, gak bisa dibatalkan langsung. Pakai jalur Retur AP buat balikin stok dan jurnal/utangnya sekaligus.',
+      v_bill_ref;
   end if;
 
   select journal_entry_id into v_original_entry_id from transactions where id = p_bill_id;

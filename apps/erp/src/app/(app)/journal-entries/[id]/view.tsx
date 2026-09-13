@@ -7,6 +7,7 @@ import type { JournalEntry } from "@/lib/journal-entries/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export function JournalEntryDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -24,7 +25,7 @@ export function JournalEntryDetailView({ id }: { id: string }) {
       .eq("id", id)
       .single();
     if (error || !data) {
-      setLoadError(error?.message ?? "Journal entry gak ditemukan.");
+      setLoadError(error?.message ?? "Jurnal gak ditemukan.");
       return;
     }
     const loaded = data as unknown as JournalEntry;
@@ -59,11 +60,11 @@ export function JournalEntryDetailView({ id }: { id: string }) {
   }, [router, load]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!entry) {
-    return <FormError>{loadError ?? "Journal entry gak ditemukan."}</FormError>;
+    return <FormError>{loadError ?? "Jurnal gak ditemukan."}</FormError>;
   }
 
   const totalDebit = entry.journal_lines.reduce((sum, l) => sum + l.debit, 0);
@@ -71,17 +72,17 @@ export function JournalEntryDetailView({ id }: { id: string }) {
 
   const detailGroups = [
     {
-      title: "Informasi Entry",
+      title: "Informasi Jurnal",
       rows: [
         { label: "Tanggal", value: entry.entry_date },
         { label: "Deskripsi", value: entry.description || "-" },
-        { label: "Source Ref", value: entry.source_ref },
+        { label: "Rujukan Dokumen", value: entry.source_ref },
         {
           label: "Status",
           value: (
             <span className="flex items-center gap-2">
               {entry.reverses_entry_id && (
-                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Reversal</span>
+                <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">Pembalikan</span>
               )}
               {pairedEntry && !entry.reverses_entry_id && (
                 <span className="rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-700">Sudah Direversal</span>
@@ -92,7 +93,7 @@ export function JournalEntryDetailView({ id }: { id: string }) {
                   onClick={() => router.push(`/journal-entries/${pairedEntry.id}`)}
                   className="text-slate-700 underline hover:text-black"
                 >
-                  {entry.reverses_entry_id ? "Membalik entry: " : "Dibalik oleh entry: "}
+                  {entry.reverses_entry_id ? "Membalik jurnal: " : "Dibalik oleh jurnal: "}
                   {pairedEntry.description || pairedEntry.source_ref} ({pairedEntry.entry_date})
                 </button>
               )}
@@ -106,11 +107,11 @@ export function JournalEntryDetailView({ id }: { id: string }) {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/journal-entries" label="Kembali ke Journal Entries" />
+      <BackLink href="/journal-entries" label="Kembali ke Jurnal Umum" />
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">Journal Entry Details</h1>
+          <h1 className="text-xl font-semibold text-black">Detail Jurnal</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {entry.source_ref}
           </span>
@@ -123,7 +124,7 @@ export function JournalEntryDetailView({ id }: { id: string }) {
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Journal Lines</span>
+          <span className="text-sm font-medium text-black">Baris Jurnal</span>
           <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
             {entry.journal_lines.length}
           </span>

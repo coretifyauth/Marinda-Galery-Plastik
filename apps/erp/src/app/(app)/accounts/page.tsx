@@ -1,19 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import {
-  accountCategories,
-  createAccountSchema,
-  type Account,
-} from "@/lib/accounts/schema";
+import { accountCategories, type Account } from "@/lib/accounts/schema";
 import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { FormError } from "@/components/ui/form-message";
-import { Modal } from "@/components/ui/modal";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type TreeNode = Account & { children: TreeNode[] };
 
@@ -67,14 +61,6 @@ export default function AccountsPage() {
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [category, setCategory] =
-    useState<(typeof accountCategories)[number]>("asset");
-  const [parentId, setParentId] = useState("");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [showForm, setShowForm] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>("");
 
@@ -112,35 +98,8 @@ export default function AccountsPage() {
     };
   }, [router, loadAccounts]);
 
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-    const parsed = createAccountSchema.safeParse({
-      code,
-      name,
-      category,
-      parent_id: parentId || null,
-    });
-    if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    setSubmitting(true);
-    const { error } = await supabase.from("accounts").insert(parsed.data);
-    setSubmitting(false);
-    if (error) {
-      setFormError(error.message);
-      return;
-    }
-    setCode("");
-    setName("");
-    setParentId("");
-    setShowForm(false);
-    await loadAccounts();
-  }
-
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const filteredAccounts = categoryFilter
@@ -176,11 +135,11 @@ export default function AccountsPage() {
               Filter
             </Button>
             <Button variant="toolbar" onClick={() => loadAccounts()}>
-              Refresh
+              Muat Ulang
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-                + New
+              <Button variant="toolbar-primary" onClick={() => router.push("/accounts/new")}>
+                + Tambah
               </Button>
             )}
           </div>
@@ -224,73 +183,6 @@ export default function AccountsPage() {
           </tbody>
         </table>
       </div>
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Akun">
-        {!canWrite && (
-          <p className="mb-4 text-sm text-amber-600">
-            Kamu belum punya role admin/accountant — submit di bawah kemungkinan
-            bakal ketolak RLS. Ini expected behavior, bukan bug.
-          </p>
-        )}
-        <form onSubmit={handleCreate} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="code">Kode</Label>
-            <Input
-              id="code"
-              placeholder="mis. 1500"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="name">Nama akun</Label>
-            <Input
-              id="name"
-              placeholder="Nama akun"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="category">Kategori</Label>
-              <Select
-                id="category"
-                value={category}
-                onChange={(e) =>
-                  setCategory(e.target.value as (typeof accountCategories)[number])
-                }
-              >
-                {accountCategories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="parent">Akun induk</Label>
-              <Select id="parent" value={parentId} onChange={(e) => setParentId(e.target.value)}>
-                <option value="">Tanpa parent (header baru)</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.code} — {a.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </div>
-          {formError && <FormError>{formError}</FormError>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? "Menyimpan..." : "Simpan"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

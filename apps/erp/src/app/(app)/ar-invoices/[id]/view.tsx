@@ -1,48 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
-import {
-  createArCreditNoteSchema,
-  type GoodsIssueForInvoice,
-} from "@/lib/ar-credit-notes/schema";
-import { applyArDepositSchema, depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
-import {
-  createWarrantyReplacementSchema,
-  type WarrantyReplacement,
-} from "@/lib/ar-warranty-replacements/schema";
-import { returnCreditRemaining, refundArReturnCreditSchema, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
-import { recordArPaymentSchema } from "@/lib/ar-payments/schema";
+import { type GoodsIssueForInvoice } from "@/lib/ar-credit-notes/schema";
+import { depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
+import { type WarrantyReplacement } from "@/lib/ar-warranty-replacements/schema";
+import { returnCreditRemaining, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
 import type { ChargeCategoryWithAccount } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
-import { LockedAccountField } from "@/components/ui/locked-account-field";
-import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
-import { CashMethodField, resolveCashAccount } from "@/components/ui/cash-method-field";
-import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { buildLetterheadHtml, buildSignatureBlockHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
 import { fetchCompanySettings, type CompanySettings } from "@/lib/company-settings/schema";
 import { fetchActiveSignatoryLabels } from "@/lib/document-signatories/schema";
-
-type ReturnLineInput = {
-  item_id: string;
-  name: string;
-  uom: string;
-  qty_available: number;
-  qty_returned: string;
-  unit_price: number | null;
-};
-type ReplacementLineInput = { item_id: string; name: string; uom: string; qty_remaining: number; qty: string };
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type JournalEntryDetail = {
   id: string;
@@ -101,7 +77,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [invoice, setInvoice] = useState<ArInvoice | null>(null);
-  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [payments, setPayments] = useState<PaymentDetail[]>([]);
@@ -121,52 +96,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
-  const [showApplyForm, setShowApplyForm] = useState(false);
-  const [applyDepositId, setApplyDepositId] = useState("");
-  const [applyAmount, setApplyAmount] = useState("");
-  const [applyDate, setApplyDate] = useState("");
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [applySubmitting, setApplySubmitting] = useState(false);
-
-  const [showReturForm, setShowReturForm] = useState(false);
-  const [returDate, setReturDate] = useState("");
-  const [returAmount, setReturAmount] = useState("");
-  const [returLines, setReturLines] = useState<ReturnLineInput[]>([]);
-  const [returError, setReturError] = useState<string | null>(null);
-  const [returSubmitting, setReturSubmitting] = useState(false);
-
-  // Nominal retur otomatis dihitung dari qty x harga jual per item (order_lines.unit_price),
-  // cuma valid kalau SEMUA baris yang qty-nya diisi punya harga itu -- item dari jalur jual
-  // langsung (walk-in, gak lewat Sales Order) gak punya harga per item di mana pun (lihat
-  // docs/domain/print-templates.md "Harga Per Item"), jadi baris kayak gitu tetap wajib input manual.
-  const returActiveLines = returLines.filter((l) => (Number(l.qty_returned) || 0) > 0);
-  const returAutoCalcEligible =
-    !!goodsIssue && returActiveLines.length > 0 && returActiveLines.every((l) => l.unit_price != null);
-  const returAutoAmount = returAutoCalcEligible
-    ? returActiveLines.reduce((sum, l) => sum + (l.unit_price ?? 0) * (Number(l.qty_returned) || 0), 0)
-    : null;
-  const effectiveReturAmount = returAutoCalcEligible ? returAutoAmount ?? 0 : Number(returAmount) || 0;
-
   const [replacements, setReplacements] = useState<WarrantyReplacement[]>([]);
-  const [showReplaceForm, setShowReplaceForm] = useState(false);
-  const [replaceDate, setReplaceDate] = useState("");
-  const [replaceLines, setReplaceLines] = useState<ReplacementLineInput[]>([]);
-  const [replaceError, setReplaceError] = useState<string | null>(null);
-  const [replaceSubmitting, setReplaceSubmitting] = useState(false);
-
-  const [showPayForm, setShowPayForm] = useState(false);
-  const [payDate, setPayDate] = useState("");
-  const [payAmount, setPayAmount] = useState("");
-  const [payMethod, setPayMethod] = useState<"TUNAI" | "BANK">("TUNAI");
-  const [payError, setPayError] = useState<string | null>(null);
-  const [paySubmitting, setPaySubmitting] = useState(false);
-
-  const [refundCreditId, setRefundCreditId] = useState<string | null>(null);
-  const [refundCreditAmount, setRefundCreditAmount] = useState("");
-  const [refundCreditDate, setRefundCreditDate] = useState("");
-  const [refundCreditMethod, setRefundCreditMethod] = useState<"TUNAI" | "BANK">("TUNAI");
-  const [refundCreditError, setRefundCreditError] = useState<string | null>(null);
-  const [refundCreditSubmitting, setRefundCreditSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     const { data: inv, error: invErr } = await supabase
@@ -185,7 +115,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setInvoice(loadedInvoice);
 
     const [
-      defAccs,
       { data: reversedRows },
       { data: entries, error: entriesErr },
       { data: pay, error: payErr },
@@ -198,7 +127,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       { data: custDeposits, error: custDepositsErr },
       { data: custReturnCredits, error: custReturnCreditsErr },
     ] = await Promise.all([
-      fetchDefaultAccounts(),
       supabase
         .from("journal_entries")
         .select("reverses_entry_id")
@@ -267,7 +195,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .order("created_at"),
     ]);
 
-    setDefaultAccounts(defAccs);
     const reversedSet = new Set(
       ((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id)
     );
@@ -319,231 +246,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  function openReturForm() {
-    setReturError(null);
-    setReturDate("");
-    setReturAmount("");
-    setReturLines(
-      goodsIssue
-        ? goodsIssue.goods_note_lines.map((l) => ({
-            item_id: l.item_id,
-            name: l.items.name,
-            uom: l.items.uom,
-            qty_available: l.qty,
-            qty_returned: "",
-            unit_price: l.order_lines?.unit_price ?? null,
-          }))
-        : []
-    );
-    setShowReturForm(true);
-  }
-
-  function updateReturLine(itemId: string, qty: string) {
-    setReturLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, qty_returned: qty } : l)));
-  }
-
-  async function handleReturSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!invoice) return;
-    setReturError(null);
-
-    const activeLines = returLines
-      .filter((l) => l.qty_returned.trim() !== "")
-      .map((l) => ({ item_id: l.item_id, qty_returned: l.qty_returned }));
-
-    const parsed = createArCreditNoteSchema.safeParse({
-      invoice_id: invoice.id,
-      credit_note_date: returDate,
-      amount: effectiveReturAmount,
-      contra_revenue_account_id: defaultAccounts["ar.contra_revenue"]?.id ?? "",
-      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
-      lines: activeLines,
-      hpp_account_id: defaultAccounts["inventory.hpp"]?.id || undefined,
-      finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id || undefined,
-      return_credit_liability_account_id: defaultAccounts["ar.return_credit_liability"]?.id || undefined,
-    });
-    if (!parsed.success) {
-      setReturError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    if (goodsIssue && activeLines.length === 0) {
-      setReturError("Invoice ini lewat goods issue — isi minimal 1 baris qty retur");
-      return;
-    }
-
-    setReturSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_credit_notes");
-    } catch (err) {
-      setReturSubmitting(false);
-      setReturError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_ar_return", {
-      p_invoice_id: parsed.data.invoice_id,
-      p_credit_note_date: parsed.data.credit_note_date,
-      p_source_ref: sourceRef,
-      p_amount: parsed.data.amount,
-      p_contra_revenue_account_id: parsed.data.contra_revenue_account_id,
-      p_receivable_account_id: parsed.data.receivable_account_id,
-      p_lines: parsed.data.lines.length > 0 ? parsed.data.lines : null,
-      p_hpp_account_id: parsed.data.hpp_account_id ?? null,
-      p_finished_good_account_id: parsed.data.finished_good_account_id ?? null,
-      p_return_credit_liability_account_id: parsed.data.return_credit_liability_account_id ?? null,
-    });
-    setReturSubmitting(false);
-    if (error) {
-      setReturError(error.message);
-      return;
-    }
-
-    setShowReturForm(false);
-    await load();
-  }
-
-  // Ganti Barang sekarang aksi top-level di invoice (bukan per-baris credit note lagi) --
-  // sisa yang bisa diganti per item = qty_issued dikurangi SEMUA yang udah diklaim lintas
-  // jalur (retur kredit + ganti barang sebelumnya), mirror sales_returned_qty() server-side
-  // (memory/scope-debt/ar-retur-mutually-exclusive.md).
-  function openReplaceForm() {
-    if (!goodsIssue) return;
-
-    const alreadyClaimed = new Map<string, number>();
-    for (const cn of creditNotes) {
-      for (const l of cn.return_lines) {
-        alreadyClaimed.set(l.item_id, (alreadyClaimed.get(l.item_id) ?? 0) + l.qty_returned);
-      }
-    }
-    for (const r of replacements) {
-      for (const l of r.replacement_lines) {
-        alreadyClaimed.set(l.item_id, (alreadyClaimed.get(l.item_id) ?? 0) + l.qty_replaced);
-      }
-    }
-
-    setReplaceError(null);
-    setReplaceDate("");
-    setReplaceLines(
-      goodsIssue.goods_note_lines
-        .map((l) => ({
-          item_id: l.item_id,
-          name: l.items.name,
-          uom: l.items.uom,
-          qty_remaining: l.qty - (alreadyClaimed.get(l.item_id) ?? 0),
-          qty: "",
-        }))
-        .filter((l) => l.qty_remaining > 0)
-    );
-    setShowReplaceForm(true);
-  }
-
-  function updateReplaceLine(itemId: string, qty: string) {
-    setReplaceLines((prev) => prev.map((l) => (l.item_id === itemId ? { ...l, qty } : l)));
-  }
-
-  async function handleReplaceSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!invoice) return;
-    setReplaceError(null);
-
-    const activeLines = replaceLines
-      .filter((l) => l.qty.trim() !== "")
-      .map((l) => ({ item_id: l.item_id, qty: l.qty }));
-
-    const parsed = createWarrantyReplacementSchema.safeParse({
-      invoice_id: invoice.id,
-      replacement_date: replaceDate,
-      lines: activeLines,
-      hpp_account_id: defaultAccounts["inventory.hpp"]?.id ?? "",
-      finished_good_account_id: defaultAccounts["inventory.finished_good"]?.id ?? "",
-    });
-    if (!parsed.success) {
-      setReplaceError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setReplaceSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("warranty_replacements");
-    } catch (err) {
-      setReplaceSubmitting(false);
-      setReplaceError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_replacement", {
-      p_type: "INBOUND",
-      p_transaction_id: parsed.data.invoice_id,
-      p_replacement_date: parsed.data.replacement_date,
-      p_source_ref: sourceRef,
-      p_lines: parsed.data.lines,
-      p_debit_account_id: parsed.data.hpp_account_id,
-      p_credit_account_id: parsed.data.finished_good_account_id,
-    });
-    setReplaceSubmitting(false);
-    if (error) {
-      setReplaceError(error.message);
-      return;
-    }
-
-    setShowReplaceForm(false);
-    await load();
-  }
-
-  function openApplyForm() {
-    setApplyError(null);
-    setApplyDepositId("");
-    setApplyAmount("");
-    setApplyDate("");
-    setShowApplyForm(true);
-  }
-
-  async function handleApplySubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!invoice) return;
-    setApplyError(null);
-
-    const parsed = applyArDepositSchema.safeParse({
-      deposit_id: applyDepositId,
-      invoice_id: invoice.id,
-      amount: applyAmount,
-      entry_date: applyDate,
-      deposit_liability_account_id: defaultAccounts["ar.deposit_liability"]?.id ?? "",
-      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
-    });
-    if (!parsed.success) {
-      setApplyError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setApplySubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_deposit_applications");
-    } catch (err) {
-      setApplySubmitting(false);
-      setApplyError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("apply_deposit", {
-      p_deposit_id: parsed.data.deposit_id,
-      p_transaction_id: parsed.data.invoice_id,
-      p_amount: parsed.data.amount,
-      p_entry_date: parsed.data.entry_date,
-      p_source_ref: sourceRef,
-      p_deposit_account_id: parsed.data.deposit_liability_account_id,
-      p_control_account_id: parsed.data.receivable_account_id,
-    });
-    setApplySubmitting(false);
-    if (error) {
-      setApplyError(error.message);
-      return;
-    }
-
-    setShowApplyForm(false);
-    await load();
-  }
-
   async function handleCancel() {
     if (!invoice) return;
     if (!window.confirm(`Batalkan invoice ${invoice.source_ref} (Rp${invoice.amount.toLocaleString("id-ID")})?`)) return;
@@ -571,115 +273,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     await load();
   }
 
-  function openPayForm() {
-    setPayError(null);
-    setPayDate("");
-    setPayAmount("");
-    setPayMethod("TUNAI");
-    setShowPayForm(true);
-  }
-
-  async function handlePaySubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!invoice) return;
-    setPayError(null);
-
-    const parsed = recordArPaymentSchema.safeParse({
-      customer_id: invoice.customer_id,
-      payment_date: payDate,
-      amount: payAmount,
-      cash_account_id: resolveCashAccount(payMethod, defaultAccounts)?.id ?? "",
-      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
-      invoice_id: invoice.id,
-    });
-    if (!parsed.success) {
-      setPayError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setPaySubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_payments");
-    } catch (err) {
-      setPaySubmitting(false);
-      setPayError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("record_payment", {
-      p_type: "OUTBOUND",
-      p_counterparty_id: parsed.data.customer_id,
-      p_payment_date: parsed.data.payment_date,
-      p_amount: parsed.data.amount,
-      p_source_ref: sourceRef,
-      p_cash_account_id: parsed.data.cash_account_id,
-      p_control_account_id: parsed.data.receivable_account_id,
-      p_transaction_id: parsed.data.invoice_id,
-    });
-    setPaySubmitting(false);
-    if (error) {
-      setPayError(error.message);
-      return;
-    }
-
-    setShowPayForm(false);
-    await load();
-  }
-
-  function openRefundCreditForm(creditId: string) {
-    setRefundCreditError(null);
-    setRefundCreditAmount("");
-    setRefundCreditDate("");
-    setRefundCreditMethod("TUNAI");
-    setRefundCreditId(creditId);
-  }
-
-  async function handleRefundCreditSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!refundCreditId) return;
-    setRefundCreditError(null);
-
-    const parsed = refundArReturnCreditSchema.safeParse({
-      credit_id: refundCreditId,
-      amount: refundCreditAmount,
-      entry_date: refundCreditDate,
-      return_credit_liability_account_id: defaultAccounts["ar.return_credit_liability"]?.id ?? "",
-      cash_account_id: resolveCashAccount(refundCreditMethod, defaultAccounts)?.id ?? "",
-    });
-    if (!parsed.success) {
-      setRefundCreditError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setRefundCreditSubmitting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("ar_return_credit_refunds");
-    } catch (err) {
-      setRefundCreditSubmitting(false);
-      setRefundCreditError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("refund_return_credit", {
-      p_credit_id: parsed.data.credit_id,
-      p_amount: parsed.data.amount,
-      p_entry_date: parsed.data.entry_date,
-      p_source_ref: sourceRef,
-      p_return_credit_account_id: parsed.data.return_credit_liability_account_id,
-      p_cash_account_id: parsed.data.cash_account_id,
-    });
-    setRefundCreditSubmitting(false);
-    if (error) {
-      setRefundCreditError(error.message);
-      return;
-    }
-
-    setRefundCreditId(null);
-    await load();
-  }
-
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!invoice) {
@@ -701,18 +296,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
   );
   const canApplyDeposit = canWrite && !isCancelled && outstanding > 0 && availableDeposits.length > 0;
-  const selectedDeposit = availableDeposits.find((dep) => dep.id === applyDepositId) ?? null;
-  const selectedDepositRemaining = selectedDeposit ? depositStatus(selectedDeposit, reversedEntryIds).remaining : 0;
   // Ganti Barang independen dari credit note sekarang (mirror create_replacement type=OUTBOUND AP) --
   // cuma butuh goods_issue ada (invoice financial-only gak punya barang fisik buat ditukar).
   const canReplace = canWrite && !isCancelled && !!goodsIssue;
-  // Jurnal HPP/Persediaan cuma kejadian kalau ada qty yang beneran diisi.
-  const replaceAnyQty = replaceLines.some((l) => (Number(l.qty) || 0) > 0);
-
-  // Sama pola kayak returExcess di ap-bills/[id]/view.tsx -- excess cuma kejadian kalau
-  // nominal retur ngelebihin outstanding invoice saat ini.
-  const returExcess = Math.max(0, effectiveReturAmount - Math.max(0, outstanding));
-  const returHasQty = returLines.some((l) => (Number(l.qty_returned) || 0) > 0);
 
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
   // jadi cetak ulang kapan pun otomatis nunjukkan kondisi terkini (retur/write-off/pembatalan
@@ -793,7 +379,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       ${watermark}
       <table>
         <tbody>
-          <tr><td class="meta">Customer</td><td>${escapeHtml(invoice.counterparties.name)}</td></tr>
+          <tr><td class="meta">Pelanggan</td><td>${escapeHtml(invoice.counterparties.name)}</td></tr>
           <tr><td class="meta">Tanggal Invoice</td><td>${escapeHtml(invoice.invoice_date)}</td></tr>
           <tr><td class="meta">Jatuh Tempo</td><td>${escapeHtml(invoice.due_date)}</td></tr>
           ${invoice.description ? `<tr><td class="meta">Deskripsi</td><td>${escapeHtml(invoice.description)}</td></tr>` : ""}
@@ -819,7 +405,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     {
       title: "Informasi Invoice",
       rows: [
-        { label: "Customer", value: invoice.counterparties.name },
+        { label: "Pelanggan", value: invoice.counterparties.name },
         { label: "Rujukan Dokumen", value: invoice.source_ref },
         { label: "Tanggal Invoice", value: invoice.invoice_date },
         {
@@ -867,10 +453,10 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/ar-invoices" label="Kembali ke AR Invoices" />
+      <BackLink href="/ar-invoices" label="Kembali ke Invoice" />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">AR Invoice Details</h1>
+          <h1 className="text-xl font-semibold text-black">Detail Invoice</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {invoice.source_ref}
           </span>
@@ -884,7 +470,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                 : "Ada goods_issue -- invoice ini punya barang fisik tercatat"
             }
           >
-            {isFinancialOnly ? "Financial-Only" : "Full — Barang Fisik"}
+            {isFinancialOnly ? "Tanpa Barang Fisik" : "Ada Barang Fisik"}
           </span>
         </div>
         <div className="flex gap-2">
@@ -913,7 +499,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
                 <th className="px-4 py-2">Deskripsi</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2">Baris</th>
               </tr>
             </thead>
@@ -925,7 +511,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                     {entry.description}
                     {entry.reverses_entry_id && (
                       <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
-                        Reversal
+                        Pembalikan
                       </span>
                     )}
                   </td>
@@ -960,7 +546,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         <div className="flex flex-col gap-3">
           {canPay && (
             <div className="flex justify-end">
-              <Button variant="toolbar" onClick={openPayForm}>
+              <Button variant="toolbar" onClick={() => router.push(`/ar-invoices/${id}/bayar`)}>
                 Bayar
               </Button>
             </div>
@@ -970,7 +556,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                   <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Rujukan Dokumen</th>
                   <th className="px-4 py-2 text-right">Jumlah</th>
                 </tr>
               </thead>
@@ -999,7 +585,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         <div className="flex flex-col gap-3">
           {canApplyDeposit && (
             <div className="flex justify-end">
-              <Button variant="toolbar" onClick={openApplyForm}>
+              <Button variant="toolbar" onClick={() => router.push(`/ar-invoices/${id}/terapkan-dp`)}>
                 Terapkan DP
               </Button>
             </div>
@@ -1008,8 +594,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                  <th className="px-4 py-2">Source Ref</th>
-                  <th className="px-4 py-2">Dari Deposit</th>
+                  <th className="px-4 py-2">Rujukan Dokumen</th>
+                  <th className="px-4 py-2">Dari Uang Muka</th>
                   <th className="px-4 py-2 text-right">Nominal</th>
                 </tr>
               </thead>
@@ -1039,12 +625,12 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           {(canRetur || canReplace) && (
             <div className="flex justify-end gap-2">
               {canReplace && (
-                <Button variant="toolbar" onClick={openReplaceForm}>
+                <Button variant="toolbar" onClick={() => router.push(`/ar-invoices/${id}/tukar-barang`)}>
                   Ganti Barang
                 </Button>
               )}
               {canRetur && (
-                <Button variant="toolbar" onClick={openReturForm}>
+                <Button variant="toolbar" onClick={() => router.push(`/ar-invoices/${id}/retur`)}>
                   Retur
                 </Button>
               )}
@@ -1055,7 +641,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                   <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Source Ref</th>
+                  <th className="px-4 py-2">Rujukan Dokumen</th>
                   <th className="px-4 py-2">Jalur</th>
                   <th className="px-4 py-2">Item Diretur</th>
                   <th className="px-4 py-2 text-right">Nominal</th>
@@ -1074,7 +660,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                             hasStockReturn ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"
                           }`}
                         >
-                          {hasStockReturn ? "Full (stok+HPP)" : "Financial-only"}
+                          {hasStockReturn ? "Ada Barang Fisik (stok+HPP)" : "Tanpa Barang Fisik"}
                         </span>
                       </td>
                       <td className="px-4 py-2">
@@ -1109,7 +695,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           {invoiceReturnCredits.length > 0 && (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 px-4 py-2">
-                <span className="text-sm font-medium text-black">Saldo Kredit Retur Customer</span>
+                <span className="text-sm font-medium text-black">Saldo Kredit Retur Pelanggan</span>
               </div>
               <table className="w-full text-left text-sm">
                 <thead>
@@ -1134,7 +720,10 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                         </td>
                         <td className="px-4 py-2 text-right">
                           {canWrite && remaining > 0.005 && (
-                            <Button variant="toolbar" onClick={() => openRefundCreditForm(rc.id)}>
+                            <Button
+                              variant="toolbar"
+                              onClick={() => router.push(`/ar-invoices/${id}/refund-kredit/${rc.id}`)}
+                            >
                               Refund Tunai
                             </Button>
                           )}
@@ -1155,9 +744,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2">Item Diganti</th>
-                <th className="px-4 py-2 text-right">Cost</th>
+                <th className="px-4 py-2 text-right">Biaya</th>
               </tr>
             </thead>
             <tbody>
@@ -1192,454 +781,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           </table>
         </div>
       )}
-
-      <Modal
-        open={showReplaceForm}
-        onClose={() => setShowReplaceForm(false)}
-        title="Tukar Barang (Garansi)"
-        maxWidth="max-w-2xl"
-      >
-        <p className="mb-4 text-sm text-slate-600">
-          Barang pengganti keluar dari stok (dijurnal HPP/Persediaan Barang Jadi) — gak nyentuh
-          Piutang Usaha sama sekali, murni tukar barang. Qty yang sama cuma boleh diklaim SATU
-          jalur: kalau item ini udah diretur pakai diskon (tab Retur), sisa yang bisa diganti di
-          sini otomatis berkurang segitu — gak bisa dua-duanya.
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            replaceAnyQty && [
-              { label: "Akun HPP (debit)", resolved: defaultAccounts["inventory.hpp"], side: "debit" },
-              {
-                label: "Akun Persediaan Barang Jadi (kredit)",
-                resolved: defaultAccounts["inventory.finished_good"],
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleReplaceSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="replace_date">Tanggal</Label>
-              <Input
-                id="replace_date"
-                type="date"
-                value={replaceDate}
-                onChange={(e) => setReplaceDate(e.target.value)}
-              />
-            </div>
-            <LockedAccountField
-              label="Akun HPP (debit)"
-              htmlFor="replace_hpp_account"
-              resolved={defaultAccounts["inventory.hpp"]}
-            />
-            <LockedAccountField
-              label="Akun Persediaan Barang Jadi (kredit)"
-              htmlFor="replace_finished_good_account"
-              resolved={defaultAccounts["inventory.finished_good"]}
-            />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
-              <span>Item (sisa bisa diganti)</span>
-              <span>Qty Ganti</span>
-            </div>
-            {replaceLines.map((line) => (
-              <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                <span className="flex items-center text-sm text-slate-700">
-                  {line.name} ({line.qty_remaining} {line.uom})
-                </span>
-                <Input
-                  type="number"
-                  min="0"
-                  max={line.qty_remaining}
-                  placeholder="0"
-                  value={line.qty}
-                  onChange={(e) => updateReplaceLine(line.item_id, e.target.value)}
-                />
-              </div>
-            ))}
-            {replaceLines.length === 0 && (
-              <p className="text-sm text-slate-400">Semua item terjual di invoice ini udah diretur/diganti penuh.</p>
-            )}
-          </div>
-
-          {replaceError && <FormError>{replaceError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowReplaceForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={replaceSubmitting || replaceLines.length === 0}>
-              {replaceSubmitting ? "Menyimpan..." : "Simpan Penggantian"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
-        open={showApplyForm}
-        onClose={() => setShowApplyForm(false)}
-        title="Terapkan DP ke Invoice Ini"
-        maxWidth="max-w-2xl"
-      >
-        <p className="mb-4 text-sm text-slate-600">
-          Reklasifikasi uang muka yang udah diterima jadi pengurang piutang invoice ini —
-          bukan pembayaran baru.
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Uang Muka Penjualan (debit)",
-                resolved: defaultAccounts["ar.deposit_liability"],
-                side: "debit",
-              },
-              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
-            ],
-          ]}
-        />
-        <form onSubmit={handleApplySubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="apply_deposit">Deposit</Label>
-              <Select
-                id="apply_deposit"
-                value={applyDepositId}
-                onChange={(e) => {
-                  setApplyDepositId(e.target.value);
-                  const dep = availableDeposits.find((d) => d.id === e.target.value);
-                  if (dep) {
-                    const remaining = depositStatus(dep, reversedEntryIds).remaining;
-                    setApplyAmount(String(Math.min(remaining, outstanding)));
-                  }
-                }}
-              >
-                <option value="">Pilih deposit...</option>
-                {availableDeposits.map((dep) => {
-                  const remaining = depositStatus(dep, reversedEntryIds).remaining;
-                  return (
-                    <option key={dep.id} value={dep.id}>
-                      {dep.source_ref} (sisa {remaining.toLocaleString("id-ID")})
-                    </option>
-                  );
-                })}
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="apply_amount">
-                Nominal Diterapkan {selectedDeposit && `(maks ${Math.min(selectedDepositRemaining, outstanding).toLocaleString("id-ID")})`}
-              </Label>
-              <Input
-                id="apply_amount"
-                type="number"
-                min="0"
-                placeholder="0"
-                value={applyAmount}
-                onChange={(e) => setApplyAmount(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="apply_date">Tanggal</Label>
-              <Input id="apply_date" type="date" value={applyDate} onChange={(e) => setApplyDate(e.target.value)} />
-            </div>
-            <LockedAccountField
-              label="Akun Uang Muka Penjualan (debit)"
-              htmlFor="apply_deposit_liability_account"
-              resolved={defaultAccounts["ar.deposit_liability"]}
-            />
-            <LockedAccountField
-              label="Akun Piutang Usaha (kredit)"
-              htmlFor="apply_receivable_account"
-              resolved={defaultAccounts["ar.receivable"]}
-            />
-          </div>
-
-          {applyError && <FormError>{applyError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowApplyForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={applySubmitting}>
-              {applySubmitting ? "Menyimpan..." : "Terapkan DP"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal open={showReturForm} onClose={() => setShowReturForm(false)} title="Catat Retur" maxWidth="max-w-2xl">
-        <p className="mb-4 text-sm text-slate-600">
-          {goodsIssue
-            ? "Invoice ini lewat Goods Issue — isi qty per item yang balik, stok & HPP otomatis ke-reverse proporsional."
-            : "Invoice ini gak lewat Goods Issue — retur cuma ngurangin piutang (kontra-revenue), gak ada stok yang disentuh."}
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Retur & Potongan Penjualan (debit)",
-                resolved: defaultAccounts["ar.contra_revenue"],
-                side: "debit",
-              },
-              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
-            ],
-            returExcess > 0 && [
-              {
-                label: "Akun Piutang Usaha (debit) — retur ini ngelebihin outstanding",
-                resolved: defaultAccounts["ar.receivable"],
-                side: "debit",
-              },
-              {
-                label: "Akun Saldo Kredit Retur Customer (kredit) — retur ini ngelebihin outstanding",
-                resolved: defaultAccounts["ar.return_credit_liability"],
-                side: "credit",
-              },
-            ],
-            goodsIssue && returHasQty && [
-              {
-                label: "Akun Persediaan Barang Jadi (debit, reversal HPP)",
-                resolved: defaultAccounts["inventory.finished_good"],
-                side: "debit",
-              },
-              {
-                label: "Akun HPP (kredit, jurnal reversal)",
-                resolved: defaultAccounts["inventory.hpp"],
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleReturSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_date">Tanggal Retur</Label>
-                <Input id="retur_date" type="date" value={returDate} onChange={(e) => setReturDate(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="retur_amount">
-                  Nominal Retur (kurangin piutang)
-                  {returAutoCalcEligible && " — otomatis dari qty x harga jual"}
-                </Label>
-                <Input
-                  id="retur_amount"
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={returAutoCalcEligible ? effectiveReturAmount : returAmount}
-                  disabled={returAutoCalcEligible}
-                  onChange={(e) => setReturAmount(e.target.value)}
-                />
-                {goodsIssue && !returAutoCalcEligible && returActiveLines.length > 0 && (
-                  <p className="text-xs text-slate-500">
-                    Ada item retur yang gak punya harga jual tercatat (bukan dari Sales Order) — isi nominal manual.
-                  </p>
-                )}
-              </div>
-              <LockedAccountField
-                label="Akun Retur & Potongan Penjualan (debit)"
-                htmlFor="retur_contra_account"
-                resolved={defaultAccounts["ar.contra_revenue"]}
-              />
-              <LockedAccountField
-                label="Akun Piutang Usaha (kredit)"
-                htmlFor="retur_receivable_account"
-                resolved={defaultAccounts["ar.receivable"]}
-              />
-              <LockedAccountField
-                label="Akun Saldo Kredit Retur Customer (kredit, cuma kalau retur ini bikin outstanding minus)"
-                htmlFor="retur_credit_liability_account"
-                resolved={defaultAccounts["ar.return_credit_liability"]}
-              />
-              {goodsIssue && (
-                <>
-                  <LockedAccountField
-                    label="Akun HPP (kredit, jurnal reversal)"
-                    htmlFor="retur_hpp_account"
-                    resolved={defaultAccounts["inventory.hpp"]}
-                  />
-                  <LockedAccountField
-                    label="Akun Persediaan Barang Jadi (debit, reversal HPP)"
-                    htmlFor="retur_finished_good_account"
-                    resolved={defaultAccounts["inventory.finished_good"]}
-                  />
-                </>
-              )}
-            </div>
-
-            {goodsIssue && (
-              <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
-                  <span>Item Terjual (qty asli)</span>
-                  <span>Qty Retur</span>
-                </div>
-                {returLines.map((line) => (
-                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                    <span className="flex items-center text-sm text-slate-700">
-                      {line.name} ({line.qty_available} {line.uom})
-                    </span>
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={line.qty_returned}
-                      onChange={(e) => updateReturLine(line.item_id, e.target.value)}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {returError && <FormError>{returError}</FormError>}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => setShowReturForm(false)}>
-                Batal
-              </Button>
-              <Button type="submit" disabled={returSubmitting}>
-                {returSubmitting ? "Menyimpan..." : "Simpan Retur"}
-              </Button>
-            </div>
-        </form>
-      </Modal>
-
-      <Modal open={showPayForm} onClose={() => setShowPayForm(false)} title="Catat Pembayaran" maxWidth="max-w-2xl">
-        <p className="mb-4 text-sm text-slate-500">
-          Payment selalu nutup invoice ini spesifik, boleh cicil (kurang dari sisa outstanding),
-          tapi gak boleh lebih (overpay ditolak).
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Kas/Bank (debit)",
-                resolved: resolveCashAccount(payMethod, defaultAccounts),
-                side: "debit",
-              },
-              { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
-            ],
-          ]}
-        />
-        <form onSubmit={handlePaySubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="pay_date">Tanggal</Label>
-              <Input id="pay_date" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="pay_amount">
-                Jumlah dibayar (boleh cicil, maks {outstanding.toLocaleString("id-ID")})
-              </Label>
-              <Input
-                id="pay_amount"
-                type="number"
-                min="0"
-                placeholder="0"
-                value={payAmount}
-                onChange={(e) => setPayAmount(e.target.value)}
-              />
-            </div>
-            <CashMethodField
-              label="Akun Kas/Bank (debit)"
-              htmlFor="pay_cash_account"
-              method={payMethod}
-              onChange={setPayMethod}
-              defaultAccounts={defaultAccounts}
-            />
-            <LockedAccountField
-              label="Akun Piutang Usaha (kredit)"
-              htmlFor="pay_receivable_account"
-              resolved={defaultAccounts["ar.receivable"]}
-            />
-          </div>
-
-          {payError && <FormError>{payError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowPayForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={paySubmitting}>
-              {paySubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
-        open={!!refundCreditId}
-        onClose={() => setRefundCreditId(null)}
-        title="Refund Tunai Saldo Kredit Retur"
-        maxWidth="max-w-2xl"
-      >
-        <p className="mb-4 text-sm text-slate-600">
-          Kembalikan sisa saldo kredit retur ini ke customer dalam bentuk kas/bank.
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Saldo Kredit Retur Customer (debit)",
-                resolved: defaultAccounts["ar.return_credit_liability"],
-                side: "debit",
-              },
-              {
-                label: "Akun Kas/Bank (kredit)",
-                resolved: resolveCashAccount(refundCreditMethod, defaultAccounts),
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleRefundCreditSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="refund_credit_amount">Nominal Refund</Label>
-              <Input
-                id="refund_credit_amount"
-                type="number"
-                min="0"
-                placeholder="0"
-                value={refundCreditAmount}
-                onChange={(e) => setRefundCreditAmount(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="refund_credit_date">Tanggal</Label>
-              <Input
-                id="refund_credit_date"
-                type="date"
-                value={refundCreditDate}
-                onChange={(e) => setRefundCreditDate(e.target.value)}
-              />
-            </div>
-            <LockedAccountField
-              label="Akun Saldo Kredit Retur Customer (debit)"
-              htmlFor="refund_credit_liability_account"
-              resolved={defaultAccounts["ar.return_credit_liability"]}
-            />
-            <CashMethodField
-              label="Akun Kas/Bank (kredit)"
-              htmlFor="refund_credit_cash_account"
-              method={refundCreditMethod}
-              onChange={setRefundCreditMethod}
-              defaultAccounts={defaultAccounts}
-            />
-          </div>
-
-          {refundCreditError && <FormError>{refundCreditError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setRefundCreditId(null)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={refundCreditSubmitting}>
-              {refundCreditSubmitting ? "Menyimpan..." : "Refund"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

@@ -1,19 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { createCustomerSchema, type Customer } from "@/lib/customers/schema";
+import { type Customer } from "@/lib/customers/schema";
 import { invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
 import type { ArPayment } from "@/lib/ar-payments/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
+import { formatCreatedBy } from "@/lib/created-by";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -32,12 +31,6 @@ export function CustomerDetailView({ id }: { id: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
 
-  const [editing, setEditing] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editContact, setEditContact] = useState("");
-  const [editPaymentTermDays, setEditPaymentTermDays] = useState("");
-  const [editError, setEditError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("invoices");
 
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -52,7 +45,7 @@ export function CustomerDetailView({ id }: { id: string }) {
     ] = await Promise.all([
       supabase
         .from("counterparties")
-        .select("id, name, contact, payment_term_days, archived_at")
+        .select("id, name, contact, payment_term_days, archived_at, created_by, created_at")
         .eq("id", id)
         .single(),
       supabase
@@ -80,9 +73,6 @@ export function CustomerDetailView({ id }: { id: string }) {
     setLoadError(invErr?.message ?? payErr?.message ?? null);
     const c = cust as Customer;
     setCustomer(c);
-    setEditName(c.name);
-    setEditContact(c.contact ?? "");
-    setEditPaymentTermDays(String(c.payment_term_days));
     setInvoices((inv ?? []) as unknown as ArInvoice[]);
     setPayments((pay ?? []) as unknown as ArPayment[]);
     setReversedEntryIds(
@@ -111,39 +101,9 @@ export function CustomerDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  async function handleSaveEdit(e: FormEvent) {
-    e.preventDefault();
-    setEditError(null);
-    const parsed = createCustomerSchema.safeParse({
-      name: editName,
-      contact: editContact || undefined,
-      payment_term_days: editPaymentTermDays,
-    });
-    if (!parsed.success) {
-      setEditError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    setSaving(true);
-    const { error } = await supabase
-      .from("counterparties")
-      .update({
-        name: parsed.data.name,
-        contact: parsed.data.contact ?? null,
-        payment_term_days: parsed.data.payment_term_days,
-      })
-      .eq("id", id);
-    setSaving(false);
-    if (error) {
-      setEditError(error.message);
-      return;
-    }
-    setEditing(false);
-    await load();
-  }
-
   async function handleDelete() {
     if (!customer) return;
-    if (!window.confirm(`Hapus customer "${customer.name}"?`)) return;
+    if (!window.confirm(`Hapus pelanggan "${customer.name}"?`)) return;
     setDeleteError(null);
     setDeleting(true);
     const { data, error } = await supabase.rpc("delete_counterparty", { p_counterparty_id: customer.id });
@@ -156,7 +116,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       router.push("/customers");
       return;
     }
-    window.alert("Customer ini sudah pernah dipakai di transaksi, jadi diarsipkan (bukan dihapus permanen).");
+    window.alert("Pelanggan ini sudah pernah dipakai di transaksi, jadi diarsipkan (bukan dihapus permanen).");
     await load();
   }
 
@@ -174,11 +134,11 @@ export function CustomerDetailView({ id }: { id: string }) {
   }
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!customer) {
-    return <FormError>{loadError ?? "Customer gak ditemukan."}</FormError>;
+    return <FormError>{loadError ?? "Pelanggan gak ditemukan."}</FormError>;
   }
 
   let totalOutstanding = 0;
@@ -191,7 +151,7 @@ export function CustomerDetailView({ id }: { id: string }) {
 
   const detailGroups = [
     {
-      title: "Informasi Customer",
+      title: "Informasi Pelanggan",
       rows: [
         { label: "Nama", value: customer.name },
         { label: "Kontak", value: customer.contact ?? "-" },
@@ -199,6 +159,10 @@ export function CustomerDetailView({ id }: { id: string }) {
         {
           label: "Status",
           value: customer.archived_at ? "Diarsipkan" : "Aktif",
+        },
+        {
+          label: "Dibuat oleh",
+          value: customer.created_at ? formatCreatedBy(customer.created_by ?? null, customer.created_at) : "-",
         },
       ],
     },
@@ -209,19 +173,19 @@ export function CustomerDetailView({ id }: { id: string }) {
   ];
 
   const tabs: TabDef[] = [
-    { key: "invoices", label: "AR Invoices", badge: invoices.length },
-    { key: "payments", label: "AR Payments", badge: payments.length },
+    { key: "invoices", label: "Invoice", badge: invoices.length },
+    { key: "payments", label: "Pembayaran", badge: payments.length },
   ];
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/customers" label="Kembali ke Customers" />
+      <BackLink href="/customers" label="Kembali ke Pelanggan" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">Customer Details</h1>
+        <h1 className="text-xl font-semibold text-black">Detail Pelanggan</h1>
         {canWrite && (
           <div className="flex gap-2">
-            <Button variant="toolbar" onClick={() => setEditing(true)}>
-              Edit
+            <Button variant="toolbar" onClick={() => router.push(`/customers/${id}/edit`)}>
+              Ubah
             </Button>
             {customer.archived_at ? (
               <Button variant="toolbar" onClick={handleReactivate} disabled={deleting}>
@@ -235,38 +199,6 @@ export function CustomerDetailView({ id }: { id: string }) {
           </div>
         )}
       </div>
-
-      <Modal open={editing} onClose={() => setEditing(false)} title="Edit Customer">
-        <form onSubmit={handleSaveEdit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit_name">Nama</Label>
-            <Input id="edit_name" value={editName} onChange={(e) => setEditName(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit_contact">Kontak</Label>
-            <Input id="edit_contact" value={editContact} onChange={(e) => setEditContact(e.target.value)} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit_payment_term_days">Termin (hari)</Label>
-            <Input
-              id="edit_payment_term_days"
-              type="number"
-              min="1"
-              value={editPaymentTermDays}
-              onChange={(e) => setEditPaymentTermDays(e.target.value)}
-            />
-          </div>
-          {editError && <FormError>{editError}</FormError>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setEditing(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? "Menyimpan..." : "Simpan"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
 
       {loadError && <FormError>{loadError}</FormError>}
       {deleteError && <FormError>{deleteError}</FormError>}
@@ -282,7 +214,7 @@ export function CustomerDetailView({ id }: { id: string }) {
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
                 <th className="px-4 py-2">Jatuh Tempo</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2 text-right">Jumlah</th>
                 <th className="px-4 py-2 text-right">Outstanding</th>
                 <th className="px-4 py-2">Status</th>
@@ -334,7 +266,7 @@ export function CustomerDetailView({ id }: { id: string }) {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2 text-right">Jumlah</th>
                 <th className="px-4 py-2">Invoice</th>
               </tr>

@@ -35,4 +35,6 @@ export type Item = {
   category_id: string | null;
   brand_id: string | null;
   archived_at: string | null;
+  created_by: string | null;
+  created_at: string;
 };

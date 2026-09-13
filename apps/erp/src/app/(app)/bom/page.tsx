@@ -1,25 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { Item } from "@/lib/items/schema";
-import { createBomSchema, type CreateBomInput } from "@/lib/bom/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useBoms } from "@/lib/bom/queries";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
-import { Modal } from "@/components/ui/modal";
 import { Pagination } from "@/components/ui/pagination";
-
-type LineInput = { raw_material_item_id: string; qty_per_batch: string };
-
-function emptyLine(): LineInput {
-  return { raw_material_item_id: "", qty_per_batch: "" };
-}
+import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 
 // Input kecil buat baris filter di header tabel -- pola sama journal-entries/page.tsx.
 const compactFilterInputClass =
@@ -27,7 +16,6 @@ const compactFilterInputClass =
 
 export default function BomPage() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -37,14 +25,7 @@ export default function BomPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
-  const [finishedItemId, setFinishedItemId] = useState("");
-  const [outputQty, setOutputQty] = useState("");
-  const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
-
   const finishedGoods = items.filter((i) => i.item_type === "FINISHED_GOOD");
-  const rawMaterials = items.filter((i) => i.item_type === "RAW_MATERIAL");
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
   // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
@@ -94,69 +75,8 @@ export default function BomPage() {
     };
   }, [router, loadItems]);
 
-  const createMutation = useMutation({
-    mutationFn: async (input: CreateBomInput) => {
-      const { data: header, error: headerError } = await supabase
-        .from("bom_headers")
-        .insert({ finished_item_id: input.finished_item_id, output_qty: input.output_qty })
-        .select("id")
-        .single();
-      if (headerError || !header) {
-        throw new Error(headerError?.message ?? "Gagal bikin BOM header");
-      }
-
-      const { error: linesError } = await supabase.from("bom_lines").insert(
-        input.lines.map((l) => ({
-          bom_header_id: header.id,
-          raw_material_item_id: l.raw_material_item_id,
-          qty_per_batch: l.qty_per_batch,
-        }))
-      );
-      if (linesError) throw new Error(linesError.message);
-    },
-    onSuccess: () => {
-      setFinishedItemId("");
-      setOutputQty("");
-      setLines([emptyLine()]);
-      setShowForm(false);
-      queryClient.invalidateQueries({ queryKey: ["bom_headers"] });
-    },
-    onError: (err) => {
-      setFormError(err instanceof Error ? err.message : "Gagal menyimpan resep");
-    },
-  });
-
-  function updateLine(index: number, patch: Partial<LineInput>) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
-  }
-
-  function addLine() {
-    setLines((prev) => [...prev, emptyLine()]);
-  }
-
-  function removeLine(index: number) {
-    setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
-  }
-
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-
-    const parsed = createBomSchema.safeParse({
-      finished_item_id: finishedItemId,
-      output_qty: outputQty,
-      lines,
-    });
-    if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    createMutation.mutate(parsed.data);
-  }
-
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
@@ -183,11 +103,11 @@ export default function BomPage() {
           </div>
           <div className="flex items-center gap-1.5">
             <Button variant="toolbar" onClick={() => bomsQuery.refetch()}>
-              Refresh
+              Muat Ulang
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-                + New
+              <Button variant="toolbar-primary" onClick={() => router.push("/bom/new")}>
+                + Tambah
               </Button>
             )}
           </div>
@@ -266,7 +186,7 @@ export default function BomPage() {
             {boms.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  {bomsQuery.isLoading ? "Memuat..." : "Belum ada resep."}
+                  {bomsQuery.isLoading ? <InlineSpinner /> : "Belum ada resep."}
                 </td>
               </tr>
             )}
@@ -281,98 +201,6 @@ export default function BomPage() {
           onPageSizeChange={setPageSize}
         />
       </div>
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Buat Resep (BOM)" maxWidth="max-w-3xl">
-        {!canWrite && (
-          <p className="mb-4 text-sm text-amber-600">
-            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-            ketolak RLS.
-          </p>
-        )}
-        <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="finished_item">Barang Jadi</Label>
-                <Select
-                  id="finished_item"
-                  value={finishedItemId}
-                  onChange={(e) => setFinishedItemId(e.target.value)}
-                >
-                  <option value="">Pilih barang jadi...</option>
-                  {finishedGoods.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} ({item.uom})
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="output_qty">Output per Batch</Label>
-                <Input
-                  id="output_qty"
-                  type="number"
-                  min="0"
-                  placeholder="mis. 50"
-                  value={outputQty}
-                  onChange={(e) => setOutputQty(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem_2.5rem] gap-2 text-sm font-medium text-slate-500">
-                <span>Bahan Baku</span>
-                <span>Qty/Batch</span>
-                <span />
-              </div>
-              {lines.map((line, i) => (
-                <div key={i} className="grid grid-cols-[1fr_8rem_2.5rem] gap-2">
-                  <Select
-                    value={line.raw_material_item_id}
-                    onChange={(e) => updateLine(i, { raw_material_item_id: e.target.value })}
-                  >
-                    <option value="">Pilih bahan baku...</option>
-                    {rawMaterials.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({item.uom})
-                      </option>
-                    ))}
-                  </Select>
-                  <Input
-                    type="number"
-                    min="0"
-                    placeholder="0"
-                    value={line.qty_per_batch}
-                    onChange={(e) => updateLine(i, { qty_per_batch: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeLine(i)}
-                    disabled={lines.length <= 1}
-                    className="text-slate-400 hover:text-red-600 disabled:opacity-30"
-                    aria-label="Hapus baris"
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
-              <Button type="button" variant="secondary" onClick={addLine} className="w-fit">
-                + Tambah bahan baku
-              </Button>
-            </div>
-
-            {formError && <FormError>{formError}</FormError>}
-
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-                Batal
-              </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? "Menyimpan..." : "Simpan Resep"}
-              </Button>
-            </div>
-        </form>
-      </Modal>
     </div>
   );
 }

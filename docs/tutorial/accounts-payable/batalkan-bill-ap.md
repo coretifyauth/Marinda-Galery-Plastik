@@ -8,6 +8,7 @@ Saat bill yang dicatat ternyata salah total (mis. salah input, salah supplier) d
 
 - Login dengan role **admin** atau **accountant**.
 - Bill ini **belum punya pembayaran sama sekali** — begitu ada pembayaran, tombol batalkan tidak akan tersedia.
+- Bill ini **bukan berasal dari penerimaan barang (GRN)** — kalau barangnya sudah masuk stok, sistem menolak pembatalan langsung (lihat "Kesalahan Umum" di bawah).
 
 ## Langkah-Langkah
 
@@ -23,4 +24,4 @@ Saat bill yang dicatat ternyata salah total (mis. salah input, salah supplier) d
 ## Kesalahan Umum
 
 - **Mencari tombol Batalkan padahal bill sudah ada pembayaran** — untuk kasus ini, penyelesaiannya lewat retur ([retur-barang-ap.md](retur-barang-ap.md)), bukan pembatalan total.
-- **Bill dari GRN yang mau dibatalkan** — pembatalan bill tidak otomatis membatalkan Goods Receipt/Purchase Order terkait; stok yang sudah masuk dari GRN tetap ada, cek dampaknya ke stok sebelum membatalkan bill yang berasal dari penerimaan barang.
+- **Bill dari GRN yang mau dibatalkan** — sistem menolak: barang yang sudah masuk stok dari GRN tidak boleh "hilang" utangnya begitu saja lewat pembatalan biasa, karena stoknya tetap ada tapi kewajiban ke supplier & nilai persediaannya lenyap dari pembukuan. Solusinya pakai [retur-barang-ap.md](retur-barang-ap.md) — jalur itu membalik stok DAN jurnal/utang sekaligus.

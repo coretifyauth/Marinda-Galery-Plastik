@@ -1,18 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase/client";
-import { generateDocumentNumber } from "@/lib/document-numbers";
-import { itemTypes, updateItemSchema, type Item } from "@/lib/items/schema";
-import { createItemUnitSchema, type ItemUnit } from "@/lib/item-units/schema";
+import { type Item } from "@/lib/items/schema";
+import type { ItemUnit } from "@/lib/item-units/schema";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { InventoryBalance } from "@/lib/inventory/schema";
 import type { ItemCategory } from "@/lib/item-categories/schema";
 import type { ItemBrand } from "@/lib/item-brands/schema";
-import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { formatStockBreakdown } from "@/lib/stock-display";
+import { formatCreatedBy } from "@/lib/created-by";
 import {
   DEFAULT_MOVEMENT_PAGE_SIZE,
   MOVEMENT_PAGE_SIZE_OPTIONS,
@@ -22,24 +21,31 @@ import {
 } from "@/lib/inventory/movements";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
-import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { Tabs } from "@/components/ui/tabs";
 import { Pagination } from "@/components/ui/pagination";
+import { useToast } from "@/components/ui/toast";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+const itemTypeLabel: Record<string, string> = {
+  RAW_MATERIAL: "Bahan Baku",
+  FINISHED_GOOD: "Barang Jadi",
+};
+
 const EMPTY_MOVEMENT_PAGE: MovementPage = { rows: [], total: 0, openingBalance: 0 };
 
 export function ItemDetailView({ id }: { id: string }) {
   const router = useRouter();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [checkingSession, setCheckingSession] = useState(true);
   const [item, setItem] = useState<Item | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -47,33 +53,17 @@ export function ItemDetailView({ id }: { id: string }) {
   const [units, setUnits] = useState<ItemUnit[]>([]);
   const [categories, setCategories] = useState<ItemCategory[]>([]);
   const [brands, setBrands] = useState<ItemBrand[]>([]);
-  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [showEditForm, setShowEditForm] = useState(false);
-  const [editName, setEditName] = useState("");
-  const [editItemType, setEditItemType] = useState<(typeof itemTypes)[number]>("RAW_MATERIAL");
-  const [editUom, setEditUom] = useState("");
-  const [editCategoryId, setEditCategoryId] = useState("");
-  const [editBrandId, setEditBrandId] = useState("");
-  const [editError, setEditError] = useState<string | null>(null);
-  const [editSubmitting, setEditSubmitting] = useState(false);
-
-  const [showUnitForm, setShowUnitForm] = useState(false);
-  const [unitIsBase, setUnitIsBase] = useState(false);
-  const [unitLabel, setUnitLabel] = useState("");
-  const [conversionFactor, setConversionFactor] = useState("1");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [unitError, setUnitError] = useState<string | null>(null);
-  const [unitSubmitting, setUnitSubmitting] = useState(false);
-
-  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const [barcodeError, setBarcodeError] = useState<string | null>(null);
   const [generatingUnitId, setGeneratingUnitId] = useState<string | null>(null);
   const [printingUnitId, setPrintingUnitId] = useState<string | null>(null);
+
+  const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
+  const [editUnitPrice, setEditUnitPrice] = useState("");
+  const [savingUnitId, setSavingUnitId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState("units");
   const [movementAsOfDate, setMovementAsOfDate] = useState(today());
@@ -84,11 +74,13 @@ export function ItemDetailView({ id }: { id: string }) {
   const [movementError, setMovementError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [{ data: it, error: itErr }, { data: acc }, { data: bal }, { data: us }, { data: cats }, { data: brs }, resolvedDefaultAccounts] =
+    const [{ data: it, error: itErr }, { data: acc }, { data: bal }, { data: us }, { data: cats }, { data: brs }] =
       await Promise.all([
         supabase
           .from("items")
-          .select("id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at")
+          .select(
+            "id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at, created_by, created_at"
+          )
           .eq("id", id)
           .single(),
         supabase
@@ -102,7 +94,6 @@ export function ItemDetailView({ id }: { id: string }) {
           .order("is_base", { ascending: false }),
         supabase.from("item_categories").select("id, name, archived_at").order("name"),
         supabase.from("item_brands").select("id, name, archived_at").order("name"),
-        fetchDefaultAccounts(),
       ]);
     if (itErr) {
       setLoadError(itErr.message);
@@ -115,7 +106,6 @@ export function ItemDetailView({ id }: { id: string }) {
     setUnits((us ?? []) as ItemUnit[]);
     setCategories((cats ?? []) as ItemCategory[]);
     setBrands((brs ?? []) as ItemBrand[]);
-    setDefaultAccounts(resolvedDefaultAccounts);
   }, [id]);
 
   useEffect(() => {
@@ -164,7 +154,7 @@ export function ItemDetailView({ id }: { id: string }) {
   }, [activeTab, movementPageNum, movementPageSize]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!item) {
@@ -175,12 +165,8 @@ export function ItemDetailView({ id }: { id: string }) {
   const inventoryAccount = getLeafAccounts(accounts).find((a) => a.id === item.inventory_account_id);
   const totalQty = balance?.qty_on_hand ?? 0;
   const totalValue = (balance?.qty_on_hand ?? 0) * (balance?.avg_cost ?? 0);
-  const hasBaseUnit = units.some((u) => u.is_base);
   const category = categories.find((c) => c.id === item.category_id);
   const brand = brands.find((b) => b.id === item.brand_id);
-  const activeCategories = categories.filter((c) => !c.archived_at);
-  const activeBrands = brands.filter((b) => !b.archived_at);
-  const editInventoryRoleKey = editItemType === "RAW_MATERIAL" ? "inventory.raw_material" : "inventory.finished_good";
 
   const detailGroups = [
     {
@@ -189,7 +175,11 @@ export function ItemDetailView({ id }: { id: string }) {
         { label: "Nama", value: item.name },
         {
           label: "Tipe",
-          value: <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{item.item_type}</span>,
+          value: (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+              {itemTypeLabel[item.item_type] ?? item.item_type}
+            </span>
+          ),
         },
         { label: "Satuan Dasar", value: item.uom },
         { label: "Kategori", value: category ? category.name : "-" },
@@ -199,173 +189,113 @@ export function ItemDetailView({ id }: { id: string }) {
           value: inventoryAccount ? `${inventoryAccount.code} — ${inventoryAccount.name}` : "-",
         },
         { label: "Status", value: item.archived_at ? "Diarsipkan" : "Aktif" },
+        { label: "Dibuat oleh", value: formatCreatedBy(item.created_by, item.created_at) },
       ],
     },
     {
       title: "Ringkasan Stok",
       rows: [
-        { label: "Qty On Hand", value: formatStockBreakdown(totalQty, item.uom, units) },
+        { label: "Qty Tersisa", value: formatStockBreakdown(totalQty, item.uom, units) },
         { label: "Avg Cost / " + item.uom, value: (balance?.avg_cost ?? 0).toLocaleString("id-ID") },
         { label: "Nilai Persediaan", value: totalValue.toLocaleString("id-ID") },
       ],
     },
   ];
 
-  function openEditForm() {
-    if (!item) return;
-    setEditError(null);
-    setEditName(item.name);
-    setEditItemType(item.item_type);
-    setEditUom(item.uom);
-    setEditCategoryId(item.category_id ?? "");
-    setEditBrandId(item.brand_id ?? "");
-    setShowEditForm(true);
-  }
-
-  async function handleUpdate(e: FormEvent) {
-    e.preventDefault();
-    if (!item) return;
-    setEditError(null);
-    const parsed = updateItemSchema.safeParse({
-      name: editName,
-      item_type: editItemType,
-      uom: editUom,
-      inventory_account_id: defaultAccounts[editInventoryRoleKey]?.id ?? "",
-      category_id: editCategoryId || null,
-      brand_id: editBrandId || null,
-    });
-    if (!parsed.success) {
-      setEditError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    setEditSubmitting(true);
-    const { error } = await supabase.from("items").update(parsed.data).eq("id", item.id);
-    setEditSubmitting(false);
-    if (error) {
-      setEditError(error.message);
-      return;
-    }
-    setShowEditForm(false);
-    await load();
-  }
-
-  function openUnitForm() {
-    setUnitError(null);
-    if (!item) return;
-    if (!hasBaseUnit) {
-      // Belum ada satuan dasar -- paksa baris pertama jadi satuan dasar, unit_label
-      // dikunci sama items.uom (konvensi, ref docs/domain/inventory.md).
-      setUnitIsBase(true);
-      setUnitLabel(item.uom);
-      setConversionFactor("1");
-    } else {
-      setUnitIsBase(false);
-      setUnitLabel("");
-      setConversionFactor("");
-    }
-    setUnitPrice("");
-    setShowUnitForm(true);
-  }
-
-  async function handleAddUnit(e: FormEvent) {
-    e.preventDefault();
-    setUnitError(null);
-    const parsed = createItemUnitSchema.safeParse({
-      item_id: id,
-      unit_label: unitLabel,
-      conversion_factor: conversionFactor,
-      price: unitPrice || undefined,
-      is_base: unitIsBase,
-    });
-    if (!parsed.success) {
-      setUnitError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    if (parsed.data.is_base && parsed.data.conversion_factor !== 1) {
-      setUnitError("Satuan dasar wajib faktor konversi 1");
-      return;
-    }
-    setUnitSubmitting(true);
-    const { error } = await supabase.from("item_units").insert({
-      item_id: parsed.data.item_id,
-      unit_label: parsed.data.unit_label,
-      conversion_factor: parsed.data.conversion_factor,
-      price: parsed.data.price ?? null,
-      is_base: parsed.data.is_base,
-    });
-    setUnitSubmitting(false);
-    if (error) {
-      setUnitError(error.message);
-      return;
-    }
-    setShowUnitForm(false);
-    await load();
-  }
-
   async function handleDelete() {
     if (!item) return;
-    if (!window.confirm(`Hapus item "${item.name}"?`)) return;
-    setDeleteError(null);
+    const ok = await confirm({
+      title: "Hapus Item",
+      message: `Hapus item "${item.name}"?`,
+      confirmLabel: "Hapus",
+      danger: true,
+    });
+    if (!ok) return;
     setDeleting(true);
     const { data, error } = await supabase.rpc("delete_item", { p_item_id: item.id });
     setDeleting(false);
     if (error) {
-      setDeleteError(error.message);
+      toast.error(error.message);
       return;
     }
     if (data === "deleted") {
+      toast.success(`Item "${item.name}" berhasil dihapus.`);
       router.push("/items");
       return;
     }
-    window.alert('Item ini sudah pernah dipakai di transaksi, jadi diarsipkan (bukan dihapus permanen).');
+    toast.success("Item ini sudah pernah dipakai di transaksi, jadi diarsipkan (bukan dihapus permanen).");
     await load();
   }
 
   async function handleReactivate() {
     if (!item) return;
-    setDeleteError(null);
     setDeleting(true);
     const { error } = await supabase.from("items").update({ archived_at: null }).eq("id", item.id);
     setDeleting(false);
     if (error) {
-      setDeleteError(error.message);
+      toast.error(error.message);
       return;
     }
+    toast.success("Item berhasil diaktifkan kembali.");
     await load();
   }
 
   async function handleDeleteUnit(unitId: string) {
-    if (!window.confirm("Hapus satuan jual ini?")) return;
+    const ok = await confirm({
+      title: "Hapus Satuan Jual",
+      message: "Hapus satuan jual ini? Kalau cuma mau ubah harga, pakai tombol Ubah -- gak perlu hapus.",
+      confirmLabel: "Hapus",
+      danger: true,
+    });
+    if (!ok) return;
     const { error } = await supabase.from("item_units").delete().eq("id", unitId);
     if (error) {
-      setLoadError(error.message);
+      toast.error(error.message);
       return;
     }
+    toast.success("Satuan jual berhasil dihapus.");
+    await load();
+  }
+
+  function startEditPrice(unit: ItemUnit) {
+    setEditingUnitId(unit.id);
+    setEditUnitPrice(unit.price != null ? String(unit.price) : "");
+  }
+
+  async function handleSavePrice(unitId: string) {
+    const parsed = editUnitPrice.trim() === "" ? null : Number(editUnitPrice);
+    if (parsed != null && (Number.isNaN(parsed) || parsed < 0)) {
+      toast.error("Harga harus angka dan gak boleh negatif.");
+      return;
+    }
+    setSavingUnitId(unitId);
+    const { error } = await supabase.from("item_units").update({ price: parsed }).eq("id", unitId);
+    setSavingUnitId(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setEditingUnitId(null);
+    toast.success("Harga satuan berhasil diperbarui.");
     await load();
   }
 
   async function handleGenerateBarcode(unitId: string) {
     const unit = units.find((u) => u.id === unitId);
     if (unit && unit.price == null) {
-      setBarcodeError("Satuan ini belum punya harga — QR code cuma buat barang yang dijual.");
+      toast.error("Satuan ini belum punya harga — QR code cuma buat barang yang dijual.");
       return;
     }
-    setBarcodeError(null);
     setGeneratingUnitId(unitId);
-    let code: string;
-    try {
-      code = await generateDocumentNumber("item_unit_barcodes");
-    } catch (err) {
-      setGeneratingUnitId(null);
-      setBarcodeError(err instanceof Error ? err.message : "Gagal generate kode");
-      return;
-    }
-    const { error: updErr } = await supabase.from("item_units").update({ barcode: code }).eq("id", unitId);
+    // RPC generate+assign 1 transaksi atomik dengan retry-on-conflict (bukan generate_document_number
+    // + update terpisah) -- lihat generate_item_unit_barcode di supabase/migrations/0005_items_schema.sql.
+    const { error } = await supabase.rpc("generate_item_unit_barcode", { p_unit_id: unitId });
     setGeneratingUnitId(null);
-    if (updErr) {
-      setBarcodeError(updErr.message);
+    if (error) {
+      toast.error(error.message);
       return;
     }
+    toast.success("Kode scan berhasil dibuat.");
     await load();
   }
 
@@ -376,13 +306,12 @@ export function ItemDetailView({ id }: { id: string }) {
   // flow. Window terpisah = gak ada chrome/dialog yang perlu disembunyiin sama sekali.
   async function handlePrintLabel(u: ItemUnit) {
     if (!u.barcode || !item) return;
-    setBarcodeError(null);
     setPrintingUnitId(u.id);
     try {
       const qrDataUrl = await QRCode.toDataURL(u.barcode, { width: 220, margin: 1 });
       const printWindow = window.open("", "_blank", "width=420,height=520");
       if (!printWindow) {
-        setBarcodeError("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
+        toast.error("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
         return;
       }
       const priceLine =
@@ -409,7 +338,7 @@ export function ItemDetailView({ id }: { id: string }) {
 </html>`);
       printWindow.document.close();
     } catch (err) {
-      setBarcodeError(err instanceof Error ? err.message : "Gagal siapin label buat print");
+      toast.error(err instanceof Error ? err.message : "Gagal siapin label buat print");
     } finally {
       setPrintingUnitId(null);
     }
@@ -417,12 +346,12 @@ export function ItemDetailView({ id }: { id: string }) {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/items" label="Kembali ke Items" />
+      <BackLink href="/items" label="Kembali ke Item" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">Item Details</h1>
+        <h1 className="text-xl font-semibold text-black">Detail Item</h1>
         {canWrite && (
           <div className="flex gap-2">
-            <Button variant="toolbar" onClick={openEditForm}>
+            <Button variant="toolbar" onClick={() => router.push(`/items/${item.id}/edit`)}>
               Edit
             </Button>
             {item.archived_at ? (
@@ -439,7 +368,6 @@ export function ItemDetailView({ id }: { id: string }) {
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
-      {deleteError && <FormError>{deleteError}</FormError>}
 
       <p className="text-sm text-slate-500">
         Weighted Average gak nyimpen riwayat per-batch — cuma 1 angka rata-rata berjalan,
@@ -467,16 +395,11 @@ export function ItemDetailView({ id }: { id: string }) {
             </span>
           </div>
           {canWrite && (
-            <Button variant="toolbar" onClick={openUnitForm}>
+            <Button variant="toolbar" onClick={() => router.push(`/items/${id}/units/new`)}>
               + Tambah Satuan
             </Button>
           )}
         </div>
-        {barcodeError && (
-          <div className="px-4 pt-3">
-            <FormError>{barcodeError}</FormError>
-          </div>
-        )}
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
@@ -500,7 +423,20 @@ export function ItemDetailView({ id }: { id: string }) {
                 </td>
                 <td className="px-4 py-2 text-right font-mono">{u.conversion_factor}</td>
                 <td className="px-4 py-2 text-right font-mono">
-                  {u.price != null ? u.price.toLocaleString("id-ID") : "-"}
+                  {editingUnitId === u.id ? (
+                    <div className="ml-auto w-28">
+                      <Input
+                        type="number"
+                        min="0"
+                        autoFocus
+                        value={editUnitPrice}
+                        onChange={(e) => setEditUnitPrice(e.target.value)}
+                        className="text-right"
+                      />
+                    </div>
+                  ) : (
+                    (u.price != null ? u.price.toLocaleString("id-ID") : "-")
+                  )}
                 </td>
                 <td className="px-4 py-2">
                   {u.barcode ? (
@@ -534,14 +470,42 @@ export function ItemDetailView({ id }: { id: string }) {
                 </td>
                 <td className="px-4 py-2 text-right">
                   {canWrite && (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteUnit(u.id)}
-                      className="text-slate-400 hover:text-red-600"
-                      aria-label="Hapus satuan"
-                    >
-                      ✕
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      {editingUnitId === u.id ? (
+                        <>
+                          <Button
+                            type="button"
+                            variant="toolbar"
+                            onClick={() => setEditingUnitId(null)}
+                            disabled={savingUnitId === u.id}
+                          >
+                            Batal
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="toolbar-primary"
+                            onClick={() => handleSavePrice(u.id)}
+                            disabled={savingUnitId === u.id}
+                          >
+                            {savingUnitId === u.id ? "..." : "Simpan"}
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button type="button" variant="toolbar" onClick={() => startEditPrice(u)}>
+                            Ubah
+                          </Button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteUnit(u.id)}
+                            className="text-slate-400 hover:text-red-600"
+                            aria-label="Hapus satuan"
+                          >
+                            ✕
+                          </button>
+                        </>
+                      )}
+                    </div>
                   )}
                 </td>
               </tr>
@@ -549,7 +513,7 @@ export function ItemDetailView({ id }: { id: string }) {
             {units.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
-                  Belum ada satuan jual — item ini belum bisa dipakai di Goods Issue.
+                  Belum ada satuan jual — item ini belum bisa dipakai di Barang Keluar.
                 </td>
               </tr>
             )}
@@ -657,139 +621,6 @@ export function ItemDetailView({ id }: { id: string }) {
         </div>
       )}
 
-      <Modal open={showUnitForm} onClose={() => setShowUnitForm(false)} title="Tambah Satuan Jual">
-        <form onSubmit={handleAddUnit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="unit_label">Nama Satuan</Label>
-            <Input
-              id="unit_label"
-              placeholder="mis. lusin"
-              value={unitLabel}
-              onChange={(e) => setUnitLabel(e.target.value)}
-              disabled={unitIsBase}
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="conversion_factor">
-                Faktor Konversi (ke {item.uom})
-              </Label>
-              <Input
-                id="conversion_factor"
-                type="number"
-                min="0"
-                placeholder="mis. 12"
-                value={conversionFactor}
-                onChange={(e) => setConversionFactor(e.target.value)}
-                disabled={unitIsBase}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="unit_price">Harga (opsional)</Label>
-              <Input
-                id="unit_price"
-                type="number"
-                min="0"
-                placeholder="mis. 22000"
-                value={unitPrice}
-                onChange={(e) => setUnitPrice(e.target.value)}
-              />
-            </div>
-          </div>
-          <p className="text-xs text-slate-500">
-            {unitIsBase
-              ? "Ini jadi satuan dasar item — nama & faktor konversi dikunci (harus sama dengan satuan dasar di master data, faktor 1)."
-              : "Faktor konversi = berapa satuan dasar sama dengan 1 satuan ini (mis. 1 lusin = 12 buah)."}
-          </p>
-          {unitError && <FormError>{unitError}</FormError>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowUnitForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={unitSubmitting}>
-              {unitSubmitting ? "Menyimpan..." : "Simpan Satuan"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal open={showEditForm} onClose={() => setShowEditForm(false)} title="Edit Item">
-        <form onSubmit={handleUpdate} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="edit_name">Nama</Label>
-            <Input id="edit_name" value={editName} onChange={(e) => setEditName(e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_item_type">Tipe</Label>
-              <Select
-                id="edit_item_type"
-                value={editItemType}
-                onChange={(e) => setEditItemType(e.target.value as (typeof itemTypes)[number])}
-              >
-                {itemTypes.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_uom">Satuan Dasar (UOM)</Label>
-              <Input id="edit_uom" value={editUom} onChange={(e) => setEditUom(e.target.value)} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_category">Kategori (opsional)</Label>
-              <Select id="edit_category" value={editCategoryId} onChange={(e) => setEditCategoryId(e.target.value)}>
-                <option value="">Tanpa kategori</option>
-                {activeCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="edit_brand">Brand (opsional)</Label>
-              <Select id="edit_brand" value={editBrandId} onChange={(e) => setEditBrandId(e.target.value)}>
-                <option value="">Tanpa brand</option>
-                {activeBrands.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </div>
-          <LockedAccountField
-            label="Akun Persediaan"
-            htmlFor="edit_inventory_account"
-            resolved={defaultAccounts[editInventoryRoleKey]}
-          />
-          {editItemType !== item.item_type && (
-            <p className="text-xs text-amber-600">
-              ⚠ Ganti Tipe ngubah akun Persediaan yang kepakai (`inventory_account_id`) — transaksi lama yang
-              udah kepakai akun sebelumnya gak berubah, cuma barang ini yang mulai pakai akun baru buat
-              transaksi berikutnya.
-            </p>
-          )}
-          {editUom !== item.uom && (
-            <p className="text-xs text-amber-600">
-              ⚠ Satuan dasar dipakai buat semua pelacakan stok (PO/GRN/BOM/Production/Goods Issue) — ganti
-              ini gak mengonversi ulang riwayat transaksi, cuma label tampilan ke depannya.
-            </p>
-          )}
-          {editError && <FormError>{editError}</FormError>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowEditForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={editSubmitting}>
-              {editSubmitting ? "Menyimpan..." : "Simpan Perubahan"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

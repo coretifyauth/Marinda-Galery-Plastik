@@ -7,6 +7,8 @@ import type { BomHeader } from "@/lib/bom/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
+import { formatCreatedBy } from "@/lib/created-by";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export function BomDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -18,7 +20,7 @@ export function BomDetailView({ id }: { id: string }) {
     const { data, error } = await supabase
       .from("bom_headers")
       .select(
-        "id, finished_item_id, output_qty, is_active, created_at, items(name, uom), bom_lines(id, raw_material_item_id, qty_per_batch, items(name, uom))"
+        "id, finished_item_id, output_qty, is_active, created_at, created_by, items(name, uom), bom_lines(id, raw_material_item_id, qty_per_batch, items(name, uom))"
       )
       .eq("id", id)
       .single();
@@ -46,7 +48,7 @@ export function BomDetailView({ id }: { id: string }) {
   }, [router, load]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!bom) {
@@ -71,6 +73,7 @@ export function BomDetailView({ id }: { id: string }) {
             </span>
           ),
         },
+        { label: "Dibuat oleh", value: formatCreatedBy(bom.created_by, bom.created_at) },
       ],
     },
   ];
@@ -79,7 +82,7 @@ export function BomDetailView({ id }: { id: string }) {
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/bom" label="Kembali ke BOM" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">BOM Details</h1>
+        <h1 className="text-xl font-semibold text-black">Detail BOM</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}

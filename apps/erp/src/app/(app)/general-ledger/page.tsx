@@ -16,6 +16,7 @@ import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { FormHint } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -86,7 +87,7 @@ export default function GeneralLedgerPage() {
   }, [selectedAccountId, loadLedger]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const isDebitNormal = selectedAccount?.normal_balance === "debit";
@@ -102,7 +103,7 @@ export default function GeneralLedgerPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">General Ledger</h1>
+        <h1 className="text-xl font-semibold text-black">Buku Besar</h1>
         <p className="text-sm text-slate-500">Histori transaksi + saldo berjalan per akun.</p>
       </div>
 
@@ -152,7 +153,7 @@ export default function GeneralLedgerPage() {
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
                 <th className="px-4 py-2">Deskripsi</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2 text-right">Debit</th>
                 <th className="px-4 py-2 text-right">Kredit</th>
                 <th className="px-4 py-2 text-right">Saldo Berjalan</th>

@@ -61,7 +61,7 @@ Kolom penting: `deposit_id`, `transaction_id`, `amount`. Tabel ini **gak punya k
 |---|---|---|---|
 | Terapkan DP ke invoice/bill yang sudah terbit | `apply_deposit` | OUTBOUND: Debit akun DP (liability) / Kredit Piutang Usaha. INBOUND: Debit Utang Usaha / Kredit akun DP (asset). Insert 1 baris `deposit_applications`, mengurangi sisa tagihan invoice/bill itu | Fungsi guard `deposit_applications_guard`: (1) `amount` gak boleh melebihi sisa DP, (2) arah DP harus sama dengan arah transaksi tujuan, (3) DP dan transaksi harus milik counterparty yang sama, (4) transaksi tujuan belum dibatalkan, (5) `amount` gak boleh melebihi sisa outstanding transaksi tujuan |
 | Status DP & status transaksi ikut ter-refresh | Trigger `deposit_applications_sync_deposit_status` (after insert) | `recompute_deposit_status(deposit_id)` + `recompute_transaction_status(transaction_id)` | Otomatis |
-| Invoice/bill yang DP-nya sudah diterapkan dibatalkan | Bagian dari `cancel_ar_invoice`/`cancel_ap_bill` (lihat `transactions-schema.md`) | Penerapan DP ikut otomatis dibalik — DP balik jadi belum dipakai | Loop unwind atas `deposit_applications` di dalam RPC pembatalan |
+| Invoice yang DP-nya sudah diterapkan dibatalkan | Bagian dari `cancel_ar_invoice` (lihat `transactions-schema.md`) | Penerapan DP ikut otomatis dibalik — DP balik jadi belum dipakai | Loop unwind atas `deposit_applications` di dalam RPC pembatalan. **`cancel_ap_bill` belum punya loop yang sama** — lihat `memory/scope-debt/cancel-ap-bill-deposit-unwind.md` |
 
 **Aturan Bisnis → RPC**
 
@@ -70,7 +70,7 @@ Kolom penting: `deposit_id`, `transaction_id`, `amount`. Tabel ini **gak punya k
 | DP yang diterapkan gak boleh melebihi sisa DP yang tersedia | Fungsi guard, cek terhadap `deposit_remaining(deposit_id)` |
 | DP cuma bisa diterapkan ke transaksi milik counterparty & arah yang sama | Fungsi guard, cek `type` dan `counterparty_id` DP vs transaksi |
 | Penerapan DP gak boleh melebihi sisa outstanding transaksi tujuan | Fungsi guard, cek `ar_invoice_remaining`/`ap_bill_remaining` |
-| Kalau invoice/bill yang DP-nya sudah diterapkan dibatalkan, penerapan DP itu wajib ikut dibalik | Loop unwind di dalam `cancel_ar_invoice`/`cancel_ap_bill` |
+| Kalau invoice yang DP-nya sudah diterapkan dibatalkan, penerapan DP itu wajib ikut dibalik | Loop unwind di dalam `cancel_ar_invoice` — `cancel_ap_bill` belum punya ini, lihat `memory/scope-debt/cancel-ap-bill-deposit-unwind.md` |
 
 **Interaksi Antar Tabel**
 

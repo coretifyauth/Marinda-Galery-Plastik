@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type CatalogModule = "pos" | "ar" | "ap";
 
@@ -597,7 +598,7 @@ function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h2 className="mb-1 font-semibold text-black">Identitas Perusahaan (Kop Surat)</h2>
       <p className="mb-3 text-sm text-slate-500">
-        Muncul di kop surat cetakan AR Invoice &amp; Purchase Order. Logo cuma link ke gambar yang
+        Muncul di kop surat cetakan Invoice &amp; Purchase Order. Logo cuma link ke gambar yang
         sudah di-host di tempat lain — belum ada upload file di fase ini.
       </p>
       <form onSubmit={handleSave} className="flex flex-col gap-3">
@@ -1004,7 +1005,7 @@ export default function ChargesSettingsPage() {
   }, [router, loadAccounts]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const canWrite = roles.includes("admin");
@@ -1012,7 +1013,7 @@ export default function ChargesSettingsPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Settings</h1>
+        <h1 className="text-xl font-semibold text-black">Pengaturan</h1>
         <p className="text-sm text-slate-500">
           Setup Default Akun, katalog kategori biaya tambahan (POS/AR/AP), pengaturan PPN, dan
           identitas perusahaan/penandatangan buat cetakan dokumen.{" "}
@@ -1032,13 +1033,13 @@ export default function ChargesSettingsPage() {
           />
           <CatalogManager
             module="ar"
-            title="Kategori Pendapatan Tambahan — AR Invoice"
+            title="Kategori Pendapatan Tambahan — Invoice"
             accounts={accounts}
             canWrite={canWrite}
           />
           <CatalogManager
             module="ap"
-            title="Kategori Beban/Persediaan Tambahan — AP Bill"
+            title="Kategori Beban/Persediaan Tambahan — Tagihan"
             accounts={accounts}
             canWrite={canWrite}
           />

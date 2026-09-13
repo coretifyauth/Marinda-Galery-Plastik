@@ -9,6 +9,7 @@ import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { FormError, FormHint } from "@/components/ui/form-message";
+import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -76,14 +77,14 @@ export default function BalanceSheetPage() {
   }, [router]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const isBalanced = report ? report.totalAssets === report.totalLiabilities + report.totalEquity : false;
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/reports" label="Kembali ke Financial Reports" />
+      <BackLink href="/reports" label="Kembali ke Laporan Keuangan" />
       <div>
         <h1 className="text-xl font-semibold text-black">Balance Sheet (Neraca)</h1>
         <p className="text-sm text-slate-500">Aset = Liabilitas + Ekuitas, per 1 tanggal tertentu.</p>
@@ -107,7 +108,7 @@ export default function BalanceSheetPage() {
       {error && <FormError>{error}</FormError>}
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        {loading && <p className="text-sm text-slate-400">Memuat...</p>}
+        {loading && <InlineSpinner />}
         {!loading && report && (
           <div className="grid grid-cols-1 gap-6 text-sm sm:grid-cols-2">
             <div className="flex flex-col gap-4">
@@ -156,7 +157,7 @@ export default function BalanceSheetPage() {
 
       <FormHint>
         Laba Ditahan di sini dihitung ulang tiap kali (kumulatif sejak transaksi pertama tercatat),
-        bukan dibaca dari akun terpisah — Period Closing formal belum ada
+        bukan dibaca dari akun terpisah — Tutup Buku formal belum ada
         (`memory/scope-debt/period-closing.md`).
       </FormHint>
     </div>

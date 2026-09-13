@@ -1,18 +1,14 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import { createSupplierSchema, type CreateSupplierInput } from "@/lib/suppliers/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useSuppliers } from "@/lib/suppliers/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
-import { Modal } from "@/components/ui/modal";
 import { Pagination } from "@/components/ui/pagination";
+import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 
 // Input kecil buat baris filter di header tabel -- pola sama journal-entries/page.tsx.
 const compactFilterInputClass =
@@ -20,7 +16,6 @@ const compactFilterInputClass =
 
 export default function SuppliersPage() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [roles, setRoles] = useState<string[]>([]);
 
@@ -31,12 +26,6 @@ export default function SuppliersPage() {
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedNameSearch = useDebouncedValue(nameSearchInput, 300);
   const debouncedContactSearch = useDebouncedValue(contactSearchInput, 300);
-
-  const [name, setName] = useState("");
-  const [contact, setContact] = useState("");
-  const [paymentTermDays, setPaymentTermDays] = useState("14");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
   // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
@@ -78,48 +67,8 @@ export default function SuppliersPage() {
     };
   }, [router]);
 
-  const createMutation = useMutation({
-    mutationFn: async (input: CreateSupplierInput) => {
-      // suppliers -> counterparties (Fase 1 order-generalization) -- create_counterparty
-      // bikin baris counterparties + counterparty_type_mapping(role='supplier') dalam 1
-      // transaksi, gak ada window baris "yatim" tanpa role.
-      const { error } = await supabase.rpc("create_counterparty", {
-        p_name: input.name,
-        p_role: "supplier",
-        p_contact: input.contact ?? null,
-        p_payment_term_days: input.payment_term_days,
-      });
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      setName("");
-      setContact("");
-      setPaymentTermDays("14");
-      setShowForm(false);
-      queryClient.invalidateQueries({ queryKey: ["suppliers"] });
-    },
-    onError: (err) => {
-      setFormError(err instanceof Error ? err.message : "Gagal menyimpan supplier");
-    },
-  });
-
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-    const parsed = createSupplierSchema.safeParse({
-      name,
-      contact: contact || undefined,
-      payment_term_days: paymentTermDays,
-    });
-    if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    createMutation.mutate(parsed.data);
-  }
-
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
@@ -127,7 +76,7 @@ export default function SuppliersPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Suppliers</h1>
+        <h1 className="text-xl font-semibold text-black">Supplier</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -139,18 +88,18 @@ export default function SuppliersPage() {
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-black">Suppliers</span>
+            <span className="text-sm font-medium text-black">Supplier</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
               {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             <Button variant="toolbar" onClick={() => suppliersQuery.refetch()}>
-              Refresh
+              Muat Ulang
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-                + New
+              <Button variant="toolbar-primary" onClick={() => router.push("/suppliers/new")}>
+                + Tambah
               </Button>
             )}
           </div>
@@ -221,7 +170,7 @@ export default function SuppliersPage() {
             {suppliers.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                  {suppliersQuery.isLoading ? "Memuat..." : "Belum ada supplier."}
+                  {suppliersQuery.isLoading ? <InlineSpinner /> : "Belum ada supplier."}
                 </td>
               </tr>
             )}
@@ -236,54 +185,6 @@ export default function SuppliersPage() {
           onPageSizeChange={setPageSize}
         />
       </div>
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Supplier">
-        {!canWrite && (
-          <p className="mb-4 text-sm text-amber-600">
-            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-            ketolak RLS.
-          </p>
-        )}
-        <form onSubmit={handleCreate} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="name">Nama</Label>
-            <Input
-              id="name"
-              placeholder="mis. Toko Gula Sejahtera"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="contact">Kontak</Label>
-            <Input
-              id="contact"
-              placeholder="mis. 022-xxxx-1002"
-              value={contact}
-              onChange={(e) => setContact(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="payment_term_days">Termin (hari)</Label>
-            <Input
-              id="payment_term_days"
-              type="number"
-              min="1"
-              value={paymentTermDays}
-              onChange={(e) => setPaymentTermDays(e.target.value)}
-            />
-          </div>
-          {formError && <FormError>{formError}</FormError>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Menyimpan..." : "Simpan"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

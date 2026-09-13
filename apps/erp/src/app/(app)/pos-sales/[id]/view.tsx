@@ -9,6 +9,7 @@ import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type JournalEntryDetail = {
   id: string;
@@ -207,7 +208,7 @@ export function PosSaleDetailView({ id }: { id: string }) {
   }
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!sale) {
@@ -221,7 +222,7 @@ export function PosSaleDetailView({ id }: { id: string }) {
     {
       title: "Informasi Transaksi",
       rows: [
-        { label: "Pelanggan", value: sale.customerName ?? "Walk-in (anonim)" },
+        { label: "Pelanggan", value: sale.customerName ?? "Pelanggan Umum (anonim)" },
         { label: "Rujukan Dokumen", value: sale.sourceRef },
         { label: "Tanggal", value: sale.saleDate },
         { label: "Bayar via", value: sale.cashAccountName ?? "—" },
@@ -252,10 +253,10 @@ export function PosSaleDetailView({ id }: { id: string }) {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/pos-sales" label="Kembali ke POS Sales" />
+      <BackLink href="/pos-sales" label="Kembali ke Penjualan POS" />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">POS Sale Details</h1>
+          <h1 className="text-xl font-semibold text-black">Detail Penjualan POS</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {sale.sourceRef}
           </span>
@@ -341,7 +342,7 @@ export function PosSaleDetailView({ id }: { id: string }) {
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                 <th className="px-4 py-2">Tanggal</th>
                 <th className="px-4 py-2">Deskripsi</th>
-                <th className="px-4 py-2">Source Ref</th>
+                <th className="px-4 py-2">Rujukan Dokumen</th>
                 <th className="px-4 py-2">Baris</th>
               </tr>
             </thead>

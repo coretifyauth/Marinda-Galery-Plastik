@@ -56,38 +56,54 @@ export function UomPriceQtyInput({ units, disabled, onChange }: Props) {
     });
   }
 
+  // Quick overview -- barang yang sama sering punya >1 satuan jual dengan harga katalog
+  // masing-masing (mis. pcs/lusin/bal) yang gak selalu proporsional 1 sama lain (bisa ada
+  // diskon per satuan lebih besar). Begitu 1 satuan dipilih, tampilin harga katalog satuan
+  // LAIN buat barang yang sama, biar user gampang sadar kalau salah pilih satuan.
+  const otherUnits = ordered.filter((u) => u.id !== selectedUnit?.id && u.price != null);
+
   return (
-    <div className="flex items-center gap-2">
-      <Input
-        type="number"
-        min="0"
-        step="any"
-        placeholder="0"
-        disabled={disabled}
-        value={qty}
-        onChange={(e) => emit(unitId, e.target.value)}
-        className="w-24"
-      />
-      {ordered.length > 1 ? (
-        <Select
-          value={unitId}
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          min="0"
+          step="any"
+          placeholder="0"
           disabled={disabled}
-          onChange={(e) => emit(e.target.value, qty)}
-          className="w-28"
-        >
-          {ordered.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.unit_label}
-            </option>
-          ))}
-        </Select>
-      ) : (
-        <span className="w-28 truncate text-sm text-slate-500">{selectedUnit?.unit_label}</span>
-      )}
-      {selectedUnit && (
-        <span className="whitespace-nowrap text-xs text-slate-400">
-          @Rp{(selectedUnit.price ?? 0).toLocaleString("id-ID")}
-        </span>
+          value={qty}
+          onChange={(e) => emit(unitId, e.target.value)}
+          className="w-24"
+        />
+        {ordered.length > 1 ? (
+          <Select
+            value={unitId}
+            disabled={disabled}
+            onChange={(e) => emit(e.target.value, qty)}
+            className="w-28"
+          >
+            {ordered.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.unit_label}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <span className="w-28 truncate text-sm text-slate-500">{selectedUnit?.unit_label}</span>
+        )}
+        {selectedUnit && (
+          <span className="whitespace-nowrap text-xs text-slate-400">
+            @Rp{(selectedUnit.price ?? 0).toLocaleString("id-ID")}
+          </span>
+        )}
+      </div>
+      {otherUnits.length > 0 && (
+        <p className="pl-26 text-xs text-slate-400">
+          Satuan lain:{" "}
+          {otherUnits
+            .map((u) => `Rp${(u.price ?? 0).toLocaleString("id-ID")}/${u.unit_label}`)
+            .join(" · ")}
+        </p>
       )}
     </div>
   );

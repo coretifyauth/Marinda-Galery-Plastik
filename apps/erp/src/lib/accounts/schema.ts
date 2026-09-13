@@ -26,6 +26,8 @@ export type Account = {
   is_contra: boolean;
   parent_id: string | null;
   archived_at: string | null;
+  created_by?: string | null;
+  created_at?: string;
 };
 
 /** Cuma leaf account (gak punya child) yang boleh diposting — ref journal-entry-schema.md. */

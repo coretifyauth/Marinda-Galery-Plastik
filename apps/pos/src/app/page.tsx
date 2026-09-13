@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { formatStockBreakdown } from "@/lib/stock-display";
 import { CameraScanner } from "@/components/camera-scanner";
+import { LoadingScreen } from "@/components/loading-screen";
 import {
   buildReceiptHtml,
   buildWhatsappLink,
@@ -848,7 +849,7 @@ export default function CheckoutPage() {
   const lastCompletedSale = recentSales.find((s) => s.sourceRef === lastCompletedRef) ?? null;
 
   if (checkingSession || itemsQuery.isLoading || accountsQuery.isLoading) {
-    return <div className="p-8 text-slate-500">Memuat...</div>;
+    return <LoadingScreen />;
   }
 
   if (itemsQuery.error || accountsQuery.error) {
@@ -1161,7 +1162,7 @@ export default function CheckoutPage() {
             disabled={cart.length === 0}
             onClick={openPaymentModal}
           >
-            Checkout
+            Bayar
           </button>
         </div>
       </div>
@@ -1203,7 +1204,7 @@ export default function CheckoutPage() {
                   value={customerId}
                   onChange={(e) => setCustomerId(e.target.value)}
                 >
-                  <option value="">Walk-in (tanpa nama)</option>
+                  <option value="">Pelanggan Umum (tanpa nama)</option>
                   {customers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -1270,7 +1271,7 @@ export default function CheckoutPage() {
               }
               className="mt-5 w-full rounded bg-slate-800 py-2.5 text-sm font-medium text-white disabled:opacity-40"
             >
-              {checkoutMutation.isPending ? "Memproses..." : "Checkout"}
+              {checkoutMutation.isPending ? "Memproses..." : "Bayar"}
             </button>
           </div>
         </div>

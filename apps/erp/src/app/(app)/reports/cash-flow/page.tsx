@@ -9,6 +9,7 @@ import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { FormError, FormHint } from "@/components/ui/form-message";
+import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 
 function firstOfMonth(): string {
   const d = new Date();
@@ -66,7 +67,7 @@ export default function CashFlowPage() {
   }, [router]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   function reload(start: string, end: string) {
@@ -79,7 +80,7 @@ export default function CashFlowPage() {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/reports" label="Kembali ke Financial Reports" />
+      <BackLink href="/reports" label="Kembali ke Laporan Keuangan" />
       <div>
         <h1 className="text-xl font-semibold text-black">Cash Flow (Arus Kas) — Indirect Method</h1>
         <p className="text-sm text-slate-500">Pergerakan kas fisik untuk 1 rentang tanggal.</p>
@@ -104,7 +105,7 @@ export default function CashFlowPage() {
       {error && <FormError>{error}</FormError>}
 
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        {loading && <p className="text-sm text-slate-400">Memuat...</p>}
+        {loading && <InlineSpinner />}
         {!loading && report && (
           <div className="flex flex-col gap-5 text-sm">
             <div>

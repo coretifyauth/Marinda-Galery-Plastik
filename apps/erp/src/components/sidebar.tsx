@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { supabase } from "@/lib/supabase/client";
 import {
   BookOpenCheck,
   ScrollText,
@@ -20,8 +21,7 @@ import {
   Warehouse,
   ChevronDown,
   Calculator,
-  Wallet,
-  CreditCard,
+  Database,
   Boxes,
   Building2,
   Scale,
@@ -32,21 +32,22 @@ import {
   PiggyBank,
   ClipboardCheck,
   ShoppingCart,
+  ShoppingBag,
   NotebookPen,
-  Cog,
   Store,
   Settings,
+  UserCog,
 } from "lucide-react";
 
 const navGroups = [
   {
-    label: "Accounting",
+    label: "Akuntansi",
     icon: Calculator,
     items: [
       { href: "/accounts", label: "Chart of Accounts", icon: BookOpenCheck },
-      { href: "/journal-entries", label: "Journal Entries", icon: ScrollText },
-      { href: "/general-ledger", label: "General Ledger", icon: BookOpenText },
-      { href: "/fixed-assets", label: "Fixed Assets", icon: Building2 },
+      { href: "/journal-entries", label: "Jurnal Umum", icon: ScrollText },
+      { href: "/general-ledger", label: "Buku Besar", icon: BookOpenText },
+      { href: "/fixed-assets", label: "Aset Tetap", icon: Building2 },
       { href: "/reports/trial-balance", label: "Trial Balance", icon: Scale },
       { href: "/reports/income-statement", label: "Income Statement", icon: TrendingUp },
       { href: "/reports/balance-sheet", label: "Balance Sheet", icon: Landmark },
@@ -55,55 +56,43 @@ const navGroups = [
     ],
   },
   {
-    label: "Accounts Receivable",
-    icon: Wallet,
+    label: "Master Data",
+    icon: Database,
     items: [
-      { href: "/customers", label: "Customers", icon: Users },
-      { href: "/ar-invoices", label: "AR Invoices", icon: FileText },
-      { href: "/ar-deposits", label: "AR Deposits", icon: PiggyBank },
+      { href: "/items", label: "Item", icon: Package },
+      { href: "/customers", label: "Pelanggan", icon: Users },
+      { href: "/suppliers", label: "Supplier", icon: Truck },
     ],
   },
   {
-    label: "Accounts Payable",
-    icon: CreditCard,
+    label: "Pembelian",
+    icon: ShoppingBag,
     items: [
-      { href: "/suppliers", label: "Suppliers", icon: Truck },
-      { href: "/ap-bills", label: "AP Bills", icon: Receipt },
-      { href: "/ap-deposits", label: "AP Deposits", icon: PiggyBank },
+      { href: "/purchase-orders", label: "Purchase Order", icon: ClipboardList },
+      { href: "/goods-receipts", label: "Barang Masuk", icon: PackageCheck },
+      { href: "/ap-bills", label: "Tagihan", icon: Receipt },
+      { href: "/ap-deposits", label: "Uang Muka AP", icon: PiggyBank },
     ],
   },
   {
-    label: "Purchasing",
-    icon: Truck,
-    items: [
-      { href: "/purchase-orders", label: "Purchase Orders", icon: ClipboardList },
-      { href: "/goods-receipts", label: "Goods Receipts", icon: PackageCheck },
-    ],
-  },
-  {
-    label: "Manufacturing",
-    icon: Cog,
-    items: [
-      { href: "/bom", label: "BOM", icon: FlaskConical },
-      { href: "/production-orders", label: "Production Orders", icon: Factory },
-    ],
-  },
-  {
-    label: "Sales Fulfillment",
+    label: "Penjualan",
     icon: Store,
     items: [
-      { href: "/sales-orders", label: "Sales Orders", icon: NotebookPen },
-      { href: "/goods-issues", label: "Goods Issues", icon: PackageMinus },
-      { href: "/pos-sales", label: "POS Sales", icon: ShoppingCart },
+      { href: "/sales-orders", label: "Sales Order", icon: NotebookPen },
+      { href: "/goods-issues", label: "Barang Keluar", icon: PackageMinus },
+      { href: "/pos-sales", label: "Penjualan POS", icon: ShoppingCart },
+      { href: "/ar-invoices", label: "Invoice", icon: FileText },
+      { href: "/ar-deposits", label: "Uang Muka AR", icon: PiggyBank },
     ],
   },
   {
-    label: "Inventory",
+    label: "Inventaris",
     icon: Boxes,
     items: [
-      { href: "/items", label: "Items", icon: Package },
       { href: "/inventory", label: "Stock Position", icon: Warehouse },
       { href: "/stock-opnames", label: "Stock Opname", icon: ClipboardCheck },
+      { href: "/bom", label: "BOM", icon: FlaskConical },
+      { href: "/production-orders", label: "Production Order", icon: Factory },
     ],
   },
 ];
@@ -115,6 +104,7 @@ function activeGroupLabel(pathname: string): string | null {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [isMaster, setIsMaster] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
     const active = activeGroupLabel(pathname);
     return active ? new Set([active]) : new Set();
@@ -125,6 +115,19 @@ export function Sidebar() {
     if (!active) return;
     setOpenGroups((prev) => (prev.has(active) ? prev : new Set(prev).add(active)));
   }, [pathname]);
+
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return;
+      const { data } = await supabase.from("user_roles").select("role_name").eq("user_id", session.user.id);
+      if (!active) return;
+      setIsMaster(((data ?? []) as { role_name: string }[]).some((r) => r.role_name === "master"));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function toggleGroup(label: string) {
     setOpenGroups((prev) => {
@@ -156,7 +159,7 @@ export function Sidebar() {
                 className="flex items-center justify-between rounded-md px-2.5 py-1 text-xs font-medium uppercase tracking-wide text-slate-400 hover:bg-slate-50 hover:text-slate-600"
               >
                 <span className="flex items-center gap-1.5">
-                  <GroupIcon className="h-3.5 w-3.5" />
+                  <GroupIcon className="h-4 w-4" />
                   {group.label}
                 </span>
                 <ChevronDown
@@ -170,13 +173,13 @@ export function Sidebar() {
                     <Link
                       key={href}
                       href={href}
-                      className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm ${
+                      className={`flex items-center gap-2 rounded-md py-1.5 pl-7 pr-2.5 text-sm ${
                         active
                           ? "bg-slate-100 font-medium text-blue-700"
                           : "text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      <Icon className="h-4 w-4" />
+                      <Icon className="h-3.5 w-3.5" />
                       {label}
                     </Link>
                   );
@@ -186,16 +189,29 @@ export function Sidebar() {
         })}
       </nav>
       <div className="shrink-0 border-t border-slate-200 px-2 py-2">
+        {isMaster && (
+          <Link
+            href="/settings/users"
+            className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm ${
+              pathname.startsWith("/settings/users")
+                ? "bg-slate-100 font-medium text-blue-700"
+                : "text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <UserCog className="h-4 w-4" />
+            User Management
+          </Link>
+        )}
         <Link
           href="/settings/charges"
           className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm ${
-            pathname.startsWith("/settings")
+            pathname.startsWith("/settings") && !pathname.startsWith("/settings/users")
               ? "bg-slate-100 font-medium text-blue-700"
               : "text-slate-600 hover:bg-slate-50"
           }`}
         >
           <Settings className="h-4 w-4" />
-          Settings
+          Pengaturan
         </Link>
       </div>
     </aside>

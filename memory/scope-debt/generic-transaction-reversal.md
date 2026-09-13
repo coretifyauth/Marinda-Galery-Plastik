@@ -17,7 +17,20 @@ Bukan technical debt kecil — butuh desain sendiri, bukan sekadar "loop semua `
 
 Sesi desain terpisah. Preseden konkret yang direkomendasikan sebagai basis desain **SUDAH ADA** (`void_pos_transaction`, migration `0078` — kasus paling sederhana: 1 invoice + 1 goods note + 1 payment, gak ada retur/DP, cari lewat FK langsung tanpa tabel penanda) — sesi desain generik ini bisa mulai kapan pun, gak lagi nunggu prasyarat lain.
 
+## Update diskusi (2026-09-11) — request eksplisit dari user, ditunda lagi karena blocker teknis baru
+
+User minta konkretnya: "reversal buat penerimaan dan pengeluaran barang serta pembayarannya" (GRN, Goods Issue, AR/AP Payment). Diskusi sempat jalan sampai hampir ke tahap schema, keputusan yang **sudah disepakati** (dipakai lagi kalau sesi ini dilanjutkan):
+
+- **GRN/Bill (dan GI/Invoice) BUKAN 2 entity terpisah** — dibuat dalam 1 RPC call yang sama (`create_goods_receipt`/`create_goods_issue`, lihat `docs/architecture/goods-notes-schema.md`). Jadi "void dari sisi GRN" dan "void dari sisi Bill" itu **aksi yang sama persis**, bukan cascade 2 langkah seperti yang tadinya diduga — cukup perluas `cancel_ap_bill`/`cancel_ar_invoice` yang sudah ada, gak perlu RPC baru khusus GRN/GI.
+- **Guard yang disepakati**: void GRN/GI cuma boleh kalau Bill/Invoice turunannya (kalau ada) belum kesentuh Payment maupun Retur/DP sama sekali — begitu salah satu ada, ditolak total, user harus urus manual dulu (sama semangat sama guard `cancel_ap_bill` yang sudah ada, cuma diperluas cakupannya ke stok/jurnal goods_notes-nya juga).
+- **Payment berdiri sendiri** (AR/AP, belum ada RPC-nya sama sekali sekarang) boleh divoid asal invoice/bill yang dibayar belum punya Retur yang makan saldo dari situ, dan payment-nya belum pernah dibalik sebelumnya (guard `v_already_voided` gaya `void_pos_transaction`).
+
+**Blocker baru yang bikin ditunda (belum ada di versi sebelumnya file ini)**: reverse jurnal GRN gampang, tapi **`avg_cost` (Rata-Rata Tertimbang) gak bisa "dimundurin" bersih** kalau sudah ada penerimaan lain untuk item yang sama sesudah GRN yang mau divoid — begitu avg_cost udah "kecampur" transaksi berikutnya, gak ada rumus mundur sederhana buat misahin balik kontribusi 1 GRN doang. **Goods Issue TIDAK kena masalah ini** (GI cuma konsumsi di avg_cost saat itu, gak pernah mengubah avg_cost, jadi reversal-nya tetap simpel — qty balik, avg_cost gak disentuh, persis pola `void_pos_transaction`). Opsi yang diusulkan tapi belum difinalkan: void GRN cuma diizinkan kalau GRN itu masih "gerakan terakhir" buat item itu (belum ada mutasi stok lain di atasnya) — kalau sudah ada, ditolak, arahkan ke Stock Opname. Alternatif lain yang belum dieksplorasi: recompute avg_cost dari seluruh `inventory_movements` yang tersisa setelah exclude GRN yang divoid.
+
+Belum ada satu baris migration/kode pun yang ditulis untuk ini — kalau dilanjutkan, mulai dari memutuskan pendekatan avg_cost di atas dulu, baru lanjut ke schema.
+
 ## Referensi
 
 - `docs/architecture/transactions-schema.md` — RPC `cancel_ar_invoice`/`cancel_ap_bill` existing beserta guard-nya.
 - `docs/architecture/pos-schema.md` — `void_pos_transaction`, preseden konkret pola "cari pendamping transaksi lewat FK, reverse N jurnal + efek samping".
+- `docs/architecture/goods-notes-schema.md` — `create_goods_receipt`/`create_goods_issue`, konfirmasi GRN/Bill (dan GI/Invoice) dibuat dalam 1 RPC call yang sama, bukan 2 entity independen.

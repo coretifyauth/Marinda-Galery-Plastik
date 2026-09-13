@@ -10,22 +10,32 @@ create table bom_headers (
   output_qty numeric(14,3) not null check (output_qty > 0),
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  created_by text default (auth.jwt() ->> 'email')
 );
+
+comment on column bom_headers.created_by is 'Email snapshot saat insert (bukan FK) -- konvensi master data (items/counterparties/accounts/bom), beda dari created_by uuid FK di tabel transaksional sejak 0011+. NULL = data lama / insert di luar jalur aplikasi.';
 
 create trigger bom_headers_set_updated_at
   before update on bom_headers
   for each row execute function set_updated_at();
 
+-- created_at/created_by ditambahkan langsung di CREATE TABLE (bukan ALTER belakangan) --
+-- bom_lines dulu gak punya timestamp sama sekali, ditambah pas fitur audit trail
+-- (created_by konvensi master data) digarap bareng items/counterparties/accounts.
 create table bom_lines (
   id uuid primary key default gen_random_uuid(),
   bom_header_id uuid not null references bom_headers(id) on delete cascade,
   raw_material_item_id uuid not null references items(id),
-  qty_per_batch numeric(14,3) not null check (qty_per_batch > 0)
+  qty_per_batch numeric(14,3) not null check (qty_per_batch > 0),
+  created_at timestamptz not null default now(),
+  created_by text default (auth.jwt() ->> 'email')
 );
 
+comment on column bom_lines.created_by is 'Email snapshot saat insert (bukan FK) -- konvensi master data (items/counterparties/accounts/bom), beda dari created_by uuid FK di tabel transaksional sejak 0011+. NULL = data lama / insert di luar jalur aplikasi.';
+
 -- RLS & Grant -- master data mutable, beda dari tabel transaksional lain: select semua
--- authenticated, insert/update cuma admin/accountant; bom_lines dapat delete juga (ganti
+-- authenticated, insert/update cuma admin; bom_lines dapat delete juga (ganti
 -- komposisi resep = hapus+tambah baris, wajar buat master data mutable).
 
 alter table bom_headers enable row level security;
@@ -36,13 +46,13 @@ create policy bom_headers_select on bom_headers
 create policy bom_headers_insert on bom_headers
   for insert with check (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy bom_headers_update on bom_headers
   for update using (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 alter table bom_lines enable row level security;
@@ -53,19 +63,19 @@ create policy bom_lines_select on bom_lines
 create policy bom_lines_insert on bom_lines
   for insert with check (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy bom_lines_update on bom_lines
   for update using (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy bom_lines_delete on bom_lines
   for delete using (
     exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert, update on bom_headers to authenticated;

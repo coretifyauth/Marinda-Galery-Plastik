@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function Home() {
   const router = useRouter();
@@ -13,5 +14,5 @@ export default function Home() {
     });
   }, [router]);
 
-  return <p className="p-8 text-sm text-slate-500">Memuat...</p>;
+  return <LoadingScreen />;
 }

@@ -9,6 +9,7 @@ import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
+import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 
 // Input kecil buat baris filter di header tabel -- Input/Select biasa terlalu besar buat
 // muat di dalam <th>, jadi dibikin versi compact lokal (pola sama journal-entries/page.tsx).
@@ -87,13 +88,13 @@ export default function PosSalesPage() {
   }, [router, loadAux]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">POS Sales</h1>
+        <h1 className="text-xl font-semibold text-black">Penjualan POS</h1>
         <p className="text-sm text-slate-500">
           Riwayat penjualan tunai kios — transaksi dibuat lewat aplikasi kasir (apps/pos), bukan di sini.
         </p>
@@ -105,20 +106,20 @@ export default function PosSalesPage() {
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-black">POS Sales</span>
+            <span className="text-sm font-medium text-black">Penjualan POS</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
               {total}
             </span>
           </div>
           <Button variant="toolbar" onClick={() => salesQuery.refetch()}>
-            Refresh
+            Muat Ulang
           </Button>
         </div>
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Rujukan Dokumen</th>
               <th className="px-4 py-2">Pelanggan</th>
               <th className="px-4 py-2">Metode Bayar</th>
               <th className="px-4 py-2 text-right">Total</th>
@@ -154,12 +155,12 @@ export default function PosSalesPage() {
               </th>
               <th className="px-4 py-1.5">
                 <select
-                  aria-label="Filter customer"
+                  aria-label="Filter pelanggan"
                   value={customerId}
                   onChange={(e) => setCustomerId(e.target.value)}
                   className={compactFilterInputClass}
                 >
-                  <option value="">Semua Customer</option>
+                  <option value="">Semua Pelanggan</option>
                   {customers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -192,7 +193,7 @@ export default function PosSalesPage() {
               >
                 <td className="whitespace-nowrap px-4 py-2">{s.sale_date}</td>
                 <td className="px-4 py-2">{s.source_ref}</td>
-                <td className="px-4 py-2">{s.customer_name ?? "Walk-in"}</td>
+                <td className="px-4 py-2">{s.customer_name ?? "Pelanggan Umum"}</td>
                 <td className="px-4 py-2">{s.cash_account_name ?? "—"}</td>
                 <td className="px-4 py-2 text-right font-mono">{s.total.toLocaleString("id-ID")}</td>
                 <td className="px-4 py-2">
@@ -211,7 +212,7 @@ export default function PosSalesPage() {
             {sales.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  {salesQuery.isLoading ? "Memuat..." : "Belum ada transaksi POS."}
+                  {salesQuery.isLoading ? <InlineSpinner /> : "Belum ada transaksi POS."}
                 </td>
               </tr>
             )}

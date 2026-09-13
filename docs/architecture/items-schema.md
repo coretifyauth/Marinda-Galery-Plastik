@@ -29,6 +29,7 @@ Master data barang yang dilacak modul Inventory — bahan baku maupun barang jad
 | `inventory_account_id` | Akun Persediaan di Chart of Accounts | Akun **kontrol** — 1 akun ini menaungi banyak item sekaligus, rincian per-item ada di subledger Inventory, bukan akun terpisah per barang di COA (pola sama seperti 1 akun "Piutang Usaha" menaungi banyak customer) |
 | `category_id`, `brand_id` | Rujukan ke katalog kategori/brand | Opsional & independen satu sama lain — barang boleh gak punya salah satu, keduanya, atau tidak sama sekali |
 | `archived_at` | Tanggal arsip | Barang yang sudah pernah dipakai gak bisa dihapus keras, cuma diarsipkan |
+| `created_by` | Email pembuat baris (snapshot, bukan FK ke `auth.users`) | Nullable — `NULL` di baris lama atau insert dari luar jalur aplikasi (Studio/service-role). Kolom sama juga ada di `item_units`/`item_categories`/`item_brands` |
 
 Penamaan tabel ini polos (`items`, bukan `inventory_items`) karena konvensi project: master data gak pakai prefix modul, cuma tabel transaksional yang pakai — pola yang sama juga dipakai `counterparties`.
 
@@ -36,7 +37,7 @@ Penamaan tabel ini polos (`items`, bukan `inventory_items`) karena konvensi proj
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Tambah/ubah barang | — (insert/update langsung ke tabel, bukan financial write) | Insert/update baris `items` | RLS: `insert` hanya `admin`/`accountant`, `update` juga termasuk buat mengisi `archived_at` |
+| Tambah/ubah barang | — (insert/update langsung ke tabel, bukan financial write) | Insert/update baris `items` | RLS: `insert` hanya `admin`, `update` juga termasuk buat mengisi `archived_at` |
 | Hapus barang | Fungsi `delete_item()` | Barang yang belum pernah dipakai transaksi apa pun → dihapus permanen. Barang yang sudah pernah dipakai → diarsipkan otomatis sebagai fallback | `security definer`, bagian dari mekanisme "Smart Delete Master Data" yang sama dipakai tabel master lain (lihat `coa-schema.md`) |
 
 **Aturan Bisnis → RPC**
@@ -60,7 +61,7 @@ Penamaan tabel ini polos (`items`, bukan `inventory_items`) karena konvensi proj
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat daftar barang | Semua user yang sudah login |
-| Menambah/mengubah barang | Role `admin` atau `accountant` |
+| Menambah/mengubah barang | Role `admin` |
 | Menghapus barang secara permanen | Lewat RPC `delete_item()` saja, dan hanya berhasil kalau barang belum pernah dipakai transaksi — kalau sudah, otomatis diarsipkan |
 
 ## Kategori & Brand Barang
@@ -78,7 +79,7 @@ Katalog terkontrol (pilih dari daftar tetap), bukan teks bebas — mencegah vari
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Tambah/ubah/nonaktifkan kategori atau brand | — (CRUD langsung ke tabel, gak ada RPC) | Insert/update baris; nonaktifkan pakai `archived_at`, bukan hapus | RLS: `insert`/`update` khusus `admin` (lebih ketat dari `items` sendiri yang admin+accountant) |
+| Tambah/ubah/nonaktifkan kategori atau brand | — (CRUD langsung ke tabel, gak ada RPC) | Insert/update baris; nonaktifkan pakai `archived_at`, bukan hapus | RLS: `insert`/`update` khusus role `admin` |
 
 **Aturan Bisnis → RPC**
 
@@ -126,7 +127,7 @@ Barang bisa dijual ke customer dalam satuan yang beda dari satuan dasarnya — m
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Tambah/ubah/hapus satuan jual | — (CRUD langsung ke tabel, gak ada RPC) | Insert/update/delete baris `item_units` | RLS: `admin`/`accountant`; trigger `check_item_units_nested_conversion` menolak kombinasi faktor konversi yang gak nested rapi antar satuan barang yang sama, dengan row lock ke baris sibling biar aman dari race condition 2 transaksi bersamaan |
+| Tambah/ubah/hapus satuan jual | — (CRUD langsung ke tabel, gak ada RPC) | Insert/update/delete baris `item_units` | RLS: `admin`; trigger `check_item_units_nested_conversion` menolak kombinasi faktor konversi yang gak nested rapi antar satuan barang yang sama, dengan row lock ke baris sibling biar aman dari race condition 2 transaksi bersamaan |
 | Konversi qty satuan jual → satuan dasar | — (murni logic UI, terjadi sebelum RPC dipanggil) | Qty yang sampai ke RPC transaksi (order, terima barang, jual barang, produksi, stock opname) selalu sudah dalam satuan dasar | Tidak ada perubahan di RPC transaksi manapun — konversi 100% terjadi di layer UI |
 
 **Aturan Bisnis → RPC**
@@ -149,7 +150,7 @@ Barang bisa dijual ke customer dalam satuan yang beda dari satuan dasarnya — m
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat satuan jual barang | Semua user yang sudah login |
-| Menambah/mengubah/menghapus satuan jual | Role `admin` atau `accountant` |
+| Menambah/mengubah/menghapus satuan jual | Role `admin` |
 
 ## Kode Scan Barang (Barcode/QR per Satuan Jual)
 
@@ -166,7 +167,7 @@ Kode scan ditaruh di level satuan jual (`item_units`), bukan di level barang (`i
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Simpan barcode pabrik | — (update langsung kolom `barcode`) | Kode dari label EAN-13/UPC produsen disimpan apa adanya | Constraint unik global lintas seluruh `item_units` |
-| Generate kode internal | Fungsi `generate_document_number()` (reuse, lihat `document-numbering-schema.md`) | Mengembalikan teks kode format `SKU-TAHUN-00001`. RPC ini **tidak** langsung menulis ke `item_units` — UI yang menyimpan hasilnya lewat update biasa | `doc_type = 'item_unit_barcodes'` — pengecualian dari konvensi "doc_type = nama tabel transaksional", karena tidak ada tabel `item_unit_barcodes` sungguhan |
+| Generate kode internal | `generate_item_unit_barcode(p_unit_id)` (1 transaksi atomik) | Di dalamnya panggil `generate_document_number('item_unit_barcodes')` (reuse, lihat `document-numbering-schema.md`) lalu langsung `update item_units set barcode = ...` pada baris yang sama — kalau ternyata kode itu sudah kepake baris lain (`unique_violation`, mis. barcode lama yang diketik manual saat seed/testing bukan lewat RPC ini), loop otomatis coba nomor berikutnya (maks 20x) tanpa error ke user | Role `admin` (dicek manual dalam fungsi, `security definer` sehingga bypass RLS) + `doc_type = 'item_unit_barcodes'` — pengecualian dari konvensi "doc_type = nama tabel transaksional", karena tidak ada tabel `item_unit_barcodes` sungguhan |
 | Cetak label QR | — (murni fitur UI, client-side) | Render QR dari nilai `barcode` yang tersimpan | Tidak ada tabel/kolom penyimpanan gambar |
 
 **Aturan Bisnis → RPC**
@@ -189,4 +190,4 @@ Kode scan ditaruh di level satuan jual (`item_units`), bukan di level barang (`i
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat/scan kode barang | Semua user yang sudah login |
-| Mengisi/generate/mengubah kode scan | Role `admin` atau `accountant` (sama seperti hak akses `item_units` secara umum) |
+| Mengisi/generate/mengubah kode scan | Role `admin` (sama seperti hak akses `item_units` secara umum) |

@@ -9,6 +9,7 @@ import type { ItemUnit } from "@/lib/item-units/schema";
 import { formatStockBreakdown } from "@/lib/stock-display";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function InventoryPage() {
   const router = useRouter();
@@ -53,7 +54,7 @@ export default function InventoryPage() {
   }, [router, loadAll]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const grandTotal = items.reduce((sum, item) => {
@@ -64,7 +65,7 @@ export default function InventoryPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">Posisi Persediaan</h1>
+        <h1 className="text-xl font-semibold text-black">Stock Position</h1>
         <p className="text-sm text-slate-500">
           Saldo akhir tiap item — Weighted Average rata-rata berjalan. Klik item buat lihat Kartu
           Stok (riwayat mutasi kronologis) di tab detail-nya.
@@ -75,9 +76,9 @@ export default function InventoryPage() {
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
-          <span className="text-sm font-medium text-black">Persediaan</span>
+          <span className="text-sm font-medium text-black">Stock Position</span>
           <Button variant="toolbar" onClick={() => loadAll()}>
-            Refresh
+            Muat Ulang
           </Button>
         </div>
         <table className="w-full text-left text-sm">

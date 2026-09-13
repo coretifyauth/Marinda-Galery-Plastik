@@ -8,8 +8,15 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
+import { formatCreatedBy } from "@/lib/created-by";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type MemberItem = { id: string; name: string; item_type: string; uom: string; archived_at: string | null };
+
+const itemTypeLabel: Record<string, string> = {
+  RAW_MATERIAL: "Bahan Baku",
+  FINISHED_GOOD: "Barang Jadi",
+};
 
 export function ItemBrandDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -23,7 +30,11 @@ export function ItemBrandDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const [{ data: br, error: brErr }, { data: items }] = await Promise.all([
-      supabase.from("item_brands").select("id, name, archived_at").eq("id", id).single(),
+      supabase
+        .from("item_brands")
+        .select("id, name, archived_at, created_by, created_at")
+        .eq("id", id)
+        .single(),
       supabase
         .from("items")
         .select("id, name, item_type, uom, archived_at")
@@ -61,7 +72,7 @@ export function ItemBrandDetailView({ id }: { id: string }) {
   }, [router, load]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!brand) {
@@ -88,7 +99,7 @@ export function ItemBrandDetailView({ id }: { id: string }) {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/items" label="Kembali ke Items" />
+      <BackLink href="/items" label="Kembali ke Item" />
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-black">Brand: {brand.name}</h1>
         {canWrite && (
@@ -109,6 +120,7 @@ export function ItemBrandDetailView({ id }: { id: string }) {
               { label: "Nama", value: brand.name },
               { label: "Status", value: brand.archived_at ? "Dinonaktifkan" : "Aktif" },
               { label: "Jumlah Barang", value: String(members.length) },
+              { label: "Dibuat oleh", value: formatCreatedBy(brand.created_by, brand.created_at) },
             ],
           },
         ]}
@@ -138,7 +150,7 @@ export function ItemBrandDetailView({ id }: { id: string }) {
                 <td className="px-4 py-2">{item.name}</td>
                 <td className="px-4 py-2">
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                    {item.item_type}
+                    {itemTypeLabel[item.item_type] ?? item.item_type}
                   </span>
                 </td>
                 <td className="px-4 py-2">{item.uom}</td>

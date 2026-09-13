@@ -1,25 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
-import { createApDepositSchema, type ApDepositStatus, type CreateApDepositInput } from "@/lib/ap-deposits/schema";
+import type { ApDepositStatus } from "@/lib/ap-deposits/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useApDeposits } from "@/lib/ap-deposits/queries";
-import { generateDocumentNumber } from "@/lib/document-numbers";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
-import { Modal } from "@/components/ui/modal";
-import { LockedAccountField } from "@/components/ui/locked-account-field";
-import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
-import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { Pagination } from "@/components/ui/pagination";
-import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 
 // Input kecil buat baris filter di header tabel -- Input/Select biasa terlalu besar buat
 // muat di dalam <th>, jadi dibikin versi compact lokal (pola sama journal-entries/page.tsx).
@@ -41,7 +32,6 @@ const statusStyle: Record<string, string> = {
 
 export default function ApDepositsPage() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -54,14 +44,6 @@ export default function ApDepositsPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
-
-  const [supplierId, setSupplierId] = useState("");
-  const [depositDate, setDepositDate] = useState("");
-  const [amount, setAmount] = useState("");
-  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
-  const [cashMethod, setCashMethod] = useState<CashMethod>("TUNAI");
-  const [formError, setFormError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
   // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
@@ -94,10 +76,6 @@ export default function ApDepositsPage() {
     setSuppliers((data ?? []) as Supplier[]);
   }, []);
 
-  const loadDefaultAccounts = useCallback(async () => {
-    setDefaultAccounts(await fetchDefaultAccounts());
-  }, []);
-
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -111,62 +89,16 @@ export default function ApDepositsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadSuppliers(), loadDefaultAccounts()]);
+      await loadSuppliers();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadDefaultAccounts]);
-
-  const createMutation = useMutation({
-    mutationFn: async (input: CreateApDepositInput) => {
-      const sourceRef = await generateDocumentNumber("ap_deposits");
-      const { error } = await supabase.rpc("create_deposit", {
-        p_type: "INBOUND",
-        p_counterparty_id: input.supplier_id,
-        p_deposit_date: input.deposit_date,
-        p_source_ref: sourceRef,
-        p_amount: input.amount,
-        p_deposit_account_id: input.deposit_asset_account_id,
-        p_cash_account_id: input.cash_account_id,
-      });
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      setSupplierId("");
-      setDepositDate("");
-      setAmount("");
-      setCashMethod("TUNAI");
-      setShowForm(false);
-      queryClient.invalidateQueries({ queryKey: ["ap_deposits"] });
-    },
-    onError: (err) => {
-      setFormError(err instanceof Error ? err.message : "Gagal menyimpan deposit");
-    },
-  });
-
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-
-    const parsed = createApDepositSchema.safeParse({
-      supplier_id: supplierId,
-      deposit_date: depositDate,
-      amount,
-      deposit_asset_account_id: defaultAccounts["ap.deposit_asset"]?.id ?? "",
-      cash_account_id: resolveCashAccount(cashMethod, defaultAccounts)?.id ?? "",
-    });
-    if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    createMutation.mutate(parsed.data);
-  }
+  }, [router, loadSuppliers]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
@@ -174,7 +106,7 @@ export default function ApDepositsPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">AP Deposits (Uang Muka ke Supplier)</h1>
+        <h1 className="text-xl font-semibold text-black">Uang Muka AP</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -186,18 +118,18 @@ export default function ApDepositsPage() {
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-black">AP Deposits</span>
+            <span className="text-sm font-medium text-black">Uang Muka AP</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
               {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             <Button variant="toolbar" onClick={() => depositsQuery.refetch()}>
-              Refresh
+              Muat Ulang
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-                + New
+              <Button variant="toolbar-primary" onClick={() => router.push("/ap-deposits/new")}>
+                + Tambah
               </Button>
             )}
           </div>
@@ -207,7 +139,7 @@ export default function ApDepositsPage() {
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Supplier</th>
               <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Rujukan Dokumen</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
               <th className="px-4 py-2 text-right">Sisa</th>
               <th className="px-4 py-2">Status</th>
@@ -298,7 +230,7 @@ export default function ApDepositsPage() {
             {deposits.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
-                  {depositsQuery.isLoading ? "Memuat..." : "Belum ada deposit."}
+                  {depositsQuery.isLoading ? <InlineSpinner /> : "Belum ada deposit."}
                 </td>
               </tr>
             )}
@@ -313,94 +245,6 @@ export default function ApDepositsPage() {
           onPageSizeChange={setPageSize}
         />
       </div>
-
-      <Modal
-        open={showForm}
-        onClose={() => setShowForm(false)}
-        title="Bayar Uang Muka ke Supplier"
-        maxWidth="max-w-xl"
-      >
-        {!canWrite && (
-          <p className="mb-4 text-sm text-amber-600">
-            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-            ketolak RLS.
-          </p>
-        )}
-        <JournalPreviewPanel
-          groups={[
-            [
-              {
-                label: "Akun Uang Muka Pembelian (debit)",
-                resolved: defaultAccounts["ap.deposit_asset"],
-                side: "debit",
-              },
-              {
-                label: "Akun Kas/Bank (kredit)",
-                resolved: resolveCashAccount(cashMethod, defaultAccounts),
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleCreate} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="supplier">Supplier</Label>
-            <Select id="supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-              <option value="">Pilih supplier...</option>
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="deposit_date">Tanggal</Label>
-              <Input
-                id="deposit_date"
-                type="date"
-                value={depositDate}
-                onChange={(e) => setDepositDate(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="amount">Jumlah</Label>
-              <Input
-                id="amount"
-                type="number"
-                min="0"
-                placeholder="0"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </div>
-          </div>
-          <LockedAccountField
-            label="Akun Uang Muka Pembelian (debit)"
-            htmlFor="deposit_asset_account"
-            resolved={defaultAccounts["ap.deposit_asset"]}
-          />
-          <CashMethodField
-            label="Akun Kas/Bank (kredit)"
-            htmlFor="cash_account"
-            method={cashMethod}
-            onChange={setCashMethod}
-            defaultAccounts={defaultAccounts}
-          />
-
-          {formError && <FormError>{formError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Menyimpan..." : "Simpan Deposit"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }

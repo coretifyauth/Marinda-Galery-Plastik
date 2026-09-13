@@ -98,44 +98,64 @@ export function UnitCostQtyInput({
     });
   }
 
+  // Quick overview -- pas cost diketik buat 1 satuan (mis. "bal"), tampilin otomatis harga
+  // setaranya di satuan lain barang yang sama (mis. per pcs, per lusin) lewat conversion_factor
+  // -- biar user gampang sadar kalau salah ketik harga di satuan yang salah (harga per bal
+  // keketuker sama harga per pcs, dst). Cuma informational, gak dikirim ke RPC.
+  const costNum = Number(cost);
+  const showBreakdown =
+    selectedUnit && cost.trim() !== "" && !Number.isNaN(costNum) && costNum > 0 && ordered.length > 1;
+  const otherUnits = showBreakdown ? ordered.filter((u) => u.id !== selectedUnit.id) : [];
+  const baseCostPreview = showBreakdown ? costNum / selectedUnit.conversion_factor : 0;
+
   return (
-    <div className="flex items-center gap-2">
-      <Input
-        type="number"
-        min="0"
-        step="any"
-        placeholder="Qty"
-        disabled={disabled}
-        value={qty}
-        onChange={(e) => emit(unitId, e.target.value, cost)}
-        className="w-20"
-      />
-      {ordered.length > 1 ? (
-        <Select
-          value={unitId}
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          min="0"
+          step="any"
+          placeholder="Qty"
           disabled={disabled}
-          onChange={(e) => emit(e.target.value, qty, cost)}
-          className="w-24"
-        >
-          {ordered.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.unit_label}
-            </option>
-          ))}
-        </Select>
-      ) : (
-        <span className="w-24 truncate text-sm text-slate-500">{selectedUnit?.unit_label}</span>
+          value={qty}
+          onChange={(e) => emit(unitId, e.target.value, cost)}
+          className="w-20"
+        />
+        {ordered.length > 1 ? (
+          <Select
+            value={unitId}
+            disabled={disabled}
+            onChange={(e) => emit(e.target.value, qty, cost)}
+            className="w-24"
+          >
+            {ordered.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.unit_label}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <span className="w-24 truncate text-sm text-slate-500">{selectedUnit?.unit_label}</span>
+        )}
+        <Input
+          type="number"
+          min="0"
+          step="any"
+          placeholder="Harga/satuan"
+          disabled={disabled}
+          value={cost}
+          onChange={(e) => emit(unitId, qty, e.target.value)}
+          className="w-28"
+        />
+      </div>
+      {showBreakdown && otherUnits.length > 0 && (
+        <p className="pl-22 text-xs text-slate-400">
+          ≈{" "}
+          {otherUnits
+            .map((u) => `Rp${Math.round(baseCostPreview * u.conversion_factor).toLocaleString("id-ID")}/${u.unit_label}`)
+            .join(" · ")}
+        </p>
       )}
-      <Input
-        type="number"
-        min="0"
-        step="any"
-        placeholder="Harga/satuan"
-        disabled={disabled}
-        value={cost}
-        onChange={(e) => emit(unitId, qty, e.target.value)}
-        className="w-28"
-      />
     </div>
   );
 }

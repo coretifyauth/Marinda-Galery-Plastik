@@ -1,30 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { Account } from "@/lib/accounts/schema";
-import {
-  postDepreciationSchema,
-  createFixedAssetDisposalSchema,
-  disposalTypes,
-  disposalTypeLabels,
-  type FixedAsset,
-  type DepreciationEntry,
-  type FixedAssetDisposal,
-} from "@/lib/fixed-assets/schema";
-import { generateDocumentNumber } from "@/lib/document-numbers";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
+import { disposalTypeLabels, type FixedAsset, type DepreciationEntry, type FixedAssetDisposal } from "@/lib/fixed-assets/schema";
 import { Button } from "@/components/ui/button";
-import { FormError, FormHint } from "@/components/ui/form-message";
+import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { Modal } from "@/components/ui/modal";
 import { DetailRows } from "@/components/ui/detail-rows";
-import { LockedAccountField } from "@/components/ui/locked-account-field";
-import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
-import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
-import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export function FixedAssetDetailView({ id }: { id: string }) {
   const router = useRouter();
@@ -33,27 +18,11 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<DepreciationEntry[]>([]);
   const [disposal, setDisposal] = useState<FixedAssetDisposal | null>(null);
-  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [showPostForm, setShowPostForm] = useState(false);
-  const [postPeriod, setPostPeriod] = useState("");
-  const [postOverride, setPostOverride] = useState("");
-  const [postError, setPostError] = useState<string | null>(null);
-  const [posting, setPosting] = useState(false);
-
-  const [showDisposeForm, setShowDisposeForm] = useState(false);
-  const [disposeDate, setDisposeDate] = useState("");
-  const [disposeType, setDisposeType] = useState<(typeof disposalTypes)[number]>("sold");
-  const [disposeProceeds, setDisposeProceeds] = useState("0");
-  const [disposeCashMethod, setDisposeCashMethod] = useState<CashMethod>("TUNAI");
-  const [disposeNotes, setDisposeNotes] = useState("");
-  const [disposeError, setDisposeError] = useState<string | null>(null);
-  const [disposing, setDisposing] = useState(false);
-
   const load = useCallback(async () => {
-    const [{ data: fa, error: faErr }, { data: acc }, { data: de, error: deErr }, { data: disp }, defAcc] =
+    const [{ data: fa, error: faErr }, { data: acc }, { data: de, error: deErr }, { data: disp }] =
       await Promise.all([
         supabase
           .from("fixed_assets")
@@ -75,7 +44,6 @@ export function FixedAssetDetailView({ id }: { id: string }) {
           )
           .eq("fixed_asset_id", id)
           .maybeSingle(),
-        fetchDefaultAccounts(),
       ]);
     if (faErr) {
       setLoadError(faErr.message);
@@ -86,7 +54,6 @@ export function FixedAssetDetailView({ id }: { id: string }) {
     setAccounts((acc ?? []) as Account[]);
     setEntries((de ?? []) as DepreciationEntry[]);
     setDisposal((disp as FixedAssetDisposal | null) ?? null);
-    setDefaultAccounts(defAcc);
   }, [id]);
 
   useEffect(() => {
@@ -110,106 +77,8 @@ export function FixedAssetDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  async function handlePost(e: FormEvent) {
-    e.preventDefault();
-    setPostError(null);
-
-    const parsed = postDepreciationSchema.safeParse({
-      fixed_asset_id: id,
-      period: postPeriod,
-      amount_override: postOverride || undefined,
-    });
-    if (!parsed.success) {
-      setPostError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setPosting(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("depreciation_entries");
-    } catch (err) {
-      setPosting(false);
-      setPostError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("post_depreciation", {
-      p_fixed_asset_id: parsed.data.fixed_asset_id,
-      p_period: parsed.data.period,
-      p_source_ref: sourceRef,
-      p_amount_override: parsed.data.amount_override ?? null,
-    });
-    setPosting(false);
-    if (error) {
-      setPostError(error.message);
-      return;
-    }
-
-    setShowPostForm(false);
-    setPostPeriod("");
-    setPostOverride("");
-    await load();
-  }
-
-  async function handleDispose(e: FormEvent) {
-    e.preventDefault();
-    setDisposeError(null);
-
-    const proceedsAmount = Number(disposeProceeds) || 0;
-    const proceedsAccount = resolveCashAccount(disposeCashMethod, defaultAccounts);
-    const gainAccount = defaultAccounts["fixed_assets.disposal_gain"];
-    const lossAccount = defaultAccounts["fixed_assets.disposal_loss"];
-
-    const parsed = createFixedAssetDisposalSchema.safeParse({
-      fixed_asset_id: id,
-      disposal_date: disposeDate,
-      disposal_type: disposeType,
-      proceeds_amount: proceedsAmount,
-      proceeds_account_id: proceedsAmount > 0 ? proceedsAccount?.id : undefined,
-      gain_account_id: gainAccount?.id,
-      loss_account_id: lossAccount?.id,
-      notes: disposeNotes || undefined,
-    });
-    if (!parsed.success) {
-      setDisposeError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    setDisposing(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("fixed_asset_disposals");
-    } catch (err) {
-      setDisposing(false);
-      setDisposeError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("create_fixed_asset_disposal", {
-      p_fixed_asset_id: parsed.data.fixed_asset_id,
-      p_disposal_date: parsed.data.disposal_date,
-      p_disposal_type: parsed.data.disposal_type,
-      p_source_ref: sourceRef,
-      p_proceeds_amount: parsed.data.proceeds_amount,
-      p_proceeds_account_id: parsed.data.proceeds_account_id ?? null,
-      p_gain_account_id: parsed.data.gain_account_id ?? null,
-      p_loss_account_id: parsed.data.loss_account_id ?? null,
-      p_notes: parsed.data.notes ?? null,
-    });
-    setDisposing(false);
-    if (error) {
-      setDisposeError(error.message);
-      return;
-    }
-
-    setShowDisposeForm(false);
-    setDisposeDate("");
-    setDisposeProceeds("0");
-    setDisposeNotes("");
-    await load();
-  }
-
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!asset) {
@@ -237,12 +106,6 @@ export function FixedAssetDetailView({ id }: { id: string }) {
   const bookValue = asset.acquisition_cost - accumulated;
   const isPublished = entries.length > 0;
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-
-  const disposeProceedsNum = Number(disposeProceeds) || 0;
-  const disposeGainLoss = disposeProceedsNum - bookValue;
-  const disposeProceedsAccount = resolveCashAccount(disposeCashMethod, defaultAccounts);
-  const disposeGainAccount = defaultAccounts["fixed_assets.disposal_gain"];
-  const disposeLossAccount = defaultAccounts["fixed_assets.disposal_loss"];
 
   const detailGroups = [
     {
@@ -290,180 +153,12 @@ export function FixedAssetDetailView({ id }: { id: string }) {
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
-      <BackLink href="/fixed-assets" label="Kembali ke Fixed Assets" />
+      <BackLink href="/fixed-assets" label="Kembali ke Aset Tetap" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">Fixed Asset Details</h1>
+        <h1 className="text-xl font-semibold text-black">Detail Aset Tetap</h1>
       </div>
 
       {loadError && <FormError>{loadError}</FormError>}
-
-      <Modal open={showPostForm} onClose={() => setShowPostForm(false)} title="Posting Penyusutan">
-        <p className="mb-3 text-sm text-slate-500">
-          Jumlah penyusutan dihitung otomatis sesuai metode aset ini (
-          {asset.depreciation_method === "straight_line"
-            ? "straight-line: nilai perolehan dibagi umur manfaat"
-            : "declining balance: nilai buku dikali tarif"}
-          ) — biasanya gak perlu isi apapun selain periode & rujukan dokumen.
-        </p>
-        <form onSubmit={handlePost} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="post_period">Periode</Label>
-            <Input
-              id="post_period"
-              type="date"
-              value={postPeriod}
-              onChange={(e) => setPostPeriod(e.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="post_override">Jumlah Manual (jarang dipakai)</Label>
-            <Input
-              id="post_override"
-              type="number"
-              min="0"
-              placeholder="kosongkan — biarkan dihitung otomatis"
-              value={postOverride}
-              onChange={(e) => setPostOverride(e.target.value)}
-            />
-          </div>
-          <FormHint>
-            Isi kolom &quot;Jumlah Manual&quot; cuma kalau ini periode TERAKHIR aset declining
-            balance & mau dipotong biar nilai buku pas berhenti di nilai residu (lihat catatan
-            teknis di <code>docs/domain/human/fixed-assets.md</code>). Selain itu, selalu
-            kosongkan.
-          </FormHint>
-          {postError && <FormError>{postError}</FormError>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowPostForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={posting}>
-              {posting ? "Memproses..." : "Post"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal open={showDisposeForm} onClose={() => setShowDisposeForm(false)} title="Lepas Aset (Disposal)">
-        <p className="mb-4 text-sm text-slate-500">
-          Aset ini berhenti dipakai selamanya — dijual, dibuang/rusak total, atau hilang. Nilai
-          buku dihitung ulang otomatis ({bookValue.toLocaleString("id-ID")}) dan dibandingkan ke
-          nilai jual buat nentuin laba/rugi pelepasan. Aksi ini gak bisa dibatalkan (koreksi cuma
-          lewat jurnal pembalik).
-        </p>
-        <JournalPreviewPanel
-          groups={[
-            [
-              accumulated > 0 && {
-                label: "Akumulasi Penyusutan (debit)",
-                resolved: accumAccount,
-                side: "debit",
-              },
-              { label: "Aset Tetap (kredit)", resolved: assetAccount, side: "credit" },
-              disposeProceedsNum > 0 && {
-                label: "Akun Kas/Bank (debit)",
-                resolved: disposeProceedsAccount,
-                side: "debit",
-              },
-              disposeGainLoss > 0 && {
-                label: "Laba Pelepasan Aset Tetap (kredit)",
-                resolved: disposeGainAccount,
-                side: "credit",
-              },
-              disposeGainLoss < 0 && {
-                label: "Rugi Pelepasan Aset Tetap (debit)",
-                resolved: disposeLossAccount,
-                side: "debit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleDispose} className="mt-4 flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dispose_type">Jenis Pelepasan</Label>
-            <select
-              id="dispose_type"
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              value={disposeType}
-              onChange={(e) => {
-                const next = e.target.value as (typeof disposalTypes)[number];
-                setDisposeType(next);
-                if (next !== "sold") setDisposeProceeds("0");
-              }}
-            >
-              {disposalTypes.map((t) => (
-                <option key={t} value={t}>
-                  {disposalTypeLabels[t]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dispose_date">Tanggal Disposal</Label>
-            <Input
-              id="dispose_date"
-              type="date"
-              value={disposeDate}
-              onChange={(e) => setDisposeDate(e.target.value)}
-            />
-          </div>
-          {disposeType === "sold" ? (
-            <>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="dispose_proceeds">Nilai Jual</Label>
-                <Input
-                  id="dispose_proceeds"
-                  type="number"
-                  min="0"
-                  value={disposeProceeds}
-                  onChange={(e) => setDisposeProceeds(e.target.value)}
-                />
-              </div>
-              <CashMethodField
-                label="Diterima Sebagai"
-                htmlFor="dispose_cash_method"
-                method={disposeCashMethod}
-                onChange={setDisposeCashMethod}
-                defaultAccounts={defaultAccounts}
-              />
-            </>
-          ) : (
-            <FormHint>
-              {disposeType === "scrapped"
-                ? "Dibuang/rusak total — gak ada uang masuk (nilai jual Rp0). Seluruh nilai buku diakui sebagai rugi pelepasan."
-                : "Hilang/dicuri — gak ada uang masuk (nilai jual Rp0). Seluruh nilai buku diakui sebagai rugi pelepasan."}
-            </FormHint>
-          )}
-          <LockedAccountField htmlFor="dispose_gain_account" resolved={disposeGainAccount} />
-          <LockedAccountField htmlFor="dispose_loss_account" resolved={disposeLossAccount} />
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="dispose_notes">Catatan (opsional)</Label>
-            <Input
-              id="dispose_notes"
-              value={disposeNotes}
-              onChange={(e) => setDisposeNotes(e.target.value)}
-            />
-          </div>
-          <p
-            className={`text-sm font-medium ${
-              disposeGainLoss > 0 ? "text-emerald-600" : disposeGainLoss < 0 ? "text-red-600" : "text-slate-500"
-            }`}
-          >
-            {disposeGainLoss > 0 && `Laba pelepasan: ${disposeGainLoss.toLocaleString("id-ID")}`}
-            {disposeGainLoss < 0 && `Rugi pelepasan: ${Math.abs(disposeGainLoss).toLocaleString("id-ID")}`}
-            {disposeGainLoss === 0 && "Gak ada laba/rugi pelepasan"}
-          </p>
-          {disposeError && <FormError>{disposeError}</FormError>}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowDisposeForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={disposing}>
-              {disposing ? "Memproses..." : "Lepas Aset"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
 
       {asset.disposed_at && disposal && (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -493,10 +188,10 @@ export function FixedAssetDetailView({ id }: { id: string }) {
 
       {canWrite && !asset.disposed_at && (
         <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={() => setShowDisposeForm(true)}>
+          <Button variant="secondary" onClick={() => router.push(`/fixed-assets/${id}/dispose`)}>
             Lepas Aset
           </Button>
-          <Button variant="toolbar" onClick={() => setShowPostForm(true)}>
+          <Button variant="toolbar" onClick={() => router.push(`/fixed-assets/${id}/post-depreciation`)}>
             Posting Penyusutan
           </Button>
         </div>

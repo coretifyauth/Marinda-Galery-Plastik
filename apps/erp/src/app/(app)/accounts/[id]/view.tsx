@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { type Account } from "@/lib/accounts/schema";
 import { fetchLinesUpTo } from "@/lib/reports/balances";
+import { formatCreatedBy } from "@/lib/created-by";
 import {
   DEFAULT_LEDGER_PAGE_SIZE,
   LEDGER_PAGE_SIZE_OPTIONS,
@@ -19,6 +20,7 @@ import { DetailRows } from "@/components/ui/detail-rows";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Pagination } from "@/components/ui/pagination";
+import { LoadingScreen } from "@/components/ui/loading-screen";
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -51,7 +53,9 @@ export function AccountDetailView({ id }: { id: string }) {
           await Promise.all([
             supabase
               .from("accounts")
-              .select("id, code, name, category, normal_balance, is_contra, parent_id, archived_at")
+              .select(
+                "id, code, name, category, normal_balance, is_contra, parent_id, archived_at, created_by, created_at"
+              )
               .eq("id", id)
               .single(),
             supabase
@@ -162,7 +166,7 @@ export function AccountDetailView({ id }: { id: string }) {
   }
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   if (!account) {
@@ -217,6 +221,10 @@ export function AccountDetailView({ id }: { id: string }) {
             "Aktif"
           ),
         },
+        {
+          label: "Dibuat oleh",
+          value: account.created_at ? formatCreatedBy(account.created_by ?? null, account.created_at) : "-",
+        },
       ],
     },
     {
@@ -229,7 +237,7 @@ export function AccountDetailView({ id }: { id: string }) {
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/accounts" label="Kembali ke Chart of Accounts" />
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-black">Account Details</h1>
+        <h1 className="text-xl font-semibold text-black">Detail Akun</h1>
         {canWrite && (
           <div className="flex gap-2">
             {account.archived_at ? (
@@ -262,7 +270,7 @@ export function AccountDetailView({ id }: { id: string }) {
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-black">Ledger</span>
+            <span className="text-sm font-medium text-black">Buku Besar</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
               {ledgerPage.total}
             </span>
@@ -285,7 +293,7 @@ export function AccountDetailView({ id }: { id: string }) {
         </div>
         <FormHint>
           <span className="px-4">
-            Transaksi bertanggal setelah tanggal ini disembunyikan dari Saldo Akhir & Ledger di bawah.
+            Transaksi bertanggal setelah tanggal ini disembunyikan dari Saldo Akhir & Buku Besar di bawah.
           </span>
         </FormHint>
         <table className="w-full text-left text-sm">
@@ -293,7 +301,7 @@ export function AccountDetailView({ id }: { id: string }) {
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Deskripsi</th>
-              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Rujukan Dokumen</th>
               <th className="px-4 py-2 text-right">Debit</th>
               <th className="px-4 py-2 text-right">Kredit</th>
               <th className="px-4 py-2 text-right">Saldo Berjalan</th>

@@ -12,4 +12,6 @@ export type ItemCategory = {
   id: string;
   name: string;
   archived_at: string | null;
+  created_by: string | null;
+  created_at: string;
 };

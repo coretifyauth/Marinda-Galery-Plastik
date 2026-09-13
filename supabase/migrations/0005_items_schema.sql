@@ -8,7 +8,8 @@ create table item_categories (
   name text not null,
   archived_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  created_by text default (auth.jwt() ->> 'email')
 );
 
 create table item_brands (
@@ -16,8 +17,12 @@ create table item_brands (
   name text not null,
   archived_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  created_by text default (auth.jwt() ->> 'email')
 );
+
+comment on column item_categories.created_by is 'Email snapshot saat insert (bukan FK) -- konvensi master data (items/counterparties/accounts/bom), beda dari created_by uuid FK di tabel transaksional sejak 0011+. NULL = data lama / insert di luar jalur aplikasi.';
+comment on column item_brands.created_by is 'Email snapshot saat insert (bukan FK) -- konvensi master data (items/counterparties/accounts/bom), beda dari created_by uuid FK di tabel transaksional sejak 0011+. NULL = data lama / insert di luar jalur aplikasi.';
 
 create trigger item_categories_set_updated_at
   before update on item_categories
@@ -37,8 +42,11 @@ create table items (
   brand_id uuid references item_brands(id),
   archived_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  created_by text default (auth.jwt() ->> 'email')
 );
+
+comment on column items.created_by is 'Email snapshot saat insert (bukan FK) -- konvensi master data (items/counterparties/accounts/bom), beda dari created_by uuid FK di tabel transaksional sejak 0011+. NULL = data lama / insert di luar jalur aplikasi.';
 
 create trigger items_set_updated_at
   before update on items
@@ -55,9 +63,12 @@ create table item_units (
   barcode text unique,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  created_by text default (auth.jwt() ->> 'email'),
   check ((is_base and conversion_factor = 1) or not is_base),
   unique (item_id, unit_label)
 );
+
+comment on column item_units.created_by is 'Email snapshot saat insert (bukan FK) -- konvensi master data (items/counterparties/accounts/bom), beda dari created_by uuid FK di tabel transaksional sejak 0011+. NULL = data lama / insert di luar jalur aplikasi.';
 
 create unique index item_units_one_base_per_item
   on item_units(item_id) where is_base;
@@ -114,9 +125,9 @@ as $$
 begin
   if not exists (
     select 1 from user_roles ur
-    where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant')
+    where ur.user_id = auth.uid() and ur.role_name = 'admin'
   ) then
-    raise exception 'Cuma admin/accountant yang boleh menghapus item';
+    raise exception 'Cuma admin yang boleh menghapus item';
   end if;
 
   begin
@@ -158,10 +169,10 @@ alter table items enable row level security;
 
 create policy items_select on items for select using (auth.role() = 'authenticated');
 create policy items_insert on items for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy items_update on items for update using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert, update on items to authenticated;
@@ -170,13 +181,68 @@ alter table item_units enable row level security;
 
 create policy item_units_select on item_units for select using (auth.role() = 'authenticated');
 create policy item_units_insert on item_units for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy item_units_update on item_units for update using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy item_units_delete on item_units for delete using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert, update, delete on item_units to authenticated;
+
+-- generate_item_unit_barcode -- generate+assign kode scan item_units jadi 1 RPC atomik
+-- dengan retry-on-conflict. Depends on generate_document_number() (document_number_counters,
+-- 0007_document_numbering_schema.sql) -- file ini (0005) urut LEBIH AWAL dari 0007, tapi
+-- referensi forward ini aman: body plpgsql cuma resolve nama fungsi saat DIPANGGIL, bukan
+-- saat CREATE FUNCTION, dan replay migration selalu selesai penuh (0001..N) sebelum RPC
+-- ini pernah benar-benar dipanggil aplikasi. Ditaruh di sini (bukan di 0007) biar tetap 1:1
+-- sama docs/architecture/items-schema.md (submodule Kode Scan Barang), bukan document-numbering.
+--
+-- Kenapa retry-on-conflict: kalau kode yang di-generate ternyata sudah kepake di baris LAIN
+-- (mis. data lama yang barcode-nya diketik manual saat seed/testing, bukan lewat RPC ini),
+-- update kedua gagal duplicate key dan nomor yang sudah kepake di counter jadi hangus (lihat
+-- kronologi di memory/brief.md). RPC ini loop: kalau update kena unique_violation, generate
+-- nomor berikutnya dan coba lagi -- user gak pernah lihat error gara-gara ini.
+create function generate_item_unit_barcode(p_unit_id uuid) returns text
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_code text;
+  v_attempt int := 0;
+  v_max_attempts constant int := 20;
+begin
+  if not exists (
+    select 1 from user_roles ur
+    where ur.user_id = auth.uid() and ur.role_name = 'admin'
+  ) then
+    raise exception 'Cuma admin yang boleh generate kode scan';
+  end if;
+
+  if not exists (select 1 from item_units where id = p_unit_id) then
+    raise exception 'Satuan jual tidak ditemukan';
+  end if;
+
+  loop
+    v_attempt := v_attempt + 1;
+    v_code := generate_document_number('item_unit_barcodes');
+    begin
+      update item_units set barcode = v_code where id = p_unit_id;
+      if not found then
+        raise exception 'Satuan jual tidak ditemukan atau sudah dihapus';
+      end if;
+      return v_code;
+    exception when unique_violation then
+      if v_attempt >= v_max_attempts then
+        raise exception 'Gagal generate kode scan unik setelah % percobaan', v_attempt;
+      end if;
+      -- kode ini hangus (counter sudah maju, gak dipakai baris manapun) -- lanjut loop coba nomor berikutnya
+    end;
+  end loop;
+end;
+$$;
+
+grant execute on function generate_item_unit_barcode(uuid) to authenticated;

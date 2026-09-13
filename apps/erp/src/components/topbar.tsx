@@ -7,27 +7,27 @@ import { supabase } from "@/lib/supabase/client";
 
 const routeLabels: Record<string, string> = {
   "/accounts": "Chart of Accounts",
-  "/journal-entries": "Journal Entries",
-  "/general-ledger": "General Ledger",
-  "/customers": "Customers",
-  "/ar-invoices": "AR Invoices",
-  "/ar-deposits": "AR Deposits",
-  "/suppliers": "Suppliers",
-  "/ap-bills": "AP Bills",
-  "/ap-deposits": "AP Deposits",
-  "/items": "Items",
+  "/journal-entries": "Jurnal Umum",
+  "/general-ledger": "Buku Besar",
+  "/customers": "Pelanggan",
+  "/ar-invoices": "Invoice",
+  "/ar-deposits": "Uang Muka AR",
+  "/suppliers": "Supplier",
+  "/ap-bills": "Tagihan",
+  "/ap-deposits": "Uang Muka AP",
+  "/items": "Item",
   "/item-categories": "Kategori Barang",
   "/item-brands": "Brand Barang",
   "/inventory": "Stock Position",
-  "/purchase-orders": "Purchase Orders",
-  "/goods-receipts": "Goods Receipts",
+  "/purchase-orders": "Purchase Order",
+  "/goods-receipts": "Barang Masuk",
   "/bom": "BOM",
-  "/production-orders": "Production Orders",
-  "/sales-orders": "Sales Orders",
-  "/goods-issues": "Goods Issues",
+  "/production-orders": "Production Order",
+  "/sales-orders": "Sales Order",
+  "/goods-issues": "Barang Keluar",
   "/stock-opnames": "Stock Opname",
-  "/fixed-assets": "Fixed Assets",
-  "/settings/charges": "Settings",
+  "/fixed-assets": "Aset Tetap",
+  "/settings/charges": "Pengaturan",
 };
 
 function getBreadcrumb(pathname: string): string[] {
@@ -41,6 +41,7 @@ function getBreadcrumb(pathname: string): string[] {
   if (prefix) {
     return [routeLabels[prefix], "Detail"];
   }
+
   return [pathname];
 }
 

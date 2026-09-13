@@ -22,6 +22,8 @@ Cross-cutting, bukan bagian dari 1 modul tunggal — dipakai bareng Piutang (AR)
 
 "Pelanggan" dan "pemasok" disimpan di 1 tabel yang sama karena strukturnya nyaris identik (cuma beda 2 kolom yang emang cuma relevan buat pelanggan), dan supaya 1 pihak yang sama bisa berperan pelanggan DAN pemasok sekaligus tanpa harus dicatat sebagai 2 entitas berbeda dengan ID berbeda.
 
+`counterparties.created_by` (email pembuat baris, snapshot bukan FK) nullable — `NULL` di baris lama atau insert di luar jalur aplikasi. Konvensi sama dipakai `items`/`accounts`/`bom_headers`/`bom_lines`, lihat `items-schema.md`.
+
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |

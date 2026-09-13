@@ -51,7 +51,7 @@ export function JournalPreviewPanel({ groups }: { groups: (LegInput[] | false | 
                   <span className="text-xs text-red-600">
                     ⚠ belum diset admin —{" "}
                     <Link href="/settings/charges" className="font-medium underline">
-                      atur di Settings
+                      atur di Pengaturan
                     </Link>
                   </span>
                 )}

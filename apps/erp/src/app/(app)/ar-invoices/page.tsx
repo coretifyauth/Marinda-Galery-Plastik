@@ -1,38 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import type { Customer } from "@/lib/customers/schema";
-import {
-  createArInvoiceSchema,
-  type ArInvoiceOrigin,
-  type ArInvoiceStatus,
-  type CreateArInvoiceInput,
-} from "@/lib/ar-invoices/schema";
+import { type ArInvoiceOrigin, type ArInvoiceStatus } from "@/lib/ar-invoices/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useArInvoices } from "@/lib/ar-invoices/queries";
-import { fetchTaxSettings, resolvedPpnKeluaran, type TaxSettings } from "@/lib/tax-settings/schema";
-import {
-  resolveChargeLines,
-  resolveChargeLineLegs,
-  type ChargeLineInput,
-  type ChargeCategoryWithAccount,
-} from "@/lib/charge-lines/schema";
-import { generateDocumentNumber } from "@/lib/document-numbers";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
-import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
-import { Modal } from "@/components/ui/modal";
-import { LockedAccountField } from "@/components/ui/locked-account-field";
-import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { Pagination } from "@/components/ui/pagination";
-import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
+import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 
 // Input kecil buat baris filter di header tabel -- Input/Select biasa terlalu besar buat
 // muat di dalam <th>, jadi dibikin versi compact lokal (pola sama journal-entries/page.tsx).
@@ -49,8 +28,8 @@ const statusStyle: Record<string, string> = {
 
 const originLabel: Record<string, string> = {
   order: "Dari Sales Order",
-  goods_movement: "Goods Issue Langsung",
-  financial_only: "Financial Only",
+  goods_movement: "Barang Keluar Langsung",
+  financial_only: "Tanpa Barang Fisik",
 };
 
 const originStyle: Record<string, string> = {
@@ -61,7 +40,6 @@ const originStyle: Record<string, string> = {
 
 export default function ArInvoicesPage() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -75,18 +53,6 @@ export default function ArInvoicesPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
-
-  const [customerId, setCustomerId] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState("");
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
-  const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
-  const [chargeTypes, setChargeTypes] = useState<ChargeCategoryWithAccount[]>([]);
-  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
-  const [applyTax, setApplyTax] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
   // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
@@ -123,23 +89,6 @@ export default function ArInvoicesPage() {
     setCustomers((data ?? []) as unknown as Customer[]);
   }, []);
 
-  const loadDefaultAccounts = useCallback(async () => {
-    setDefaultAccounts(await fetchDefaultAccounts());
-  }, []);
-
-  const loadChargeTypes = useCallback(async () => {
-    const { data } = await supabase
-      .from("charge_categories")
-      .select("id, name, account_id, archived_at, accounts(code, name)")
-      .eq("module", "ar")
-      .order("name");
-    setChargeTypes((data ?? []) as unknown as ChargeCategoryWithAccount[]);
-  }, []);
-
-  const loadTaxSettings = useCallback(async () => {
-    setTaxSettings(await fetchTaxSettings());
-  }, []);
-
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -153,76 +102,16 @@ export default function ArInvoicesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([
-        loadCustomers(),
-        loadDefaultAccounts(),
-        loadChargeTypes(),
-        loadTaxSettings(),
-      ]);
+      await loadCustomers();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadDefaultAccounts, loadChargeTypes, loadTaxSettings]);
-
-  const createMutation = useMutation({
-    mutationFn: async (input: CreateArInvoiceInput) => {
-      const sourceRef = await generateDocumentNumber("ar_invoices");
-      const { error } = await supabase.rpc("create_transaction", {
-        p_type: "OUTBOUND",
-        p_counterparty_id: input.customer_id,
-        p_date: input.invoice_date,
-        p_description: input.description || null,
-        p_source_ref: sourceRef,
-        p_lines: input.credit_lines,
-        p_control_account_id: input.receivable_account_id,
-        p_apply_tax: input.apply_tax,
-      });
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      setCustomerId("");
-      setInvoiceDate("");
-      setDescription("");
-      setAmount("");
-      setExtraLines([]);
-      setApplyTax(false);
-      setShowForm(false);
-      queryClient.invalidateQueries({ queryKey: ["ar_invoices"] });
-    },
-    onError: (err) => {
-      setFormError(err instanceof Error ? err.message : "Gagal menyimpan invoice");
-    },
-  });
-
-  function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-
-    const creditLines = [
-      { account_id: defaultAccounts["ar.revenue"]?.id ?? "", amount: Number(amount) },
-      ...resolveChargeLines(extraLines, chargeTypes),
-    ];
-
-    const parsed = createArInvoiceSchema.safeParse({
-      customer_id: customerId,
-      invoice_date: invoiceDate,
-      description,
-      credit_lines: creditLines,
-      receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
-      apply_tax: applyTax,
-    });
-    if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-
-    createMutation.mutate(parsed.data);
-  }
+  }, [router, loadCustomers]);
 
   if (checkingSession) {
-    return <p className="text-sm text-slate-500">Memuat...</p>;
+    return <LoadingScreen />;
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
@@ -230,7 +119,7 @@ export default function ArInvoicesPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-black">AR Invoices</h1>
+        <h1 className="text-xl font-semibold text-black">Invoice</h1>
         <p className="text-sm text-slate-500">
           Role kamu:{" "}
           {roles.length > 0 ? roles.join(", ") : "belum ada role — cuma bisa lihat"}
@@ -242,18 +131,18 @@ export default function ArInvoicesPage() {
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-black">AR Invoices</span>
+            <span className="text-sm font-medium text-black">Invoice</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
               {total}
             </span>
           </div>
           <div className="flex items-center gap-1.5">
             <Button variant="toolbar" onClick={() => invoicesQuery.refetch()}>
-              Refresh
+              Muat Ulang
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-                + New
+              <Button variant="toolbar-primary" onClick={() => router.push("/ar-invoices/new")}>
+                + Tambah
               </Button>
             )}
           </div>
@@ -261,10 +150,10 @@ export default function ArInvoicesPage() {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-              <th className="px-4 py-2">Customer</th>
+              <th className="px-4 py-2">Pelanggan</th>
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Jatuh Tempo</th>
-              <th className="px-4 py-2">Source Ref</th>
+              <th className="px-4 py-2">Rujukan Dokumen</th>
               <th className="px-4 py-2">Tipe</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
               <th className="px-4 py-2 text-right">Outstanding</th>
@@ -273,12 +162,12 @@ export default function ArInvoicesPage() {
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5">
                 <select
-                  aria-label="Filter customer"
+                  aria-label="Filter pelanggan"
                   value={customerFilter}
                   onChange={(e) => setCustomerFilter(e.target.value)}
                   className={compactFilterSelectClass}
                 >
-                  <option value="">Semua customer</option>
+                  <option value="">Semua pelanggan</option>
                   {customers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -394,7 +283,7 @@ export default function ArInvoicesPage() {
             {invoices.length === 0 && (
               <tr>
                 <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
-                  {invoicesQuery.isLoading ? "Memuat..." : "Belum ada invoice."}
+                  {invoicesQuery.isLoading ? <InlineSpinner /> : "Belum ada invoice."}
                 </td>
               </tr>
             )}
@@ -409,112 +298,6 @@ export default function ArInvoicesPage() {
           onPageSizeChange={setPageSize}
         />
       </div>
-
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah AR Invoice" maxWidth="max-w-2xl">
-        {!canWrite && (
-          <p className="mb-4 text-sm text-amber-600">
-            Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal
-            ketolak RLS.
-          </p>
-        )}
-        <JournalPreviewPanel
-          groups={[
-            [
-              { label: "Akun Piutang Usaha (debit)", resolved: defaultAccounts["ar.receivable"], side: "debit" },
-              { label: "Akun Pendapatan (kredit)", resolved: defaultAccounts["ar.revenue"], side: "credit" },
-              ...resolveChargeLineLegs(extraLines, chargeTypes, "credit"),
-              applyTax && {
-                label: "Akun PPN Keluaran (kredit)",
-                resolved: resolvedPpnKeluaran(taxSettings),
-                side: "credit",
-              },
-            ],
-          ]}
-        />
-        <form onSubmit={handleCreate} className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="customer">Customer</Label>
-              <Select id="customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                <option value="">Pilih customer...</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} (net-{c.payment_term_days})
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="invoice_date">Tanggal</Label>
-              <Input
-                id="invoice_date"
-                type="date"
-                value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="description">Deskripsi</Label>
-              <Input
-                id="description"
-                placeholder="mis. Kirim barang ke Warung Bu Siti"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="amount">Jumlah</Label>
-              <Input
-                id="amount"
-                type="number"
-                min="0"
-                placeholder="0"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </div>
-            <LockedAccountField
-              label="Akun Piutang Usaha (debit)"
-              htmlFor="receivable_account"
-              resolved={defaultAccounts["ar.receivable"]}
-            />
-            <LockedAccountField
-              label="Akun Pendapatan (kredit)"
-              htmlFor="revenue_account"
-              resolved={defaultAccounts["ar.revenue"]}
-            />
-          </div>
-
-          <ChargeLinesEditor
-            label="Kategori Pendapatan Tambahan (opsional — mis. jasa antar)"
-            lines={extraLines}
-            chargeTypes={chargeTypes}
-            onChange={setExtraLines}
-          />
-
-          {taxSettings?.is_active && (
-            <label className="flex w-fit items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={applyTax}
-                onChange={(e) => setApplyTax(e.target.checked)}
-              />
-              Kena PPN Keluaran ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
-            </label>
-          )}
-
-          {formError && <FormError>{formError}</FormError>}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-              Batal
-            </Button>
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? "Menyimpan..." : "Simpan Invoice"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
     </div>
   );
 }
