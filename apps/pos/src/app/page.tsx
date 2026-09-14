@@ -159,14 +159,15 @@ async function fetchChargeTypes(): Promise<ChargeType[]> {
   return (data ?? []) as ChargeType[];
 }
 
+// tax_settings/company_settings digabung jadi app_settings (migration 0028)
 async function fetchTaxSettings(): Promise<TaxSettings | null> {
-  const { data, error } = await supabase.from("tax_settings").select("is_active, ppn_rate").maybeSingle();
+  const { data, error } = await supabase.from("app_settings").select("is_active, ppn_rate").maybeSingle();
   if (error) throw new Error(error.message);
   return (data ?? null) as TaxSettings | null;
 }
 
 async function fetchCompanyName(): Promise<string | null> {
-  const { data, error } = await supabase.from("company_settings").select("name").maybeSingle();
+  const { data, error } = await supabase.from("app_settings").select("name").maybeSingle();
   if (error) throw new Error(error.message);
   return ((data as { name: string } | null) ?? null)?.name ?? null;
 }

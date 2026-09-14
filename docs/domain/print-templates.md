@@ -12,7 +12,7 @@ Solusinya: tiap halaman detail dokumen yang relevan dapat tombol "Cetak" yang me
 
 ## Konsep Inti
 
-Fitur ini pada dasarnya murni **layer presentasi** — gak ada tabel/data baru yang disimpan, cetakan dirender langsung dari data yang sudah ada di sistem (`ar_invoices`, `purchase_orders`, dst). Submodule "Kop Surat & Blok Tanda Tangan" di bawah nambahin 2 baris config (identitas perusahaan, daftar penandatangan) — tapi prinsipnya tetap sama: gak ada hasil cetak yang disimpan/di-generate terpisah, sumber datanya cuma ada 2 (data transaksi + config cetakan).
+Fitur ini pada dasarnya murni **layer presentasi** — gak ada tabel/data baru yang disimpan, cetakan dirender langsung dari data yang sudah ada di sistem (`ar_invoices`, `purchase_orders`, dst). Submodule "Kop Surat" di bawah nambahin identitas perusahaan sebagai config — tapi prinsipnya tetap sama: gak ada hasil cetak yang disimpan/di-generate terpisah, sumber datanya cuma ada 2 (data transaksi + config cetakan).
 
 ### Live Data, Bukan Snapshot Beku
 
@@ -57,28 +57,22 @@ Fitur ini pada dasarnya murni **layer presentasi** — gak ada tabel/data baru y
 **Common Mistakes**
 - Mengira semua dokumen transaksional otomatis bisa dicetak begitu fitur ini ada — cuma 2 jenis dokumen yang saat ini didukung.
 
-### Kop Surat & Blok Tanda Tangan
+### Kop Surat
 
 **Cara Kerja**
-- Cetakan AR Invoice dan Purchase Order sekarang punya **kop surat resmi** di atas (nama perusahaan, alamat, NPWP, logo kalau ada) dan **blok tanda tangan** di bawah (kolom per jabatan penandatangan, masing-masing cuma judul jabatan + garis kosong buat ditandatangani manual — bukan e-signature).
-- Identitas perusahaan disimpan sebagai 1 baris konfigurasi tunggal (mirip pengaturan PPN) — admin isi/ubah lewat halaman Settings, bukan lewat kode.
-- Daftar jabatan penandatangan (misal "Kepala Toko", "Bagian Gudang") juga dikelola admin lewat Settings — bisa ditambah, diurutkan (menentukan urutan kolom di kertas dari kiri ke kanan), dinonaktifkan sementara, atau dihapus permanen kalau memang gak relevan lagi.
-- Sengaja **tanpa kolom nama pegawai** di daftar jabatan — cetakan cuma butuh nunjukkan siapa yang HARUS tanda tangan di posisi apa (berdasarkan jabatan), bukan mencatat nama orangnya di sistem.
+- Cetakan AR Invoice dan Purchase Order punya **kop surat resmi** di atas (nama perusahaan, alamat, NPWP, logo kalau ada).
+- Identitas perusahaan disimpan sebagai 1 baris konfigurasi tunggal (digabung bareng pengaturan PPN & config lain, lihat `docs/architecture/app-settings-schema.md`) — admin isi/ubah lewat halaman Settings, bukan lewat kode.
 
 **Aturan Bisnis**
-- Kop surat & blok tanda tangan ikut aturan "Live Data" di atas — perubahan nama perusahaan atau daftar jabatan langsung kepakai di cetakan berikutnya, gak perlu update kode.
-- Cuma jabatan yang statusnya aktif yang muncul di blok tanda tangan; jabatan yang dinonaktifkan sementara (bukan dihapus) gak muncul tapi datanya tetap ada kalau mau diaktifkan lagi.
+- Kop surat ikut aturan "Live Data" di atas — perubahan nama perusahaan langsung kepakai di cetakan berikutnya, gak perlu update kode.
 
 **Skenario**
 - Toko ganti alamat — admin update di Settings, cetakan invoice/PO berikutnya langsung pakai alamat baru, gak perlu ada yang deploy kode.
-- Ada jabatan baru yang perlu ikut tanda tangan (misal "Bagian Gudang" ditambah selain "Kepala Toko") — admin tambah 1 baris di Settings, kolom tanda tangan baru otomatis muncul di cetakan berikutnya tanpa ubah apa pun di halaman invoice/PO.
 
 **Common Mistakes**
-- Menganggap blok tanda tangan butuh nama pegawai tersimpan di sistem — cukup jabatan, penandatanganan fisiknya manual di kertas.
 - Mengira logo perusahaan bisa diunggah langsung ke sistem — fase ini cuma nerima link ke gambar yang sudah di-host di tempat lain.
 
 ## Glossary
 
 - **Cetak (print template)**: tampilan siap-print 1 dokumen transaksi, dibuka di window baru, dirender live dari data terkini — bukan file/snapshot yang disimpan.
 - **Kop surat**: identitas perusahaan (nama, alamat, NPWP, logo) yang muncul di bagian atas cetakan, dikelola sebagai 1 baris konfigurasi tunggal.
-- **Blok tanda tangan**: kolom-kolom di bagian bawah cetakan (1 kolom per jabatan penandatangan aktif) — judul jabatan + garis kosong, ditandatangani manual di kertas.

@@ -6,7 +6,6 @@ import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { TaxSettings } from "@/lib/tax-settings/schema";
 import { updateCompanySettingsSchema, type CompanySettings } from "@/lib/company-settings/schema";
-import { createDocumentSignatorySchema, type DocumentSignatory } from "@/lib/document-signatories/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -211,7 +210,7 @@ function DefaultAccountsManager({ accounts, canWrite }: { accounts: Account[]; c
 
   const load = useCallback(async () => {
     const { data } = await supabase
-      .from("default_account_settings")
+      .from("app_default_account_settings")
       .select("id, role_key, label, account_id, accounts(code, name)")
       .order("role_key");
     setRows((data ?? []) as unknown as DefaultAccountRow[]);
@@ -240,7 +239,7 @@ function DefaultAccountsManager({ accounts, canWrite }: { accounts: Account[]; c
     }
     setSubmitting(true);
     const { error: err } = await supabase
-      .from("default_account_settings")
+      .from("app_default_account_settings")
       .update({ account_id: editAccountId })
       .eq("id", row.id);
     setSubmitting(false);
@@ -526,8 +525,9 @@ function FixedAssetPresetsManager({ accounts, canWrite }: { accounts: Account[];
   );
 }
 
-/** Kelola company_settings — singleton (pola sama TaxSettingsCard di bawah), dibaca live
- * buat kop surat cetakan AR Invoice/PO (docs/domain/print-templates.md). */
+/** Kelola app_settings (kolom identitas perusahaan) — singleton (pola sama TaxSettingsCard
+ * di bawah, migration 0028 gabungan tax_settings+company_settings+pos_settings), dibaca
+ * live buat kop surat cetakan AR Invoice/PO (docs/domain/print-templates.md). */
 function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
   const [settings, setSettings] = useState<CompanySettings | null>(null);
   const [name, setName] = useState("");
@@ -539,7 +539,10 @@ function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
   const [saved, setSaved] = useState(false);
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from("company_settings").select("*").maybeSingle();
+    const { data } = await supabase
+      .from("app_settings")
+      .select("id, name, address, npwp, logo_url, updated_at, updated_by")
+      .maybeSingle();
     if (data) {
       const s = data as CompanySettings;
       setSettings(s);
@@ -574,7 +577,7 @@ function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
       data: { user },
     } = await supabase.auth.getUser();
     const { error: err } = await supabase
-      .from("company_settings")
+      .from("app_settings")
       .update({
         name: parsed.data.name,
         address: parsed.data.address || null,
@@ -650,178 +653,6 @@ function CompanySettingsCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
-/** Kelola document_signatories — pola mirip CatalogManager (list+Modal create+archive
- * toggle), tapi tambah "Hapus" permanen (migration 0027_document_signatories_hard_delete.sql
- * -- aman karena gak ada FK manapun ke tabel ini) dan field sort_order (urutan kolom
- * blok tanda tangan cetakan, kiri ke kanan). */
-function DocumentSignatoriesManager({ canWrite }: { canWrite: boolean }) {
-  const [rows, setRows] = useState<DocumentSignatory[]>([]);
-  const [label, setLabel] = useState("");
-  const [sortOrder, setSortOrder] = useState("0");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    const { data } = await supabase
-      .from("document_signatories")
-      .select("id, label, sort_order, archived_at, created_at, updated_at")
-      .order("sort_order");
-    setRows((data ?? []) as DocumentSignatory[]);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (active) await load();
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load]);
-
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    const parsed = createDocumentSignatorySchema.safeParse({ label, sort_order: sortOrder });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    setSubmitting(true);
-    const { error: err } = await supabase.from("document_signatories").insert(parsed.data);
-    setSubmitting(false);
-    if (err) {
-      setError(err.message);
-      return;
-    }
-    setLabel("");
-    setSortOrder("0");
-    setShowForm(false);
-    await load();
-  }
-
-  async function toggleArchive(row: DocumentSignatory) {
-    await supabase
-      .from("document_signatories")
-      .update({ archived_at: row.archived_at ? null : new Date().toISOString() })
-      .eq("id", row.id);
-    await load();
-  }
-
-  async function handleDelete(row: DocumentSignatory) {
-    if (!window.confirm(`Hapus permanen jabatan "${row.label}"? Gak bisa dibatalkan.`)) return;
-    setError(null);
-    setDeletingId(row.id);
-    const { error: err } = await supabase.from("document_signatories").delete().eq("id", row.id);
-    setDeletingId(null);
-    if (err) {
-      setError(err.message);
-      return;
-    }
-    await load();
-  }
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-black">Penandatangan Cetakan</h2>
-        {canWrite && (
-          <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-            + Tambah
-          </Button>
-        )}
-      </div>
-      <p className="mb-3 text-sm text-slate-500">
-        Jabatan yang muncul di blok tanda tangan cetakan (mis. Kepala Toko, Bagian Gudang) — cuma
-        label jabatan + garis kosong, gak ada nama pegawai. Urutan menentukan posisi kolom dari
-        kiri ke kanan.
-      </p>
-      <table className="mb-3 w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
-            <th className="py-1.5">Jabatan</th>
-            <th className="py-1.5">Urutan</th>
-            <th className="py-1.5">Status</th>
-            {canWrite && <th className="py-1.5" />}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-b border-slate-100">
-              <td className="py-1.5">{row.label}</td>
-              <td className="py-1.5">{row.sort_order}</td>
-              <td className="py-1.5">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${
-                    row.archived_at ? "bg-slate-100 text-slate-400" : "bg-emerald-50 text-emerald-700"
-                  }`}
-                >
-                  {row.archived_at ? "Nonaktif" : "Aktif"}
-                </span>
-              </td>
-              {canWrite && (
-                <td className="py-1.5 text-right">
-                  <div className="flex justify-end gap-1.5">
-                    <Button type="button" variant="toolbar" onClick={() => toggleArchive(row)}>
-                      {row.archived_at ? "Aktifkan" : "Nonaktifkan"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="toolbar"
-                      disabled={deletingId === row.id}
-                      onClick={() => handleDelete(row)}
-                    >
-                      Hapus
-                    </Button>
-                  </div>
-                </td>
-              )}
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={4} className="py-3 text-center text-slate-400">
-                Belum ada jabatan penandatangan.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      {error && <FormError>{error}</FormError>}
-
-      {canWrite && (
-        <Modal open={showForm} onClose={() => setShowForm(false)} title="Tambah Penandatangan">
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="signatory-label">Jabatan</Label>
-              <Input
-                id="signatory-label"
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                placeholder="mis. Kepala Toko"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="signatory-sort">Urutan</Label>
-              <Input id="signatory-sort" type="number" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-                Batal
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "..." : "+ Tambah"}
-              </Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
 function TaxSettingsCard({ canWrite }: { canWrite: boolean }) {
   const [settings, setSettings] = useState<TaxSettings | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -837,7 +668,10 @@ function TaxSettingsCard({ canWrite }: { canWrite: boolean }) {
 
   const load = useCallback(async () => {
     const [{ data: ts }, { data: acc }] = await Promise.all([
-      supabase.from("tax_settings").select("*").maybeSingle(),
+      supabase
+        .from("app_settings")
+        .select("id, is_active, ppn_rate, ppn_keluaran_account_id, ppn_masukan_account_id")
+        .maybeSingle(),
       supabase
         .from("accounts")
         .select("id, code, name, category, normal_balance, parent_id, archived_at")
@@ -870,7 +704,7 @@ function TaxSettingsCard({ canWrite }: { canWrite: boolean }) {
     setSaved(false);
     setSubmitting(true);
     const { error: err } = await supabase
-      .from("tax_settings")
+      .from("app_settings")
       .update({
         is_active: isActive,
         ppn_rate: Number(rate),
@@ -991,7 +825,7 @@ export default function ChargesSettingsPage() {
         return;
       }
       const { data: roleRows } = await supabase
-        .from("user_roles")
+        .from("app_user_roles")
         .select("role_name")
         .eq("user_id", session.user.id);
       if (!active) return;
@@ -1046,12 +880,7 @@ export default function ChargesSettingsPage() {
         </div>
       )}
       {activeTab === "tax" && <TaxSettingsCard canWrite={canWrite} />}
-      {activeTab === "print_documents" && (
-        <div className="flex flex-col gap-6">
-          <CompanySettingsCard canWrite={canWrite} />
-          <DocumentSignatoriesManager canWrite={canWrite} />
-        </div>
-      )}
+      {activeTab === "print_documents" && <CompanySettingsCard canWrite={canWrite} />}
     </div>
   );
 }

@@ -15,9 +15,8 @@ import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
-import { buildLetterheadHtml, buildSignatureBlockHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
+import { buildLetterheadHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
 import { fetchCompanySettings, type CompanySettings } from "@/lib/company-settings/schema";
-import { fetchActiveSignatoryLabels } from "@/lib/document-signatories/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type JournalEntryDetail = {
@@ -89,7 +88,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [chargeTypes, setChargeTypes] = useState<ChargeCategoryWithAccount[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
-  const [signatoryLabels, setSignatoryLabels] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("jurnal");
 
@@ -229,15 +227,14 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         return;
       }
       const { data: roleRows } = await supabase
-        .from("user_roles")
+        .from("app_user_roles")
         .select("role_name")
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      const [company, labels] = await Promise.all([fetchCompanySettings(), fetchActiveSignatoryLabels()]);
+      const company = await fetchCompanySettings();
       if (!active) return;
       setCompanySettings(company);
-      setSignatoryLabels(labels);
       await load();
       if (active) setCheckingSession(false);
     });
@@ -303,7 +300,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
   // jadi cetak ulang kapan pun otomatis nunjukkan kondisi terkini (retur/write-off/pembatalan
   // yang terjadi setelah cetakan pertama), bukan angka beku waktu pertama dicetak. Kop surat
-  // (company_settings) + blok tanda tangan (document_signatories) dibaca live juga.
+  // (app_settings) dibaca live juga.
   function handlePrint() {
     if (!invoice) return;
 
@@ -393,7 +390,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           <tr class="total-row"><td>Outstanding</td><td class="num">Rp${outstanding.toLocaleString("id-ID")}</td></tr>
         </tbody>
       </table>
-      ${buildSignatureBlockHtml(signatoryLabels)}
     `;
 
     if (!openPrintWindow(`Invoice ${invoice.source_ref}`, body)) {

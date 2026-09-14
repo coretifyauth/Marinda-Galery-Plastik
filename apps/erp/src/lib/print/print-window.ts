@@ -44,9 +44,6 @@ export function openPrintWindow(title: string, bodyHtml: string): boolean {
   }
   .letterhead-name { font-size: 16px; font-weight: 700; }
   .letterhead-meta { font-size: 11px; color: #64748b; }
-  .signature-block { display: flex; justify-content: space-between; margin-top: 48px; }
-  .signature-col { width: 30%; text-align: center; font-size: 12px; }
-  .signature-line { margin-top: 56px; padding-top: 4px; border-top: 1px solid #1e293b; }
 </style>
 </head>
 <body>
@@ -78,22 +75,4 @@ export function buildLetterheadHtml(company: LetterheadCompany | null): string {
       </div>
     </div>
   `;
-}
-
-/** Blok tanda tangan -- ditaruh di bawah body cetakan, 1 kolom per jabatan aktif
- * (document_signatories.archived_at is null), urut sort_order. Cuma label jabatan + garis
- * kosong (keputusan desain migration 0026) -- gak render apa pun kalau belum ada jabatan
- * yang didaftar. */
-export function buildSignatureBlockHtml(labels: string[]): string {
-  if (labels.length === 0) return "";
-  const cols = labels
-    .map(
-      (label) => `
-        <div class="signature-col">
-          <div>${escapeHtml(label)}</div>
-          <div class="signature-line">&nbsp;</div>
-        </div>`
-    )
-    .join("");
-  return `<div class="signature-block">${cols}</div>`;
 }

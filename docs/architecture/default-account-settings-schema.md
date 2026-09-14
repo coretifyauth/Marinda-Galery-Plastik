@@ -7,7 +7,7 @@
 | Default Akun | Master mapping "peran akun" (mis. Piutang Usaha, Kas Toko) ke 1 akun tetap di Chart of Accounts — dipakai form transaksi supaya user gak perlu milih akun bebas. |
 | Preset Akun Aset Tetap | Master paket 3 akun sekaligus (Aset/Akumulasi Penyusutan/Beban Penyusutan) per jenis aset tetap. |
 
-> **Migration final (2026-09-07):** `supabase/migrations/0008_default_account_settings_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
+> **Migration final (2026-09-07, rename 2026-09-14):** `supabase/migrations/0008_default_account_settings_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas. Tabel `default_account_settings` di-rename jadi `app_default_account_settings` (prefix `app_` buat tabel config/infrastruktur cross-cutting) lewat `supabase/migrations/0029_app_prefix_rename_and_drop_signatories.sql`; `fixed_asset_account_presets` gak ikut di-rename.
 
 ## Masalah yang Diselesaikan
 

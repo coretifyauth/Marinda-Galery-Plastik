@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 export const POS_ALLOWED_ROLES = ["cashier", "master"];
 
 export async function hasPosAccess(userId: string): Promise<boolean> {
-  const { data } = await supabase.from("user_roles").select("role_name").eq("user_id", userId);
+  const { data } = await supabase.from("app_user_roles").select("role_name").eq("user_id", userId);
   const roles = ((data ?? []) as { role_name: string }[]).map((r) => r.role_name);
   return roles.some((r) => POS_ALLOWED_ROLES.includes(r));
 }

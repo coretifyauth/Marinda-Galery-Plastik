@@ -120,7 +120,7 @@ export function Sidebar() {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) return;
-      const { data } = await supabase.from("user_roles").select("role_name").eq("user_id", session.user.id);
+      const { data } = await supabase.from("app_user_roles").select("role_name").eq("user_id", session.user.id);
       if (!active) return;
       setIsMaster(((data ?? []) as { role_name: string }[]).some((r) => r.role_name === "master"));
     });

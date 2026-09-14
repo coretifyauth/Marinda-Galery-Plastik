@@ -15,9 +15,9 @@ yang disebut di dokumen ini historis.
 | `transactions`/`transaction_lines` | Jurnal Piutang↔Pendapatan (+kategori tambahan+PPN) | `counterparties`, `accounts` |
 | `goods_notes` (`type='OUTBOUND'`)/`goods_note_lines` | Konsumsi stok + jurnal HPP↔Persediaan + harga jual per barang | `items` |
 | `payments` | Pelunasan — jurnal Kas↔Piutang, selalu lunas penuh seketika | `accounts` |
-| `pos_settings` | Singleton — ID customer default "Pelanggan Umum" (fallback pembeli anonim) | `counterparties` |
+| `app_settings` (kolom `walk_in_customer_id`) | Singleton — ID customer default "Pelanggan Umum" (fallback pembeli anonim). Sejak 2026-09-14 gabungan dengan pajak+identitas perusahaan, lihat `app-settings-schema.md` | `counterparties` |
 | `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan yang bisa dipilih kasir saat checkout | `accounts` |
-| `tax_settings` | Pengaturan PPN — 1 baris untuk seluruh sistem, dipakai bareng AP/AR | `accounts` |
+| `app_settings` (kolom PPN) | Pengaturan PPN — 1 baris untuk seluruh sistem, dipakai bareng AP/AR | `accounts` |
 
 ## Konsep Inti
 
@@ -77,7 +77,7 @@ Penjualan kios yang tercatat sebelum sistem ini diunifikasi ke mesin transaksi u
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
 | `charge_categories` (`module='pos'`) | Katalog jenis biaya tambahan — master data, disiapkan admin | `accounts` |
-| `tax_settings` | Pengaturan PPN, sama tabel dengan AP/AR | `accounts` |
+| `app_settings` (kolom PPN) | Pengaturan PPN, sama tabel dengan AP/AR — lihat `app-settings-schema.md` | `accounts` |
 
 **Alur Teknis (RPC)**
 

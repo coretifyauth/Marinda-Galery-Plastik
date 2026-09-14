@@ -178,16 +178,14 @@ function WhitelistPanel() {
 
   const load = useCallback(async () => {
     const { data, error: err } = await supabase
-      .from("signup_whitelist")
-      .select("id, email, created_by, created_at, consumed_at, signup_whitelist_roles(role_name)")
+      .from("app_user_signup_whitelist")
+      .select("id, email, created_by, created_at, consumed_at, role_name")
       .order("created_at", { ascending: false });
     if (err) {
       toast.error(err.message);
       return;
     }
-    const rows = (data ?? []) as unknown as Array<
-      Omit<WhitelistEntry, "roles"> & { signup_whitelist_roles: { role_name: string }[] }
-    >;
+    const rows = (data ?? []) as unknown as Array<Omit<WhitelistEntry, "roles"> & { role_name: string }>;
     setEntries(
       rows.map((r) => ({
         id: r.id,
@@ -195,7 +193,7 @@ function WhitelistPanel() {
         created_by: r.created_by,
         created_at: r.created_at,
         consumed_at: r.consumed_at,
-        roles: r.signup_whitelist_roles.map((x) => x.role_name),
+        roles: [r.role_name],
       }))
     );
   }, [toast]);
@@ -219,7 +217,7 @@ function WhitelistPanel() {
     setSubmitting(true);
     const { error: err } = await supabase.rpc("add_whitelist_entry", {
       p_email: trimmedEmail,
-      p_roles: [role],
+      p_role: role,
     });
     setSubmitting(false);
     if (err) {
@@ -373,7 +371,7 @@ export default function UserManagementPage() {
         return;
       }
       const { data: roleRows } = await supabase
-        .from("user_roles")
+        .from("app_user_roles")
         .select("role_name")
         .eq("user_id", session.user.id);
       if (!active) return;

@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabase/client";
 export const ERP_ALLOWED_ROLES = ["admin", "master"];
 
 export async function hasErpAccess(userId: string): Promise<boolean> {
-  const { data } = await supabase.from("user_roles").select("role_name").eq("user_id", userId);
+  const { data } = await supabase.from("app_user_roles").select("role_name").eq("user_id", userId);
   const roles = ((data ?? []) as { role_name: string }[]).map((r) => r.role_name);
   return roles.some((r) => ERP_ALLOWED_ROLES.includes(r));
 }

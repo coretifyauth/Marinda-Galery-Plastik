@@ -34,7 +34,8 @@ Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor. `docs/tutoria
 ### architecture/
 ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan bahas RPC/trigger secara kode — buat syntax SQL persis, tiap file nunjuk ke migration pasangannya di `supabase/migrations/`). Spine-based — 1 file `.md` per tabel spine/root yang beneran ada di Supabase, bukan per modul bisnis (tabel yang dipakai bareng lintas modul, mis. transaksi AR & AP, tetap 1 file). Daftar resmi & pengelompokan file: daftar di bawah ini adalah acuannya.
 
-- `coa-schema.md`, `journal-entry-schema.md`, `fixed-assets-schema.md`, `financial-reports-schema.md`, `pos-schema.md` — gak berubah, gak kena unifikasi.
+- `journal-entry-schema.md`, `fixed-assets-schema.md`, `financial-reports-schema.md`, `pos-schema.md` — gak berubah, gak kena unifikasi.
+- `coa-schema.md` — gak kena unifikasi AR/AP, tapi 2026-09-14 tabel `roles`/`user_roles`/`signup_whitelist` di-rename `app_roles`/`app_user_roles`/`app_user_signup_whitelist` (prefix `app_` buat tabel config/infrastruktur), `signup_whitelist_roles` digabung jadi kolom `role_name`.
 - `counterparty-schema.md` — gabungan pelanggan+pemasok jadi `counterparties`.
 - `transactions-schema.md` — gabungan invoice AR + bill AP.
 - `payments-schema.md` — gabungan pembayaran AR + AP.
@@ -42,7 +43,7 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `return-credits-schema.md` — gabungan saldo kredit retur AR + AP.
 - `deposits-schema.md` — gabungan uang muka AR + AP.
 - `replacements-schema.md` — gabungan ganti barang garansi AR + tukar barang ke pemasok AP (retur Opsi B), 2026-09-09.
-- `tax-settings-schema.md` — Pengaturan PPN, 1 baris dipakai bareng AR/AP/POS.
+- `app-settings-schema.md` (dulu `tax-settings-schema.md`, digabung dengan `company_settings`+`pos_settings` 2026-09-14) — Pengaturan PPN + identitas perusahaan + walk-in customer POS, 1 baris dipakai bareng AR/AP/POS/print.
 - `items-schema.md` — master barang, satuan jual/harga, Kode Scan Barang.
 - `orders-schema.md` — gabungan Purchase Order + Sales Order.
 - `goods-notes-schema.md` (dulu `goods-receipt-schema.md`+`goods-issue-schema.md`, digabung 2026-09-07) — penerimaan barang dari pemasok (3-Way Matching, INBOUND) dan penjualan/keluar barang ke pelanggan (OUTBOUND, titik HPP diakui), 1 tabel generic dibedakan `type`.
@@ -51,8 +52,8 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `stock-opname-schema.md` — penyesuaian stok fisik.
 - `inventory-ledger-schema.md` — saldo & kartu stok (Weighted Average Costing).
 - `document-numbering-schema.md` — 2 tabel baru (Daftar Jenis Dokumen, Penghitung Nomor) + 1 kolom baru di AP Bill (Nomor Nota Supplier).
-- `default-account-settings-schema.md` — 2 tabel baru (Default Akun, Preset Akun Aset Tetap), mengganti dropdown akun bebas di hampir semua form transaksi dengan field otomatis terkunci — dipicu bug nyata (salah pilih akun di panel Retur AP Bill).
-- `print-templates-schema.md` — Kop Surat & Blok Tanda Tangan (config presentasi cetak dokumen).
+- `default-account-settings-schema.md` — 2 tabel baru (Default Akun, Preset Akun Aset Tetap), mengganti dropdown akun bebas di hampir semua form transaksi dengan field otomatis terkunci — dipicu bug nyata (salah pilih akun di panel Retur AP Bill). Tabel `default_account_settings` di-rename `app_default_account_settings` 2026-09-14.
+- `print-templates-schema.md` dihapus 2026-09-14 — isinya (`document_signatories`, identitas perusahaan) sudah tuntas dipindah/dihapus: kop surat jadi bagian `app-settings-schema.md`, blok tanda tangan (`document_signatories`) di-drop total (fitur gak dipakai lagi, lihat `docs/domain/print-templates.md`).
 
 ### tutorial/
 User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial` — cakupan modul sudah lengkap. Disegmentasi jadi 10 subfolder modul (40 file total):

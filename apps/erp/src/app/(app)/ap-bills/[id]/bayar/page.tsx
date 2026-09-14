@@ -73,7 +73,7 @@ export default function ApBillBayarPage() {
         return;
       }
       const { data: roleRows } = await supabase
-        .from("user_roles")
+        .from("app_user_roles")
         .select("role_name")
         .eq("user_id", session.user.id);
       if (!active) return;

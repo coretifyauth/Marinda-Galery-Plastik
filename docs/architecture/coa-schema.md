@@ -6,12 +6,12 @@ Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `roles` | Daftar peran yang dikenal sistem: `master`, `admin`, `cashier` | — |
-| `user_roles` | Peran yang dipegang tiap user (1 user boleh punya lebih dari 1 peran) | `roles`, user login |
-| `signup_whitelist` / `signup_whitelist_roles` | Daftar email yang boleh registrasi + peran yang bakal didapat | `roles`, `auth.users` (lewat trigger, bukan FK langsung) |
+| `app_roles` | Daftar peran yang dikenal sistem: `master`, `admin`, `cashier` | — |
+| `app_user_roles` | Peran yang dipegang tiap user (1 user boleh punya lebih dari 1 peran) | `app_roles`, user login |
+| `app_user_signup_whitelist` | Daftar email yang boleh registrasi + 1 peran yang bakal didapat | `app_roles`, `auth.users` (lewat trigger, bukan FK langsung) |
 | `accounts` | Daftar akun (Chart of Accounts itu sendiri) | Bisa nunjuk ke akun lain sebagai "induk" (struktur header/leaf) |
 
-> **Migration final (2026-09-07):** `supabase/migrations/0002_coa_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
+> **Migration final (2026-09-07, rename+merge 2026-09-14):** `supabase/migrations/0002_coa_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas. `roles`/`user_roles`/`signup_whitelist` di-rename `app_roles`/`app_user_roles`/`app_user_signup_whitelist` (prefix `app_` buat tabel config/infrastruktur cross-cutting, bukan domain bisnis) dan `signup_whitelist_roles` digabung jadi 1 kolom `role_name` di `app_user_signup_whitelist` lewat `supabase/migrations/0029_app_prefix_rename_and_drop_signatories.sql`.
 
 ## Konsep Inti
 
@@ -19,8 +19,8 @@ Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `roles` | Daftar peran yang dikenal sistem (lihat submodule "Registrasi & Manajemen User") | — |
-| `user_roles` | Peran yang dipegang tiap user (1 user boleh punya lebih dari 1 peran) | `roles`, user login |
+| `app_roles` | Daftar peran yang dikenal sistem (lihat submodule "Registrasi & Manajemen User") | — |
+| `app_user_roles` | Peran yang dipegang tiap user (1 user boleh punya lebih dari 1 peran) | `app_roles`, user login |
 | `accounts` | Daftar akun (Chart of Accounts itu sendiri) | Self-relasi ke `accounts` lain sebagai "induk" |
 
 **Struktur `accounts` (kolom yang penting buat dipahami)**
@@ -52,7 +52,7 @@ Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke
 | Akun leaf yang sudah dipakai gak boleh diam-diam jadi header | Trigger `accounts_no_retroactive_header` |
 | Field kritikal akun terkunci setelah dipakai transaksi | Trigger `accounts_published_lock` (`code`/`category`/`normal_balance`/`parent_id`/`is_contra`) |
 | Akun gak bisa dihapus permanen kalau udah pernah dipakai | Fungsi `delete_account` — hapus permanen cuma berhasil kalau belum ada referensi apa pun di tempat lain, kalau ada otomatis diarsipkan lewat `archived_at` sebagai fallback |
-| Peran dikelola lewat lookup table, bukan enum, biar nambah peran baru gak butuh migration `ALTER TYPE` | Tabel `roles` + `user_roles` (PK komposit `user_id, role_name`) |
+| Peran dikelola lewat lookup table, bukan enum, biar nambah peran baru gak butuh migration `ALTER TYPE` (relevan buat template ini di-fork jadi project lain) | Tabel `app_roles` + `app_user_roles` (PK komposit `user_id, role_name`) |
 | Cuma email yang di-whitelist yang boleh registrasi | Auth Hook `before_user_created_hook` (lihat submodule "Registrasi & Manajemen User") |
 
 **Interaksi Antar Tabel**
@@ -60,7 +60,7 @@ Konsep bisnisnya ada di `docs/domain/chart-of-accounts.md` — file ini fokus ke
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `accounts.parent_id` | self-relasi (banyak-ke-satu) | `accounts` |
-| `user_roles` | banyak-ke-satu | `roles`, user login (`auth.users`) |
+| `app_user_roles` | banyak-ke-satu | `app_roles`, user login (`auth.users`) |
 | `journal_lines.account_id` (modul Journal Entry) | banyak-ke-satu, wajib leaf | `accounts` |
 
 ## Akun Kontra (Contra Account)
@@ -99,10 +99,9 @@ Sebelum 2026-09-13, `/signup` bisa dipakai siapa saja tanpa validasi — akun ba
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `roles` | 3 peran: `master`, `admin`, `cashier` | — |
-| `signup_whitelist` | Email yang boleh registrasi + `created_by`/`created_at`/`consumed_at` | — |
-| `signup_whitelist_roles` | Peran yang bakal didapat 1 entry whitelist begitu dipakai signup | `signup_whitelist`, `roles` |
-| `user_roles` | 1 baris = 1 role milik 1 user. Non-master WAJIB tepat 1 baris (kebijakan "1 akun 1 role") — cuma `master` yang boleh multi-baris | `roles`, `auth.users` |
+| `app_roles` | 3 peran: `master`, `admin`, `cashier` | — |
+| `app_user_signup_whitelist` | Email yang boleh registrasi + `role_name` (1 kolom, bukan join table lagi sejak 2026-09-14) + `created_by`/`created_at`/`consumed_at` | `app_roles` |
+| `app_user_roles` | 1 baris = 1 role milik 1 user. Non-master WAJIB tepat 1 baris (kebijakan "1 akun 1 role") — cuma `master` yang boleh multi-baris | `app_roles`, `auth.users` |
 
 **Peran (role)**
 
@@ -116,27 +115,27 @@ Role `viewer` juga dipensiunkan bareng `accountant` (2026-09-13) — gak pernah 
 
 **Keputusan — role juga jadi gate akses APLIKASI, bukan cuma permission:** sejak kebijakan "1 akun 1 role", role juga nentuin aplikasi mana yang boleh dipakai — `admin`/`master` -> ERP, `cashier`/`master` -> POS. Dicek di titik login KEDUA app (`apps/erp/src/lib/app-access.ts` `hasErpAccess`, `apps/pos/src/lib/app-access.ts` `hasPosAccess`) — akun yang gak lolos langsung di-`signOut()` lagi dengan pesan error, bukan cuma dibatasi actionnya doang. `master` sengaja TIDAK ditambahkan ke ~70 RLS policy/RPC guard yang sudah ada di file migration lain (semua checknya berbentuk "role user termasuk salah satu dari [...]", row-existence, bukan exact-match) — akun master cukup dikasih role `admin` DAN `cashier` sekaligus (manual lewat database), otomatis lolos semua guard existing (RLS maupun app-access gate) tanpa nyentuh satu pun file lain.
 
-**Bug yang sempat kejadian (2026-09-13), sudah ditutup trigger `user_roles_master_implies_all`:** `hasErpAccess`/`hasPosAccess` EKSPLISIT memasukkan `'master'` ke daftar role yang diizinkan (bukan cuma `admin`/`cashier`) -- jadi akun yang CUMA punya baris `master` (lupa dipasangkan `admin`+`cashier`) tetap BISA login ke kedua aplikasi (login-nya sukses), tapi begitu masuk, hampir semua actual write action gagal karena ~70 RLS policy/RPC itu cuma cek `role_name = 'admin'`/`'cashier'` literal, gak pernah tau soal `'master'`. Konfusing karena login-nya kelihatan "berhasil" padahal permission-nya rusak. Ditutup lewat trigger `user_roles_master_implies_all` -- begitu baris `master` di-insert ke `user_roles`, `admin`+`cashier` otomatis nyusul buat `user_id` yang sama, jadi gak ada lagi jalan buat kelupaan pasangkan manual. **Kalau mau cabut status master dari 1 akun, hapus ketiga baris role-nya sekaligus** (bukan cuma baris `master`) -- baris `admin`+`cashier` yang otomatis nempel gak ke-cleanup otomatis kalau cuma baris `master`-nya yang dihapus, dan bakal balik melanggar kebijakan "1 akun 1 role".
+**Bug yang sempat kejadian (2026-09-13), sudah ditutup trigger `user_roles_master_implies_all`:** `hasErpAccess`/`hasPosAccess` EKSPLISIT memasukkan `'master'` ke daftar role yang diizinkan (bukan cuma `admin`/`cashier`) -- jadi akun yang CUMA punya baris `master` (lupa dipasangkan `admin`+`cashier`) tetap BISA login ke kedua aplikasi (login-nya sukses), tapi begitu masuk, hampir semua actual write action gagal karena ~70 RLS policy/RPC itu cuma cek `role_name = 'admin'`/`'cashier'` literal, gak pernah tau soal `'master'`. Konfusing karena login-nya kelihatan "berhasil" padahal permission-nya rusak. Ditutup lewat trigger `user_roles_master_implies_all` -- begitu baris `master` di-insert ke `app_user_roles`, `admin`+`cashier` otomatis nyusul buat `user_id` yang sama, jadi gak ada lagi jalan buat kelupaan pasangkan manual. **Kalau mau cabut status master dari 1 akun, hapus ketiga baris role-nya sekaligus** (bukan cuma baris `master`) -- baris `admin`+`cashier` yang otomatis nempel gak ke-cleanup otomatis kalau cuma baris `master`-nya yang dihapus, dan bakal balik melanggar kebijakan "1 akun 1 role".
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Cek email boleh signup | Auth Hook `before_user_created_hook(event jsonb)` | Nolak `auth.signUp()` (`{"error":{"http_code":403,...}}`) kalau email gak ada di `signup_whitelist` yang belum `consumed_at` | Jalan SEBELUM baris `auth.users` ada — cuma bisa nolak, gak bisa insert `user_roles` (FK bakal gagal) |
-| Assign role setelah signup sukses | Trigger `handle_new_user_role_assignment` (`after insert on auth.users`) | Insert baris `user_roles` sesuai `signup_whitelist_roles`, tandai whitelist `consumed_at` | 1 transaksi sama dengan insert `auth.users` — gagal di sini = seluruh signup rollback |
-| Lihat semua user + role-nya | RPC `list_app_users()` | Gabungin `auth.users`+`user_roles` (client gak bisa query `auth.users` langsung) | Role `master` |
+| Cek email boleh signup | Auth Hook `before_user_created_hook(event jsonb)` | Nolak `auth.signUp()` (`{"error":{"http_code":403,...}}`) kalau email gak ada di `app_user_signup_whitelist` yang belum `consumed_at` | Jalan SEBELUM baris `auth.users` ada — cuma bisa nolak, gak bisa insert `app_user_roles` (FK bakal gagal) |
+| Assign role setelah signup sukses | Trigger `handle_new_user_role_assignment` (`after insert on auth.users`) | Insert 1 baris `app_user_roles` dari `app_user_signup_whitelist.role_name`, tandai whitelist `consumed_at` | 1 transaksi sama dengan insert `auth.users` — gagal di sini = seluruh signup rollback |
+| Lihat semua user + role-nya | RPC `list_app_users()` | Gabungin `auth.users`+`app_user_roles` (client gak bisa query `auth.users` langsung) | Role `master` |
 | Ubah role user yang sudah ada | RPC `set_user_roles(p_user_id, p_roles)` | Ganti total set role `admin`/`cashier` milik 1 user | Role `master`; nolak kalau `p_roles` kosong, mengandung `'master'`, atau lebih dari 1 elemen (kebijakan 1 akun 1 role) |
-| Tambah/hapus undangan whitelist | RPC `add_whitelist_entry(p_email, p_roles)` / `remove_whitelist_entry(p_id)` | Insert/hapus baris `signup_whitelist`+`signup_whitelist_roles` | Role `master`; `remove_whitelist_entry` nolak kalau undangan udah dipakai signup — gak bisa dicabut lagi, cuma bisa dihapus manual lewat SQL kalau perlu re-invite email yang sama |
-| Master otomatis dapat admin+cashier | Trigger `user_roles_master_implies_all` (`after insert on user_roles`) | Begitu baris `master` di-insert, `admin`+`cashier` otomatis nyusul buat `user_id` yang sama | Cuma nutup jalur INSERT (lihat catatan bug di atas) |
+| Tambah/hapus undangan whitelist | RPC `add_whitelist_entry(p_email, p_role)` / `remove_whitelist_entry(p_id)` | Insert/hapus 1 baris `app_user_signup_whitelist` | Role `master`; `remove_whitelist_entry` nolak kalau undangan udah dipakai signup — gak bisa dicabut lagi, cuma bisa dihapus manual lewat SQL kalau perlu re-invite email yang sama |
+| Master otomatis dapat admin+cashier | Trigger `user_roles_master_implies_all` (`after insert on app_user_roles`) | Begitu baris `master` di-insert, `admin`+`cashier` otomatis nyusul buat `user_id` yang sama | Cuma nutup jalur INSERT (lihat catatan bug di atas) |
 
 **Aturan Bisnis → RPC**
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
 | Cuma email yang diundang yang boleh punya akun | Auth Hook `before_user_created_hook` |
-| Role `master` gak pernah bisa didapat lewat signup atau UI | `check (role_name <> 'master')` di `signup_whitelist_roles`, guard eksplisit di `set_user_roles`/`add_whitelist_entry` |
-| 1 akun = tepat 1 role (kecuali `master`) | Guard `array_length(p_roles,1) > 1` di `set_user_roles`/`add_whitelist_entry` |
-| Whitelist/User Management cuma bisa dikelola `master` | Guard eksplisit di `list_app_users`, `set_user_roles`, `add_whitelist_entry`, `remove_whitelist_entry` — `signup_whitelist`/`signup_whitelist_roles` sendiri RLS default-deny buat insert/update/delete langsung |
+| Role `master` gak pernah bisa didapat lewat signup atau UI | `check (role_name <> 'master')` di `app_user_signup_whitelist`, guard eksplisit di `set_user_roles`/`add_whitelist_entry` |
+| 1 akun = tepat 1 role (kecuali `master`) | Guard `array_length(p_roles,1) > 1` di `set_user_roles`; `app_user_signup_whitelist.role_name` cuma 1 kolom (`not null`), gak bisa >1 role per undangan secara struktural |
+| Whitelist/User Management cuma bisa dikelola `master` | Guard eksplisit di `list_app_users`, `set_user_roles`, `add_whitelist_entry`, `remove_whitelist_entry` — `app_user_signup_whitelist` sendiri RLS default-deny buat insert/update/delete langsung |
 | Master otomatis dapat admin+cashier, gak bisa lupa dipasangkan manual | Trigger `user_roles_master_implies_all` |
 
 **Catatan penting:** submodule ini menutup celah "siapa boleh punya akun sama sekali" DAN "aplikasi mana yang boleh dia akses". Celah TERPISAH yang masih terbuka: ~50 RLS policy `SELECT` di seluruh schema cuma cek `auth.role()='authenticated'` (bukan role spesifik), jadi user role apa pun (termasuk `cashier`) tetap bisa baca semua data finansial lewat query langsung ke tabel — lihat `memory/scope-debt/rls-select-not-role-scoped.md`.
