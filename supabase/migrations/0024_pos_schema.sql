@@ -3,46 +3,9 @@
 -- Identitas "ini penjualan kios" PURE STRUKTURAL: transaksi OUTBOUND + persis 1
 -- goods_notes(type='OUTBOUND') + persis 1 payments lunas penuh + 0 retur/DP.
 
-create table pos_settings (
-  id boolean primary key default true,
-  walk_in_customer_id uuid not null references counterparties(id),
-  updated_at timestamptz not null default now(),
-  updated_by uuid references auth.users(id),
-  constraint pos_settings_singleton check (id)
-);
-
-create trigger pos_settings_set_updated_at
-  before update on pos_settings
-  for each row execute function set_updated_at();
-
-alter table pos_settings enable row level security;
-
-create policy pos_settings_select on pos_settings
-  for select using (auth.role() = 'authenticated');
-
-create policy pos_settings_update on pos_settings
-  for update using (
-    exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
-  );
-
-grant select, update on pos_settings to authenticated;
-
--- Seed "Pelanggan Umum" -- fallback wajib buat walk-in tanpa nama, row counterparties
--- sintetis (BUKAN data bisnis nyata, infrastruktur wajib biar create_pos_sale gak pernah
--- exception "walk_in_customer_id belum diset").
-do $$
-declare
-  v_customer_id uuid;
-begin
-  insert into counterparties (name, payment_term_days)
-  values ('Pelanggan Umum', 1)
-  returning id into v_customer_id;
-
-  insert into counterparty_type_mapping (counterparty_id, role)
-  values (v_customer_id, 'customer');
-
-  insert into pos_settings (walk_in_customer_id) values (v_customer_id);
-end $$;
+-- Pelanggan walk-in default ("Pelanggan Umum") + pengaturan lain lintas-modul ada di
+-- app_settings (docs/architecture/app-settings-schema.md), bukan tabel khusus POS -- diisi
+-- lewat RPC complete_onboarding (submodule "Onboarding"), bukan seed migration.
 
 -- create_pos_sale -- security definer PERTAMA di project, orkestrasi create_goods_issue+
 -- record_payment. Role cashier cuma bisa lewat sini.
@@ -76,8 +39,8 @@ declare
   v_settle_amount numeric;
 begin
   if not exists (
-    select 1 from user_roles ur
-    where ur.user_id = auth.uid() and ur.role_name in ('admin', 'accountant', 'cashier')
+    select 1 from app_user_roles ur
+    where ur.user_id = auth.uid() and ur.role_name in ('admin', 'cashier')
   ) then
     raise exception 'Gak punya akses buat bikin POS Sale';
   end if;
@@ -88,16 +51,16 @@ begin
 
   v_customer_id := p_customer_id;
   if v_customer_id is null then
-    select walk_in_customer_id into v_customer_id from pos_settings where id = true;
+    select walk_in_customer_id into v_customer_id from app_settings where id = true;
     if v_customer_id is null then
-      raise exception 'pos_settings.walk_in_customer_id belum diset -- hubungi admin';
+      raise exception 'app_settings.walk_in_customer_id belum diset -- hubungi admin';
     end if;
   end if;
 
   select account_id into v_receivable_account_id
-    from default_account_settings where role_key = 'ar.receivable';
+    from app_default_account_settings where role_key = 'ar.receivable';
   if v_receivable_account_id is null then
-    raise exception 'default_account_settings ar.receivable belum diset -- hubungi admin';
+    raise exception 'app_default_account_settings ar.receivable belum diset -- hubungi admin';
   end if;
 
   for v_line in select * from jsonb_array_elements(p_lines)

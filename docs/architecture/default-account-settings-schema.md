@@ -6,9 +6,7 @@
 |---|---|
 | Default Akun | Master mapping "peran akun" (mis. Piutang Usaha, Kas Toko) ke 1 akun tetap di Chart of Accounts — dipakai form transaksi supaya user gak perlu milih akun bebas. |
 
-> **Migration final (2026-09-07, rename 2026-09-14):** `supabase/migrations/0008_default_account_settings_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas. Tabel `default_account_settings` di-rename jadi `app_default_account_settings` (prefix `app_` buat tabel config/infrastruktur cross-cutting) lewat `supabase/migrations/0029_app_prefix_rename_and_drop_signatories.sql`.
->
-> **Preset Akun Aset Tetap (`fixed_asset_account_presets`) dicabut total** lewat `supabase/migrations/0030_drop_fixed_assets_module.sql` (2026-09-15, keputusan owner) bareng seluruh modul Fixed Assets — lihat `docs/domain/general-ledger.md` bagian preset jurnal (`app_preset_journal_entries`). Submodule "Preset Akun Aset Tetap" di bawah dihapus dari dokumen ini.
+> **Migration:** `supabase/migrations/0008_default_account_settings_schema.sql`. Preset Akun Aset Tetap (`fixed_asset_account_presets`) sudah dicabut total bareng seluruh modul Fixed Assets (keputusan owner) — lihat `docs/domain/general-ledger.md` bagian preset jurnal (`app_preset_journal_entries`). Submodule "Preset Akun Aset Tetap" di bawah dihapus dari dokumen ini.
 
 ## Masalah yang Diselesaikan
 
@@ -25,6 +23,7 @@ Modul ini menutup gap itu: field-field seperti ini otomatis terisi & terkunci (r
 **Alur Teknis**
 - Form transaksi baca peta ini sekali di awal, tiap field akun langsung tampil nilai terkunci sesuai perannya — gak ada langkah user pilih apa pun.
 - Kalau suatu peran belum di-set admin (kasusnya harusnya jarang, semua peran yang dipakai sudah diisi dari awal), field itu tampil peringatan merah + link ke halaman Pengaturan, bukan diam-diam dikosongkan atau nampilin dropdown bebas lagi.
+- 19 baris awal (daftar `role_key` di atas) sekarang dibuat lewat RPC `complete_onboarding` (lihat `coa-schema.md` submodule "Onboarding — Bootstrap Konfigurasi Awal") kalau tabel ini masih kosong — dulu cuma bisa lewat migration seed. Idempotent per `role_key` (`on conflict do nothing`), jadi aman dipanggil ulang. `account_id` di-resolve cocok `(code, name, category)` sekaligus (bukan `code` doang) — kalau kode template kebetulan sudah dipakai akun lain yang gak terkait, RPC gagal total dengan pesan jelas daripada diam-diam mapping ke akun yang salah. Mengubah akun yang sudah dipetakan tetap lewat halaman Pengaturan seperti biasa, gak lewat RPC ini.
 
 **Aturan Bisnis → Data**
 - "User gak boleh salah pilih akun" dijaga karena gak ada dropdown bebas untuk field-field ini — satu-satunya cara mengubah akun yang dipakai adalah admin masuk ke halaman Pengaturan.

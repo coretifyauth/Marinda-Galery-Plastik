@@ -1,10 +1,9 @@
 -- Inventory Ledger (inventory_balances + inventory_movements). Ref:
--- memory/architecture/data/inventory-ledger-schema.md.
+-- docs/architecture/inventory-ledger-schema.md.
 --
 -- inventory_movements WAJIB di sini (bukan lebih awal) -- composite FK-nya butuh 6 tabel
 -- sumber (goods_note_lines, production_order_lines, return_lines, stock_opname_lines,
--- warranty_replacement_lines, purchase_replacement_lines) SEMUA sudah ada duluan (file
--- 0011/0012/0018/0019/0021/0022).
+-- replacement_lines) SEMUA sudah ada duluan (file 0011/0012/0018/0019/0021).
 
 create table inventory_balances (
   item_id uuid primary key references items(id),
@@ -22,18 +21,18 @@ create policy inventory_balances_select on inventory_balances
 
 create policy inventory_balances_insert on inventory_balances
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy inventory_balances_update on inventory_balances
   for update using (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 -- consume_weighted_average -- satu-satunya jalur konsumsi stok (dipakai create_goods_issue,
--- create_production_order, create_warranty_replacement, create_ap_return, create_purchase_replacement).
+-- create_production_order, create_replacement, create_ap_return).
 -- Cuma kurangin qty_on_hand, avg_cost gak berubah pas konsumsi.
 create function consume_weighted_average(p_item_id uuid, p_qty_needed numeric) returns numeric
 language plpgsql
@@ -77,21 +76,23 @@ create table inventory_movements (
   return_line_id uuid,
   stock_opname_line_id uuid,
   production_order_line_id uuid,
-  warranty_replacement_line_id uuid,
-  purchase_replacement_line_id uuid,
+  replacement_line_id uuid,
 
   foreign key (goods_note_line_id, item_id) references goods_note_lines(id, item_id),
   foreign key (production_order_id, item_id) references production_orders(id, item_id),
   foreign key (return_line_id, item_id) references return_lines(id, item_id),
   foreign key (stock_opname_line_id, item_id) references stock_opname_lines(id, item_id),
   foreign key (production_order_line_id, item_id) references production_order_lines(id, item_id),
-  foreign key (warranty_replacement_line_id, item_id) references warranty_replacement_lines(id, item_id),
-  foreign key (purchase_replacement_line_id, item_id) references purchase_replacement_lines(id, item_id)
+  foreign key (replacement_line_id, item_id) references replacement_lines(id, item_id),
 
-  -- CATATAN: check(num_nonnulls(...)=1) SENGAJA gak ditulis -- constraint ini udah gak ada
-  -- di database live sejak migration 0068 (histori lama), scope-debt aktif:
-  -- memory/scope-debt/inventory-movements-exactly-one-source-constraint.md. Kolom di atas
-  -- tetap "tepat 1 terisi per baris" SECARA KONVENSI (semua RPC nulis sesuai itu).
+  -- Tepat 1 dari 6 kolom sumber di atas wajib terisi per baris -- traceability ke 1 sumber
+  -- tunggal (Core Invariant: tiap transaksi traceable ke source document).
+  check (
+    num_nonnulls(
+      goods_note_line_id, production_order_id, return_line_id,
+      stock_opname_line_id, production_order_line_id, replacement_line_id
+    ) = 1
+  )
 );
 
 create index inventory_movements_item_id_movement_date_id_idx
@@ -108,8 +109,8 @@ create policy inventory_movements_select on inventory_movements
 
 create policy inventory_movements_insert on inventory_movements
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on inventory_movements to authenticated;
@@ -156,10 +157,10 @@ select
     case when im.goods_note_line_id is not null and gn.type = 'OUTBOUND' then 'Penjualan (Kirim Barang)' else null end,
     case when im.production_order_line_id is not null then 'Produksi (Konsumsi Bahan)' else null end,
     case when im.return_line_id is not null and rl.type = 'OUTBOUND' then 'Retur ke Supplier' else null end,
-    case when im.warranty_replacement_line_id is not null then 'Penggantian Garansi' else null end,
-    case when im.purchase_replacement_line_id is not null then 'Tukar Barang (Retur Supplier)' else null end
+    case when im.replacement_line_id is not null and rp.type = 'INBOUND' then 'Penggantian Garansi' else null end,
+    case when im.replacement_line_id is not null and rp.type = 'OUTBOUND' then 'Tukar Barang (Retur Supplier)' else null end
   ) as source_label,
-  coalesce(ap_bill.source_ref, prod_header.source_ref, r.source_ref, so.source_ref, gn.source_ref, prod_line_header.source_ref, wr.source_ref, pr.source_ref) as source_ref
+  coalesce(ap_bill.source_ref, prod_header.source_ref, r.source_ref, so.source_ref, gn.source_ref, prod_line_header.source_ref, rp.source_ref) as source_ref
 from inventory_movements im
   left join goods_note_lines gnl on gnl.id = im.goods_note_line_id
   left join goods_notes gn on gn.id = gnl.goods_note_id
@@ -171,9 +172,7 @@ from inventory_movements im
   left join stock_opnames so on so.id = sol.stock_opname_id
   left join production_order_lines pol on pol.id = im.production_order_line_id
   left join production_orders prod_line_header on prod_line_header.id = pol.production_order_id
-  left join warranty_replacement_lines wrl on wrl.id = im.warranty_replacement_line_id
-  left join warranty_replacements wr on wr.id = wrl.warranty_replacement_id
-  left join purchase_replacement_lines prpl on prpl.id = im.purchase_replacement_line_id
-  left join purchase_replacements pr on pr.id = prpl.purchase_replacement_id;
+  left join replacement_lines rpl on rpl.id = im.replacement_line_id
+  left join replacements rp on rp.id = rpl.replacement_id;
 
 grant select on inventory_movements_with_source to authenticated;

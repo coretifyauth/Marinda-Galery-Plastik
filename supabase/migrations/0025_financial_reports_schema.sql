@@ -134,8 +134,8 @@ create policy period_closings_select on period_closings
 
 create policy period_closings_insert on period_closings
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create trigger period_closings_block_edit_delete

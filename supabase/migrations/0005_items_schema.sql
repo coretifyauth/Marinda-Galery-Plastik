@@ -124,7 +124,7 @@ set search_path = public, pg_temp
 as $$
 begin
   if not exists (
-    select 1 from user_roles ur
+    select 1 from app_user_roles ur
     where ur.user_id = auth.uid() and ur.role_name = 'admin'
   ) then
     raise exception 'Cuma admin yang boleh menghapus item';
@@ -148,18 +148,18 @@ alter table item_brands enable row level security;
 
 create policy item_categories_select on item_categories for select using (auth.role() = 'authenticated');
 create policy item_categories_insert on item_categories for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy item_categories_update on item_categories for update using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 create policy item_brands_select on item_brands for select using (auth.role() = 'authenticated');
 create policy item_brands_insert on item_brands for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy item_brands_update on item_brands for update using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert, update on item_categories to authenticated;
@@ -169,10 +169,10 @@ alter table items enable row level security;
 
 create policy items_select on items for select using (auth.role() = 'authenticated');
 create policy items_insert on items for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy items_update on items for update using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert, update on items to authenticated;
@@ -181,13 +181,13 @@ alter table item_units enable row level security;
 
 create policy item_units_select on item_units for select using (auth.role() = 'authenticated');
 create policy item_units_insert on item_units for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy item_units_update on item_units for update using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy item_units_delete on item_units for delete using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert, update, delete on item_units to authenticated;
@@ -216,7 +216,7 @@ declare
   v_max_attempts constant int := 20;
 begin
   if not exists (
-    select 1 from user_roles ur
+    select 1 from app_user_roles ur
     where ur.user_id = auth.uid() and ur.role_name = 'admin'
   ) then
     raise exception 'Cuma admin yang boleh generate kode scan';

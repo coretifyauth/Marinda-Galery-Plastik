@@ -102,7 +102,7 @@ begin
     select ppn_rate,
            case when p_type = 'OUTBOUND' then ppn_keluaran_account_id else ppn_masukan_account_id end
       into v_ppn_rate, v_ppn_account_id
-      from tax_settings where id = true and is_active = true;
+      from app_settings where id = true and is_active = true;
 
     if v_ppn_rate is null or v_ppn_account_id is null then
       raise exception 'PPN belum aktif/diset -- cek Pengaturan Pajak';
@@ -189,10 +189,10 @@ alter table charge_categories enable row level security;
 
 create policy charge_categories_select on charge_categories for select using (auth.role() = 'authenticated');
 create policy charge_categories_insert on charge_categories for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 create policy charge_categories_update on charge_categories for update using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert, update on charge_categories to authenticated;
@@ -435,8 +435,8 @@ create policy transactions_select on transactions
 
 create policy transactions_insert on transactions
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 alter table transaction_lines enable row level security;
@@ -446,8 +446,8 @@ create policy transaction_lines_select on transaction_lines
 
 create policy transaction_lines_insert on transaction_lines
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on transactions to authenticated;

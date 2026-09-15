@@ -119,15 +119,11 @@ create trigger return_credit_refunds_guard_trigger
   for each row execute function return_credit_refunds_guard();
 
 -- return_credit_remaining(credit_id) -- gantiin ar_return_credit_remaining+ap_return_credit_remaining.
--- Reducer warranty_replacements.return_credit_settled_amount gak di-branch by type -- buat baris
--- OUTBOUND (AP) subquery-nya otomatis 0 (warranty_replacements gak pernah nulis return_id OUTBOUND).
+-- Saldo kredit retur cuma bisa diselesaikan lewat refund tunai (return_credit_refunds) --
+-- gak ada jalur "settle lewat ganti barang" (replacements berdiri independen, gak nyentuh
+-- return_credits sama sekali).
 create function return_credit_remaining(p_credit_id uuid) returns numeric as $$
   select c.amount
-    - coalesce((
-        select sum(wr.return_credit_settled_amount)
-        from warranty_replacements wr
-        where wr.return_id = c.return_id
-      ), 0)
     - coalesce((select sum(amount) from return_credit_refunds where credit_id = p_credit_id), 0)
   from return_credits c
   where c.id = p_credit_id;
@@ -184,14 +180,14 @@ alter table return_credits enable row level security;
 
 create policy return_credits_select on return_credits for select using (auth.role() = 'authenticated');
 create policy return_credits_insert on return_credits for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 alter table return_credit_refunds enable row level security;
 
 create policy return_credit_refunds_select on return_credit_refunds for select using (auth.role() = 'authenticated');
 create policy return_credit_refunds_insert on return_credit_refunds for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert on return_credits to authenticated;

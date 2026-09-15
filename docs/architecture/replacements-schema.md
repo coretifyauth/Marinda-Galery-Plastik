@@ -1,10 +1,10 @@
 # Ganti/Tukar Barang (Replacements) — Struktur Data
 
-Konsep bisnisnya ada di 2 tempat: sisi AR di `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)" — customer punya barang cacat dan minta barang pengganti, bukan retur (dapat kredit/diskon); sisi AP di `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier" (Opsi B — Tukar Barang) — bahan baku yang diterima ternyata rusak dan supplier setuju mengirim barang pengganti, bukan mengurangi utang. File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0027_replacements_schema.sql`.
+Konsep bisnisnya ada di 2 tempat: sisi AR di `docs/domain/accounts-receivable.md` bagian "Penukaran Barang Pasca-Retur (Garansi)" — customer punya barang cacat dan minta barang pengganti, bukan retur (dapat kredit/diskon); sisi AP di `docs/domain/accounts-payable.md` bagian "Retur Barang ke Supplier" (Opsi B — Tukar Barang) — bahan baku yang diterima ternyata rusak dan supplier setuju mengirim barang pengganti, bukan mengurangi utang. File ini fokus ke bagaimana datanya disimpan dan aturan apa yang dijaga otomatis oleh sistem. Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0021_replacements_schema.sql`.
 
-Ini 1 pasang tabel `replacements`+`replacement_lines` yang menampung KEDUA arah, dibedakan lewat kolom `type` (`INBOUND` = AR/garansi, `OUTBOUND` = AP/tukar ke supplier) — pola sama `return_credits`/`payments`/`deposits`/`returns` (lihat `return-credits-schema.md`).
+Ini 1 pasang tabel `replacements`+`replacement_lines` yang menampung KEDUA arah, dibedakan lewat kolom `type` (`INBOUND` = AR/garansi, `OUTBOUND` = AP/tukar ke supplier) — pola sama `return_credits`/`payments`/`deposits`/`returns` (lihat `return-credits-schema.md`). Saldo kredit retur (`return_credits`) berdiri independen dari replacements — gak ada jalur "settle saldo kredit retur lewat ganti barang", cuma refund tunai.
 
-**Migration:** `supabase/migrations/0027_replacements_schema.sql` (2026-09-09) — menggantikan `warranty_replacements` (AR, migration `0021`, sudah di-drop) + `purchase_replacements` (AP, migration `0022`, sudah di-drop). Unifikasi dilakukan setelah dikonfirmasi kedua tabel lama sudah tidak punya baris data (`inventory_movements` di-TRUNCATE total 2026-09-07) dan 5 kolom vestigial `warranty_replacements` (`return_id`, `discount_reversed_amount`, `discount_reversal_journal_entry_id`, `return_credit_settled_amount`, `return_credit_settlement_journal_entry_id`) sudah tidak pernah diisi RPC aktif — kapabilitas "settle saldo kredit retur lewat ganti barang" yang dulu diwakili kolom itu sudah dilarang eksplisit (`docs/domain/accounts-receivable.md` baris 55-58, cuma boleh refund tunai). Riwayat lengkapnya ada di `git log` dan di migration `0021`/`0022` yang masih ada sebagai catatan historis (tidak diedit, sesuai konvensi live-linked project).
+**Migration:** `supabase/migrations/0021_replacements_schema.sql`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -73,5 +73,5 @@ Memaksakan `INBOUND` ikut pola `OUTBOUND` (2 movement) akan menciptakan movement
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat daftar ganti/tukar barang | Semua user yang sudah login |
-| Mencatat ganti/tukar barang baru | Role `admin` atau `accountant` |
+| Mencatat ganti/tukar barang baru | Role `admin` |
 | Mengubah/menghapus baris yang sudah tercatat | **Tidak ada seorang pun** — immutable, kalau salah input dikoreksi lewat kejadian baru, bukan mengedit yang lama |

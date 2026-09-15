@@ -128,7 +128,7 @@ end;
 $$;
 
 -- RLS & Grant -- pola identik tabel transaksional lain (goods_notes, dst) -- select semua
--- authenticated, insert cuma admin/accountant, gak ada policy update/delete (immutable,
+-- authenticated, insert cuma admin, gak ada policy update/delete (immutable,
 -- RLS default-deny + block_edit_delete).
 
 alter table stock_opnames enable row level security;
@@ -138,8 +138,8 @@ create policy stock_opnames_select on stock_opnames
 
 create policy stock_opnames_insert on stock_opnames
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 alter table stock_opname_lines enable row level security;
@@ -149,8 +149,8 @@ create policy stock_opname_lines_select on stock_opname_lines
 
 create policy stock_opname_lines_insert on stock_opname_lines
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on stock_opnames to authenticated;

@@ -1,10 +1,9 @@
 # Pengaturan Aplikasi (App Settings) — Struktur Data
 
-Tabel konfigurasi global lintas-modul, digabung dari 3 tabel singleton yang tadinya
-terpisah (`tax_settings`, `company_settings`, `pos_settings` — migration `0028`) karena
-3-3nya persis sama pola: 1 baris selamanya, RLS select semua user login/update admin doang,
-gak punya relasi ke satu sama lain. Menggabungnya menghapus duplikasi 3x pasang RLS policy +
-3x seed singleton, dan app cukup 1x fetch buat semua config global.
+Tabel konfigurasi global lintas-modul, isinya 3 domain independen yang persis sama pola: 1
+baris selamanya, RLS select semua user login/update admin doang, gak punya relasi ke satu
+sama lain. Digabung 1 tabel biar gak perlu 3x pasang RLS policy + 3x fetch buat config
+global.
 
 Isinya 3 domain bisnis independen dalam 1 baris:
 - **Pajak (PPN)** — dibahas `docs/domain/accounts-payable.md` bagian "Kategori Campur & PPN"
@@ -15,7 +14,7 @@ Isinya 3 domain bisnis independen dalam 1 baris:
 - **Pelanggan Walk-in (POS)** — dibahas `docs/domain/pos.md`, id `counterparties` default
   buat penjualan kios tanpa customer dipilih manual.
 
-Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0028_merge_settings_into_app_settings.sql` (tabel gabungan) — struktur asal sebelum digabung ada di `supabase/migrations/0006_tax_settings_schema.sql`, `0009_print_templates_schema.sql`, `0024_pos_schema.sql` (historis, tabelnya sudah di-drop).
+Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0006_app_settings_schema.sql`.
 
 Tabel ini **bukan child dari modul manapun** — konfigurasi lintas-modul (dipakai `transactions`, `goods_notes`, dan alur POS sekaligus), berdiri sendiri sebagai 1 file spine.
 
@@ -25,7 +24,7 @@ Tabel ini **bukan child dari modul manapun** — konfigurasi lintas-modul (dipak
 |---|---|---|
 | `app_settings` | Konfigurasi tunggal (singleton) — PPN, identitas perusahaan, customer walk-in POS | `accounts` (akun PPN Keluaran & Masukan), `counterparties` (walk-in customer) |
 
-> **Migration final (2026-09-14):** `supabase/migrations/0028_merge_settings_into_app_settings.sql` — gabungan `tax_settings`(0006)+`company_settings`(0009)+`pos_settings`(0024). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS — SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
+> **Migration:** `supabase/migrations/0006_app_settings_schema.sql`.
 
 ## Konsep Inti
 
@@ -49,6 +48,7 @@ Tabel ini **bukan child dari modul manapun** — konfigurasi lintas-modul (dipak
 | Catat bill dari supplier yang kena PPN Masukan | `create_transaction` (lihat `transactions-schema.md`) | Baca `ppn_masukan_account_id`/`ppn_rate` dari `app_settings`, hitung nominal PPN otomatis, tambahkan ke akun kontrol sebagai bagian dari total utang | Menolak (raise exception) kalau `is_active=false` atau akun PPN belum diset |
 | Catat penjualan kasir yang kena PPN Keluaran / customer gak dipilih | `create_pos_sale` (lihat `pos-schema.md`) | Baca `ppn_keluaran_account_id`/`ppn_rate` buat hitung PPN; baca `walk_in_customer_id` kalau kasir gak pilih customer | Menolak kalau `is_active=false`/akun PPN belum diset (khusus PPN); `walk_in_customer_id` selalu ada (kolom `not null`) |
 | Cetak dokumen (AR Invoice/PO) | — (bukan RPC, dibaca langsung pas halaman dibuka) | Kop surat dirender dari `name`/`address`/`npwp`/`logo_url` TERKINI | — |
+| Isi baris pertama `app_settings` (setup awal aplikasi) | `complete_onboarding(...)` (lihat `coa-schema.md` submodule "Onboarding — Bootstrap Konfigurasi Awal") | Insert 1 baris singleton: identitas usaha + PPN (akun PPN di-resolve dari template COA yang dibuat RPC yang sama) + `walk_in_customer_id` (counterparty "Pelanggan Umum" dibuat/reuse RPC yang sama) | Menolak kalau `app_settings` sudah punya baris — cuma bisa dipanggil sekali selama tabel ini masih kosong |
 
 **Aturan Bisnis → RPC**
 
@@ -76,4 +76,5 @@ Tabel ini **bukan child dari modul manapun** — konfigurasi lintas-modul (dipak
 |---|---|
 | Melihat pengaturan saat ini (PPN, identitas perusahaan, walk-in customer) | Semua user yang sudah login |
 | Mengubah pengaturan apa pun di baris ini | Role `admin` doang |
-| Menambah baris baru / menghapus baris | **Tidak ada seorang pun** — baris tunggalnya cuma pernah diseed lewat migration (migrasi data dari 3 tabel asal), dan constraint singleton menolak baris kedua apa pun yang dicoba |
+| Mengisi baris pertama | Admin, sekali lewat RPC `complete_onboarding` (lihat `coa-schema.md` submodule "Onboarding") |
+| Menambah baris baru / menghapus baris | **Tidak ada seorang pun** — constraint singleton menolak baris kedua apa pun yang dicoba |

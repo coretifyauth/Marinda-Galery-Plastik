@@ -260,17 +260,17 @@ create policy orders_select on orders
 
 create policy orders_insert on orders
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy orders_update on orders
   for update using (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   ) with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert, update on orders to authenticated;
@@ -282,8 +282,8 @@ create policy order_lines_select on order_lines
 
 create policy order_lines_insert on order_lines
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on order_lines to authenticated;

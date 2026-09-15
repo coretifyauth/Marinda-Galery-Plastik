@@ -175,8 +175,8 @@ create trigger return_lines_no_over_return_outbound_trigger
   execute function return_lines_no_over_return_outbound();
 
 -- sales_returned_qty/purchase_returned_qty -- gabungan qty yang udah "diklaim" lintas
--- retur+ganti barang. warranty_replacements/purchase_replacements baru didefinisikan di
--- file belakangan (0020/0021) -- aman, SQL stable function resolve lazy saat dipanggil.
+-- retur+ganti barang (replacements, didefinisikan di file belakangan -- aman, SQL stable
+-- function resolve lazy saat dipanggil).
 create function sales_returned_qty(p_invoice_id uuid, p_item_id uuid) returns numeric as $$
   select
     coalesce((
@@ -186,9 +186,9 @@ create function sales_returned_qty(p_invoice_id uuid, p_item_id uuid) returns nu
     ), 0)
     +
     coalesce((
-      select sum(wrl.qty_replaced) from warranty_replacement_lines wrl
-      join warranty_replacements wr on wr.id = wrl.warranty_replacement_id
-      where wr.invoice_id = p_invoice_id and wrl.item_id = p_item_id
+      select sum(rpl.qty_replaced) from replacement_lines rpl
+      join replacements rp on rp.id = rpl.replacement_id
+      where rp.transaction_id = p_invoice_id and rp.type = 'INBOUND' and rpl.item_id = p_item_id
     ), 0);
 $$ language sql stable;
 
@@ -201,9 +201,9 @@ create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns nu
     ), 0)
     +
     coalesce((
-      select sum(prpl.qty_replaced) from purchase_replacement_lines prpl
-      join purchase_replacements prp on prp.id = prpl.purchase_replacement_id
-      where prp.bill_id = p_bill_id and prpl.item_id = p_item_id
+      select sum(rpl.qty_replaced) from replacement_lines rpl
+      join replacements rp on rp.id = rpl.replacement_id
+      where rp.transaction_id = p_bill_id and rp.type = 'OUTBOUND' and rpl.item_id = p_item_id
     ), 0);
 $$ language sql stable;
 
@@ -462,8 +462,8 @@ create policy returns_select on returns
 
 create policy returns_insert on returns
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on returns to authenticated;
@@ -475,8 +475,8 @@ create policy return_lines_select on return_lines
 
 create policy return_lines_insert on return_lines
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on return_lines to authenticated;

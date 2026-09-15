@@ -35,7 +35,6 @@ insert into document_number_types (doc_type, prefix, label) values
   ('pos_sales', 'POS', 'POS Sale'),
   ('journal_entries', 'JE', 'Journal Entry (manual)'),
   ('period_closings', 'CLS', 'Tutup Buku'),
-  ('depreciation_entries', 'DEPR', 'Posting Penyusutan'),
   ('item_unit_barcodes', 'SKU', 'Kode Scan Barang (item_units.barcode)');
 
 create table document_number_counters (

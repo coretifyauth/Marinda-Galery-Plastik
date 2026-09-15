@@ -485,22 +485,22 @@ alter table deposit_forfeitures enable row level security;
 
 create policy deposits_select on deposits for select using (auth.role() = 'authenticated');
 create policy deposits_insert on deposits for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 create policy deposit_applications_select on deposit_applications for select using (auth.role() = 'authenticated');
 create policy deposit_applications_insert on deposit_applications for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 create policy deposit_refunds_select on deposit_refunds for select using (auth.role() = 'authenticated');
 create policy deposit_refunds_insert on deposit_refunds for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 create policy deposit_forfeitures_select on deposit_forfeitures for select using (auth.role() = 'authenticated');
 create policy deposit_forfeitures_insert on deposit_forfeitures for insert with check (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'admin')
 );
 
 grant select, insert on deposits to authenticated;

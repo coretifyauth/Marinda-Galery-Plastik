@@ -45,13 +45,13 @@ create policy bom_headers_select on bom_headers
 
 create policy bom_headers_insert on bom_headers
   for insert with check (
-    exists (select 1 from user_roles ur
+    exists (select 1 from app_user_roles ur
             where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy bom_headers_update on bom_headers
   for update using (
-    exists (select 1 from user_roles ur
+    exists (select 1 from app_user_roles ur
             where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
@@ -62,19 +62,19 @@ create policy bom_lines_select on bom_lines
 
 create policy bom_lines_insert on bom_lines
   for insert with check (
-    exists (select 1 from user_roles ur
+    exists (select 1 from app_user_roles ur
             where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy bom_lines_update on bom_lines
   for update using (
-    exists (select 1 from user_roles ur
+    exists (select 1 from app_user_roles ur
             where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 create policy bom_lines_delete on bom_lines
   for delete using (
-    exists (select 1 from user_roles ur
+    exists (select 1 from app_user_roles ur
             where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 

@@ -41,7 +41,7 @@ create trigger app_preset_journal_entry_lines_leaf_only_trigger
 
 -- app_preset_journal_entry_lines_draft_only -- baris preset cuma boleh diubah selama header
 -- masih status draft. Begitu header active/inactive, baris terkunci permanen (published-lock
--- pattern, sama filosofi accounts_published_lock/fixed_assets_published_lock).
+-- pattern, sama filosofi accounts_published_lock).
 create function app_preset_journal_entry_lines_draft_only() returns trigger as $$
 declare
   v_status text;
@@ -195,10 +195,10 @@ $$;
 grant execute on function create_journal_entry_from_preset(uuid, date, text, text, jsonb) to authenticated;
 
 -- RLS -- kelola preset (insert/update/delete) cuma role master. select terbuka semua
--- authenticated (admin/accountant butuh baca daftar preset aktif buat dropdown Jurnal Umum).
+-- authenticated (semua user login butuh baca daftar preset aktif buat dropdown Jurnal Umum).
 -- Posting (create_journal_entry_from_preset) gak butuh policy tersendiri di tabel ini -- yang
 -- dicek RLS-nya adalah insert ke journal_entries/journal_lines di dalam create_journal_entry
--- (security invoker, tetap role admin/accountant sesuai policy 0003).
+-- (security invoker, tetap role admin sesuai policy 0003).
 
 alter table app_preset_journal_entries enable row level security;
 

@@ -9,7 +9,6 @@ export const accountCategories = [
 ] as const;
 
 export const createAccountSchema = z.object({
-  code: z.string().min(1, "Kode wajib diisi"),
   name: z.string().min(1, "Nama wajib diisi"),
   category: z.enum(accountCategories),
   parent_id: z.string().uuid().nullable().optional(),

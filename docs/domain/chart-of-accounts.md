@@ -20,6 +20,8 @@ Tiap akun wajib masuk salah satu dari 5 kategori, masing-masing punya **normal b
 
 Kode akun (account code) konvensi umum: 1xxx Asset, 2xxx Liability, 3xxx Equity, 4xxx Revenue, 5xxx Expense — dipakai buat sorting laporan keuangan.
 
+**Kode akun bukan keputusan bisnis.** User cuma perlu memutuskan 2 hal: nama akun & kategori/posisi hierarkinya (mau jadi anak dari akun apa). Angka kode persisnya cuma identifier teknis biar urut rapi di laporan — sistem yang menentukan otomatis (ikut kelipatan kategori untuk akun baru, atau ikut kode akun induk untuk akun anak), bukan sesuatu yang perlu dipikirkan manual tiap kali bikin akun baru.
+
 **Struktur Hierarkikal — Akun Bisa Dipecah (Parent-Child)**
 
 Satu akun bisa **dipecah** jadi beberapa sub-akun (child) buat nambah detail, tanpa bikin kategori baru. Ini yang bikin COA disebut *hierarchical* — bentuknya pohon (tree), bukan daftar datar.
@@ -123,6 +125,35 @@ Beberapa kesalahan pemahaman yang sering kejadian di seputar konsep inti ini:
 - Salah kategori — misal Utang Usaha dimasukin ke Expense padahal Liability. Bikin Balance Sheet vs Income Statement salah total.
 - Lupa normal balance saat validasi — sistem gak bisa deteksi user salah debit/kredit dari sisi logika bisnis kalau field ini gak dipakai (walau SUM tetap balance).
 - Posting transaksi langsung ke akun header (akun yang masih punya child) — bikin saldo rollup gak jelas/dobel-hitung. Transaksi wajib ke leaf account paling detail.
+- Mikirin kode akun sebagai keputusan penting yang perlu dipilih hati-hati — padahal cuma identifier teknis (sistem yang generate otomatis). Yang benar-benar penting dipikirkan adalah nama & posisi hierarkinya, bukan angka kodenya.
+
+### Onboarding / Setup Awal
+
+**Masalah yang Diselesaikan**
+
+Sistem akuntansi gak bisa mencatat apa pun sebelum COA + beberapa konfigurasi wajib lain ada: pemetaan "transaksi jenis X otomatis posting ke akun mana" (Default Akun), identitas usaha & status pajak, dan pelanggan default buat penjualan tunai tanpa nama. Kalau salah satu dari ini kosong — baik karena instalasi baru maupun karena seluruh data di database dihapus — hampir semua RPC transaksi (POS, AR Invoice, AP Bill, Goods Receipt) berhenti berfungsi total, bukan cuma modul akun yang kena.
+
+**Cara Kerja**
+
+- Begitu terdeteksi konfigurasi wajib belum ada, aplikasi mengunci semua halaman lain dan mengarahkan admin ke satu alur setup, sebelum bisa dipakai untuk transaksi apa pun.
+- Langkah 1: admin melihat daftar peran akun yang wajib ada (mis. "Piutang Usaha", "Kas Toko"), lalu menekan satu tombol untuk menerapkan seluruh COA + Default Akun + Daftar Jenis Dokumen bawaan sekaligus — begitu selesai, daftar itu berubah jadi tabel hasil (peran akun → akun beneran yang dipetakan). Bentuknya baku (representasi akuntansi dagang yang sudah valid), bukan sesuatu yang dipilih-pilih satu per satu di layar ini. Penyesuaian (tambah akun, ganti mapping Default Akun) tetap bisa dilakukan belakangan lewat halaman yang sudah ada, bukan lewat setup ini.
+- Langkah 2: admin mengisi identitas usaha (nama, alamat, NPWP) dan status pajak (aktif/tidak, tarif) — ini satu-satunya bagian yang genuinely beda tiap usaha, jadi tetap diminta manual. Pelanggan default untuk penjualan tunai tanpa nama dibuat otomatis, gak perlu diminta terpisah.
+- Kedua langkah ini disimpan sebagai satu operasi utuh — kalau gagal di tengah jalan, semuanya dibatalkan, gak ada kondisi "setengah ter-setup" yang bikin sebagian transaksi jalan dan sebagian gagal secara membingungkan.
+
+**Aturan Bisnis**
+
+- Setup awal cuma bisa dijalankan sekali selama konfigurasinya belum ada — begitu berhasil, gak bisa dijalankan ulang begitu saja (mencegah admin gak sengaja menimpa konfigurasi yang sudah dipakai bertransaksi). Kalau perlu diulang (mis. seluruh data memang sengaja dihapus untuk mulai dari nol), itu baru bisa terjadi lagi setelah konfigurasinya benar-benar kosong lagi.
+- Cuma admin yang boleh menjalankan setup awal.
+
+**Skenario**
+
+- Toko baru pertama kali pakai sistem: admin login pertama kali, diarahkan ke setup, klik terapkan konfigurasi bawaan, isi identitas usaha, langsung bisa mulai transaksi.
+- Seluruh data di database dihapus (disengaja atau tidak): begitu admin login lagi, sistem mendeteksi konfigurasi wajib kosong, alur setup muncul lagi persis seperti instalasi baru — gak perlu campur tangan manual di luar aplikasi untuk memulihkan.
+
+**Common Mistakes**
+
+- Mengira COA harus disesuaikan detail dulu sebelum sistem bisa dipakai — template bawaan sudah representasi akuntansi dagang yang valid dan lengkap untuk semua transaksi inti; penyesuaian ke kebutuhan spesifik usaha bisa menyusul kapan saja setelah sistem jalan, gak perlu diselesaikan di layar setup.
+- Menjalankan ulang setup awal untuk sekadar "mengganti" identitas usaha atau tarif pajak — perubahan seperti itu adalah pengaturan rutin (lewat halaman Pengaturan yang sudah ada), bukan alasan untuk mengulang proses setup awal.
 
 ### Akun Kontra (Contra Account)
 

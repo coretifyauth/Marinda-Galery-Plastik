@@ -28,14 +28,21 @@ sekali isi:
 - `npx supabase login` lalu `npx supabase link --project-ref <project-ref-baru>` — bukan
   project-ref repo asal.
 - Update `project_id` di `supabase/config.toml`.
-- `npx supabase db push` — apply 25 migration spine apa adanya (invariant + COA generic
-  reusable lintas bisnis, gak perlu ditulis ulang).
+- `npx supabase db push` — apply migration spine apa adanya (invariant + schema generic
+  reusable lintas bisnis, gak perlu ditulis ulang). Ini cuma bikin SCHEMA-nya doang (tabel
+  kosong) — COA/Default Akun/`app_settings` sengaja gak lagi di-seed migration (keputusan
+  2026-09-15), lanjut ke langkah 3.
 
-### 3. Sesuaikan Chart of Accounts seed
+### 3. Jalankan Setup Awal (bukan lagi edit seed migration)
 
-COA default (`supabase/migrations/0002_coa_schema.sql`) generic dagang/jasa. Kalau bisnis
-owner butuh akun tambahan (manufaktur: WIP/raw material, dst) — migration BARU nambah
-akun, jangan edit `0002` langsung (sudah live-linked, aturan `CLAUDE.md`).
+Login sebagai admin pertama (dibuat manual lewat database, lihat
+`docs/architecture/coa-schema.md` submodule "Registrasi & Manajemen User"), buka `/setup` —
+wizard ini otomatis nerapin template COA dagang/jasa generik (31 akun) + 19 Default Akun +
+Daftar Jenis Dokumen, admin cuma isi identitas usaha & status pajak. Kalau bisnis owner
+butuh akun tambahan di luar template (manufaktur: WIP/raw material, dst) — tambahin lewat
+`/accounts/new` (kode di-generate otomatis) SETELAH setup selesai, bukan edit seed migration
+manapun (gak ada lagi seed COA buat diedit — lihat `docs/domain/chart-of-accounts.md`
+submodule "Onboarding / Setup Awal").
 
 ### 4. Putuskan nasib docs/domain & riwayat memory
 

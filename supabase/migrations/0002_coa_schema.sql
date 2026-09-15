@@ -7,38 +7,40 @@
 create type account_category as enum ('asset','liability','equity','revenue','expense');
 create type balance_side as enum ('debit','credit');
 
--- roles -- lookup table (bukan enum Postgres) biar nambah role baru = INSERT baris, bukan
--- migration ALTER TYPE.
-create table roles (
+-- app_roles -- lookup table (bukan enum Postgres) biar nambah role baru = INSERT baris,
+-- bukan migration ALTER TYPE. Prefix app_ (bareng app_user_roles/app_user_signup_whitelist/
+-- app_default_account_settings) nandain tabel config/infrastruktur cross-cutting, beda dari
+-- tabel domain bisnis -- relevan buat template ini di-fork jadi project lain.
+create table app_roles (
   name text primary key,
   description text
 );
 
-insert into roles (name, description) values
+insert into app_roles (name, description) values
   ('master', 'Superuser -- semua akses ERP+POS+kelola user/role. Cuma disetup manual lewat database, gak pernah lewat whitelist/signup.'),
   ('admin', 'Full access ERP (transaksi + konfigurasi)'),
   ('cashier', 'Checkout POS doang, lewat create_pos_sale (security definer)');
 
-alter table roles enable row level security;
+alter table app_roles enable row level security;
 
-create policy roles_select on roles
+create policy app_roles_select on app_roles
   for select using (auth.role() = 'authenticated');
 
-grant select on roles to authenticated;
+grant select on app_roles to authenticated;
 
--- user_roles -- PK gabungan (user_id, role_name): 1 user boleh >1 role sekaligus.
-create table user_roles (
+-- app_user_roles -- PK gabungan (user_id, role_name): 1 user boleh >1 role sekaligus.
+create table app_user_roles (
   user_id uuid not null references auth.users(id) on delete cascade,
-  role_name text not null references roles(name),
+  role_name text not null references app_roles(name),
   primary key (user_id, role_name)
 );
 
-alter table user_roles enable row level security;
+alter table app_user_roles enable row level security;
 
-create policy user_roles_select_self on user_roles
+create policy app_user_roles_select_self on app_user_roles
   for select using (user_id = auth.uid());
 
-grant select on user_roles to authenticated;
+grant select on app_user_roles to authenticated;
 
 -- accounts -- tabel inti COA. normal_balance generated column, gak bisa diisi manual --
 -- nutup celah "salah kategori". is_contra membalik arah normal_balance (kategori
@@ -77,56 +79,11 @@ create trigger accounts_set_updated_at
 -- di 0003_journal_entry_schema.sql begitu tabel itu ada) + Smart Delete (delete_account,
 -- ditambah di file yang sama karena butuh pola foreign_key_violation generic).
 
--- Seed Chart of Accounts (39 akun) -- padanan 0002_seed_coa.sql historis + akun tambahan
--- yang sudah eksis di database live (1360/4400/5800/5900/6000, dulu ditambah manual/migration
--- terpisah, sekarang digabung langsung sebagai seed final). 2 pass: akun tanpa parent dulu,
--- baru akun anak (lookup parent_id via subquery by code, bukan hardcode UUID).
-insert into accounts (code, name, category, is_contra) values
-  ('1000', 'Kas', 'asset', false),
-  ('1300', 'Piutang Usaha', 'asset', false),
-  ('1350', 'Piutang Retur Supplier', 'asset', false),
-  ('1360', 'Uang Muka Pembelian', 'asset', false),
-  ('1400', 'Persediaan Bahan Baku', 'asset', false),
-  ('1420', 'Persediaan Barang Jadi', 'asset', false),
-  ('1500', 'PPN Masukan', 'asset', false),
-  ('1600', 'Aset Tetap', 'asset', false),
-  ('2100', 'Utang Usaha', 'liability', false),
-  ('2200', 'Utang Bank', 'liability', false),
-  ('2300', 'Uang Muka Penjualan', 'liability', false),
-  ('2400', 'PPN Keluaran', 'liability', false),
-  ('2500', 'Saldo Kredit Retur Customer', 'liability', false),
-  ('3100', 'Modal Pemilik', 'equity', false),
-  ('3200', 'Laba Ditahan', 'equity', false),
-  ('4100', 'Pendapatan Penjualan Toko', 'revenue', false),
-  ('4200', 'Pendapatan Penjualan Grosir', 'revenue', false),
-  ('4300', 'Pendapatan Lain-lain', 'revenue', false),
-  ('4400', 'Pendapatan Selisih Persediaan', 'revenue', false),
-  ('4900', 'Retur & Potongan Penjualan', 'revenue', true),
-  ('5100', 'Harga Pokok Penjualan', 'expense', false),
-  ('5200', 'Beban Gaji Karyawan', 'expense', false),
-  ('5300', 'Beban Sewa Toko', 'expense', false),
-  ('5400', 'Beban Listrik dan Air', 'expense', false),
-  ('5500', 'Beban Bunga Bank', 'expense', false),
-  ('5600', 'Beban Penyusutan Rak Display Toko', 'expense', false),
-  ('5610', 'Beban Penyusutan Mobil Pickup Antar Barang', 'expense', false),
-  ('5700', 'Beban Piutang Tak Tertagih', 'expense', false),
-  ('5800', 'Beban Kerugian Uang Muka', 'expense', false),
-  ('5900', 'Beban Kerugian Barang Rusak', 'expense', false),
-  ('6000', 'Beban Selisih Persediaan', 'expense', false),
-  ('6100', 'Beban Biaya Pembelian', 'expense', false),
-  ('6200', 'Rugi Pelepasan Aset Tetap', 'expense', false);
-
-insert into accounts (code, name, category, is_contra, parent_id)
-  select v.code, v.name, v.category, v.is_contra, p.id
-  from (values
-    ('1100', 'Kas Toko', 'asset'::account_category, false, '1000'),
-    ('1200', 'Kas di Bank', 'asset'::account_category, false, '1000'),
-    ('1610', 'Rak Display Toko', 'asset'::account_category, false, '1600'),
-    ('1620', 'Mobil Pickup Antar Barang', 'asset'::account_category, false, '1600'),
-    ('1630', 'Akumulasi Penyusutan Rak Display Toko', 'asset'::account_category, true, '1600'),
-    ('1640', 'Akumulasi Penyusutan Mobil Pickup Antar Barang', 'asset'::account_category, true, '1600')
-  ) as v(code, name, category, is_contra, parent_code)
-  join accounts p on p.code = v.parent_code;
+-- TIDAK ADA seed baris akun di sini -- COA (39 akun template dagang) adalah keputusan
+-- bisnis, bukan reference data hardcode-kode. Diisi lewat RPC complete_onboarding
+-- (submodule "Onboarding" di file terpisah) yang dipanggil dari halaman /setup sekali di
+-- awal (instalasi baru) atau kapan pun app_settings kosong (mis. pasca data dihapus total)
+-- -- lihat docs/domain/chart-of-accounts.md submodule "Onboarding / Setup Awal".
 
 alter table accounts enable row level security;
 
@@ -135,13 +92,17 @@ create policy accounts_select on accounts
 
 create policy accounts_insert on accounts
   for insert with check (
-    exists (select 1 from user_roles ur
+    exists (select 1 from app_user_roles ur
             where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
+-- accounts_insert DIPERKETAT lagi belakangan (lihat submodule "Onboarding" -- file
+-- onboarding-schema) begitu app_settings ada -- gak bisa digabung di sini langsung karena
+-- app_settings sendiri baru bisa dibuat SETELAH accounts (FK ppn_keluaran_account_id/
+-- ppn_masukan_account_id), circular kalau dipaksa 1 statement.
 
 create policy accounts_update on accounts
   for update using (
-    exists (select 1 from user_roles ur
+    exists (select 1 from app_user_roles ur
             where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 -- sengaja gak ada policy DELETE -> RLS default deny -> hard delete tertutup total, cuma
@@ -162,7 +123,7 @@ grant select, insert, update on accounts to authenticated;
 -- pun) -- 'master' (superuser) ditambah gantiin posisi admin lama.
 --
 -- Kenapa 2 mekanisme (Auth Hook + trigger), bukan 1: hook "before-user-created" jalan
--- SEBELUM baris auth.users ada -- gak bisa insert ke user_roles di titik itu (FK bakal
+-- SEBELUM baris auth.users ada -- gak bisa insert ke app_user_roles di titik itu (FK bakal
 -- gagal, baris user_id-nya belum ada). Insert ke auth.users sendiri gak bisa "dibatalkan
 -- separuh jalan" dari sisi kita, jadi assignment role + tandain whitelist "consumed"
 -- harus nunggu baris auth.users beneran ada -- trigger AFTER INSERT ON auth.users itu
@@ -182,43 +143,31 @@ grant select, insert, update on accounts to authenticated;
 -- auth.role()='authenticated' (bukan role spesifik) -- lihat
 -- memory/scope-debt/rls-select-not-role-scoped.md.
 
-create table signup_whitelist (
+-- app_user_signup_whitelist -- 1 baris = 1 undangan = tepat 1 role ("1 whitelist = 1 role",
+-- dipaksa langsung di kolom lewat NOT NULL, bukan join table terpisah lagi).
+create table app_user_signup_whitelist (
   id uuid primary key default gen_random_uuid(),
   email text not null unique,
+  role_name text not null references app_roles(name) check (role_name <> 'master'),
   created_by text not null default (auth.jwt() ->> 'email'),
   created_at timestamptz not null default now(),
   consumed_at timestamptz,
   check (email = lower(email))
 );
 
--- "Minimal 1 role per whitelist entry" cuma ditegakkan di add_whitelist_entry (RPC),
--- bukan constraint DB -- insert manual langsung ke signup_whitelist tanpa baris di sini
--- bakal bikin email itu lolos signup dengan 0 role (silent, gak error). Provisioning
--- manual lewat SQL harus sadar ini, sama kayak pairing admin+cashier buat akun master.
-create table signup_whitelist_roles (
-  whitelist_id uuid not null references signup_whitelist(id) on delete cascade,
-  role_name text not null references roles(name),
-  primary key (whitelist_id, role_name),
-  check (role_name <> 'master')
+alter table app_user_signup_whitelist enable row level security;
+
+create policy app_user_signup_whitelist_select on app_user_signup_whitelist for select using (
+  exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master')
 );
 
-alter table signup_whitelist enable row level security;
-alter table signup_whitelist_roles enable row level security;
-
-create policy signup_whitelist_select on signup_whitelist for select using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master')
-);
-create policy signup_whitelist_roles_select on signup_whitelist_roles for select using (
-  exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master')
-);
-
-grant select on signup_whitelist, signup_whitelist_roles to authenticated;
+grant select on app_user_signup_whitelist to authenticated;
 -- Insert/update/delete SENGAJA gak ada policy (default-deny) -- satu-satunya jalur nulis
 -- adalah RPC security definer di bawah, pola sama document_number_counters (0007).
 
 -- before_user_created_hook -- Auth Hook resmi Supabase, nolak signup kalau email belum
--- ada di signup_whitelist. Owned by postgres (bukan supabase_auth_admin) supaya bisa
--- baca signup_whitelist lewat security definer -- supabase_auth_admin sendiri cuma
+-- ada di whitelist. Owned by postgres (bukan supabase_auth_admin) supaya bisa baca
+-- app_user_signup_whitelist lewat security definer -- supabase_auth_admin sendiri cuma
 -- dikasih EXECUTE, gak perlu akses tabel langsung.
 create function before_user_created_hook(event jsonb) returns jsonb
 language plpgsql
@@ -231,7 +180,7 @@ begin
   v_email := lower(event -> 'user' ->> 'email');
 
   if v_email is null or not exists (
-    select 1 from signup_whitelist sw where sw.email = v_email and sw.consumed_at is null
+    select 1 from app_user_signup_whitelist sw where sw.email = v_email and sw.consumed_at is null
   ) then
     return jsonb_build_object(
       'error', jsonb_build_object(
@@ -260,9 +209,10 @@ set search_path = public, pg_temp
 as $$
 declare
   v_whitelist_id uuid;
+  v_role_name text;
 begin
-  select id into v_whitelist_id
-    from signup_whitelist
+  select id, role_name into v_whitelist_id, v_role_name
+    from app_user_signup_whitelist
     where email = lower(new.email) and consumed_at is null
     for update;
 
@@ -270,10 +220,9 @@ begin
     raise exception 'Email % gak ada di whitelist yang masih aktif -- signup seharusnya sudah ditolak hook', new.email;
   end if;
 
-  insert into user_roles (user_id, role_name)
-    select new.id, swr.role_name from signup_whitelist_roles swr where swr.whitelist_id = v_whitelist_id;
+  insert into app_user_roles (user_id, role_name) values (new.id, v_role_name);
 
-  update signup_whitelist set consumed_at = now() where id = v_whitelist_id;
+  update app_user_signup_whitelist set consumed_at = now() where id = v_whitelist_id;
 
   return new;
 end;
@@ -284,7 +233,7 @@ create trigger on_auth_user_created_assign_role
   for each row execute function handle_new_user_role_assignment();
 
 -- RPC User Management -- eksklusif master. list_app_users() gabungin auth.users+
--- user_roles (auth.users gak bisa di-query langsung dari client lewat PostgREST).
+-- app_user_roles (auth.users gak bisa di-query langsung dari client lewat PostgREST).
 create function list_app_users() returns table (
   user_id uuid, email text, roles text[], user_created_at timestamptz
 )
@@ -293,7 +242,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  if not exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
+  if not exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
     raise exception 'Cuma master yang boleh lihat daftar user';
   end if;
 
@@ -301,7 +250,7 @@ begin
     select u.id, u.email::text, coalesce(array_agg(ur.role_name order by ur.role_name) filter (where ur.role_name is not null), '{}'),
            u.created_at
     from auth.users u
-    left join user_roles ur on ur.user_id = u.id
+    left join app_user_roles ur on ur.user_id = u.id
     group by u.id, u.email, u.created_at
     order by u.created_at desc;
 end;
@@ -319,7 +268,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  if not exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
+  if not exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
     raise exception 'Cuma master yang boleh ubah role user';
   end if;
 
@@ -335,15 +284,16 @@ begin
     raise exception '1 akun cuma boleh punya 1 role (admin ATAU cashier) -- multi-role cuma buat master, harus manual lewat database';
   end if;
 
-  delete from user_roles where user_id = p_user_id and role_name <> 'master';
-  insert into user_roles (user_id, role_name)
+  delete from app_user_roles where user_id = p_user_id and role_name <> 'master';
+  insert into app_user_roles (user_id, role_name)
     select p_user_id, r from unnest(p_roles) r;
 end;
 $$;
 
--- add_whitelist_entry/remove_whitelist_entry -- master-only. add_whitelist_entry enforce
--- tepat 1 role juga (mirror set_user_roles).
-create function add_whitelist_entry(p_email text, p_roles text[]) returns uuid
+-- add_whitelist_entry/remove_whitelist_entry -- master-only. Satu email = satu role
+-- (p_role tunggal, bukan array -- ngikutin app_user_signup_whitelist.role_name yang cuma
+-- 1 kolom, bukan join table).
+create function add_whitelist_entry(p_email text, p_role text) returns uuid
 language plpgsql
 security definer
 set search_path = public, pg_temp
@@ -351,25 +301,19 @@ as $$
 declare
   v_id uuid;
 begin
-  if not exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
+  if not exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
     raise exception 'Cuma master yang boleh kelola whitelist';
   end if;
 
-  if 'master' = any(p_roles) then
-    raise exception 'Role master gak bisa diberikan lewat whitelist -- harus manual lewat database';
-  end if;
-
-  if p_roles is null or array_length(p_roles, 1) is null then
+  if p_role is null then
     raise exception 'Pilih 1 role buat email ini';
   end if;
 
-  if array_length(p_roles, 1) > 1 then
-    raise exception '1 akun cuma boleh punya 1 role (admin ATAU cashier) -- multi-role cuma buat master, harus manual lewat database';
+  if p_role = 'master' then
+    raise exception 'Role master gak bisa diberikan lewat whitelist -- harus manual lewat database';
   end if;
 
-  insert into signup_whitelist (email) values (lower(p_email)) returning id into v_id;
-  insert into signup_whitelist_roles (whitelist_id, role_name)
-    select v_id, r from unnest(p_roles) r;
+  insert into app_user_signup_whitelist (email, role_name) values (lower(p_email), p_role) returning id into v_id;
 
   return v_id;
 end;
@@ -381,11 +325,11 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  if not exists (select 1 from user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
+  if not exists (select 1 from app_user_roles ur where ur.user_id = auth.uid() and ur.role_name = 'master') then
     raise exception 'Cuma master yang boleh kelola whitelist';
   end if;
 
-  delete from signup_whitelist where id = p_whitelist_id and consumed_at is null;
+  delete from app_user_signup_whitelist where id = p_whitelist_id and consumed_at is null;
   if not found then
     raise exception 'Undangan gak ditemukan atau sudah dipakai buat signup -- gak bisa dihapus';
   end if;
@@ -394,16 +338,16 @@ $$;
 
 grant execute on function list_app_users() to authenticated;
 grant execute on function set_user_roles(uuid, text[]) to authenticated;
-grant execute on function add_whitelist_entry(text, text[]) to authenticated;
+grant execute on function add_whitelist_entry(text, text) to authenticated;
 grant execute on function remove_whitelist_entry(uuid) to authenticated;
 
--- ensure_master_has_all_roles -- begitu baris 'master' di-insert ke user_roles (jalur
+-- ensure_master_has_all_roles -- begitu baris 'master' di-insert ke app_user_roles (jalur
 -- satu-satunya: manual lewat database), 'admin' dan 'cashier' otomatis nyusul buat
 -- user_id yang sama. Nutup risiko operator lupa pasangkan manual -- akibatnya kalau
 -- kelupaan: akun BISA login (hasErpAccess/hasPosAccess eksplisit ngizinin 'master'),
 -- tapi locked out dari hampir semua actual write action, karena guard lain di seluruh
 -- schema gak pernah tau soal 'master' (lihat catatan di atas). Cuma nutup jalur INSERT
--- -- gak ada RPC/kode manapun yang pernah UPDATE role_name di user_roles langsung
+-- -- gak ada RPC/kode manapun yang pernah UPDATE role_name di app_user_roles langsung
 -- (selalu delete+insert, lihat set_user_roles).
 create function ensure_master_has_all_roles() returns trigger
 language plpgsql
@@ -411,15 +355,15 @@ security definer
 set search_path = public, pg_temp
 as $$
 begin
-  insert into user_roles (user_id, role_name)
+  insert into app_user_roles (user_id, role_name)
   values (new.user_id, 'admin'), (new.user_id, 'cashier')
   on conflict do nothing;
   return new;
 end;
 $$;
 
-create trigger user_roles_master_implies_all
-  after insert on user_roles
+create trigger app_user_roles_master_implies_all
+  after insert on app_user_roles
   for each row
   when (new.role_name = 'master')
   execute function ensure_master_has_all_roles();

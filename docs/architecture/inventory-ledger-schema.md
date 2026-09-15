@@ -2,10 +2,7 @@
 
 Dua hal yang sering ketukar tapi beda fungsi: **saldo stok berjalan** (`inventory_balances` — qty & harga rata-rata SAAT INI per barang) dan **Kartu Stok/riwayat mutasi** (`inventory_movements` — histori kronologis tiap kejadian yang menggerakkan qty). Cross-cutting — dibaca/ditulis dari hampir semua RPC transaksi Inventory (Terima Barang, Produksi, Jual, Retur, Opname, POS). Konsep bisnis metode costing ada di `docs/domain/inventory.md` bagian "Kenapa Butuh Metode Costing", riwayat mutasi ada di bagian "Kartu Stok / Riwayat Mutasi per Item". Detail teknis: `supabase/migrations/0023_inventory_ledger_schema.sql`.
 
-**Migration final (2026-09-07):** `supabase/migrations/0023_inventory_ledger_schema.sql`
-(+ `0026_inventory_movements_exactly_one_source_constraint.sql`) — konsolidasi dari migration
-incremental lama (sudah dihapus, historinya ada di `git log`). Nomor migration `00XX` yang
-disebut di dokumen ini historis.
+**Migration:** `supabase/migrations/0023_inventory_ledger_schema.sql`.
 
 ## Peta Data (ERD) — Ringkasan Semua Tabel
 
@@ -74,7 +71,7 @@ disebut di dokumen ini historis.
 |---|---|---|
 | `qty` | Bertanda — positif = masuk, negatif = keluar | Bukan kolom `direction` terpisah, supaya `SUM(qty)` langsung jadi saldo, gak perlu `CASE WHEN` di tiap query |
 | `movement_date` | Tanggal transaksi ASLI dari tabel sumbernya (mis. tanggal terima barang, tanggal produksi) | Bukan `created_at` — bisa beda kalau ada input mundur; ini kolom yang dipakai query saldo pembuka & pengurutan histori |
-| 6 kolom penunjuk sumber (nullable, tepat 1 terisi per baris) | Jenis mutasinya ditentukan dari kolom mana yang terisi | Dijamin `check(num_nonnulls(...) = 1)` di level database. Sempat tidak aktif untuk sementara (hilang gak sengaja sejak penghapusan salah satu jalur retur lama, gagal dipulihkan karena ada 2 baris data lama yang menyimpang) — sudah dipulihkan setelah data historis dibersihkan total. `warranty_replacement_line_id`+`purchase_replacement_line_id` (2 kolom terpisah) digabung jadi 1 kolom `replacement_line_id` sejak unifikasi `replacements` (migration `0027`). |
+| 6 kolom penunjuk sumber (nullable, tepat 1 terisi per baris) | Jenis mutasinya ditentukan dari kolom mana yang terisi (termasuk `replacement_line_id`, gabungan penggantian garansi AR + tukar barang AP — lihat `replacements-schema.md`) | Dijamin `check(num_nonnulls(...) = 1)` di level database |
 | Saldo berjalan | **TIDAK disimpan** sebagai kolom | Dihitung ulang tiap kali dibaca (saldo pembuka + akumulasi baris di halaman itu) demi akurasi — gak ada risiko nilai tersimpan diam-diam menyimpang dari data mutasi asli |
 
 **Kenapa tabel ledger terpusat, bukan view gabungan** — keputusan arsitektur eksplisit: baca riwayat lebih cepat & konsisten jangka panjang (1 tabel rapi, gak perlu buka ±10 tabel tiap kartu stok dibuka), ditukar biaya awal lebih besar (harus ubah ±9-10 RPC transaksi yang sudah ada + backfill data historis).
@@ -113,6 +110,6 @@ Sumber dari `replacements-schema.md` type=`OUTBOUND` (opsi "tukar barang" pada r
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat saldo stok & Kartu Stok | Semua user yang sudah login |
-| Menambah/mengubah saldo stok (`inventory_balances`) | Role `admin` atau `accountant` — selalu lewat RPC transaksi, tidak pernah diubah manual langsung |
-| Menulis baris Kartu Stok (`inventory_movements`) | Role `admin` atau `accountant` — kecuali RPC penjualan POS yang `security definer`, tetap bisa insert lewat privilege pemilik fungsi walau role kasir sendiri gak punya akses insert langsung |
+| Menambah/mengubah saldo stok (`inventory_balances`) | Role `admin` — selalu lewat RPC transaksi, tidak pernah diubah manual langsung |
+| Menulis baris Kartu Stok (`inventory_movements`) | Role `admin` — kecuali RPC penjualan POS yang `security definer`, tetap bisa insert lewat privilege pemilik fungsi walau role kasir sendiri gak punya akses insert langsung |
 | Mengedit/menghapus baris Kartu Stok atau saldo stok secara manual | **Tidak ada seorang pun** |

@@ -427,8 +427,8 @@ create policy goods_notes_select on goods_notes
 
 create policy goods_notes_insert on goods_notes
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on goods_notes to authenticated;
@@ -440,8 +440,8 @@ create policy goods_note_lines_select on goods_note_lines
 
 create policy goods_note_lines_insert on goods_note_lines
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on goods_note_lines to authenticated;

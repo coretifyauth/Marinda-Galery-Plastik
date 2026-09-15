@@ -135,7 +135,7 @@ end;
 $$;
 
 -- RLS & Grant -- pola identik AR/AP: select terbuka semua authenticated, insert cuma
--- admin/accountant. Transaksional -- gak ada policy update/delete.
+-- admin. Transaksional -- gak ada policy update/delete.
 
 alter table production_orders enable row level security;
 
@@ -144,8 +144,8 @@ create policy production_orders_select on production_orders
 
 create policy production_orders_insert on production_orders
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 alter table production_order_lines enable row level security;
@@ -155,8 +155,8 @@ create policy production_order_lines_select on production_order_lines
 
 create policy production_order_lines_insert on production_order_lines
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 grant select, insert on production_orders to authenticated;

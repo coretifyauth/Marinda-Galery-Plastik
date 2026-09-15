@@ -25,6 +25,8 @@
 **Interaksi Antar Tabel**
 - Penghitung Nomor merujuk ke Daftar Jenis Dokumen (tiap baris penghitung harus jenis dokumen yang memang terdaftar).
 
+**Bootstrap ulang kalau kosong** — 29 baris Daftar Jenis Dokumen (key + prefix bawaan, TIDAK termasuk `depreciation_entries` yang sudah dicabut permanen menyusul pencabutan modul Fixed Assets) sekarang juga bisa dibuat lewat RPC `complete_onboarding` (lihat `coa-schema.md` submodule "Onboarding — Bootstrap Konfigurasi Awal") kalau tabel ini kosong (mis. pasca seluruh data dihapus) — idempotent per `doc_type` (`on conflict do nothing`), jaring pengaman di atas seed migration `0007` yang normalnya sudah mengisinya. Key-nya (`ap_bills`, `ar_invoices`, dst) TETAP hardcoded karena dipanggil literal oleh RPC lain (`generate_document_number(p_doc_type)`) — bukan sesuatu yang bisa diketik bebas admin, cuma teks `prefix`/`label` yang boleh disesuaikan belakangan.
+
 ## AP Bill — Nomor Nota Supplier
 
 **Peta Data (ERD)**

@@ -121,10 +121,10 @@ set search_path = public, pg_temp
 as $$
 begin
   if not exists (
-    select 1 from user_roles ur
-    where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant')
+    select 1 from app_user_roles ur
+    where ur.user_id = auth.uid() and ur.role_name = 'admin'
   ) then
-    raise exception 'Cuma admin/accountant yang boleh menghapus akun';
+    raise exception 'Cuma admin yang boleh menghapus akun';
   end if;
 
   begin
@@ -206,8 +206,8 @@ create policy journal_entries_select on journal_entries
 
 create policy journal_entries_insert on journal_entries
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 
 alter table journal_lines enable row level security;
@@ -217,8 +217,8 @@ create policy journal_lines_select on journal_lines
 
 create policy journal_lines_insert on journal_lines
   for insert with check (
-    exists (select 1 from user_roles ur
-            where ur.user_id = auth.uid() and ur.role_name in ('admin','accountant'))
+    exists (select 1 from app_user_roles ur
+            where ur.user_id = auth.uid() and ur.role_name = 'admin')
   );
 -- sengaja gak ada policy UPDATE/DELETE -> RLS default deny
 

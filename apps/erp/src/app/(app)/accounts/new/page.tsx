@@ -19,7 +19,6 @@ export default function NewAccountPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState<(typeof accountCategories)[number]>("asset");
   const [parentId, setParentId] = useState("");
@@ -64,7 +63,6 @@ export default function NewAccountPage() {
     e.preventDefault();
     setFormError(null);
     const parsed = createAccountSchema.safeParse({
-      code,
       name,
       category,
       parent_id: parentId || null,
@@ -74,7 +72,11 @@ export default function NewAccountPage() {
       return;
     }
     setSubmitting(true);
-    const { error } = await supabase.from("accounts").insert(parsed.data);
+    const { error } = await supabase.rpc("create_account", {
+      p_name: parsed.data.name,
+      p_category: parsed.data.category,
+      p_parent_id: parsed.data.parent_id ?? null,
+    });
     setSubmitting(false);
     if (error) {
       setFormError(error.message);
@@ -87,7 +89,7 @@ export default function NewAccountPage() {
     return <LoadingScreen />;
   }
 
-  const canWrite = roles.includes("admin") || roles.includes("accountant");
+  const canWrite = roles.includes("admin");
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
@@ -102,8 +104,8 @@ export default function NewAccountPage() {
 
       {!canWrite && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
-          Kamu belum punya role admin/accountant — submit di bawah kemungkinan bakal ketolak RLS. Ini
-          expected behavior, bukan bug.
+          Kamu belum punya role admin — submit di bawah kemungkinan bakal ketolak RLS. Ini expected
+          behavior, bukan bug.
         </p>
       )}
 
@@ -114,19 +116,10 @@ export default function NewAccountPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="code">Kode</Label>
-                <Input
-                  id="code"
-                  autoFocus
-                  placeholder="mis. 1500"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="name">Nama akun</Label>
                 <Input
                   id="name"
+                  autoFocus
                   placeholder="Nama akun"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -164,6 +157,14 @@ export default function NewAccountPage() {
         </div>
 
         <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:self-start">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-6">
+            <p className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Soal Kode Akun
+            </p>
+            <p className="text-sm text-slate-600">
+              Kode akun dibuatkan otomatis sesuai kategori & posisi hierarki — gak perlu diketik manual.
+            </p>
+          </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-6">
             <p className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
               Soal Akun Induk
