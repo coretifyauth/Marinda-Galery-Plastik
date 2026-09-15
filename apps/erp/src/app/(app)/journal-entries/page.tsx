@@ -102,6 +102,9 @@ export default function JournalEntriesPage() {
             </span>
           </div>
           <div className="flex items-center gap-1.5">
+            <Button variant="toolbar" onClick={() => router.push("/journal-entries/presets")}>
+              Kelola Preset
+            </Button>
             <Button variant="toolbar" onClick={() => entriesQuery.refetch()}>
               Muat Ulang
             </Button>

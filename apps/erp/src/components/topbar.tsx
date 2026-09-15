@@ -26,7 +26,6 @@ const routeLabels: Record<string, string> = {
   "/sales-orders": "Sales Order",
   "/goods-issues": "Barang Keluar",
   "/stock-opnames": "Stock Opname",
-  "/fixed-assets": "Aset Tetap",
   "/settings/charges": "Pengaturan",
 };
 

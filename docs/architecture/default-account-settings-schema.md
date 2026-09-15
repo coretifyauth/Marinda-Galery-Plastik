@@ -5,9 +5,10 @@
 | Tabel | Fungsi |
 |---|---|
 | Default Akun | Master mapping "peran akun" (mis. Piutang Usaha, Kas Toko) ke 1 akun tetap di Chart of Accounts — dipakai form transaksi supaya user gak perlu milih akun bebas. |
-| Preset Akun Aset Tetap | Master paket 3 akun sekaligus (Aset/Akumulasi Penyusutan/Beban Penyusutan) per jenis aset tetap. |
 
-> **Migration final (2026-09-07, rename 2026-09-14):** `supabase/migrations/0008_default_account_settings_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas. Tabel `default_account_settings` di-rename jadi `app_default_account_settings` (prefix `app_` buat tabel config/infrastruktur cross-cutting) lewat `supabase/migrations/0029_app_prefix_rename_and_drop_signatories.sql`; `fixed_asset_account_presets` gak ikut di-rename.
+> **Migration final (2026-09-07, rename 2026-09-14):** `supabase/migrations/0008_default_account_settings_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas. Tabel `default_account_settings` di-rename jadi `app_default_account_settings` (prefix `app_` buat tabel config/infrastruktur cross-cutting) lewat `supabase/migrations/0029_app_prefix_rename_and_drop_signatories.sql`.
+>
+> **Preset Akun Aset Tetap (`fixed_asset_account_presets`) dicabut total** lewat `supabase/migrations/0030_drop_fixed_assets_module.sql` (2026-09-15, keputusan owner) bareng seluruh modul Fixed Assets — lihat `docs/domain/general-ledger.md` bagian preset jurnal (`app_preset_journal_entries`). Submodule "Preset Akun Aset Tetap" di bawah dihapus dari dokumen ini.
 
 ## Masalah yang Diselesaikan
 
@@ -32,23 +33,11 @@ Modul ini menutup gap itu: field-field seperti ini otomatis terisi & terkunci (r
 
 **Kasus khusus: Items** — field "Akun Persediaan" di form tambah barang gak nanya sama sekali, otomatis ngikutin jenis barang (Bahan Baku/Barang Jadi) yang sudah dipilih user di field sebelumnya.
 
-## Preset Akun Aset Tetap
-
-**Peta Data (ERD)**
-- 1 baris = 1 jenis aset tetap (mis. "Kendaraan Operasional") + 3 akun sekaligus (Aset, Akumulasi Penyusutan, Beban Penyusutan) yang harus dipakai bareng sebagai 1 paket.
-
-**Alur Teknis**
-- Beda dari Default Akun — Fixed Assets butuh 3 akun sekaligus, dan jenis aset baru tetap mungkin muncul di masa depan (gak seperti Piutang Usaha yang perannya tetap 1 selamanya). Jadi form Tambah Aset Tetap tinggal pilih 1 preset (nama jenis asetnya), bukan pilih 3 akun terpisah — mencegah salah pasang (mis. akun Aset "Rak" ketuker sama akun Akumulasi Penyusutan "Mobil").
-- Admin bisa nambah preset baru kapan pun ada jenis aset baru.
-
-**Aturan Bisnis → Data**
-- "3 akun aset tetap harus konsisten sepasang" dijaga karena user cuma bisa pilih dari paket yang sudah admin siapkan, gak bisa mix-and-match 3 akun dari preset berbeda.
-
 ## Kasus Khusus — Retur AP Bill
 
 Field akun kredit di panel Retur AP Bill sengaja BUKAN 1 akun tetap — harus sama dengan akun yang dipakai waktu bill itu dicatat pertama kali, dan itu bisa beda-beda tergantung isi bill-nya. Solusinya: pilihannya dibatasi cuma ke akun-akun yang beneran dipakai di bill yang sedang diretur (bukan seluruh COA) — kalau bill itu cuma pakai 1 akun, otomatis cuma ada 1 pilihan.
 
 ## Yang Sengaja Gak Disentuh
 
-- **Journal Entries manual** — ini justru alat yang memang dirancang buat pilih akun bebas (dipakai admin/akuntan buat transaksi yang gak cocok pola form manapun).
+- **Journal Entries manual** — dulu jalur bebas pilih akun, sekarang **diganti preset jurnal** (`app_preset_journal_entries`, 2026-09-15) karena jalur bebas itu sendiri jadi sumber inkonsistensi buat transaksi rutin — lihat `docs/domain/general-ledger.md` submodule "Preset Jurnal".
 - **Kategori pendapatan/beban tambahan** (fitur yang sudah ada sebelumnya di AR Invoice/AP Bill/POS) — tetap jalan seperti biasa, karena itu memang genuinely butuh pilihan (nama kategorinya beda-beda per transaksi).

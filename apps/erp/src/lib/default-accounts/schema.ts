@@ -21,25 +21,3 @@ export async function fetchDefaultAccounts(): Promise<Record<string, ResolvedAcc
   }
   return map;
 }
-
-export type FixedAssetAccountPreset = {
-  id: string;
-  label: string;
-  asset_account_id: string;
-  accumulated_depreciation_account_id: string;
-  depreciation_expense_account_id: string;
-  archived_at: string | null;
-  asset_account: { code: string; name: string };
-  accumulated_depreciation_account: { code: string; name: string };
-  depreciation_expense_account: { code: string; name: string };
-};
-
-export async function fetchFixedAssetAccountPresets(): Promise<FixedAssetAccountPreset[]> {
-  const { data } = await supabase
-    .from("fixed_asset_account_presets")
-    .select(
-      "id, label, asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, archived_at, asset_account:asset_account_id(code, name), accumulated_depreciation_account:accumulated_depreciation_account_id(code, name), depreciation_expense_account:depreciation_expense_account_id(code, name)"
-    )
-    .order("label");
-  return (data ?? []) as unknown as FixedAssetAccountPreset[];
-}

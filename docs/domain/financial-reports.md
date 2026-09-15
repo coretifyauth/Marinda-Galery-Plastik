@@ -74,7 +74,7 @@ Modul ini beda dari modul-modul pencatatan transaksi: **gak ada catatan baru, ga
   Asset = Liability + Equity
   ```
 - **Bagian penting & gampang salah:** Equity bukan cuma `Modal Pemilik` — harus ditambah **Laba Ditahan** (akumulasi laba semua periode + laba periode berjalan). Laba Bersih dari Income Statement "masuk" ke Equity lewat **closing entry** (lihat submodule "Tutup Buku").
-- **Akun kontra (Akumulasi Penyusutan) wajib masuk** — Aset Tetap ditampilin nilai perolehan penuh DIKURANGIN Akumulasi Penyusutan, bukan nilai perolehan mentah (`docs/domain/fixed-assets.md`, `docs/domain/chart-of-accounts.md` bagian "Akun Kontra").
+- **Akun kontra (Akumulasi Penyusutan) wajib masuk kalau ada** — Aset Tetap ditampilin nilai perolehan penuh DIKURANGIN Akumulasi Penyusutan, bukan nilai perolehan mentah (`docs/domain/chart-of-accounts.md` bagian "Akun Kontra"). Gak ada modul dedicated buat aset tetap (dicabut 2026-09-15, dikelola manual lewat preset jurnal — `docs/domain/general-ledger.md` bagian preset jurnal), tapi konsep akun kontra ini tetap berlaku kalau user pilih nyatet penyusutan sendiri.
 - Kalau data-nya real (dari pencatatan berpasangan yang selalu balance karena double-entry), Asset **PASTI** sama dengan Liability+Equity. Kalau gak sama pas hitung Neraca beneran, berarti ada bug di query rollup (lupa 1 akun, atau lupa proses closing Laba Ditahan).
 
 **Aturan Bisnis**

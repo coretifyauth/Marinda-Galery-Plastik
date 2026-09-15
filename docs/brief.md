@@ -27,14 +27,16 @@ Konvensi penamaan file: kebab-case deskriptif, tanpa prefix nomor. `docs/tutoria
 - `accounts-receivable.md` — customer master data + termin, invoice (due_date snapshot) & payment & payment allocation (many-to-many, kenapa gak cukup invoice_id langsung), status invoice derived, constraint (journal-backed, immutability, anti over-allocation, cancellation guard), 5 skenario alokasi, belum termasuk (retur, DP, overpayment).
 - `accounts-payable.md` — kebalikan AR: supplier master data + termin (ditentuin SUPPLIER, bukan kita), bill & payment & payment allocation, constraint identik AR + cancellation guard, 5 skenario (termasuk aging kebalik dari AR), belum termasuk (retur, DP, bill compound).
 - `inventory.md` — membeli ≠ berbiaya (matching principle), Weighted Average (satu-satunya metode costing), BOM/Production Order (biaya bahan baku doang, belum labor/overhead), PO → GRN+Bill (3-way matching), Goods Issue (titik HPP diakui), belum termasuk (GR/IR clearing, Sales Order, price variance report).
-- `fixed-assets.md` — matching by time (beda dari Inventory yang matching by event), 2 metode penyusutan in-scope: garis lurus (SLM) & saldo menurun (declining balance), kenapa kredit penyusutan wajib ke akun Akumulasi Penyusutan terpisah, akun kontra-asset, disposal aset (jual/buang/hilang + laba-rugi pelepasan), belum termasuk (metode Unit Produksi, revaluasi, ganti metode di tengah jalan).
 - `financial-reports.md` — read-only agregasi dari jurnal, 4 laporan: Trial Balance, Income Statement, Balance Sheet, Cash Flow. Urutan wajib TB→IS→BS→CF, cara validasi silang. Contoh angka lengkap 1 periode tervalidasi end-to-end. Period Closing (konteks bisnis).
+- **Fixed Assets dicabut total 2026-09-15** (keputusan owner) — modul dedicated (master aset, penyusutan otomatis, disposal) digantikan preset jurnal generik (`app_preset_journal_entries`, lihat `general-ledger.md`); akuisisi/penyusutan/disposal aset tetap sekarang tanggung jawab user manual, sistem gak lagi hitung/enforce apa pun soal ini. `fixed-assets.md` dihapus dari folder ini.
 - `document-numbering.md` — cross-cutting, menggantikan field "Rujukan Dokumen" isi-manual dengan nomor otomatis format PREFIX-TAHUN-URUTAN (reset tiap tahun) di semua dokumen transaksional. Kasus khusus AP Bill (dokumen eksternal, nota supplier) — nomor asli direkam terpisah di field "Nomor Nota Supplier".
 
 ### architecture/
 ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan bahas RPC/trigger secara kode — buat syntax SQL persis, tiap file nunjuk ke migration pasangannya di `supabase/migrations/`). Spine-based — 1 file `.md` per tabel spine/root yang beneran ada di Supabase, bukan per modul bisnis (tabel yang dipakai bareng lintas modul, mis. transaksi AR & AP, tetap 1 file). Daftar resmi & pengelompokan file: daftar di bawah ini adalah acuannya.
 
-- `journal-entry-schema.md`, `fixed-assets-schema.md`, `financial-reports-schema.md`, `pos-schema.md` — gak berubah, gak kena unifikasi.
+- `financial-reports-schema.md`, `pos-schema.md` — gak berubah, gak kena unifikasi.
+- `journal-entry-schema.md` — 2026-09-15 nambah submodule "Preset Jurnal" (`app_preset_journal_entries`+`app_preset_journal_entry_lines`) — Jurnal Umum manual bebas-pilih-akun diganti preset yang disiapkan role `master`, `create_journal_entry` (RPC dasar) gak disentuh.
+- `fixed-assets-schema.md` dihapus 2026-09-15 — modul Fixed Assets dicabut total, lihat catatan di `domain/` di atas.
 - `coa-schema.md` — gak kena unifikasi AR/AP, tapi 2026-09-14 tabel `roles`/`user_roles`/`signup_whitelist` di-rename `app_roles`/`app_user_roles`/`app_user_signup_whitelist` (prefix `app_` buat tabel config/infrastruktur), `signup_whitelist_roles` digabung jadi kolom `role_name`.
 - `counterparty-schema.md` — gabungan pelanggan+pemasok jadi `counterparties`.
 - `transactions-schema.md` — gabungan invoice AR + bill AP.
@@ -52,17 +54,16 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `stock-opname-schema.md` — penyesuaian stok fisik.
 - `inventory-ledger-schema.md` — saldo & kartu stok (Weighted Average Costing).
 - `document-numbering-schema.md` — 2 tabel baru (Daftar Jenis Dokumen, Penghitung Nomor) + 1 kolom baru di AP Bill (Nomor Nota Supplier).
-- `default-account-settings-schema.md` — 2 tabel baru (Default Akun, Preset Akun Aset Tetap), mengganti dropdown akun bebas di hampir semua form transaksi dengan field otomatis terkunci — dipicu bug nyata (salah pilih akun di panel Retur AP Bill). Tabel `default_account_settings` di-rename `app_default_account_settings` 2026-09-14.
+- `default-account-settings-schema.md` — tabel Default Akun, mengganti dropdown akun bebas di hampir semua form transaksi dengan field otomatis terkunci — dipicu bug nyata (salah pilih akun di panel Retur AP Bill). Tabel `default_account_settings` di-rename `app_default_account_settings` 2026-09-14. Tabel kedua (Preset Akun Aset Tetap) dicabut 2026-09-15 bareng modul Fixed Assets.
 - `print-templates-schema.md` dihapus 2026-09-14 — isinya (`document_signatories`, identitas perusahaan) sudah tuntas dipindah/dihapus: kop surat jadi bagian `app-settings-schema.md`, blok tanda tangan (`document_signatories`) di-drop total (fitur gak dipakai lagi, lihat `docs/domain/print-templates.md`).
 
 ### tutorial/
-User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial` — cakupan modul sudah lengkap. Disegmentasi jadi 10 subfolder modul (40 file total):
+User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial` — cakupan modul sudah lengkap. Disegmentasi jadi 9 subfolder modul (38 file total):
 - `chart-of-accounts/` — `tambah-akun-baru.md`.
 - `general-ledger/` — `buat-jurnal-manual.md`, `lihat-buku-besar-akun.md`.
 - `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `tukar-barang-garansi.md`, `uang-muka-ar.md`, `batalkan-invoice-ar.md`.
 - `accounts-payable/` — `tambah-supplier-baru.md`, `buat-bill-ap.md`, `bayar-bill-ap.md`, `retur-barang-ap.md`, `uang-muka-ap.md`, `batalkan-bill-ap.md`.
 - `inventory/` — `tambah-item-master.md`, `atur-satuan-harga-barcode.md`, `kelola-kategori-brand-barang.md`, `buat-purchase-order.md`, `terima-barang-grn.md`, `jual-barang-goods-issue.md`, `buat-resep-bom.md`, `buat-production-order.md`, `buat-sales-order.md`, `kirim-penuhi-sales-order.md`, `stock-opname.md`, `lihat-stock-position.md`.
-- `fixed-assets/` — `tambah-aset-tetap.md`, `posting-penyusutan-aset.md`.
 - `financial-reports/` — `lihat-laporan-keuangan.md`, `tutup-buku-periode.md`.
 - `pos/` — `checkout-pos.md`, `batalkan-transaksi-pos.md`.
 - `settings/` — `atur-default-akun.md`, `atur-kategori-biaya-ppn.md`, `atur-kop-surat-cetakan.md` (prasyarat lintas modul — direferensikan dari banyak tutorial modul lain).

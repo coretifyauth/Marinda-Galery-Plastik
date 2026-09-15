@@ -9,7 +9,7 @@ COA cuma nyiapin "kantong-kantong" akun — belum ada tempat buat nyatet kejadia
 
 ## Konsep Inti
 
-- **Journal Entry** — unit pencatatan 1 kejadian bisnis, minimal 2 baris debit/kredit yang saling melengkapi dan wajib balance. Ini unit dasar yang dipakai SEMUA modul lain (AR, AP, Inventory, Fixed Assets, dst) buat nyatet efek keuangannya — gak ada modul yang punya jalur pencatatan sendiri di luar ini.
+- **Journal Entry** — unit pencatatan 1 kejadian bisnis, minimal 2 baris debit/kredit yang saling melengkapi dan wajib balance. Ini unit dasar yang dipakai SEMUA modul lain (AR, AP, Inventory, dst) buat nyatet efek keuangannya — gak ada modul yang punya jalur pencatatan sendiri di luar ini.
 - **General Ledger (Buku Besar)** — kumpulan seluruh journal entry yang udah tercatat, dikelompokkan per akun. Jadi sumber saldo tiap akun di Chart of Accounts, termasuk rollup akun induk dari saldo semua akun anaknya.
 
 **Accrual vs Cash Basis — kenapa Piutang/Utang penting**
@@ -51,6 +51,32 @@ Transaksi #5 sengaja 3 baris (**compound entry**) — nunjukin invariant `SUM(de
 - Nyatet transaksi cash-basis (nunggu kas beneran pindah) padahal seharusnya accrual — bikin Piutang/Utang gak pernah dicatat, laporan gak nyerminin posisi bisnis sebenarnya.
 - Lupa rujukan ke dokumen sumber — entry jadi gak bisa ditelusuri balik ke bukti fisiknya.
 
+### Preset Jurnal (Ganti Jurnal Umum Bebas)
+
+**Cara Kerja**
+- **Masalah**: halaman Jurnal Umum dulu ngizinin user pilih akun BEBAS tiap bikin entry — perlu buat transaksi yang beneran gak terduga (gak cocok pola form modul manapun), tapi buat transaksi RUTIN (bayar listrik, gaji, sewa, bunga bank) itu bahaya: staff beda bisa pilih akun beda-beda buat kejadian yang konsepnya sama, laporan jadi gak konsisten bulan ke bulan.
+- **Solusi (keputusan owner 2026-09-15)**: halaman Jurnal Umum **gak lagi punya jalur pilih akun bebas sama sekali** — satu-satunya cara bikin entry di sana adalah pilih 1 **preset** yang sudah disiapkan duluan. Preset menentukan akun + sisi (debit/kredit) tiap baris; user cuma isi **jumlah per baris**, tanggal, dan referensi — gak bisa ganti akun atau nambah/hapus baris.
+- **Siapa boleh bikin preset**: cuma role **master** (superuser, beda dari role `admin` yang biasa ngurus Default Akun) — pemisahan wewenang sengaja: master nentuin AKUN mana yang valid dipakai, `admin`/accountant harian cuma milih preset & isi jumlah, gak pernah pegang keputusan akun.
+- **State machine preset**: `draft` (baris bebas ditambah/diubah/dihapus) → `active` (baris **terkunci permanen**, preset ini yang muncul di dropdown Jurnal Umum) → `inactive` (disembunyikan dari dropdown, tapi bisa diaktifkan lagi kapan pun — riwayat transaksi yang udah pernah dibuat pakai preset itu tetap utuh). **Gak pernah balik ke `draft`** dari `active`/`inactive` — begitu preset pernah aktif, struktur barisnya final selamanya; kalau butuh susunan akun beda, bikin preset baru.
+- Preset baru boleh diaktifkan kalau minimal **2 baris**, minimal **1 baris debit dan 1 baris kredit** — kombinasi kurang dari itu mustahil pernah balance (`SUM(debit)=SUM(credit)`, lihat Konsep Inti).
+- Posting pakai preset tetap lewat mekanisme Journal Entry yang sama (Konsep Inti) — balance check, leaf-only, atomicity, source_ref wajib, semua aturan itu tetap berlaku persis sama, cuma jalur MASUKNYA yang beda (lewat preset, bukan pilih akun bebas).
+- RPC dasar (`create_journal_entry`) **gak disentuh/dilarang** — modul lain (AR, AP, Inventory) tetap manggil dia langsung buat nyatet efek keuangan yang DIHITUNG OTOMATIS sama modulnya masing-masing (bukan user pilih akun manual). Larangan "gak boleh pilih akun bebas" ini spesifik ke halaman Jurnal Umum, bukan ke mekanisme jurnal itu sendiri.
+
+**Aturan Bisnis**
+- Preset status `draft` boleh dihapus permanen (belum pernah dipakai transaksi apa pun).
+- Preset status `active`/`inactive` **gak bisa dihapus** — cuma bisa ditoggle antara `active`↔`inactive`.
+- Gak ada jalur bikin entry Jurnal Umum tanpa preset — kalau transaksi beneran baru pertama kali kejadian dan belum ada presetnya, master harus bikin preset baru dulu sebelum transaksi itu bisa dicatat sama sekali (trade-off sadar: konsistensi akun didahulukan di atas kecepatan input transaksi langka).
+
+**Skenario**
+- Preset "Bayar Listrik" (Debit Beban Listrik / Kredit Kas Bank) — akuntan posting tiap bulan, jumlahnya beda-beda tiap bulan, akunnya selalu konsisten karena udah terkunci di preset.
+- Master bikin preset baru, ketauan salah pilih akun sebelum dipakai — masih bisa diedit bebas karena masih status `draft`, belum diaktifkan.
+- Preset yang udah aktif dinonaktifkan sementara (misal cara bayar berubah) — hilang dari pilihan Jurnal Umum, tapi bisa diaktifkan lagi kapan pun tanpa bikin ulang dari nol, dan transaksi lama yang pernah pakai preset itu gak kepengaruh sama sekali.
+
+**Common Mistakes**
+- Master coba aktifkan preset yang barisnya belum lengkap (misal cuma debit doang, atau cuma 1 baris) — ditolak sistem, karena mustahil pernah balance.
+- Nyangka preset yang dinonaktifkan berarti datanya hilang — enggak, cuma disembunyikan dari pilihan; riwayat transaksi lama tetap utuh selamanya (immutability entry, lihat Konsep Inti).
+- Berharap masih bisa pilih akun bebas kayak Jurnal Umum versi lama — udah gak ada jalurnya sama sekali; transaksi tanpa preset yang cocok harus nunggu master bikin presetnya dulu.
+
 ### Period Closing (Tutup Buku)
 
 **Cara Kerja**
@@ -70,7 +96,7 @@ Transaksi #5 sengaja 3 baris (**compound entry**) — nunjukin invariant `SUM(de
 - **Soft close vs hard close — bukan 2 mekanisme, cuma 1.** Istilah "tutup buku" di dunia nyata sering dipakai longgar buat 2 hal yang beda: **hard close** — proses yang dijelasin di atas, closing entry BENERAN diposting (Revenue/Expense di-nol-kan), rentang tanggalnya BENERAN dikunci. Ini satu-satunya proses yang secara teknis akuntansi layak disebut "closing". **Soft close** (kadang disebut "interim review" atau "laporan sementara") — sekadar **melihat** angka Laba Rugi buat 1 rentang tanggal (misal buat keputusan internal bulanan), TANPA memposting closing entry apa pun dan TANPA mengunci apa pun. Revenue/Expense tetap menumpuk seperti biasa, entry baru masih bebas ditambah/dikoreksi. Karena soft close gak mengubah data atau mengunci apa pun, dia sebenarnya bukan proses "closing" terpisah — dia cuma **menjalankan laporan Income Statement buat rentang tanggal tertentu**, sesuatu yang udah bisa dilakukan kapan pun tanpa mekanisme tambahan (`financial-reports.md`). Sistem ini cuma punya 1 mekanisme closing (yang hard), dan itu keputusan sadar — bukan gap yang kelewat.
 - **Cadence-nya bebas, bukan dihardcode bulanan/tahunan.** Hard close bisa dipanggil buat rentang tanggal APA PUN — 1 bulan, 1 kuartal, 1 tahun, bahkan 1 minggu. Gak ada konsep "tipe periode" yang disimpan; cuma tanggal mulai dan tanggal akhir. Satu-satunya aturan keras: rentang berikutnya wajib mulai persis 1 hari setelah rentang sebelumnya berakhir.
 - **Best practice buat skala UMKM.** Closing formal **gak perlu sering-sering**. Makin sering ditutup (misal tiap bulan), makin tinggi risiko ada transaksi telat yang "kejebak" di periode yang udah terlanjur dikunci. Review bulanan/mingguan cukup pakai laporan Income Statement biasa (soft, gak dikunci) — buat mutusin hal internal (naikin harga, ganti supplier). Hard close idealnya **tahunan**, diselaraskan sama kewajiban pajak tahunan (SPT Tahunan) dan momen laporan ke pihak luar (bank). Jangan buru-buru nutup persis di akhir tahun kalender — kasih jeda beberapa minggu di awal periode berikutnya biar nota-nota yang telat nyampe sempat kekumpul, baru ditutup.
-- **Cakupan kuncian — berlaku ke semua modul, bukan cuma jurnal manual.** Karena semua RPC financial write di modul lain (AR, AP, Inventory, Fixed Assets) ujung-ujungnya manggil mekanisme jurnal yang sama, kuncian hard close otomatis berlaku ke **semua jenis transaksi** begitu rentangnya ditutup — bukan cuma entry yang diinput manual: invoice AR baru, bill AP baru, posting penyusutan, goods issue, bahkan reversing entry buat koreksi, semuanya ditolak kalau tanggalnya masuk rentang yang udah ditutup. Satu-satunya jalan: catat transaksinya dengan tanggal periode yang **sedang berjalan**.
+- **Cakupan kuncian — berlaku ke semua modul, bukan cuma jurnal manual.** Karena semua RPC financial write di modul lain (AR, AP, Inventory) ujung-ujungnya manggil mekanisme jurnal yang sama, kuncian hard close otomatis berlaku ke **semua jenis transaksi** begitu rentangnya ditutup — bukan cuma entry lewat preset jurnal (submodule "Preset Jurnal" di bawah): invoice AR baru, bill AP baru, goods issue, bahkan reversing entry buat koreksi, semuanya ditolak kalau tanggalnya masuk rentang yang udah ditutup. Satu-satunya jalan: catat transaksinya dengan tanggal periode yang **sedang berjalan**.
 - **Kenapa pemecahan periode penting (bukan cuma angka gabungan).** Kalau dibiarkan gak pernah ditutup, Laba Rugi kumulatif bisa nyampur momen yang sifatnya beda jauh — misal periode akuisisi aset besar (beban penyusutan numpuk, belum ada pendapatan operasional) dengan periode operasional biasa (jualan jalan normal) — jadi 1 angka gabungan yang bikin panik tapi gak jelas asalnya dari mana. Begitu dipecah jadi periode-periode kontigu, baru kelihatan bagian mana yang wajar rugi karena investasi dan bagian mana yang operasionalnya sebenarnya sehat. Period closing gak mengubah kebenaran angka, cuma memecahnya jadi potongan yang bisa dibaca dan dibandingkan.
 - Mekanisme ini bergantung ke Income Statement (Financial Reports) buat ngasih angka definitif per periode. Detail struktur data: `docs/architecture/financial-reports-schema.md` bagian "Tutup Buku".
 

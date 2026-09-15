@@ -65,6 +65,65 @@ Konsep bisnisnya ada di `docs/domain/general-ledger.md` — file ini fokus ke st
 | `journal_entries` | opsional, satu-ke-satu (self-reference) | `journal_entries` lain (entry yang dibalikkannya) |
 | Semua modul lain (AR, AP, Inventory, Fixed Assets) | wajib lewat | `create_journal_entry`/`reverse_journal_entry` — tidak ada jalur pencatatan keuangan di luar RPC ini |
 
+## Preset Jurnal
+
+Konsep bisnisnya: `docs/domain/general-ledger.md` submodule "Preset Jurnal". Detail teknis: `supabase/migrations/0032_preset_journal_entries_schema.sql`.
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `app_preset_journal_entries` | Header 1 preset (label, status draft/active/inactive) | — |
+| `app_preset_journal_entry_lines` | Baris preset — akun + sisi (debit/kredit) terkunci, TANPA amount | `app_preset_journal_entries`, akun leaf di `accounts` |
+
+**Struktur `app_preset_journal_entries`**
+
+| Kolom | Isinya | Catatan |
+|---|---|---|
+| `label` | Nama preset, mis. "Bayar Listrik" | |
+| `status` | `draft` / `active` / `inactive` | default `draft`, state machine — lihat "Alur Teknis" |
+| `activated_at` | Kapan draft→active terjadi | nullable, keisi sekali, gak pernah diubah lagi |
+
+**Struktur `app_preset_journal_entry_lines`**
+
+| Kolom | Isinya | Catatan |
+|---|---|---|
+| `account_id` | Akun tujuan baris ini | wajib leaf (reuse guard `journal_lines_leaf_only`) |
+| `side` | `debit` / `credit` | akun+sisi ini yang terkunci begitu preset aktif — amount TETAP kosong di sini, diisi user tiap posting |
+| `label` | Keterangan baris opsional | mis. "Beban Iklan Dept A" |
+| `sort_order` | Urutan tampil | unique per preset |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC/Cara | Efek | Guard |
+|---|---|---|---|
+| Kelola baris preset (draft) | INSERT/UPDATE/DELETE langsung ke `app_preset_journal_entry_lines` (bukan RPC — RLS+trigger cukup) | Tambah/ubah/hapus baris | Trigger `app_preset_journal_entry_lines_draft_only` — cuma jalan kalau header masih `draft`; trigger `journal_lines_leaf_only` — akun wajib leaf |
+| Aktifkan preset | UPDATE `status='active'` langsung | Baris terkunci permanen, `activated_at` terisi | Trigger `app_preset_journal_entries_status_guard` — minimal 2 baris, minimal 1 debit & 1 kredit; transisi `draft→active` cuma sekali |
+| Toggle nonaktif/aktifkan lagi | UPDATE `status` `active`↔`inactive` | Preset hilang/muncul lagi dari dropdown posting | Trigger yang sama — transisi `active↔inactive` bebas bolak-balik, tapi gak pernah balik ke `draft` |
+| Hapus preset | DELETE langsung | Hapus permanen | Trigger `app_preset_journal_entries_delete_guard` — cuma boleh kalau status masih `draft` |
+| Posting entry pakai preset | `create_journal_entry_from_preset` | Validasi preset `active` + jumlah baris input cocok jumlah baris preset, susun `p_lines` dari akun/sisi preset + jumlah dari user, lalu manggil `create_journal_entry` (reuse, 0003) | Preset harus `active`; tiap `line_id` harus bagian dari preset yang sama; jumlah wajib > 0; balance check tetap jalan di `create_journal_entry` seperti biasa |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Cuma role `master` yang boleh kelola preset (bikin/edit/aktifkan/nonaktifkan/hapus) | RLS insert/update/delete di kedua tabel — cek `app_user_roles.role_name = 'master'` |
+| Baris preset cuma bisa diubah selagi `draft` | Trigger `app_preset_journal_entry_lines_draft_only` — berlaku juga kalau update/delete langsung lewat client, bukan cuma lewat RPC |
+| Preset gak pernah balik ke `draft` dari `active`/`inactive` | Trigger `app_preset_journal_entries_status_guard` — transisi ilegal ditolak eksplisit |
+| Aktivasi butuh minimal 2 baris + minimal 1 debit & 1 kredit | Trigger yang sama, dicek pas transisi `draft→active` |
+| `active`/`inactive` gak bisa dihapus, cuma `draft` | Trigger `app_preset_journal_entries_delete_guard` |
+| Posting cuma bisa pakai preset `active`, akun/sisi gak bisa diubah user | Guard di `create_journal_entry_from_preset` — validasi status + `line_id` harus match `preset_id` yang sama |
+| Balance debit=kredit, leaf-only, atomicity, source_ref wajib (Core Invariant) tetap berlaku sama persis buat entry dari preset | `create_journal_entry_from_preset` reuse `create_journal_entry` (0003) — gak ada logic invariant yang ditulis ulang |
+| RPC dasar `create_journal_entry` tetap bebas dipakai modul lain (AR/AP/Inventory) dengan akun dihitung otomatis | RPC ini gak disentuh sama sekali — larangan pilih akun bebas cuma berlaku di jalur UI Jurnal Umum |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `app_preset_journal_entry_lines` | banyak-ke-satu | `app_preset_journal_entries` |
+| `app_preset_journal_entry_lines` | banyak-ke-satu (leaf only) | `accounts` |
+| `create_journal_entry_from_preset` | manggil di dalamnya | `create_journal_entry` (submodule "Konsep Inti", reuse) |
+
 ## Period Closing (Tutup Buku)
 
 **Peta Data (ERD)**
@@ -98,6 +157,7 @@ Konsep bisnisnya ada di `docs/domain/general-ledger.md` — file ini fokus ke st
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat semua transaksi & saldo | Semua user yang sudah login |
-| Membuat transaksi baru | Role `admin` atau `accountant` |
+| Membuat transaksi baru lewat Jurnal Umum | Role `admin` atau `accountant` — **wajib pakai preset**, gak ada lagi pilih akun bebas (submodule "Preset Jurnal") |
 | Mengedit atau menghapus transaksi | **Tidak ada seorang pun** — hanya reversing entry yang diizinkan |
+| Membuat/mengubah/mengaktifkan/menonaktifkan/menghapus preset jurnal | Role `master` doang |
 | Menutup periode (hard close) | Role `admin` atau `accountant` — detail lengkap `docs/architecture/financial-reports-schema.md` |

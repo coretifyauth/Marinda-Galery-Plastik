@@ -120,10 +120,11 @@ Detail rule granular ditulis di `memory/rules/feature-development-flow.md` saat 
 3. Accounts Receivable
 4. Accounts Payable
 5. Inventory (COGS, FIFO/weighted avg)
-6. Fixed Assets (depresiasi)
-7. Financial Reports (Balance Sheet, Income Statement, Cash Flow, Trial Balance)
-8. Tax handling
-9. Modul non-finance (Sales, Procurement, HR) — nyambung ke GL
+6. Financial Reports (Balance Sheet, Income Statement, Cash Flow, Trial Balance)
+7. Tax handling
+8. Modul non-finance (Sales, Procurement, HR) — nyambung ke GL
+
+**Fixed Assets (depresiasi) dicabut dari roadmap 2026-09-15** (keputusan owner) — bukan modul dedicated lagi, tanggung jawab pindah ke user lewat preset jurnal generik (`app_preset_journal_entries`, lihat `docs/domain/general-ledger.md`). Kalau bisnis butuh dedicated module ini lagi di masa depan, bangun ulang lewat skill `new-feature`, bukan un-drop migration lama.
 
 ## Core Invariants (never violate)
 - Tiap journal entry: SUM(debit) = SUM(credit)
