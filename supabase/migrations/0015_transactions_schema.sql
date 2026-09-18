@@ -202,6 +202,9 @@ grant select, insert, update on charge_categories to authenticated;
 -- belakangan (0016 payments/0017 deposits/0019 returns/0020 return_credits) -- aman, SQL
 -- function stable resolve lazy saat dipanggil.
 create function ar_invoice_remaining(p_invoice_id uuid) returns numeric as $$
+declare
+  v_result numeric;
+begin
   select ai.amount
     - coalesce((select sum(amount) from payments where transaction_id = p_invoice_id and type = 'OUTBOUND'), 0)
     - coalesce((select sum(amount) from returns where transaction_id = p_invoice_id and type = 'INBOUND'), 0)
@@ -215,11 +218,17 @@ create function ar_invoice_remaining(p_invoice_id uuid) returns numeric as $$
         join returns r on r.id = rc.return_id
         where r.transaction_id = p_invoice_id
       ), 0)
+  into v_result
   from transactions ai
   where ai.id = p_invoice_id;
-$$ language sql stable;
+  return v_result;
+end;
+$$ language plpgsql stable;
 
 create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
+declare
+  v_result numeric;
+begin
   select ab.amount
     - coalesce((select sum(amount) from payments where transaction_id = p_bill_id and type = 'INBOUND'), 0)
     - coalesce((select sum(amount) from returns where transaction_id = p_bill_id and type = 'OUTBOUND'), 0)
@@ -233,9 +242,12 @@ create function ap_bill_remaining(p_bill_id uuid) returns numeric as $$
         join returns r on r.id = rc.return_id
         where r.transaction_id = p_bill_id
       ), 0)
+  into v_result
   from transactions ab
   where ab.id = p_bill_id;
-$$ language sql stable;
+  return v_result;
+end;
+$$ language plpgsql stable;
 
 -- cancel_ar_invoice/cancel_ap_bill -- reversing entry, guard payment/return-count.
 create function cancel_ar_invoice(

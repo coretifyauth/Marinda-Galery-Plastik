@@ -178,6 +178,9 @@ create trigger return_lines_no_over_return_outbound_trigger
 -- retur+ganti barang (replacements, didefinisikan di file belakangan -- aman, SQL stable
 -- function resolve lazy saat dipanggil).
 create function sales_returned_qty(p_invoice_id uuid, p_item_id uuid) returns numeric as $$
+declare
+  v_result numeric;
+begin
   select
     coalesce((
       select sum(rl.qty_returned) from return_lines rl
@@ -189,10 +192,16 @@ create function sales_returned_qty(p_invoice_id uuid, p_item_id uuid) returns nu
       select sum(rpl.qty_replaced) from replacement_lines rpl
       join replacements rp on rp.id = rpl.replacement_id
       where rp.transaction_id = p_invoice_id and rp.type = 'INBOUND' and rpl.item_id = p_item_id
-    ), 0);
-$$ language sql stable;
+    ), 0)
+  into v_result;
+  return v_result;
+end;
+$$ language plpgsql stable;
 
 create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns numeric as $$
+declare
+  v_result numeric;
+begin
   select
     coalesce((
       select sum(rl.qty_returned) from return_lines rl
@@ -204,8 +213,11 @@ create function purchase_returned_qty(p_bill_id uuid, p_item_id uuid) returns nu
       select sum(rpl.qty_replaced) from replacement_lines rpl
       join replacements rp on rp.id = rpl.replacement_id
       where rp.transaction_id = p_bill_id and rp.type = 'OUTBOUND' and rpl.item_id = p_item_id
-    ), 0);
-$$ language sql stable;
+    ), 0)
+  into v_result;
+  return v_result;
+end;
+$$ language plpgsql stable;
 
 -- create_ar_return/create_ap_return -- TETAP 2 fungsi terpisah (efek jurnal beda bentuk).
 -- inventory_movements/goods_note_lines/consume_weighted_average dipanggil di sini --
