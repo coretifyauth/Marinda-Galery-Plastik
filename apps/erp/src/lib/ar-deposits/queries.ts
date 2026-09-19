@@ -15,7 +15,7 @@ export type ArDepositFilters = {
   pageSize: number;
 };
 
-// ar_deposits_with_status (migration 0037) -- view yang udah nyediain status/remaining
+// ar_deposits_with_status (migration 0036) -- view yang udah nyediakan status/remaining
 // terhitung server-side, jadi list gak perlu lagi fetch nested applications/refunds/forfeitures
 // cuma buat dihitung ulang di client (itu tetap dipakai di halaman detail [id]/view.tsx).
 const SELECT_COLUMNS =
