@@ -36,6 +36,7 @@ import {
   Store,
   Settings,
   UserCog,
+  X,
 } from "lucide-react";
 
 const navGroups = [
@@ -100,7 +101,7 @@ function activeGroupLabel(pathname: string): string | null {
   return group?.label ?? null;
 }
 
-export function Sidebar() {
+export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
   const [isMaster, setIsMaster] = useState(false);
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
@@ -140,11 +141,33 @@ export function Sidebar() {
   }
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-20 flex h-screen w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <div className="flex items-center gap-2 px-4 py-4">
-        <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
-        <span className="font-semibold text-black">Custom ERP</span>
-      </div>
+    <>
+      {open && (
+        <div
+          className="fixed inset-0 z-20 bg-black/40 md:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-30 flex h-screen w-64 shrink-0 flex-col border-r border-slate-200 bg-white transition-transform duration-200 md:translate-x-0 ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2 px-4 py-4">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+            <span className="font-semibold text-black">Custom ERP</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-slate-400 hover:bg-slate-50 hover:text-slate-600 md:hidden"
+            aria-label="Tutup menu"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-2 pb-4">
         {navGroups.map((group) => {
           const isOpen = openGroups.has(group.label);
@@ -212,6 +235,7 @@ export function Sidebar() {
           Pengaturan
         </Link>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
