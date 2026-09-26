@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
@@ -8,6 +8,12 @@ import { AuthGuard } from "@/components/auth-guard";
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Tutup drawer mobile tiap ganti halaman, biar gak nyangkut kebuka nutupin konten baru.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
 
   // /setup dirender tanpa chrome ERP biasa (sidebar/topbar) -- link-link di situ cuma
   // bakal mantul balik ke /setup selama onboarding belum selesai (lihat AuthGuard).
@@ -24,10 +30,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   return (
     <AuthGuard>
       <div className="flex h-screen flex-1 overflow-hidden bg-slate-100">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden pl-64">
-          <Topbar />
-          <main className="min-h-0 flex-1 overflow-y-auto p-6">{children}</main>
+        <Sidebar open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden md:pl-64">
+          <Topbar onMenuClick={() => setMobileNavOpen(true)} />
+          <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
         </div>
       </div>
     </AuthGuard>

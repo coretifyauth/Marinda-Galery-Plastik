@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Menu } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
 const routeLabels: Record<string, string> = {
@@ -44,7 +44,7 @@ function getBreadcrumb(pathname: string): string[] {
   return [pathname];
 }
 
-export function Topbar() {
+export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const breadcrumb = getBreadcrumb(pathname);
@@ -63,15 +63,25 @@ export function Topbar() {
   }
 
   return (
-    <header className="flex h-12 items-center justify-between border-b border-slate-200 bg-white px-4">
-      <nav className="text-sm text-slate-500">
-        {breadcrumb.map((crumb, i) => (
-          <span key={crumb}>
-            {i > 0 && <span className="mx-1.5">/</span>}
-            <span className={i === breadcrumb.length - 1 ? "text-black" : ""}>{crumb}</span>
-          </span>
-        ))}
-      </nav>
+    <header className="flex h-12 items-center justify-between gap-2 border-b border-slate-200 bg-white px-4">
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="-ml-1 rounded-md p-1.5 text-slate-500 hover:bg-slate-50 md:hidden"
+          aria-label="Buka menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <nav className="truncate text-sm text-slate-500">
+          {breadcrumb.map((crumb, i) => (
+            <span key={crumb}>
+              {i > 0 && <span className="mx-1.5">/</span>}
+              <span className={i === breadcrumb.length - 1 ? "text-black" : ""}>{crumb}</span>
+            </span>
+          ))}
+        </nav>
+      </div>
       <div className="relative flex items-center gap-4">
         <button
           onClick={() => setMenuOpen((v) => !v)}

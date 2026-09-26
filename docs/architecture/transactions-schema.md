@@ -57,7 +57,7 @@ Transaksi **gak bisa diubah atau dihapus** setelah tersimpan (sama seperti Jurna
 | Tidak ada mekanisme Credit Hold (tolak invoice baru kalau customer kelewat batas kredit) | Gak ada pengecekan ini di `create_transaction`; gak ada kolom batas kredit di data pelanggan |
 | Tidak ada mekanisme Piutang Tak Tertagih (write-off) | Gak ada jalur RPC untuk ini di sistem |
 | Staf gak bebas pilih akun pembukuan buat kategori tambahan, harus dari daftar yang disiapkan admin | Katalog `charge_categories` (lihat submodule "Kategori Tambahan & PPN") |
-| Transaksi yang sudah tersimpan gak boleh diedit/dihapus, cuma boleh dibalik | RLS gak ada policy update/delete + trigger penjaga kedua (`block_edit_delete`) |
+| Transaksi yang sudah tersimpan gak boleh diedit/dihapus, cuma boleh dibalik | RLS gak ada policy update/delete + trigger penjaga kedua (`transactions_block_edit_delete_or_sync` — bolehkan UPDATE cuma kolom turunan `outstanding`/`returned`/`status`/`origin`, blok sekutu dan perubahan kolom bisnis inti, pola sama kayak `orders`/`deposits`) |
 | Pembatalan transaksi harus tetap tertelusur ke dokumen aslinya | `cancel_ar_invoice`/`cancel_ap_bill` gak menghapus/mengubah baris asli — cuma menambah jurnal pembalik baru |
 
 **Interaksi Antar Tabel**
