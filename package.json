@@ -12,6 +12,8 @@
     "build:pos": "npm run build -w pos",
     "lint:erp": "npm run lint -w erp",
     "lint:pos": "npm run lint -w pos",
+    "desktop:dev:pos": "npm run desktop:dev -w pos",
+    "desktop:build:pos": "npm run desktop:build -w pos",
     "test:erp": "npm run test -w erp"
   }
 }

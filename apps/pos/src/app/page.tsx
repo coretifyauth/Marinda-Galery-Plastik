@@ -6,15 +6,33 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { formatStockBreakdown } from "@/lib/stock-display";
-import { CameraScanner } from "@/components/camera-scanner";
 import { LoadingScreen } from "@/components/loading-screen";
+import { buildReceiptHtml, printReceipt, type ReceiptData } from "@/lib/print-window";
+import { listSerialPorts, printEscPos } from "@/lib/thermal-printer";
+import { getPrinterPort, isTauri, setPrinterPort } from "@/lib/printer-settings";
+import type { CartLine, ChargeType, Customer, ItemRow, SaleHistoryItem, TaxSettings } from "@/lib/pos-types";
+import { getKeyValue, localDb, setKeyValue, type OutboxReceiptSnapshot, type OutboxSalePayload } from "@/lib/local-db";
+import { nextOfflineSourceRef } from "@/lib/device-id";
+import { isLikelyNetworkError, probeSupabase, useOnlineStatus } from "@/lib/online-status";
+import { syncOutbox } from "@/lib/offline-sync";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
-  buildReceiptHtml,
-  buildWhatsappLink,
-  buildWhatsappReceiptText,
-  printReceipt,
-  type ReceiptData,
-} from "@/lib/print-window";
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CloudUpload,
+  History,
+  Minus,
+  Plus,
+  Printer,
+  Receipt,
+  RefreshCw,
+  ScanLine,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 
 type PricedUnit = {
   unit_label: string;
@@ -43,53 +61,20 @@ type ScannableUnit = {
   barcode: string;
 };
 
-type Customer = {
-  id: string;
-  name: string;
-  contact: string | null;
-};
-
 // unit_price & qty_sold di sini SELALU dalam satuan jual baris ini (bisa base
 // unit ATAU satuan lain kayak lusin/pack kalau ditambah lewat scan) -- konversi
 // ke satuan dasar (dipakai RPC create_pos_sale) baru terjadi pas checkout().
-type CartLine = {
-  item_id: string;
-  name: string;
-  unit_label: string;
-  conversion_factor: number;
-  unit_price: number;
-  qty_sold: number;
-  available: number;
-};
-
-type ChargeType = {
-  id: string;
-  name: string;
-  account_id: string;
-};
-
-type TaxSettings = {
-  is_active: boolean;
-  ppn_rate: number;
-};
 
 type ExtraLine = { category_id: string; amount: string };
 
-// Riwayat singkat buat panel "Transaksi Terakhir" + cetak ulang/kirim WA -- goods_issue_lines
-// nyimpen qty/harga dalam SATUAN DASAR selalu (create_pos_sale konversi sebelum insert),
-// jadi unit_label transaksi asli (kalau dari scan satuan bukan-dasar) gak tersimpan --
-// riwayat nampilin qty x harga dalam satuan dasar item, bukan satuan yang dipilih pas jual.
-type SaleHistoryLine = { name: string; uom: string; qty: number; unitPrice: number; amount: number };
-type SaleHistoryItem = {
-  id: string;
+type CheckoutResult = {
+  mode: "online" | "offline";
   sourceRef: string;
-  createdAt: string;
-  customerName: string | null;
-  customerContact: string | null;
-  cashAccountId: string;
-  lines: SaleHistoryLine[];
-  extraTotal: number;
-  taxTotal: number;
+  total: number;
+  cartLines: CartLine[];
+  cashReceivedNum: number | null;
+  changeNum: number | null;
+  receiptSnapshot: OutboxReceiptSnapshot;
 };
 
 const ACCOUNT_CODES = {
@@ -100,76 +85,122 @@ const ACCOUNT_CODES = {
   PERSEDIAAN_BARANG_JADI: "1420",
 } as const;
 
-// Baris mentah dari query "items" -- disimpen di cache React Query APA ADANYA (bukan
-// CatalogItem/ScannableUnit yang udah diolah), biar checkout() bisa nge-patch
-// `inventory_balances.qty_on_hand` langsung di cache abis sukses (tanpa refetch ulang
-// seluruh katalog) -- CatalogItem/ScannableUnit diturunkan dari ini lewat useMemo.
-type ItemRow = {
-  id: string;
-  name: string;
-  uom: string;
-  item_units:
-    | { unit_label: string; conversion_factor: number; price: number | null; is_base: boolean; barcode: string | null }[]
-    | null;
-  inventory_balances: { qty_on_hand: number } | null;
-};
-
+// Tiap fetcher: coba Supabase seperti biasa -> sukses -> tulis-tembus ke Dexie
+// (cache buat dibaca offline nanti) -> gagal (offline) -> baca balik dari Dexie;
+// cache kosong (belum pernah online sekalipun) -> lempar error apa adanya, gak
+// ada yang bisa ditampilkan. Lihat plan: offline sync POS (IndexedDB + outbox).
 async function fetchItemRows(): Promise<ItemRow[]> {
-  const { data, error } = await supabase
-    .from("items")
-    .select(
-      "id, name, uom, item_units(unit_label, conversion_factor, price, is_base, barcode), inventory_balances(qty_on_hand)"
-    )
-    .is("archived_at", null)
-    .order("name");
-  if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as ItemRow[];
+  try {
+    const { data, error } = await supabase
+      .from("items")
+      .select(
+        "id, name, uom, item_units(unit_label, conversion_factor, price, is_base, barcode), inventory_balances(qty_on_hand)"
+      )
+      .is("archived_at", null)
+      .order("name");
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as unknown as ItemRow[];
+    await localDb.transaction("rw", localDb.items, async () => {
+      await localDb.items.clear();
+      await localDb.items.bulkPut(rows);
+    });
+    return rows;
+  } catch (err) {
+    const cached = await localDb.items.toArray();
+    if (cached.length > 0) return cached;
+    throw err;
+  }
 }
 
 async function fetchAccountIds(): Promise<Record<string, string>> {
-  const { data, error } = await supabase
-    .from("accounts")
-    .select("id, code")
-    .in("code", Object.values(ACCOUNT_CODES));
-  if (error) throw new Error(error.message);
-  const codeToId: Record<string, string> = {};
-  for (const acc of data ?? []) codeToId[acc.code as string] = acc.id as string;
-  return codeToId;
+  try {
+    const { data, error } = await supabase
+      .from("accounts")
+      .select("id, code")
+      .in("code", Object.values(ACCOUNT_CODES));
+    if (error) throw new Error(error.message);
+    const codeToId: Record<string, string> = {};
+    for (const acc of data ?? []) codeToId[acc.code as string] = acc.id as string;
+    await setKeyValue("accounts", codeToId);
+    return codeToId;
+  } catch (err) {
+    const cached = await getKeyValue<Record<string, string>>("accounts");
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 async function fetchCustomers(): Promise<Customer[]> {
-  const { data, error } = await supabase
-    .from("counterparties")
-    .select("id, name, contact, counterparty_type_mapping!inner(role)")
-    .eq("counterparty_type_mapping.role", "customer")
-    .is("archived_at", null)
-    .order("name");
-  if (error) throw new Error(error.message);
-  return (data ?? []) as Customer[];
+  try {
+    const { data, error } = await supabase
+      .from("counterparties")
+      .select("id, name, contact, counterparty_type_mapping!inner(role)")
+      .eq("counterparty_type_mapping.role", "customer")
+      .is("archived_at", null)
+      .order("name");
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as Customer[];
+    await localDb.transaction("rw", localDb.customers, async () => {
+      await localDb.customers.clear();
+      await localDb.customers.bulkPut(rows);
+    });
+    return rows;
+  } catch (err) {
+    const cached = await localDb.customers.toArray();
+    if (cached.length > 0) return cached;
+    throw err;
+  }
 }
 
 async function fetchChargeTypes(): Promise<ChargeType[]> {
-  const { data, error } = await supabase
-    .from("charge_categories")
-    .select("id, name, account_id")
-    .eq("module", "pos")
-    .is("archived_at", null)
-    .order("name");
-  if (error) throw new Error(error.message);
-  return (data ?? []) as ChargeType[];
+  try {
+    const { data, error } = await supabase
+      .from("charge_categories")
+      .select("id, name, account_id")
+      .eq("module", "pos")
+      .is("archived_at", null)
+      .order("name");
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as ChargeType[];
+    await localDb.transaction("rw", localDb.chargeTypes, async () => {
+      await localDb.chargeTypes.clear();
+      await localDb.chargeTypes.bulkPut(rows);
+    });
+    return rows;
+  } catch (err) {
+    const cached = await localDb.chargeTypes.toArray();
+    if (cached.length > 0) return cached;
+    throw err;
+  }
 }
 
 // tax_settings/company_settings digabung jadi app_settings (migration 0028)
 async function fetchTaxSettings(): Promise<TaxSettings | null> {
-  const { data, error } = await supabase.from("app_settings").select("is_active, ppn_rate").maybeSingle();
-  if (error) throw new Error(error.message);
-  return (data ?? null) as TaxSettings | null;
+  try {
+    const { data, error } = await supabase.from("app_settings").select("is_active, ppn_rate").maybeSingle();
+    if (error) throw new Error(error.message);
+    const row = (data ?? null) as TaxSettings | null;
+    await setKeyValue("tax_settings", row);
+    return row;
+  } catch (err) {
+    const cached = await getKeyValue<TaxSettings | null>("tax_settings");
+    if (cached !== undefined) return cached;
+    throw err;
+  }
 }
 
 async function fetchCompanyName(): Promise<string | null> {
-  const { data, error } = await supabase.from("app_settings").select("name").maybeSingle();
-  if (error) throw new Error(error.message);
-  return ((data as { name: string } | null) ?? null)?.name ?? null;
+  try {
+    const { data, error } = await supabase.from("app_settings").select("name").maybeSingle();
+    if (error) throw new Error(error.message);
+    const name = ((data as { name: string } | null) ?? null)?.name ?? null;
+    await setKeyValue("company_settings", name);
+    return name;
+  } catch (err) {
+    const cached = await getKeyValue<string | null>("company_settings");
+    if (cached !== undefined) return cached;
+    throw err;
+  }
 }
 
 // Sejak migration pos-sales-simplify: pos_sales/pos_sale_lines/pos_sale_extra_credit_lines
@@ -185,7 +216,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "id, source_ref, date, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
+      "id, source_ref, date, created_at, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
     )
     .eq("type", "OUTBOUND")
     .eq("date", date)
@@ -196,6 +227,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
     id: string;
     source_ref: string;
     date: string;
+    created_at: string;
     counterparties: { name: string; contact: string | null } | null;
     goods_notes: { goods_note_lines: { qty: number; unit_price: number | null; items: { name: string; uom: string } | null }[] }[];
     payments: { id: string; journal_entry_id: string }[];
@@ -226,7 +258,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
     return {
       id: row.id,
       sourceRef: row.source_ref,
-      createdAt: row.date,
+      createdAt: row.created_at,
       customerName: row.counterparties?.name ?? null,
       customerContact: row.counterparties?.contact ?? null,
       cashAccountId: cashAccountByEntry.get(paymentEntryId) ?? "",
@@ -338,29 +370,27 @@ function CatalogCard({
               </option>
             ))}
           </select>
-          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">
-            ▾
-          </span>
+          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-slate-400" />
         </div>
       )}
       {available && (
         <div className="mt-2 flex items-center gap-1">
           <button
             type="button"
-            className="h-6 w-6 rounded border border-slate-300 text-sm disabled:opacity-30"
+            className="flex h-6 w-6 items-center justify-center rounded border border-slate-300 disabled:opacity-30"
             onClick={() => onUpdateQty(item.id, unit.unit_label, cartQty - 1)}
             disabled={cartQty === 0}
           >
-            −
+            <Minus className="h-3 w-3" />
           </button>
           <span className="w-6 text-center text-xs">{cartQty}</span>
           <button
             type="button"
-            className="h-6 w-6 rounded border border-slate-300 text-sm disabled:opacity-30"
+            className="flex h-6 w-6 items-center justify-center rounded border border-slate-300 disabled:opacity-30"
             onClick={() => onAdd(item, unit)}
             disabled={cartQty >= item.qtyOnHand}
           >
-            +
+            <Plus className="h-3 w-3" />
           </button>
         </div>
       )}
@@ -368,18 +398,100 @@ function CatalogCard({
   );
 }
 
+// Preview struk WYSIWYG -- niru tampilan hasil print (lebar sempit, monospace),
+// dipakai baik buat modal "Transaksi Berhasil" (auto muncul abis checkout) maupun
+// "Tinjau Struk" (manual, dari riwayat transaksi).
+function ReceiptPreview({ data }: { data: ReceiptData }) {
+  const rp = (n: number) => `Rp${Math.round(n).toLocaleString("id-ID")}`;
+  return (
+    <div className="mx-auto w-70 rounded border border-slate-200 bg-white p-3 font-mono text-xs text-slate-800">
+      <div className="text-center">
+        {data.companyName && <div className="font-bold">{data.companyName}</div>}
+        <div>{data.dateTime}</div>
+        <div>{data.sourceRef}</div>
+      </div>
+      <hr className="my-2 border-dashed border-slate-300" />
+      {data.lines.map((l, i) => (
+        <div key={i} className="mb-1">
+          <div>{l.name}</div>
+          <div className="flex justify-between">
+            <span>
+              {l.qty} {l.uom} x {rp(l.unitPrice)}
+            </span>
+            <span>{rp(l.amount)}</span>
+          </div>
+        </div>
+      ))}
+      <hr className="my-2 border-dashed border-slate-300" />
+      <div className="flex justify-between">
+        <span>Subtotal</span>
+        <span>{rp(data.subtotal)}</span>
+      </div>
+      {data.extraLines.map((l, i) => (
+        <div key={i} className="flex justify-between">
+          <span>{l.label}</span>
+          <span>{rp(l.amount)}</span>
+        </div>
+      ))}
+      {data.taxAmount > 0 && (
+        <div className="flex justify-between">
+          <span>PPN{data.taxRate != null ? ` (${data.taxRate}%)` : ""}</span>
+          <span>{rp(data.taxAmount)}</span>
+        </div>
+      )}
+      <hr className="my-2 border-dashed border-slate-300" />
+      <div className="flex justify-between text-sm font-bold">
+        <span>Total</span>
+        <span>{rp(data.total)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span>Bayar ({data.paymentLabel})</span>
+        <span>{data.cashReceived != null ? rp(data.cashReceived) : "-"}</span>
+      </div>
+      {data.change != null && (
+        <div className="flex justify-between">
+          <span>Kembalian</span>
+          <span>{rp(data.change)}</span>
+        </div>
+      )}
+      {data.customerName && <div className="mt-1">Pelanggan: {data.customerName}</div>}
+      <div className="mt-2 text-center">Terima kasih!</div>
+    </div>
+  );
+}
+
 export default function CheckoutPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { isOnline } = useOnlineStatus();
+  const pendingSyncCount = useLiveQuery(() => localDb.outboxSales.where("status").equals("pending").count(), [], 0);
+  const reviewRows =
+    useLiveQuery(
+      () =>
+        localDb.outboxSales
+          .where("status")
+          .anyOf("failed_stock", "failed_other")
+          .sortBy("updatedAt")
+          .then((rows) => rows.reverse()),
+      [],
+      []
+    ) ?? [];
   const [checkingSession, setCheckingSession] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [showSyncDrawer, setShowSyncDrawer] = useState(false);
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const [printerPort, setPrinterPortState] = useState<string | null>(() => getPrinterPort());
+  const [availablePorts, setAvailablePorts] = useState<string[]>([]);
+  const [printerError, setPrinterError] = useState<string | null>(null);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   const [cart, setCart] = useState<CartLine[]>([]);
   const [scanInput, setScanInput] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
   const scanInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [showCameraScanner, setShowCameraScanner] = useState(false);
   const [extraLines, setExtraLines] = useState<ExtraLine[]>([]);
   // null = ikut default tax_settings.is_active; true/false = kasir override manual
   // buat transaksi ini doang (reset ke null lagi abis checkout sukses).
@@ -388,15 +500,11 @@ export default function CheckoutPage() {
   const [cashReceived, setCashReceived] = useState("");
   const [customerId, setCustomerId] = useState<string>("");
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [historyDate, setHistoryDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [lastCompletedRef, setLastCompletedRef] = useState<string | null>(null);
-  const [lastReceiptMeta, setLastReceiptMeta] = useState<{ cashReceived: number | null; change: number | null } | null>(
-    null
-  );
+  const [receiptModal, setReceiptModal] = useState<{ data: ReceiptData; mode: "success" | "review" } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -512,7 +620,6 @@ export default function CheckoutPage() {
 
   const addToCart = useCallback((item: CatalogItem, unit: PricedUnit) => {
     setCheckoutError(null);
-    setSuccessMessage(null);
     setCart((prev) => {
       const existing = prev.find((l) => l.item_id === item.id && l.unit_label === unit.unit_label);
       if (existing) {
@@ -542,7 +649,6 @@ export default function CheckoutPage() {
   // "Kode Scan Barang (Barcode/QR per Satuan Jual)".
   function addScannedUnit(unit: ScannableUnit) {
     setCheckoutError(null);
-    setSuccessMessage(null);
     const available = Math.floor(unit.qtyOnHand / unit.conversionFactor);
     if (available <= 0) {
       setScanError(`Stok ${unit.itemName} (${unit.unitLabel}) habis`);
@@ -598,7 +704,7 @@ export default function CheckoutPage() {
   }
 
   const checkoutMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<CheckoutResult> => {
       const cashAccountId =
         paymentMethod === "CASH" ? accountIds[ACCOUNT_CODES.KAS_TOKO] : accountIds[ACCOUNT_CODES.KAS_BANK];
 
@@ -609,11 +715,11 @@ export default function CheckoutPage() {
           return { account_id: type?.account_id ?? "", amount: Number(l.amount) };
         });
 
-      const sourceRef = await generateDocumentNumber("pos_sales");
+      const cashReceivedNum = paymentMethod === "CASH" && cashReceived.trim() !== "" ? Number(cashReceived) : null;
+      const changeNum = cashReceivedNum != null ? cashReceivedNum - total : null;
 
-      const { error } = await supabase.rpc("create_pos_sale", {
+      const payload: OutboxSalePayload = {
         p_sale_date: new Date().toISOString().slice(0, 10),
-        p_source_ref: sourceRef,
         p_customer_id: customerId || null,
         p_cash_account_id: cashAccountId,
         p_revenue_account_id: accountIds[ACCOUNT_CODES.PENDAPATAN_TOKO],
@@ -631,21 +737,66 @@ export default function CheckoutPage() {
           qty_sold: l.qty_sold * l.conversion_factor,
           unit_price: l.unit_price / l.conversion_factor,
         })),
-      });
-      if (error) throw new Error(error.message);
-
-      const cashReceivedNum = paymentMethod === "CASH" && cashReceived.trim() !== "" ? Number(cashReceived) : null;
-      return {
-        sourceRef,
-        total,
-        cartLines: cart,
-        cashReceivedNum,
-        changeNum: cashReceivedNum != null ? cashReceivedNum - total : null,
       };
+
+      // Snapshot struk/riwayat -- dihitung SEKALI di sini, gak tergantung online/offline
+      // (sumbernya cuma cart/customer/extra/tax yang udah ada di client). Dipakai baik
+      // buat modal "Transaksi Berhasil" (langsung, gak nunggu refetch server -- efek
+      // sampingnya struk transaksi baru sekarang selalu tampilin JAM beneran, bukan
+      // kolom `date` yang cuma tanggal) maupun outbox kalau ternyata offline.
+      const customer = customers.find((c) => c.id === customerId) ?? null;
+      const receiptSnapshot: OutboxReceiptSnapshot = {
+        customerName: customer?.name ?? null,
+        customerContact: customer?.contact ?? null,
+        cashAccountId,
+        lines: cart.map((l) => {
+          const baseUom = catalog.find((c) => c.id === l.item_id)?.uom ?? l.unit_label;
+          const qty = l.qty_sold * l.conversion_factor;
+          const unitPrice = l.unit_price / l.conversion_factor;
+          return { name: l.name, uom: baseUom, qty, unitPrice, amount: qty * unitPrice };
+        }),
+        extraTotal,
+        taxTotal: taxAmount,
+      };
+
+      // Probe dulu SEBELUM nyoba RPC beneran -- bedain "gak bisa dijangkau" (offline,
+      // masuk outbox) dari "server nolak" (error bisnis kayak stok gak cukup, harus
+      // tetap nge-throw ke onError, JANGAN pernah masuk outbox). Lihat plan: offline
+      // sync POS.
+      if (await probeSupabase()) {
+        try {
+          const sourceRef = await generateDocumentNumber("pos_sales");
+          const { error } = await supabase.rpc("create_pos_sale", { ...payload, p_source_ref: sourceRef });
+          if (error) throw new Error(error.message);
+          return { mode: "online", sourceRef, total, cartLines: cart, cashReceivedNum, changeNum, receiptSnapshot };
+        } catch (err) {
+          if (!isLikelyNetworkError(err)) throw err; // error bisnis asli -- bubble ke onError
+          // else: probe sukses tapi koneksi putus tepat pas request -- lanjut ke jalur offline
+        }
+      }
+
+      // JALUR OFFLINE -- simpan ke outbox lokal, sourceRef resmi baru didapat pas sync
+      // (generate_document_number butuh online). Validasi oversell TIDAK terjadi di
+      // sini (gak ada cara validasi ke server pas offline) -- ditangkep belakangan pas
+      // sync-replay (offline-sync.ts), transaksi yang nolak masuk drawer sinkronisasi.
+      const tempSourceRef = nextOfflineSourceRef();
+      const now = new Date().toISOString();
+      await localDb.outboxSales.add({
+        id: crypto.randomUUID(),
+        tempSourceRef,
+        status: "pending",
+        createdAt: now,
+        updatedAt: now,
+        retryCount: 0,
+        lastError: null,
+        payload,
+        receiptSnapshot,
+      });
+
+      return { mode: "offline", sourceRef: tempSourceRef, total, cartLines: cart, cashReceivedNum, changeNum, receiptSnapshot };
     },
     onMutate: () => {
       setCheckoutError(null);
-      setSuccessMessage(null);
     },
     onError: (err) => {
       setCheckoutError(err instanceof Error ? err.message : "Gagal memproses transaksi");
@@ -655,30 +806,50 @@ export default function CheckoutPage() {
       // katalog kayak sebelumnya (lihat diskusi performa: refetch abis tiap checkout
       // gak scale kalau katalog gede). Validasi oversell TETAP 100% di server lewat
       // create_pos_sale (RPC udah nolak kalau stok gak cukup sebelum baris ini
-      // kejalan) -- cache ini murni angka yang ditampilin ke kasir, bukan sumber
-      // kebenaran. memory/architecture/app/tech-stack-decisions.md: POS gak boleh
-      // punya cache stok PERMANEN -- staleTime pendek (15s) + refetch-on-focus
-      // (default React Query) tetap jaga cache ini gak pernah "permanen".
-      queryClient.setQueryData<ItemRow[]>(["items"], (old) =>
-        old?.map((row) => {
-          const soldBase = result.cartLines
-            .filter((l) => l.item_id === row.id)
-            .reduce((sum, l) => sum + l.qty_sold * l.conversion_factor, 0);
-          if (soldBase === 0 || !row.inventory_balances) return row;
-          return {
-            ...row,
-            inventory_balances: { qty_on_hand: row.inventory_balances.qty_on_hand - soldBase },
-          };
-        })
-      );
+      // kejalan, KECUALI jalur offline yang validasinya baru kejadian pas sync) --
+      // cache ini murni angka yang ditampilin ke kasir, bukan sumber kebenaran.
+      // memory/architecture/app/tech-stack-decisions.md: POS gak boleh punya cache
+      // stok PERMANEN -- staleTime pendek (15s) + refetch-on-focus (default React
+      // Query) tetap jaga cache ini gak pernah "permanen".
+      const patchedItems = (queryClient.getQueryData<ItemRow[]>(["items"]) ?? []).map((row) => {
+        const soldBase = result.cartLines
+          .filter((l) => l.item_id === row.id)
+          .reduce((sum, l) => sum + l.qty_sold * l.conversion_factor, 0);
+        if (soldBase === 0 || !row.inventory_balances) return row;
+        return {
+          ...row,
+          inventory_balances: { qty_on_hand: row.inventory_balances.qty_on_hand - soldBase },
+        };
+      });
+      queryClient.setQueryData<ItemRow[]>(["items"], patchedItems);
+      void localDb.items.bulkPut(patchedItems); // biar fallback cache offline ikut konsisten
 
-      const today = new Date().toISOString().slice(0, 10);
+      const now = new Date().toISOString();
+      const today = now.slice(0, 10);
       setHistoryDate(today);
-      queryClient.invalidateQueries({ queryKey: ["pos_sales", today] });
 
-      setLastReceiptMeta({ cashReceived: result.cashReceivedNum, change: result.changeNum });
-      setLastCompletedRef(result.sourceRef);
-      setSuccessMessage(`Transaksi berhasil (${result.sourceRef}) — total Rp${result.total.toLocaleString("id-ID")}`);
+      // Suntik langsung ke cache riwayat (bukan nunggu invalidate) buat KEDUA mode --
+      // biar modal struk di bawah bisa dibangun instan tanpa race sama refetch, dan
+      // riwayat/cetak-ulang jalan sama persis baik transaksi online maupun offline.
+      const historyItem: SaleHistoryItem = {
+        id: result.sourceRef,
+        sourceRef: result.sourceRef,
+        createdAt: now,
+        ...result.receiptSnapshot,
+      };
+      queryClient.setQueryData<SaleHistoryItem[]>(["pos_sales", today, chargeTypesQuery.data], (old) => [
+        historyItem,
+        ...(old ?? []),
+      ]);
+      if (result.mode === "online") {
+        queryClient.invalidateQueries({ queryKey: ["pos_sales", today] }); // rekonsiliasi latar belakang
+      }
+
+      setReceiptModal({
+        data: receiptFromSale(historyItem, { cashReceived: result.cashReceivedNum, change: result.changeNum }),
+        mode: "success",
+      });
+
       setCart([]);
       setCustomerId("");
       setExtraLines([]);
@@ -689,6 +860,66 @@ export default function CheckoutPage() {
       scanInputRef.current?.focus();
     },
   });
+
+  // Window desktop (Tauri) gak punya tombol reload browser & bisa dibiarkan fokus
+  // terus seharian di kios kasir -- refetchOnWindowFocus react-query jadi gak cukup
+  // buat narik data terbaru (stok, pelanggan, dll), jadi kasir perlu tombol manual ini.
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await queryClient.invalidateQueries();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [queryClient]);
+
+  const handleSyncNow = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      await syncOutbox();
+      await queryClient.invalidateQueries({ queryKey: ["pos_sales"] });
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [queryClient]);
+
+  async function retryOutboxRow(id: string) {
+    await localDb.outboxSales.update(id, { status: "pending" });
+    await syncOutbox();
+  }
+
+  async function discardOutboxRow(id: string) {
+    if (!window.confirm("Transaksi ini TIDAK akan pernah tercatat di sistem. Yakin buang?")) return;
+    await localDb.outboxSales.delete(id);
+  }
+
+  // Trigger otomatis: event "online" (WebView2 gak selalu reliable soal ini --
+  // tombol ☁️ Sync Sekarang di header jadi fallback manual) + 1x percobaan pas
+  // app startup (nutup celah: app di-kill pas masih ada baris pending, dibuka
+  // lagi udah online).
+  useEffect(() => {
+    void syncOutbox();
+    const onOnline = () => void syncOutbox();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
+  const openPrinterSettings = useCallback(async () => {
+    setShowPrinterSettings(true);
+    setPrinterError(null);
+    if (!isTauri()) return;
+    try {
+      const ports = await listSerialPorts();
+      setAvailablePorts(ports);
+    } catch (err) {
+      setPrinterError(err instanceof Error ? err.message : "Gagal ambil daftar port.");
+    }
+  }, []);
+
+  const saveSelectedPort = useCallback((port: string) => {
+    setPrinterPort(port || null);
+    setPrinterPortState(port || null);
+  }, []);
 
   // Flow (2026-08-16): kasir GAK milih metode bayar dari awal -- pencet "Checkout"
   // dulu (keranjang harus udah ada isi), baru disuguhkan modal buat pilih pelanggan
@@ -726,25 +957,34 @@ export default function CheckoutPage() {
     };
   }
 
-  function handlePrintSale(sale: SaleHistoryItem, meta?: { cashReceived: number | null; change: number | null }) {
-    const html = buildReceiptHtml(receiptFromSale(sale, meta));
-    const ok = printReceipt(sale.sourceRef, html);
-    if (!ok) setCheckoutError("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
-  }
+  const printReceiptData = useCallback(
+    async (receipt: ReceiptData) => {
+      if (isTauri() && printerPort) {
+        setIsPrinting(true);
+        try {
+          await printEscPos(printerPort, receipt);
+        } catch (err) {
+          setCheckoutError(
+            `Gagal cetak ke printer (${printerPort}): ${err instanceof Error ? err.message : String(err)}`
+          );
+        } finally {
+          setIsPrinting(false);
+        }
+        return;
+      }
 
-  function handleWhatsappSale(sale: SaleHistoryItem, meta?: { cashReceived: number | null; change: number | null }) {
-    const text = buildWhatsappReceiptText(receiptFromSale(sale, meta));
-    window.open(buildWhatsappLink(sale.customerContact, text), "_blank");
-  }
+      const html = buildReceiptHtml(receipt);
+      const ok = printReceipt(receipt.sourceRef, html);
+      if (!ok) setCheckoutError("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
+    },
+    [printerPort]
+  );
 
-  function handleCameraDetect(code: string) {
-    setShowCameraScanner(false);
-    const unit = scannableUnits.find((u) => u.barcode === code);
-    if (!unit) {
-      setScanError("Kode gak ketemu — cari manual dari katalog di bawah");
-      return;
-    }
-    addScannedUnit(unit);
+  async function handlePrintSale(
+    sale: SaleHistoryItem,
+    meta?: { cashReceived: number | null; change: number | null }
+  ) {
+    await printReceiptData(receiptFromSale(sale, meta));
   }
 
   // Keyboard shortcut -- keputusan (2026-08-16): angka 1-9 ikut POSISI grid saat ini
@@ -761,7 +1001,7 @@ export default function CheckoutPage() {
     }
 
     function onKeyDown(e: KeyboardEvent) {
-      if (showCameraScanner || showHistory || showPaymentModal) return;
+      if (showHistory || showPaymentModal || receiptModal) return;
 
       if (e.key === "F2") {
         e.preventDefault();
@@ -819,7 +1059,7 @@ export default function CheckoutPage() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filteredCatalog, showCameraScanner, showHistory, showPaymentModal, openPaymentModal, addToCart]);
+  }, [filteredCatalog, showHistory, showPaymentModal, receiptModal, openPaymentModal, addToCart]);
 
   // Bug ketemu (kode barcode contoh "SKU-2026-00015"): klik apa pun di halaman (kartu
   // katalog, tombol qty +/-, dst) mindahin fokus browser ke elemen yang diklik itu.
@@ -833,7 +1073,7 @@ export default function CheckoutPage() {
   // ada modal/overlay lain lagi kebuka.
   useEffect(() => {
     function refocusScanInput() {
-      if (showCameraScanner || showHistory || showPaymentModal) return;
+      if (showHistory || showPaymentModal || receiptModal) return;
       const active = document.activeElement;
       const isTextInput =
         active instanceof HTMLElement &&
@@ -845,9 +1085,24 @@ export default function CheckoutPage() {
     }
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
-  }, [showCameraScanner, showHistory, showPaymentModal]);
+  }, [showHistory, showPaymentModal, receiptModal]);
 
-  const lastCompletedSale = recentSales.find((s) => s.sourceRef === lastCompletedRef) ?? null;
+  // Modal struk (sukses ATAU tinjau): Enter atau tombol Cetak sama-sama langsung
+  // ngeprint lalu nutup modal -- kasir gak perlu klik dua kali (klik Cetak, klik
+  // Tutup) pas alur transaksi cepat.
+  useEffect(() => {
+    if (!receiptModal) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        printReceiptData(receiptModal!.data).then(() => setReceiptModal(null));
+      } else if (e.key === "Escape") {
+        setReceiptModal(null);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [receiptModal, printReceiptData]);
 
   if (checkingSession || itemsQuery.isLoading || accountsQuery.isLoading) {
     return <LoadingScreen />;
@@ -862,46 +1117,91 @@ export default function CheckoutPage() {
     <div className="flex h-dvh flex-col lg:flex-row">
       <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-xl font-semibold">Kasir</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-semibold">Kasir</h1>
+            <span
+              className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
+                isOnline ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+              }`}
+            >
+              <span className={`h-2 w-2 rounded-full ${isOnline ? "bg-emerald-500" : "bg-red-500"}`} />
+              {isOnline ? "Online" : "Offline"}
+            </span>
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => setShowHistory(true)}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:border-slate-400"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:border-slate-400"
             >
-              🕘 Riwayat Transaksi
+              <History className="h-4 w-4" /> Riwayat Transaksi
             </button>
             <button
               type="button"
-              onClick={() => setShowCameraScanner(true)}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:border-slate-400"
-              title="Scan pakai kamera"
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:border-slate-400 disabled:opacity-50"
+              title="Muat ulang stok, pelanggan, dan data lain dari server"
             >
-              📷 Kamera
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+              {isRefreshing ? "Memuat..." : "Refresh"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSyncDrawer(true)}
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm hover:opacity-90 ${
+                reviewRows.length > 0
+                  ? "border-red-300 bg-red-50 text-red-700"
+                  : pendingSyncCount
+                    ? "border-amber-300 bg-amber-50 text-amber-700"
+                    : "border-slate-300 text-slate-600 hover:border-slate-400"
+              }`}
+              title="Sinkronisasi transaksi offline"
+            >
+              <CloudUpload className="h-4 w-4" /> Sinkronisasi
+              {(pendingSyncCount || reviewRows.length) > 0 && (
+                <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-xs font-semibold">
+                  {pendingSyncCount + reviewRows.length}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={openPrinterSettings}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:border-slate-400"
+              title="Atur printer thermal"
+            >
+              <Printer className="h-4 w-4" /> Printer{printerPort ? ` (${printerPort})` : ""}
             </button>
           </div>
         </div>
         <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <form onSubmit={handleScanSubmit}>
-            <input
-              ref={scanInputRef}
-              type="text"
-              autoFocus
-              placeholder="Scan / ketik kode..."
-              value={scanInput}
-              onChange={(e) => setScanInput(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
-            />
+            <div className="flex items-center rounded-lg border border-slate-300 bg-white focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-600/40">
+              <ScanLine className="ml-3 h-4 w-4 shrink-0 text-slate-400" />
+              <input
+                ref={scanInputRef}
+                type="text"
+                autoFocus
+                placeholder="Scan / ketik kode..."
+                value={scanInput}
+                onChange={(e) => setScanInput(e.target.value)}
+                className="w-full border-0 bg-transparent px-2.5 py-2.5 text-sm focus:outline-none"
+              />
+            </div>
             {scanError && <p className="mt-1 text-xs text-amber-600">{scanError}</p>}
           </form>
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="Cari nama barang... (Ctrl+F)"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:border-slate-500 focus:outline-none"
-          />
+          <div className="flex items-center rounded-lg border border-slate-300 bg-white focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-600/40">
+            <Search className="ml-3 h-4 w-4 shrink-0 text-slate-400" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Cari nama barang... (Ctrl+F)"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full border-0 bg-transparent px-2.5 py-2.5 text-sm focus:outline-none"
+            />
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {filteredCatalog.map((item) => (
@@ -938,7 +1238,7 @@ export default function CheckoutPage() {
                 className="text-slate-500"
                 aria-label="Tutup"
               >
-                ✕
+                <X className="h-5 w-5" />
               </button>
             </div>
             <input
@@ -966,17 +1266,18 @@ export default function CheckoutPage() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        className="text-xs text-slate-500 underline"
+                        className="text-xs text-slate-500 underline disabled:opacity-40"
+                        disabled={isPrinting}
                         onClick={() => handlePrintSale(sale)}
                       >
                         Cetak
                       </button>
                       <button
                         type="button"
-                        className="text-xs text-slate-500 underline"
-                        onClick={() => handleWhatsappSale(sale)}
+                        className="flex items-center gap-1 text-xs text-slate-500 underline"
+                        onClick={() => setReceiptModal({ data: receiptFromSale(sale), mode: "review" })}
                       >
-                        WA
+                        <Receipt className="h-3.5 w-3.5" /> Tinjau Struk
                       </button>
                     </div>
                   </div>
@@ -1010,10 +1311,10 @@ export default function CheckoutPage() {
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 <button
-                  className="h-7 w-7 rounded border border-slate-300"
+                  className="flex h-7 w-7 items-center justify-center rounded border border-slate-300"
                   onClick={() => updateQty(line.item_id, line.unit_label, line.qty_sold - 1)}
                 >
-                  −
+                  <Minus className="h-3.5 w-3.5" />
                 </button>
                 <input
                   type="number"
@@ -1028,17 +1329,18 @@ export default function CheckoutPage() {
                   className="w-12 rounded border border-slate-300 py-1 text-center text-sm"
                 />
                 <button
-                  className="h-7 w-7 rounded border border-slate-300"
+                  className="flex h-7 w-7 items-center justify-center rounded border border-slate-300"
                   onClick={() => updateQty(line.item_id, line.unit_label, line.qty_sold + 1)}
                   disabled={line.qty_sold >= line.available}
                 >
-                  +
+                  <Plus className="h-3.5 w-3.5" />
                 </button>
                 <button
                   className="ml-1 text-red-500"
                   onClick={() => removeLine(line.item_id, line.unit_label)}
+                  aria-label="Hapus baris"
                 >
-                  ✕
+                  <X className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -1051,7 +1353,7 @@ export default function CheckoutPage() {
               className="flex w-full items-center justify-between text-xs font-medium text-slate-500"
             >
               <span>Detail Transaksi (Biaya Tambahan, PPN)</span>
-              <span>{detailsExpanded ? "▲" : "▼"}</span>
+              {detailsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
             </button>
 
             {detailsExpanded && (
@@ -1081,7 +1383,7 @@ export default function CheckoutPage() {
                         onChange={(e) => updateExtraLine(i, { amount: e.target.value })}
                       />
                       <button className="text-red-500" onClick={() => removeExtraLine(i)} aria-label="Hapus baris">
-                        ✕
+                        <X className="h-4 w-4" />
                       </button>
                     </div>
                   ))}
@@ -1131,35 +1433,12 @@ export default function CheckoutPage() {
             <span>Rp{total.toLocaleString("id-ID")}</span>
           </div>
 
-          {successMessage && (
-            <div className="rounded bg-green-50 p-2 text-sm text-green-700">
-              <div>{successMessage}</div>
-              {lastCompletedSale && (
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    className="rounded border border-green-300 px-2 py-1 text-xs"
-                    onClick={() => handlePrintSale(lastCompletedSale, lastReceiptMeta ?? undefined)}
-                  >
-                    Cetak Struk
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded border border-green-300 px-2 py-1 text-xs"
-                    onClick={() => handleWhatsappSale(lastCompletedSale, lastReceiptMeta ?? undefined)}
-                  >
-                    Kirim WA
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
           {checkoutError && !showPaymentModal && (
             <div className="rounded bg-red-50 p-2 text-sm text-red-700">{checkoutError}</div>
           )}
 
           <button
-            className="w-full rounded bg-slate-800 py-3 font-medium text-white disabled:opacity-40"
+            className="w-full rounded bg-blue-600 py-3 font-medium text-white hover:bg-blue-700 disabled:opacity-40"
             disabled={cart.length === 0}
             onClick={openPaymentModal}
           >
@@ -1167,9 +1446,6 @@ export default function CheckoutPage() {
           </button>
         </div>
       </div>
-      {showCameraScanner && (
-        <CameraScanner onDetect={handleCameraDetect} onClose={() => setShowCameraScanner(false)} />
-      )}
       {showPaymentModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -1190,7 +1466,7 @@ export default function CheckoutPage() {
                 className="text-slate-500"
                 aria-label="Tutup"
               >
-                ✕
+                <X className="h-5 w-5" />
               </button>
             </div>
             <div className="mb-4 flex justify-between text-sm font-semibold">
@@ -1218,7 +1494,7 @@ export default function CheckoutPage() {
                 <div className="flex gap-2">
                   <button
                     className={`flex-1 rounded border px-3 py-2 text-sm ${
-                      paymentMethod === "CASH" ? "border-slate-800 bg-slate-800 text-white" : "border-slate-300"
+                      paymentMethod === "CASH" ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300"
                     }`}
                     onClick={() => setPaymentMethod("CASH")}
                   >
@@ -1226,7 +1502,7 @@ export default function CheckoutPage() {
                   </button>
                   <button
                     className={`flex-1 rounded border px-3 py-2 text-sm ${
-                      paymentMethod === "BANK" ? "border-slate-800 bg-slate-800 text-white" : "border-slate-300"
+                      paymentMethod === "BANK" ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300"
                     }`}
                     onClick={() => setPaymentMethod("BANK")}
                   >
@@ -1270,10 +1546,251 @@ export default function CheckoutPage() {
                 checkoutMutation.isPending ||
                 (paymentMethod === "CASH" && (cashReceived.trim() === "" || Number(cashReceived) < total))
               }
-              className="mt-5 w-full rounded bg-slate-800 py-2.5 text-sm font-medium text-white disabled:opacity-40"
+              className="mt-5 w-full rounded bg-blue-600 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
             >
               {checkoutMutation.isPending ? "Memproses..." : "Bayar"}
             </button>
+          </div>
+        </div>
+      )}
+      {showPrinterSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => setShowPrinterSettings(false)}
+        >
+          <div className="w-full max-w-sm rounded-lg bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-semibold">Pengaturan Printer Thermal</h3>
+              <button
+                type="button"
+                onClick={() => setShowPrinterSettings(false)}
+                className="text-slate-500"
+                aria-label="Tutup"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {!isTauri() && (
+              <p className="text-sm text-amber-600">
+                Print langsung ke printer cuma jalan di aplikasi desktop, bukan di browser.
+              </p>
+            )}
+
+            {isTauri() && (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-500">
+                  Pairing printer lewat Bluetooth Windows dulu (Settings → Bluetooth & devices), baru pilih COM
+                  port-nya di sini.
+                </p>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">COM Port</label>
+                  <select
+                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                    value={printerPort ?? ""}
+                    onChange={(e) => saveSelectedPort(e.target.value)}
+                  >
+                    <option value="">— Belum dipilih —</option>
+                    {availablePorts.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={openPrinterSettings}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:border-slate-400"
+                >
+                  <RefreshCw className="h-4 w-4" /> Cari Ulang Port
+                </button>
+                {printerError && <p className="text-sm text-red-600">{printerError}</p>}
+                {printerPort && (
+                  <p className="text-sm text-emerald-600">
+                    Aktif: struk bakal langsung cetak ke {printerPort} (tanpa dialog print).
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      <div
+        className={`fixed inset-0 z-40 transition-opacity duration-200 ${
+          showSyncDrawer ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        }`}
+        aria-hidden={!showSyncDrawer}
+      >
+        <div className="absolute inset-0 bg-black/40" onClick={() => setShowSyncDrawer(false)} />
+        <div
+          className={`absolute inset-y-0 left-0 flex w-96 max-w-full flex-col bg-white shadow-xl transition-transform duration-200 ${
+            showSyncDrawer ? "translate-x-0" : "-translate-x-full"
+          }`}
+        >
+          <div className="border-b border-slate-200 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="flex items-center gap-1.5 font-semibold">
+                <CloudUpload className="h-4 w-4" /> Sinkronisasi
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowSyncDrawer(false)}
+                className="text-slate-500"
+                aria-label="Tutup"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={handleSyncNow}
+              disabled={isSyncing || !pendingSyncCount}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+            >
+              {isSyncing ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" /> Sinkron...
+                </>
+              ) : pendingSyncCount ? (
+                <>
+                  <CloudUpload className="h-4 w-4" /> Sync Sekarang ({pendingSyncCount})
+                </>
+              ) : (
+                "Semua transaksi sudah tersinkron"
+              )}
+            </button>
+          </div>
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
+            {!pendingSyncCount && reviewRows.length === 0 && (
+              <div className="text-sm text-slate-400">Gak ada transaksi menunggu sinkronisasi.</div>
+            )}
+            {reviewRows.length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-red-600">
+                  <AlertTriangle className="h-3.5 w-3.5" /> Perlu Ditinjau
+                </div>
+                <p className="mb-3 text-xs text-slate-500">
+                  Transaksi ini gagal disinkronkan (biasanya stok gak cukup pas dicek ulang). Struk sudah tercetak
+                  ke pelanggan, tapi belum tercatat resmi. Input stok opname dulu kalau perlu, baru retry — atau
+                  buang kalau memang gak bisa dilanjutkan.
+                </p>
+                <div className="space-y-3">
+                  {reviewRows.map((row) => {
+                    const rowTotal =
+                      row.receiptSnapshot.lines.reduce((s, l) => s + l.amount, 0) +
+                      row.receiptSnapshot.extraTotal +
+                      row.receiptSnapshot.taxTotal;
+                    return (
+                      <div key={row.id} className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium">{row.tempSourceRef}</span>
+                          <span className="text-xs text-slate-500">
+                            {new Date(row.updatedAt).toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                        <div className="mt-1 space-y-0.5 text-xs text-slate-600">
+                          {row.receiptSnapshot.lines.map((l, i) => (
+                            <div key={i} className="flex justify-between">
+                              <span>
+                                {l.name} — {l.qty} {l.uom} x Rp{l.unitPrice.toLocaleString("id-ID")}
+                              </span>
+                              <span>Rp{l.amount.toLocaleString("id-ID")}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-1 flex justify-between text-sm font-semibold">
+                          <span>Total</span>
+                          <span>Rp{rowTotal.toLocaleString("id-ID")}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-red-700">
+                          {row.lastError ?? "Gagal sync (sebab tidak diketahui)"}
+                        </p>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => retryOutboxRow(row.id)}
+                            className="flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-xs hover:border-slate-400"
+                          >
+                            <RefreshCw className="h-3 w-3" /> Retry
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => discardOutboxRow(row.id)}
+                            className="flex items-center gap-1 rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:border-red-400"
+                          >
+                            <Trash2 className="h-3 w-3" /> Buang
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {pendingSyncCount > 0 && (
+              <div className="rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-500">
+                {pendingSyncCount} transaksi menunggu koneksi buat disinkronkan otomatis.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {receiptModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setReceiptModal(null)}
+        >
+          <div className="w-full max-w-sm rounded-lg bg-white p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="flex items-center gap-1.5 font-semibold">
+                {receiptModal.mode === "success" ? (
+                  <>
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600" /> Transaksi Berhasil!
+                  </>
+                ) : (
+                  <>
+                    <Receipt className="h-5 w-5 text-slate-500" /> Tinjau Struk
+                  </>
+                )}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setReceiptModal(null)}
+                className="text-slate-500"
+                aria-label="Tutup"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <ReceiptPreview data={receiptModal.data} />
+            {checkoutError && <div className="mt-3 rounded bg-red-50 p-2 text-xs text-red-700">{checkoutError}</div>}
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                autoFocus
+                disabled={isPrinting}
+                onClick={() => printReceiptData(receiptModal.data).then(() => setReceiptModal(null))}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
+              >
+                {isPrinting ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Mencetak...
+                  </>
+                ) : (
+                  <>
+                    <Printer className="h-4 w-4" /> Cetak (Enter)
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setReceiptModal(null)}
+                className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:border-slate-400"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         </div>
       )}
