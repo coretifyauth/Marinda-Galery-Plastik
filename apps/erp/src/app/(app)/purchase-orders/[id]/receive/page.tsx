@@ -48,6 +48,7 @@ export default function ReceivePurchaseOrderPage() {
   const [billDescription, setBillDescription] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [lines, setLines] = useState<LineInput[]>([]);
+  const [discountAmount, setDiscountAmount] = useState("");
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<ChargeCategoryWithAccount[]>([]);
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
@@ -124,10 +125,11 @@ export default function ReceivePurchaseOrderPage() {
     );
   }
 
-  const totalDebit = lines.reduce(
+  const subtotal = lines.reduce(
     (sum, l) => sum + (parseFloat(l.qty_received) || 0) * (parseFloat(l.unit_cost) || 0),
     0
   );
+  const totalDebit = subtotal - (parseFloat(discountAmount) || 0);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -151,6 +153,7 @@ export default function ReceivePurchaseOrderPage() {
       })),
       extra_debit_lines: resolveChargeLines(extraLines, expenseCategories),
       apply_tax: applyTax,
+      discount_amount: discountAmount || 0,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -178,6 +181,7 @@ export default function ReceivePurchaseOrderPage() {
       p_extra_debit_lines: parsed.data.extra_debit_lines,
       p_apply_tax: parsed.data.apply_tax,
       p_supplier_id: null,
+      p_discount_amount: parsed.data.discount_amount,
     });
     setSubmitting(false);
     if (error) {
@@ -270,6 +274,25 @@ export default function ReceivePurchaseOrderPage() {
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="discount_amount">Diskon Pembelian (opsional — nominal Rupiah)</Label>
+              <Input
+                id="discount_amount"
+                type="number"
+                min="0"
+                step="any"
+                placeholder="mis. 50000"
+                value={discountAmount}
+                onChange={(e) => setDiscountAmount(e.target.value)}
+              />
+              <p className="text-xs text-slate-500">
+                Potongan yang disepakati sama supplier saat penerimaan ini (trade discount) — langsung
+                mengurangi nilai Utang Usaha, gak ada jurnal terpisah.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <ChargeLinesEditor
               label="Kategori Debit Tambahan (opsional — mis. ongkir supplier)"
               lines={extraLines}
@@ -307,7 +330,17 @@ export default function ReceivePurchaseOrderPage() {
           />
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-slate-500">Nilai Tagihan</p>
+            <div className="flex items-center justify-between text-sm text-slate-500">
+              <span>Subtotal</span>
+              <span className="font-mono">Rp{subtotal.toLocaleString("id-ID")}</span>
+            </div>
+            {Number(discountAmount) > 0 && (
+              <div className="flex items-center justify-between text-sm text-emerald-600">
+                <span>Diskon</span>
+                <span className="font-mono">-Rp{Number(discountAmount).toLocaleString("id-ID")}</span>
+              </div>
+            )}
+            <p className="mt-2 text-sm text-slate-500">Nilai Tagihan</p>
             <p className="mt-1 font-mono text-2xl text-black">
               Rp{totalDebit.toLocaleString("id-ID")}
             </p>

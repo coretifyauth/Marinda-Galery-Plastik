@@ -9,6 +9,16 @@ import type { Item } from "@/lib/items/schema";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { createGoodsIssueSchema } from "@/lib/goods-issues/schema";
 import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
+import {
+  fetchActiveItemDiscountRules,
+  resolveItemDiscount,
+  type ItemDiscountRule,
+} from "@/lib/item-discount-rules/schema";
+import {
+  fetchActiveBundlePromoRules,
+  resolveBundlePromoDiscounts,
+  type BundlePromoRule,
+} from "@/lib/bundle-promo-rules/schema";
 import { fetchTaxSettings, resolvedPpnKeluaran, type TaxSettings } from "@/lib/tax-settings/schema";
 import {
   resolveChargeLines,
@@ -29,10 +39,17 @@ import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
-type LineInput = { item_id: string; qty: string; amount: number };
+type LineInput = {
+  item_id: string;
+  qty: string;
+  amount: number;
+  baseQty: number;
+  discountRuleId: string | null;
+  discountAmount: number;
+};
 
 function emptyLine(): LineInput {
-  return { item_id: "", qty: "", amount: 0 };
+  return { item_id: "", qty: "", amount: 0, baseQty: 0, discountRuleId: null, discountAmount: 0 };
 }
 
 export default function NewGoodsIssuePage() {
@@ -41,6 +58,8 @@ export default function NewGoodsIssuePage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
+  const [discountRules, setDiscountRules] = useState<ItemDiscountRule[]>([]);
+  const [bundleRules, setBundleRules] = useState<BundlePromoRule[]>([]);
 
   const [customerId, setCustomerId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
@@ -70,7 +89,7 @@ export default function NewGoodsIssuePage() {
     const [{ data }, { data: units }] = await Promise.all([
       supabase
         .from("items")
-        .select("id, name, item_type, uom, inventory_account_id, archived_at")
+        .select("id, name, item_type, uom, inventory_account_id, category_id, archived_at")
         .order("name"),
       supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
     ]);
@@ -96,6 +115,8 @@ export default function NewGoodsIssuePage() {
           .order("name")
           .then(({ data }) => setChargeTypes((data ?? []) as unknown as ChargeCategoryWithAccount[])),
         fetchTaxSettings().then(setTaxSettings),
+        fetchActiveItemDiscountRules().then(setDiscountRules),
+        fetchActiveBundlePromoRules().then(setBundleRules),
       ]);
       if (active) setCheckingSession(false);
     });
@@ -105,14 +126,25 @@ export default function NewGoodsIssuePage() {
   }, [router, loadCustomers, loadItems]);
 
   function updateLineItem(index: number, itemId: string) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { item_id: itemId, qty: "", amount: 0 } : l)));
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...emptyLine(), item_id: itemId } : l)));
   }
 
-  function updateLineQty(index: number, change: UomQtyChange | null) {
+  function updateLineQty(index: number, itemId: string, change: UomQtyChange | null) {
     setLines((prev) =>
-      prev.map((l, i) =>
-        i === index ? { ...l, qty: change ? String(change.baseQty) : "", amount: change?.amount ?? 0 } : l
-      )
+      prev.map((l, i) => {
+        if (i !== index) return l;
+        if (!change) return { ...l, qty: "", amount: 0, baseQty: 0, discountRuleId: null, discountAmount: 0 };
+        const item = items.find((it) => it.id === itemId);
+        const resolved = resolveItemDiscount(itemId, item?.category_id ?? null, change.baseQty, change.amount, discountRules);
+        return {
+          ...l,
+          qty: String(change.baseQty),
+          amount: change.amount,
+          baseQty: change.baseQty,
+          discountRuleId: resolved?.discount_rule_id ?? null,
+          discountAmount: resolved?.discount_amount ?? 0,
+        };
+      })
     );
   }
 
@@ -124,16 +156,34 @@ export default function NewGoodsIssuePage() {
     setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  const totalAmount = lines.reduce((sum, l) => sum + l.amount, 0);
+  // Bundle promo (Beli N Gratis X) butuh lihat SEMUA baris sekaligus (qty pemicu lintas baris)
+  // -- dihitung derived tiap render, DIGABUNG ke discountAmount per-item yang udah ada
+  // (dibatasi gak lebih dari amount baris itu sendiri), bukan disimpan terpisah di state.
+  const bundleResolved = resolveBundlePromoDiscounts(
+    lines.map((l) => ({ item_id: l.item_id, qty: l.baseQty, unit_price: l.baseQty > 0 ? l.amount / l.baseQty : 0 })),
+    bundleRules
+  );
+  const linesWithBundle = lines.map((l, i) => {
+    const bundle = bundleResolved.get(i);
+    const combinedDiscount = Math.min(l.discountAmount + (bundle?.discount_amount ?? 0), l.amount);
+    return { ...l, bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null, combinedDiscount };
+  });
+
+  const grossAmount = lines.reduce((sum, l) => sum + l.amount, 0);
+  const totalDiscount = linesWithBundle.reduce((sum, l) => sum + l.combinedDiscount, 0);
+  const totalAmount = grossAmount - totalDiscount;
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
-    const activeLines = lines.filter((l) => l.item_id.trim() !== "" && l.qty.trim() !== "");
+    const activeLines = linesWithBundle.filter((l) => l.item_id.trim() !== "" && l.qty.trim() !== "");
     const convertedLines = activeLines.map((l) => ({
       item_id: l.item_id,
       qty_issued: Number(l.qty),
+      discount_rule_id: l.discountRuleId ?? undefined,
+      discount_amount: l.combinedDiscount,
+      bundle_promo_rule_id: l.bundlePromoRuleId ?? undefined,
     }));
 
     const creditLines = [
@@ -255,7 +305,7 @@ export default function NewGoodsIssuePage() {
                 <span>Qty & Satuan (harga otomatis)</span>
                 <span />
               </div>
-              {lines.map((line, i) => {
+              {linesWithBundle.map((line, i) => {
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id && u.price != null);
                 return (
                   <div key={i} className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2">
@@ -268,11 +318,19 @@ export default function NewGoodsIssuePage() {
                       ))}
                     </Select>
                     {line.item_id && unitsForItem.length > 0 ? (
-                      <UomPriceQtyInput
-                        key={line.item_id}
-                        units={unitsForItem}
-                        onChange={(change) => updateLineQty(i, change)}
-                      />
+                      <div className="flex flex-col gap-0.5">
+                        <UomPriceQtyInput
+                          key={line.item_id}
+                          units={unitsForItem}
+                          onChange={(change) => updateLineQty(i, line.item_id, change)}
+                        />
+                        {line.combinedDiscount > 0 && (
+                          <span className="text-xs text-emerald-600">
+                            {line.bundlePromoRuleId ? "Beli N Gratis X" : "Diskon otomatis"}: -Rp
+                            {line.combinedDiscount.toLocaleString("id-ID")}
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <span className="flex items-center text-xs text-slate-400">
                         {line.item_id ? "Barang ini belum punya harga jual" : "Pilih item dulu"}
@@ -343,7 +401,17 @@ export default function NewGoodsIssuePage() {
           />
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-slate-500">Jumlah Pendapatan</p>
+            <div className="flex items-center justify-between text-sm text-slate-500">
+              <span>Subtotal</span>
+              <span className="font-mono">Rp{grossAmount.toLocaleString("id-ID")}</span>
+            </div>
+            {totalDiscount > 0 && (
+              <div className="flex items-center justify-between text-sm text-emerald-600">
+                <span>Diskon</span>
+                <span className="font-mono">-Rp{totalDiscount.toLocaleString("id-ID")}</span>
+              </div>
+            )}
+            <p className="mt-2 text-sm text-slate-500">Jumlah Pendapatan</p>
             <p className="mt-1 font-mono text-2xl text-black">Rp{totalAmount.toLocaleString("id-ID")}</p>
           </div>
 

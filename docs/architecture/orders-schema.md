@@ -37,6 +37,8 @@ Konsep bisnisnya (kenapa order cuma "komitmen" dan belum bikin jurnal, kenapa op
 | Kolom | Isinya | Catatan |
 |---|---|---|
 | `item_id`, `qty_ordered`, `unit_price` | Barang, jumlah dipesan, harga sepakat | Harga di sini cuma "kesepakatan awal" — harga/qty riil dicatat ulang saat realisasi (GRN/Goods Issue), boleh beda |
+| `discount_rule_id`, `discount_amount` | Estimasi diskon (cuma buat `direction='SALE'`) | Resolusi otomatis dari `item-discount-rules-schema.md` saat order dibuat, `qty_ordered` penuh — PURELY informational (order gak pernah bikin jurnal). Dihitung ULANG dari nol saat realisasi ke `goods_note_lines`, bukan diwarisi dari sini — qty riil & aturan yang aktif saat realisasi boleh beda. Selalu `NULL`/`0` buat `direction='PURCHASE'` (sisi beli gak pakai aturan) |
+| `bundle_promo_rule_id` | Estimasi "Beli N Gratis X" (cuma buat `direction='SALE'`) | Resolusi cart-wide dari `bundle-promo-rules-schema.md` — sama sifatnya kayak `discount_rule_id` (informational, dihitung ulang saat realisasi) |
 
 **Alur Teknis (RPC)**
 
@@ -65,6 +67,8 @@ Konsep bisnisnya (kenapa order cuma "komitmen" dan belum bikin jurnal, kenapa op
 | `orders.counterparty_id` | banyak-ke-satu | `counterparties` |
 | `order_lines.order_id` | banyak-ke-satu | `orders` |
 | `order_lines.item_id` | banyak-ke-satu | `items` |
+| `order_lines.discount_rule_id` | banyak-ke-satu, opsional | `item_discount_rules` (`item-discount-rules-schema.md`), cuma keisi buat `direction='SALE'` |
+| `order_lines.bundle_promo_rule_id` | banyak-ke-satu, opsional | `bundle_promo_rules` (`bundle-promo-rules-schema.md`), cuma keisi buat `direction='SALE'` |
 | `order_lines` (via `order_line_id`) | satu-ke-banyak (opsional) | `goods_note_lines` (`goods_notes.type='INBOUND'` kalau `direction='PURCHASE'`, `'OUTBOUND'` kalau `direction='SALE'`) |
 
 Catatan tampilan: di aplikasi, Purchase Order dan Sales Order tetap tampil sebagai 2 halaman/menu terpisah (`/purchase-orders`, `/sales-orders`) — ini keputusan UI yang sengaja dipertahankan, bukan cerminan bahwa datanya masih 2 tabel berbeda.

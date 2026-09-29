@@ -39,6 +39,7 @@ export default function NewApBillPage() {
   const [description, setDescription] = useState("");
   const [supplierDocumentRef, setSupplierDocumentRef] = useState("");
   const [amount, setAmount] = useState("");
+  const [discountAmount, setDiscountAmount] = useState("");
   const [debitCategoryId, setDebitCategoryId] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
@@ -109,6 +110,7 @@ export default function NewApBillPage() {
         p_control_account_id: input.payable_account_id,
         p_apply_tax: input.apply_tax,
         p_supplier_document_ref: input.supplier_document_ref || null,
+        p_discount_amount: input.discount_amount,
       });
       if (error) throw new Error(error.message);
       return data as string;
@@ -127,8 +129,9 @@ export default function NewApBillPage() {
     setFormError(null);
 
     const debitCategory = expenseCategories.find((c) => c.id === debitCategoryId);
+    const netMainAmount = (Number(amount) || 0) - (Number(discountAmount) || 0);
     const debitLines = [
-      { account_id: debitCategory?.account_id ?? "", amount: Number(amount) },
+      { account_id: debitCategory?.account_id ?? "", amount: netMainAmount },
       ...resolveChargeLines(extraLines, expenseCategories),
     ];
 
@@ -140,6 +143,7 @@ export default function NewApBillPage() {
       debit_lines: debitLines,
       payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
       apply_tax: applyTax,
+      discount_amount: discountAmount || 0,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -154,10 +158,11 @@ export default function NewApBillPage() {
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  const totalAmount = (Number(amount) || 0) + resolveChargeLines(extraLines, expenseCategories).reduce(
+  const subtotal = (Number(amount) || 0) + resolveChargeLines(extraLines, expenseCategories).reduce(
     (sum, l) => sum + l.amount,
     0
   );
+  const totalAmount = subtotal - (Number(discountAmount) || 0);
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
@@ -226,6 +231,18 @@ export default function NewApBillPage() {
                 />
               </div>
               <div className="flex flex-col gap-1.5">
+                <Label htmlFor="discount_amount">Diskon Pembelian (opsional — nominal Rupiah)</Label>
+                <Input
+                  id="discount_amount"
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="mis. 50000"
+                  value={discountAmount}
+                  onChange={(e) => setDiscountAmount(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
                 <Label htmlFor="debit_category">Kategori Persediaan/Beban (debit)</Label>
                 <Select id="debit_category" value={debitCategoryId} onChange={(e) => setDebitCategoryId(e.target.value)}>
                   <option value="">Pilih kategori...</option>
@@ -283,7 +300,17 @@ export default function NewApBillPage() {
           />
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-slate-500">Nilai Tagihan</p>
+            <div className="flex items-center justify-between text-sm text-slate-500">
+              <span>Subtotal</span>
+              <span className="font-mono">Rp{subtotal.toLocaleString("id-ID")}</span>
+            </div>
+            {Number(discountAmount) > 0 && (
+              <div className="flex items-center justify-between text-sm text-emerald-600">
+                <span>Diskon</span>
+                <span className="font-mono">-Rp{Number(discountAmount).toLocaleString("id-ID")}</span>
+              </div>
+            )}
+            <p className="mt-2 text-sm text-slate-500">Nilai Tagihan</p>
             <p className="mt-1 font-mono text-2xl text-black">Rp{totalAmount.toLocaleString("id-ID")}</p>
           </div>
 

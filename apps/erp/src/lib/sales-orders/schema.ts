@@ -4,6 +4,9 @@ export const soLineSchema = z.object({
   item_id: z.string().uuid("Pilih item"),
   qty_ordered: z.coerce.number().positive("Qty harus lebih dari 0"),
   unit_price: z.coerce.number().positive("Harga harus lebih dari 0"),
+  discount_rule_id: z.string().uuid().optional(),
+  discount_amount: z.coerce.number().nonnegative().optional(),
+  bundle_promo_rule_id: z.string().uuid().optional(),
 });
 
 export const createSalesOrderSchema = z.object({

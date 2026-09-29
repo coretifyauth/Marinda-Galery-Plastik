@@ -52,13 +52,15 @@ cuma tabel penyimpanannya.
 | `unit_cost` | Harga beli riil per unit | Wajib diisi **HANYA INBOUND** — input manual, boleh beda dari harga di order line (selisih murni informasional) |
 | `total_cost` | Total biaya pokok (extended, bukan per-unit) | Wajib diisi **HANYA OUTBOUND** — dihitung dari harga rata-rata tertimbang saat konsumsi (Weighted Average, `inventory-ledger-schema.md`), bukan input manual |
 | `unit_price` | Harga jual per unit | Cuma keisi sisi OUTBOUND jalur langsung (POS/walk-in tanpa Sales Order) — kalau ada `order_line_id`, harga tetap bersumber dari `order_lines.unit_price` |
+| `discount_rule_id`, `discount_amount` | Diskon barang (lihat `item-discount-rules-schema.md`) | **OUTBOUND**: resolusi FRESH dari aturan aktif saat baris ini dibuat (bukan diwarisi dari `order_lines`), sudah baked-in ke `unit_price`/jumlah yang dikirim ke `create_goods_issue` — murni audit trail. **INBOUND**: porsi dari diskon header (nominal manual admin, lihat submodule "Diskon Pembelian" di bawah) yang diproratakan `create_goods_receipt` ke baris ini berdasar `qty * unit_cost` — satu-satunya kasus di mana kolom ini dipakai buat aritmatika (mengoreksi `avg_cost`) |
+| `bundle_promo_rule_id` | "Beli N Gratis X" (lihat `bundle-promo-rules-schema.md`) | Cuma OUTBOUND — `discount_amount` di atas bisa nampung kontribusi dari `item_discount_rules` DAN `bundle_promo_rules` sekaligus (dijumlah, dibatasi gak lebih dari `qty*unit_price` baris itu). Dari jalur POS, diisi `create_pos_sale` sendiri (server-side); dari Sales Order/Goods Issue manual, dari resolusi TypeScript client (informational, sama pola `discount_rule_id`) |
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Catat penerimaan barang (INBOUND, + tagihan sekaligus) | `create_goods_receipt` | 1 panggilan: (1) tentukan supplier — dari order kalau diisi, atau manual kalau langsung; (2) bikin Bill + jurnal Debit Persediaan/Kredit Utang Usaha; (3) insert `goods_notes`(`type='INBOUND'`)+`goods_note_lines`; (4) hitung ulang `avg_cost` & update saldo Persediaan per item | Order tujuan (kalau diisi) harus Purchase Order dan belum dibatalkan; qty diterima per baris order gak boleh melebihi sisa dipesan; jalur langsung wajib supplier manual |
-| Catat pengiriman barang (OUTBOUND, + invoice + pengakuan HPP sekaligus) | `create_goods_issue` | 1 panggilan: (1) bikin invoice + jurnal Debit Piutang/Kredit Pendapatan; (2) konsumsi tiap barang jadi dari stok (Weighted Average); (3) bikin jurnal **kedua** — Debit HPP, Kredit Persediaan Barang Jadi; (4) insert `goods_notes`(`type='OUTBOUND'`)+`goods_note_lines`; (5) catat mutasi keluar ke Kartu Stok | Sales Order tujuan (kalau diisi) harus `direction='SALE'` dan belum dibatalkan; qty keluar per baris order gak boleh melebihi sisa dipesan; qty keluar gak boleh melebihi stok tersedia |
+| Catat penerimaan barang (INBOUND, + tagihan sekaligus) | `create_goods_receipt` | 1 panggilan: (1) tentukan supplier — dari order kalau diisi, atau manual kalau langsung; (2) diskon header (`p_discount_amount`, opsional) diproratakan per baris berdasar `qty * unit_cost`, sisa pembulatan dibebankan ke baris terakhir; (3) bikin Bill + jurnal Debit Persediaan (sudah net diskon)/Kredit Utang Usaha; (4) insert `goods_notes`(`type='INBOUND'`)+`goods_note_lines`; (5) hitung ulang `avg_cost` & update saldo Persediaan per item pakai harga NET (setelah diskon per baris) | Order tujuan (kalau diisi) harus Purchase Order dan belum dibatalkan; qty diterima per baris order gak boleh melebihi sisa dipesan; jalur langsung wajib supplier manual; diskon gak boleh melebihi subtotal pembelian |
+| Catat pengiriman barang (OUTBOUND, + invoice + pengakuan HPP sekaligus) | `create_goods_issue` | 1 panggilan: (1) bikin invoice + jurnal Debit Piutang/Kredit Pendapatan (nilai per baris sudah net diskon, dihitung & dikirim client sebelum RPC dipanggil); (2) konsumsi tiap barang jadi dari stok (Weighted Average, gak kepengaruh diskon jual — HPP soal cost barang keluar, bukan harga jual); (3) bikin jurnal **kedua** — Debit HPP, Kredit Persediaan Barang Jadi; (4) insert `goods_notes`(`type='OUTBOUND'`)+`goods_note_lines` (termasuk `discount_rule_id`/`discount_amount` per baris, audit trail); (5) catat mutasi keluar ke Kartu Stok | Sales Order tujuan (kalau diisi) harus `direction='SALE'` dan belum dibatalkan; qty keluar per baris order gak boleh melebihi sisa dipesan; qty keluar gak boleh melebihi stok tersedia |
 
 **Aturan Bisnis → RPC**
 
@@ -73,6 +75,8 @@ cuma tabel penyimpanannya.
 | Order yang sudah dibatalkan gak bisa jadi dasar Goods Note baru | Guard di awal kedua RPC — cek `cancelled_at` order sebelum lanjut |
 | Tiap transaksi harus tertelusur ke dokumen sumber | `transaction_id` wajib diisi di `goods_notes`, gak pernah berdiri sendiri |
 | Data yang sudah tercatat gak boleh diubah/dihapus diam-diam | Trigger immutability pada `goods_notes` dan `goods_note_lines` |
+| Diskon penjualan gak pernah jadi baris jurnal terpisah (trade discount) | `create_goods_issue` cuma menyimpan `discount_rule_id`/`discount_amount` per baris (audit trail) — nilai yang dijurnal sudah net dari `p_credit_lines`, RPC gak menghitung ulang |
+| Diskon pembelian gak boleh bikin nilai Persediaan (GL) menyimpang dari valuasi Kartu Stok (`avg_cost`) | `create_goods_receipt` memprorata `p_discount_amount` ke tiap baris SEBELUM menghitung `avg_cost`, bukan cuma mengurangi angka agregat |
 
 **Interaksi Antar Tabel**
 
@@ -84,6 +88,8 @@ cuma tabel penyimpanannya.
 | `goods_note_lines.goods_note_id` | banyak-ke-satu | `goods_notes` |
 | `goods_note_lines.order_line_id` | banyak-ke-satu (opsional) | `order_lines` (arah harus cocok `type` header) |
 | `goods_note_lines.item_id` | banyak-ke-satu | `items` |
+| `goods_note_lines.discount_rule_id` | banyak-ke-satu, opsional | `item_discount_rules` (`item-discount-rules-schema.md`), cuma keisi buat `type='OUTBOUND'` |
+| `goods_note_lines.bundle_promo_rule_id` | banyak-ke-satu, opsional | `bundle_promo_rules` (`bundle-promo-rules-schema.md`), cuma keisi buat `type='OUTBOUND'` |
 | `goods_note_lines` (tiap insert) | memicu update/konsumsi | Saldo stok (`inventory-ledger-schema.md`) |
 
 Catatan lintas modul: retur customer (pembalikan stok+HPP dari OUTBOUND) dan retur ke supplier

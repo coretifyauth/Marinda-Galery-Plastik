@@ -13,8 +13,12 @@
 --
 -- Ref: memory/brief.md item `journal-lines-unbounded-aggregate.md` (status: Selesai,
 -- tapi migration `0041_report_account_ledger_opening_balance_rpc.sql` gak pernah dibuat).
+--
+-- create or replace (bukan create polos) -- fungsi ini ternyata udah ada di database live
+-- dari luar riwayat migration yang tercatat (sama kasusnya kayak 0036/0042), signature sama
+-- persis jadi aman di-replace.
 
-create function report_account_ledger_opening_balance(
+create or replace function report_account_ledger_opening_balance(
   p_account_id uuid,
   p_as_of date,
   p_before_offset int

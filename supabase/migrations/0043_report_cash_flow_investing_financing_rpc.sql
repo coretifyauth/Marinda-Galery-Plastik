@@ -5,8 +5,12 @@
 --
 -- Ref: memory/brief.md item `journal-lines-unbounded-aggregate.md` (status: Selesai,
 -- tapi migration `0040_report_cash_flow_investing_financing_rpc.sql` gak pernah dibuat).
+--
+-- create or replace (bukan create polos) -- fungsi ini ternyata udah ada di database live
+-- dari luar riwayat migration yang tercatat (sama kasusnya kayak 0036/0042), signature sama
+-- persis jadi aman di-replace.
 
-create function report_cash_flow_investing_financing(
+create or replace function report_cash_flow_investing_financing(
   p_start_date date,
   p_end_date date
 )

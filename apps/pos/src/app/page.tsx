@@ -16,6 +16,8 @@ import { nextOfflineSourceRef } from "@/lib/device-id";
 import { isLikelyNetworkError, probeSupabase, useOnlineStatus } from "@/lib/online-status";
 import { syncOutbox } from "@/lib/offline-sync";
 import { useLiveQuery } from "dexie-react-hooks";
+import { fetchActiveItemDiscountRules, resolveItemDiscount } from "@/lib/item-discount-rules";
+import { fetchActiveBundlePromoRules, resolveBundlePromoDiscounts } from "@/lib/bundle-promo-rules";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -94,7 +96,7 @@ async function fetchItemRows(): Promise<ItemRow[]> {
     const { data, error } = await supabase
       .from("items")
       .select(
-        "id, name, uom, item_units(unit_label, conversion_factor, price, is_base, barcode), inventory_balances(qty_on_hand)"
+        "id, name, uom, category_id, item_units(unit_label, conversion_factor, price, is_base, barcode), inventory_balances(qty_on_hand)"
       )
       .is("archived_at", null)
       .order("name");
@@ -216,7 +218,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "id, source_ref, date, created_at, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
+      "id, source_ref, date, created_at, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, discount_amount, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
     )
     .eq("type", "OUTBOUND")
     .eq("date", date)
@@ -229,7 +231,14 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
     date: string;
     created_at: string;
     counterparties: { name: string; contact: string | null } | null;
-    goods_notes: { goods_note_lines: { qty: number; unit_price: number | null; items: { name: string; uom: string } | null }[] }[];
+    goods_notes: {
+      goods_note_lines: {
+        qty: number;
+        unit_price: number | null;
+        discount_amount: number;
+        items: { name: string; uom: string } | null;
+      }[];
+    }[];
     payments: { id: string; journal_entry_id: string }[];
     transaction_lines: { account_id: string; amount: number; is_tax: boolean }[];
   };
@@ -273,6 +282,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
         .filter((l) => !l.is_tax && chargeAccountIds.has(l.account_id))
         .reduce((s, l) => s + l.amount, 0),
       taxTotal: row.transaction_lines.filter((l) => l.is_tax).reduce((s, l) => s + l.amount, 0),
+      discountTotal: goodsIssueLines.reduce((s, l) => s + (l.discount_amount ?? 0), 0),
     };
   });
 }
@@ -570,6 +580,21 @@ export default function CheckoutPage() {
     enabled: !checkingSession && !!chargeTypesQuery.data,
     staleTime: 10_000,
   });
+  // Diskon otomatis (Diskon Penjualan + Beli N Gratis X) -- query ini PREVIEW doang buat
+  // tampilan kembalian sebelum checkout; nilai otoritatif yang beneran dijurnal dihitung
+  // ULANG server-side di dalam create_pos_sale (lihat item-discount-rules.ts/bundle-promo-rules.ts).
+  const discountRulesQuery = useQuery({
+    queryKey: ["item_discount_rules"],
+    queryFn: fetchActiveItemDiscountRules,
+    enabled: !checkingSession,
+    staleTime: 10 * 60_000,
+  });
+  const bundleRulesQuery = useQuery({
+    queryKey: ["bundle_promo_rules"],
+    queryFn: fetchActiveBundlePromoRules,
+    enabled: !checkingSession,
+    staleTime: 10 * 60_000,
+  });
 
   const catalog = useMemo(() => mapItemRowsToCatalog(itemsQuery.data ?? []), [itemsQuery.data]);
   const scannableUnits = useMemo(() => mapItemRowsToScannableUnits(itemsQuery.data ?? []), [itemsQuery.data]);
@@ -587,10 +612,49 @@ export default function CheckoutPage() {
     return catalog.filter((item) => item.name.toLowerCase().includes(query));
   }, [catalog, searchQuery]);
 
-  const itemTotal = useMemo(
+  const grossItemTotal = useMemo(
     () => cart.reduce((sum, line) => sum + line.qty_sold * line.unit_price, 0),
     [cart]
   );
+
+  // Preview diskon (Diskon Penjualan + Beli N Gratis X) -- cart-wide, sama pola sisi admin
+  // (apps/erp). item.category_id diambil dari katalog yang udah di-fetch, bukan query baru.
+  const cartWithDiscount = useMemo(() => {
+    const discountRules = discountRulesQuery.data ?? [];
+    const bundleRules = bundleRulesQuery.data ?? [];
+    const itemLookup = new Map((itemsQuery.data ?? []).map((it) => [it.id, it]));
+
+    const itemResolved = cart.map((line) => {
+      const item = itemLookup.get(line.item_id);
+      const amount = line.qty_sold * line.unit_price;
+      const resolved = resolveItemDiscount(line.item_id, item?.category_id ?? null, line.qty_sold, amount, discountRules);
+      return { discountRuleId: resolved?.discount_rule_id ?? null, discountAmount: resolved?.discount_amount ?? 0 };
+    });
+
+    const bundleResolved = resolveBundlePromoDiscounts(
+      cart.map((line) => ({ item_id: line.item_id, qty: line.qty_sold, unit_price: line.unit_price })),
+      bundleRules
+    );
+
+    return cart.map((line, i) => {
+      const bundle = bundleResolved.get(i);
+      const gross = line.qty_sold * line.unit_price;
+      const combinedDiscount = Math.min(itemResolved[i].discountAmount + (bundle?.discount_amount ?? 0), gross);
+      return {
+        ...line,
+        discountRuleId: itemResolved[i].discountRuleId,
+        bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null,
+        combinedDiscount,
+      };
+    });
+  }, [cart, discountRulesQuery.data, bundleRulesQuery.data, itemsQuery.data]);
+
+  const totalDiscountPreview = useMemo(
+    () => cartWithDiscount.reduce((sum, l) => sum + l.combinedDiscount, 0),
+    [cartWithDiscount]
+  );
+
+  const itemTotal = grossItemTotal - totalDiscountPreview;
 
   const extraTotal = useMemo(
     () =>
@@ -757,6 +821,7 @@ export default function CheckoutPage() {
         }),
         extraTotal,
         taxTotal: taxAmount,
+        discountTotal: totalDiscountPreview,
       };
 
       // Probe dulu SEBELUM nyoba RPC beneran -- bedain "gak bisa dijangkau" (offline,
@@ -950,7 +1015,8 @@ export default function CheckoutPage() {
       taxAmount: sale.taxTotal,
       taxRate: taxSettings?.ppn_rate ?? null,
       subtotal,
-      total: subtotal + sale.extraTotal + sale.taxTotal,
+      discountTotal: sale.discountTotal,
+      total: subtotal - sale.discountTotal + sale.extraTotal + sale.taxTotal,
       paymentLabel: sale.cashAccountId === accountIds[ACCOUNT_CODES.KAS_TOKO] ? "Tunai" : "Bank",
       cashReceived: meta?.cashReceived ?? null,
       change: meta?.change ?? null,
@@ -1292,7 +1358,7 @@ export default function CheckoutPage() {
         <h2 className="mb-3 shrink-0 font-semibold">Keranjang</h2>
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
           {cart.length === 0 && <div className="text-sm text-slate-400">Belum ada item.</div>}
-          {cart.map((line) => (
+          {cartWithDiscount.map((line) => (
             <div
               key={`${line.item_id}-${line.unit_label}`}
               className="flex items-center justify-between gap-3 rounded-md border border-slate-100 px-2 py-2.5 text-sm"
@@ -1308,6 +1374,12 @@ export default function CheckoutPage() {
                   Rp{line.unit_price.toLocaleString("id-ID")} × {line.qty_sold} = Rp
                   {(line.unit_price * line.qty_sold).toLocaleString("id-ID")}
                 </div>
+                {line.combinedDiscount > 0 && (
+                  <div className="text-xs text-emerald-600">
+                    {line.bundlePromoRuleId ? "Beli N Gratis X" : "Diskon otomatis"}: -Rp
+                    {line.combinedDiscount.toLocaleString("id-ID")}
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
                 <button
@@ -1412,8 +1484,14 @@ export default function CheckoutPage() {
           <div className="space-y-0.5 text-sm text-slate-500">
             <div className="flex justify-between">
               <span>Subtotal Barang</span>
-              <span>Rp{itemTotal.toLocaleString("id-ID")}</span>
+              <span>Rp{grossItemTotal.toLocaleString("id-ID")}</span>
             </div>
+            {totalDiscountPreview > 0 && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Diskon</span>
+                <span>-Rp{totalDiscountPreview.toLocaleString("id-ID")}</span>
+              </div>
+            )}
             {extraTotal > 0 && (
               <div className="flex justify-between">
                 <span>Biaya Tambahan</span>

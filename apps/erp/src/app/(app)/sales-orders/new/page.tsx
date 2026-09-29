@@ -18,11 +18,27 @@ import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import {
+  fetchActiveItemDiscountRules,
+  resolveItemDiscount,
+  type ItemDiscountRule,
+} from "@/lib/item-discount-rules/schema";
+import {
+  fetchActiveBundlePromoRules,
+  resolveBundlePromoDiscounts,
+  type BundlePromoRule,
+} from "@/lib/bundle-promo-rules/schema";
 
-type LineInput = { item_id: string; qty_ordered: string; unit_price: string };
+type LineInput = {
+  item_id: string;
+  qty_ordered: string;
+  unit_price: string;
+  discountRuleId: string | null;
+  discountAmount: number;
+};
 
 function emptyLine(): LineInput {
-  return { item_id: "", qty_ordered: "", unit_price: "" };
+  return { item_id: "", qty_ordered: "", unit_price: "", discountRuleId: null, discountAmount: 0 };
 }
 
 export default function NewSalesOrderPage() {
@@ -31,6 +47,8 @@ export default function NewSalesOrderPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
+  const [discountRules, setDiscountRules] = useState<ItemDiscountRule[]>([]);
+  const [bundleRules, setBundleRules] = useState<BundlePromoRule[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [customerId, setCustomerId] = useState("");
@@ -55,7 +73,7 @@ export default function NewSalesOrderPage() {
     const [{ data }, { data: units }] = await Promise.all([
       supabase
         .from("items")
-        .select("id, name, item_type, uom, inventory_account_id, archived_at")
+        .select("id, name, item_type, uom, inventory_account_id, category_id, archived_at")
         .order("name"),
       supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
     ]);
@@ -76,7 +94,12 @@ export default function NewSalesOrderPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadCustomers(), loadItems()]);
+      await Promise.all([
+        loadCustomers(),
+        loadItems(),
+        fetchActiveItemDiscountRules().then(setDiscountRules),
+        fetchActiveBundlePromoRules().then(setBundleRules),
+      ]);
       if (active) setCheckingSession(false);
     });
     return () => {
@@ -110,10 +133,18 @@ export default function NewSalesOrderPage() {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
   }
 
-  function updateLineQty(index: number, change: UomQtyChange | null) {
+  function updateLineQty(index: number, itemId: string, change: UomQtyChange | null) {
+    if (!change) {
+      updateLine(index, { qty_ordered: "", unit_price: "", discountRuleId: null, discountAmount: 0 });
+      return;
+    }
+    const item = items.find((it) => it.id === itemId);
+    const resolved = resolveItemDiscount(itemId, item?.category_id ?? null, change.baseQty, change.amount, discountRules);
     updateLine(index, {
-      qty_ordered: change ? String(change.baseQty) : "",
-      unit_price: change ? String(change.basePrice) : "",
+      qty_ordered: String(change.baseQty),
+      unit_price: String(change.basePrice),
+      discountRuleId: resolved?.discount_rule_id ?? null,
+      discountAmount: resolved?.discount_amount ?? 0,
     });
   }
 
@@ -125,10 +156,29 @@ export default function NewSalesOrderPage() {
     setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  const totalValue = lines.reduce(
+  // Bundle promo (Beli N Gratis X) butuh lihat SEMUA baris sekaligus -- derived tiap render,
+  // digabung ke discountAmount per-item yang udah ada (dibatasi gak lebih dari nilai baris itu).
+  const bundleResolved = resolveBundlePromoDiscounts(
+    lines.map((l) => ({
+      item_id: l.item_id,
+      qty: parseFloat(l.qty_ordered) || 0,
+      unit_price: parseFloat(l.unit_price) || 0,
+    })),
+    bundleRules
+  );
+  const linesWithBundle = lines.map((l, i) => {
+    const bundle = bundleResolved.get(i);
+    const gross = (parseFloat(l.qty_ordered) || 0) * (parseFloat(l.unit_price) || 0);
+    const combinedDiscount = Math.min(l.discountAmount + (bundle?.discount_amount ?? 0), gross);
+    return { ...l, bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null, combinedDiscount };
+  });
+
+  const grossValue = lines.reduce(
     (sum, l) => sum + (parseFloat(l.qty_ordered) || 0) * (parseFloat(l.unit_price) || 0),
     0
   );
+  const totalDiscount = linesWithBundle.reduce((sum, l) => sum + l.combinedDiscount, 0);
+  const totalValue = grossValue - totalDiscount;
 
   function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -138,10 +188,13 @@ export default function NewSalesOrderPage() {
       customer_id: customerId,
       so_date: soDate,
       expected_date: expectedDate || undefined,
-      lines: lines.map((l) => ({
+      lines: linesWithBundle.map((l) => ({
         item_id: l.item_id,
         qty_ordered: l.qty_ordered,
         unit_price: l.unit_price,
+        discount_rule_id: l.discountRuleId ?? undefined,
+        discount_amount: l.combinedDiscount,
+        bundle_promo_rule_id: l.bundlePromoRuleId ?? undefined,
       })),
     });
     if (!parsed.success) {
@@ -222,13 +275,21 @@ export default function NewSalesOrderPage() {
                 <span>Qty & Satuan (harga otomatis)</span>
                 <span />
               </div>
-              {lines.map((line, i) => {
+              {linesWithBundle.map((line, i) => {
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id && u.price != null);
                 return (
                   <div key={i} className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2">
                     <Select
                       value={line.item_id}
-                      onChange={(e) => updateLine(i, { item_id: e.target.value, qty_ordered: "", unit_price: "" })}
+                      onChange={(e) =>
+                        updateLine(i, {
+                          item_id: e.target.value,
+                          qty_ordered: "",
+                          unit_price: "",
+                          discountRuleId: null,
+                          discountAmount: 0,
+                        })
+                      }
                     >
                       <option value="">Pilih item...</option>
                       {sellableItems.map((item) => (
@@ -238,7 +299,19 @@ export default function NewSalesOrderPage() {
                       ))}
                     </Select>
                     {line.item_id && unitsForItem.length > 0 ? (
-                      <UomPriceQtyInput key={line.item_id} units={unitsForItem} onChange={(change) => updateLineQty(i, change)} />
+                      <div className="flex flex-col gap-0.5">
+                        <UomPriceQtyInput
+                          key={line.item_id}
+                          units={unitsForItem}
+                          onChange={(change) => updateLineQty(i, line.item_id, change)}
+                        />
+                        {line.combinedDiscount > 0 && (
+                          <span className="text-xs text-emerald-600">
+                            {line.bundlePromoRuleId ? "Beli N Gratis X" : "Diskon otomatis"}: -Rp
+                            {line.combinedDiscount.toLocaleString("id-ID")}
+                          </span>
+                        )}
+                      </div>
                     ) : (
                       <span className="flex items-center text-xs text-slate-400">
                         {line.item_id ? "Barang ini belum punya harga jual" : "Pilih item dulu"}
@@ -271,7 +344,17 @@ export default function NewSalesOrderPage() {
 
         <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:self-start">
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-slate-500">Nilai Pesanan</p>
+            <div className="flex items-center justify-between text-sm text-slate-500">
+              <span>Subtotal</span>
+              <span className="font-mono">Rp{grossValue.toLocaleString("id-ID")}</span>
+            </div>
+            {totalDiscount > 0 && (
+              <div className="flex items-center justify-between text-sm text-emerald-600">
+                <span>Diskon</span>
+                <span className="font-mono">-Rp{totalDiscount.toLocaleString("id-ID")}</span>
+              </div>
+            )}
+            <p className="mt-2 text-sm text-slate-500">Nilai Pesanan</p>
             <p className="mt-1 font-mono text-2xl text-black">Rp{totalValue.toLocaleString("id-ID")}</p>
           </div>
 

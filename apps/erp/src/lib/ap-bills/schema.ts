@@ -9,6 +9,7 @@ export const createApBillSchema = z.object({
   debit_lines: z.array(chargeLineSchema).min(1, "Minimal 1 baris debit"),
   payable_account_id: z.string().uuid("Pilih akun Utang Usaha"),
   apply_tax: z.boolean().default(false),
+  discount_amount: z.coerce.number().nonnegative().default(0),
 });
 
 export type CreateApBillInput = z.infer<typeof createApBillSchema>;

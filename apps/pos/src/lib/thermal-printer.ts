@@ -70,6 +70,7 @@ export function buildReceiptEscPos(data: ReceiptData): Uint8Array {
 
   b.text(dashLine());
   b.text(padRow("Subtotal", rp(data.subtotal)));
+  if (data.discountTotal > 0) b.text(padRow("Diskon", `-${rp(data.discountTotal)}`));
   for (const l of data.extraLines) b.text(padRow(l.label, rp(l.amount)));
   if (data.taxAmount > 0) {
     b.text(padRow(`PPN${data.taxRate != null ? ` (${data.taxRate}%)` : ""}`, rp(data.taxAmount)));

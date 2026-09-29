@@ -14,7 +14,16 @@
 -- counterparties(name) di queries.ts resolve lewat FK counterparty_id -> counterparties(id),
 -- sama mekanisme PostgREST resource embedding kayak view invoices/bills lain.
 
-create or replace view ap_deposits_with_status
+-- drop+create (bukan create or replace) -- kedua view ini ternyata udah ada di database live
+-- dari luar riwayat migration yang tercatat (kolom `remaining` kepasang tipe `numeric` polos,
+-- bukan `numeric(14,2)` kayak kolom aslinya di tabel `deposits`), dan Postgres nolak
+-- CREATE OR REPLACE VIEW kalau tipe kolom outputnya beda dari definisi lama. Aman di-drop --
+-- view gak nyimpen data sendiri, cuma definisi query, dan gak ada objek lain yang bergantung
+-- ke sini lewat FK.
+drop view if exists ap_deposits_with_status;
+drop view if exists ar_deposits_with_status;
+
+create view ap_deposits_with_status
   with (security_invoker = true) as
 select
   id, counterparty_id as supplier_id, deposit_date, source_ref, amount,
@@ -22,7 +31,7 @@ select
 from deposits
 where type = 'INBOUND';
 
-create or replace view ar_deposits_with_status
+create view ar_deposits_with_status
   with (security_invoker = true) as
 select
   id, counterparty_id as customer_id, deposit_date, source_ref, amount,

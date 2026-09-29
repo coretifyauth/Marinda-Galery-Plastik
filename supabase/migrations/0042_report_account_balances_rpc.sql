@@ -11,8 +11,13 @@
 -- benar-benar dibuat, jadi semua laporan keuangan error). File ini adalah
 -- re-creation dengan nomor migration 0042 (0039-0041 sudah direferensi untuk
 -- AR changes di brief.md).
+--
+-- create or replace (bukan create polos) -- kedua fungsi ini ternyata udah ada di database
+-- live dari luar riwayat migration yang tercatat (sama kasusnya kayak ap_deposits_with_status/
+-- ar_deposits_with_status di 0036), signature (nama+tipe argumen) sama persis jadi aman
+-- di-replace, gak perlu drop dulu.
 
-create function report_account_balances_up_to(
+create or replace function report_account_balances_up_to(
   p_as_of date
 )
 returns table (account_id uuid, debit numeric, credit numeric)
@@ -29,7 +34,7 @@ as $$
   group by jl.account_id
 $$;
 
-create function report_account_balances_between(
+create or replace function report_account_balances_between(
   p_start_date date,
   p_end_date date,
   p_exclude_entry_ids uuid[] default '{}'

@@ -37,6 +37,7 @@ export type ItemRow = {
   id: string;
   name: string;
   uom: string;
+  category_id: string | null;
   item_units:
     | { unit_label: string; conversion_factor: number; price: number | null; is_base: boolean; barcode: string | null }[]
     | null;
@@ -58,4 +59,5 @@ export type SaleHistoryItem = {
   lines: SaleHistoryLine[];
   extraTotal: number;
   taxTotal: number;
+  discountTotal: number;
 };

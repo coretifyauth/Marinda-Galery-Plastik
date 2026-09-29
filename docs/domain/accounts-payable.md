@@ -35,6 +35,26 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - Batalin bill yang udah ada pembayaran/retur tanpa pengaman — pembukuan tetap balance tapi transaksi yang udah kesentuh jadi gak jelas nasibnya.
 - Salah pilih akun debit pas bikin bill — bahan baku harusnya masuk Persediaan (asset), jasa/sewa/listrik harusnya langsung Beban (expense). Sistem nerima akun debit sebagai input manual, jadi kesalahan pilih akun itu tanggung jawab yang input, bukan dicegah otomatis.
 
+### Diskon Pembelian (Trade Discount)
+
+Sama seperti sisi penjualan, diskon yang didukung di sini adalah **trade discount** — potongan yang disepakati di titik bill/penerimaan barang dibuat, bukan cash discount bersyarat waktu bayar. Trade discount gak pernah punya baris jurnal sendiri; nilai bill langsung dicatat net dari awal. Lihat submodule "Diskon Penjualan (Trade Discount)" di `docs/domain/accounts-receivable.md` untuk perbandingan lengkap trade vs cash discount.
+
+**Cara Kerja**
+- Beda dari sisi penjualan, diskon pembelian gak butuh master data aturan — admin bebas mengisi nilai diskon nominal Rupiah langsung saat bikin AP Bill atau saat mencatat Penerimaan Barang (Goods Receipt), mirip cara kerja kategori beban tambahan (misal Ongkos Kirim Supplier), cuma arahnya mengurangi total, bukan menambah.
+- Nilai diskon ini murni mengurangi jumlah yang jadi Utang Usaha — gak nyentuh akun pembukuan mana pun secara terpisah, karena bukan kejadian akuntansi sendiri, cuma bagian dari negosiasi harga di titik pembelian itu.
+- Berlaku di level dokumen (1 nilai per bill), bukan per baris barang — beda dari sisi penjualan yang per-barang lewat aturan diskon.
+
+**Aturan Bisnis**
+- Diskon pembelian diinput manual sebagai nominal Rupiah (bukan persen), bebas diisi admin tanpa harus dari master data — beda sengaja dari sisi penjualan yang wajib dari aturan.
+- Diskon pembelian gak pernah menghasilkan baris jurnal terpisah — nilai bill yang tercatat sudah net dari awal.
+
+**Skenario**
+- Bill dari supplier senilai Rp1.000.000, dapat potongan tunai Rp50.000 karena bayar kontan — admin isi field diskon Rp50.000 saat bikin bill, Utang Usaha yang tercatat Rp950.000, tanpa baris jurnal diskon terpisah.
+
+**Common Mistakes**
+- Mencatat diskon pembelian sebagai baris jurnal "Diskon Pembelian" tersendiri — trade discount gak butuh itu, cukup net langsung.
+- Menyamakan mekanisme ini dengan diskon penjualan (yang wajib dari master data aturan) — sisi pembelian sengaja dibuat bebas/manual, gak butuh aturan yang disiapkan duluan.
+
 ### Retur Barang ke Supplier
 
 Form retur memvalidasi kategori akun: akun Persediaan gak bisa "diretur" lewat jalur nominal manual tanpa bukti fisik (bill wajib punya Goods Receipt Note buat retur Persediaan), dan akun Utang Usaha terkunci otomatis ke akun yang benar (gak bisa salah diisi akun lain).

@@ -20,6 +20,7 @@ export const createGoodsReceiptSchema = z
     lines: z.array(grnLineSchema).min(1, "Minimal 1 baris item"),
     extra_debit_lines: z.array(chargeLineSchema).optional(),
     apply_tax: z.boolean().default(false),
+    discount_amount: z.coerce.number().nonnegative().default(0),
   })
   // Purchase Order opsional (memory/scope-debt/order-generalization.md Fase 2) -- tapi
   // begitu gak ada PO, supplier-nya harus dipilih manual, gak ada jalur lain buat tau siapa

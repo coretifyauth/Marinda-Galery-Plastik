@@ -47,6 +47,8 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `replacements-schema.md` — gabungan ganti barang garansi AR + tukar barang ke pemasok AP (retur Opsi B), 2026-09-09.
 - `app-settings-schema.md` (dulu `tax-settings-schema.md`, digabung dengan `company_settings`+`pos_settings` 2026-09-14) — Pengaturan PPN + identitas perusahaan + walk-in customer POS, 1 baris dipakai bareng AR/AP/POS/print.
 - `items-schema.md` — master barang, satuan jual/harga, Kode Scan Barang.
+- `item-discount-rules-schema.md` — aturan diskon penjualan per barang/kategori barang (trade discount, sisi jual doang), 2026-09-29.
+- `bundle-promo-rules-schema.md` — aturan "Beli N Gratis X" (barang hadiah boleh beda dari barang pemicu), 2026-09-29. Resolusi server-side di `create_pos_sale` (beda dari `item-discount-rules-schema.md` yang trust client sisi admin).
 - `orders-schema.md` — gabungan Purchase Order + Sales Order.
 - `goods-notes-schema.md` (dulu `goods-receipt-schema.md`+`goods-issue-schema.md`, digabung 2026-09-07) — penerimaan barang dari pemasok (3-Way Matching, INBOUND) dan penjualan/keluar barang ke pelanggan (OUTBOUND, titik HPP diakui), 1 tabel generic dibedakan `type`.
 - `bom-schema.md` — resep produksi (Bill of Materials).

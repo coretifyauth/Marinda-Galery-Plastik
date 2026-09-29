@@ -23,6 +23,79 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 
 Tidak ada mekanisme penolakan otomatis untuk invoice baru berdasarkan batas kredit atau keterlambatan piutang customer — customer tidak punya batas kredit maupun toleransi keterlambatan yang disimpan/dicek sistem. Penagihan piutang telat ditangani lewat reminder dan renegosiasi cicilan, dilakukan manual oleh staf, bukan lewat blokir otomatis sistem.
 
+### Diskon Penjualan (Trade Discount)
+
+Diskon yang didukung sistem adalah **trade discount** — potongan yang disepakati di titik invoice/Sales Order dibuat, bukan diskon bersyarat waktu bayar (**cash/settlement discount**, misal term "2/10 net 30"). Bedanya penting: trade discount gak pernah punya baris jurnal sendiri (invoice langsung dicatat di nilai net), sementara cash discount butuh invoice dicatat di nilai kotor dulu lalu diakui belakangan pas pembayaran lewat akun kontra terpisah. Sistem ini sengaja cuma mendukung trade discount — cash discount di luar scope sekarang.
+
+**Cara Kerja**
+- Staf gak bisa mengetik nilai diskon bebas untuk penjualan — diskon HARUS berasal dari daftar aturan diskon yang disiapkan admin lebih dulu sebagai data master, prinsipnya sama dengan kategori pendapatan tambahan (staf gak bebas pilih hal finansial sendiri).
+- Tiap aturan diskon ditempelkan ke SATU barang spesifik ATAU SATU kategori barang (gak bisa dua-duanya dalam 1 aturan yang sama) — nilainya persen atau nominal Rupiah, dipilih admin saat aturan itu dibuat.
+- Diskon diterapkan OTOMATIS per baris barang, begitu barang yang dipilih staf cocok dengan aturan yang aktif — staf gak memilih aturan mana yang dipakai secara manual, sistem yang mencocokkan.
+- Kalau 1 barang cocok ke 2 aturan sekaligus (aturan khusus barang itu DAN aturan kategori yang menaunginya), aturan yang lebih spesifik (langsung ke barang) yang menang. Supaya konflik ini gak pernah numpuk jadi rumit, tiap barang cuma boleh punya SATU aturan aktif, dan tiap kategori juga cuma boleh punya SATU aturan aktif — jadi ambiguitas cuma bisa terjadi di 1 bentuk (barang vs kategori penaungnya), gak pernah aturan-vs-aturan di level yang sama.
+- Nilai diskon per baris dihitung & disimpan permanen begitu barisnya dibuat (snapshot) — kalau aturan diskonnya diubah/diarsipkan belakangan, transaksi yang udah terlanjur dibuat gak ikut berubah, sama seperti pola snapshot harga/termin lain di sistem ini.
+- Diskon di level dokumen (total invoice) bukan input terpisah — murni akumulasi dari diskon tiap baris barang yang kena aturan, ditampilkan sebagai 1 angka ringkasan di atas baris-baris item.
+- Cuma berlaku buat invoice yang punya baris barang fisik (dari Sales Order, Jual Barang Langsung/Goods Issue, atau checkout kasir/POS) — invoice financial-only (jasa, tanpa referensi barang) gak pernah kena diskon ini karena gak ada barang yang bisa dicocokkan ke aturan.
+- **Berlaku juga di kasir (POS)**, otomatis, tanpa kasir pilih apa pun — sama prinsipnya kayak sisi admin. Bedanya cuma di titik komputasinya: sisi admin (Sales Order/Goods Issue) dihitung di lapisan aplikasi lalu dipercaya oleh RPC (staf yang menjalankannya sudah role admin/accountant), sementara checkout POS dihitung ULANG di dalam RPC `create_pos_sale` sendiri (server-side, gak dipercaya dari aplikasi kasir) — karena RPC itu dirancang gak pernah mempercayai nilai apa pun dari sisi kasir sejak awal (role `cashier` akses lebih terbatas). Lihat `docs/architecture/item-discount-rules-schema.md` buat detail teknisnya.
+
+**Aturan Bisnis**
+- Staf tidak bisa menginput nilai diskon bebas untuk penjualan — hanya dari aturan diskon aktif yang sudah disiapkan admin.
+- 1 barang cuma boleh dinaungi 1 aturan diskon aktif, 1 kategori juga cuma boleh dinaungi 1 aturan diskon aktif.
+- Kalau barang match ke aturan barang DAN aturan kategori sekaligus, aturan barang (lebih spesifik) yang menang.
+- Nilai diskon disimpan sebagai snapshot per baris transaksi — perubahan/pengarsipan aturan diskon di kemudian hari gak mengubah transaksi yang sudah terlanjur dibuat.
+- Diskon penjualan gak pernah menghasilkan baris jurnal terpisah — nilai invoice yang tercatat sudah net dari awal.
+- Berlaku di semua jalur penjualan barang fisik: Sales Order, Jual Barang Langsung, maupun checkout kasir (POS).
+
+**Skenario**
+- Barang "Kopi Robusta 250gr" punya aturan diskon aktif 10% — staf bikin Sales Order pilih barang ini, sistem otomatis potong 10% dari harga jual satuan itu di baris tersebut, invoice yang lahir dari situ sudah net.
+- Kategori "Minuman Kemasan" punya aturan diskon aktif Rp2.000/unit, tapi barang "Teh Botol 350ml" (masuk kategori itu) juga punya aturan diskon khusus 5% — yang dipakai buat barang ini aturan barangnya (5%), aturan kategori diabaikan untuk barang ini.
+- Invoice jasa (financial-only, gak ada baris barang) — gak ada diskon yang bisa diterapkan sama sekali, karena gak ada barang untuk dicocokkan ke aturan.
+
+**Common Mistakes**
+- Membiarkan staf mengetik nilai diskon bebas di form invoice/Sales Order — melanggar aturan "harus dari master data", buka celah diskon sembarangan tanpa kendali admin.
+- Membolehkan 2 aturan aktif menaungi barang/kategori yang sama — bikin ambigu aturan mana yang harus dipakai.
+- Menghitung ulang diskon dari aturan TERKINI tiap invoice lama dibuka — harusnya pakai nilai snapshot yang udah disimpan saat baris itu dibuat, bukan dihitung ulang.
+- Membuat baris jurnal "Diskon Penjualan" terpisah — trade discount gak pernah punya baris jurnal sendiri, beda dari cash discount yang sengaja gak diimplementasi sekarang.
+- Mempercayai nilai diskon yang dikirim aplikasi kasir apa adanya di `create_pos_sale` — beda dari RPC sisi admin, RPC ini `security definer` buat role `cashier` yang aksesnya terbatas, jadi WAJIB menghitung ulang sendiri aturan mana yang berlaku di server, bukan trust dari client.
+
+### Beli N Gratis X (Bundle Promo)
+
+Mekanisme promo kedua, **berbeda** dari Diskon Penjualan di atas — bukan variasi darinya. Diskon Penjualan berbasis **harga** (qty yang dibawa pulang customer tetap sama, cuma harga per unit yang dipotong). Bundle Promo berbasis **kuantitas** — customer bawa pulang barang LEBIH BANYAK dari yang dia bayar (misal "beli 2 Sabun gratis 1 Shampo"), sehingga ada dampak stok fisik ekstra (barang hadiah beneran keluar gudang) yang gak ada di Diskon Penjualan biasa.
+
+**Cara Kerja**
+- Barang pemicu (yang harus dibeli) SELALU barang spesifik, bukan kategori (beda dari Diskon Penjualan yang boleh kategori) — di dunia nyata promo jenis ini hampir selalu soal 1 produk spesifik, bukan "barang apa saja dari kategori X".
+- Barang hadiah BOLEH beda dari barang pemicu (misal beli Sabun gratis Shampo), atau boleh juga barang yang sama (misal beli 2 Kopi gratis 1 Kopi yang sama) — keduanya sama-sama didukung lewat struktur yang sama, cuma beda apakah kedua sisinya nunjuk barang yang sama atau beda.
+- Aturan promo terdiri dari: barang pemicu, qty beli minimal (N), barang hadiah, qty gratis per set (X). Sistem otomatis mencocokkan — staf gak pilih aturan mana yang dipakai secara manual, sama prinsipnya dengan Diskon Penjualan.
+- **Berulang tiap kelipatan penuh** — kalau syarat "beli 2" dan customer beli 5 barang pemicu, itu dihitung 2 set penuh (4 unit terpakai, dapat 2 unit gratis) + sisa 1 unit yang gak cukup buat set berikutnya (dibayar penuh, gak dapat apa-apa). Bukan cuma berlaku 1x per transaksi berapa pun qty-nya.
+- **Barang hadiah harus BENERAN ada sebagai baris tersendiri di invoice/keranjang** (staf/kasir tetap harus pilih/scan barang hadiahnya secara fisik seperti barang biasa) — sistem TIDAK PERNAH menambahkan barang ke invoice secara otomatis. Begitu syarat qty barang pemicu terpenuhi DAN barang hadiahnya ada di baris, sistem mengoreksi HARGA baris barang hadiah itu jadi Rp0 (sampai batas qty gratis yang didapat, gak melebihi qty barang hadiah yang beneran ada di baris itu). Kalau customer gak ambil barang hadiahnya sama sekali, gak ada apa pun yang terjadi — invoice tetap harga penuh, karena gak ada barang hadiah yang keluar dari gudang untuk dikoreksi harganya.
+- **Ditangani dengan Cara A** (lihat perbandingan di bawah) — TIDAK ada baris jurnal "Beban Promosi" terpisah. Barang hadiah yang keluar tetap lewat jurnal HPP/Persediaan Barang Jadi yang sama seperti penjualan normal (HPP diakui dari cost barang yang keluar, gak peduli harga jualnya Rp0 atau bukan) — cuma Pendapatan Penjualan buat baris itu yang jadi Rp0.
+- **Perbandingan Cara A vs Cara B** (2 cara akuntansi menangani barang gratis — sistem ini cuma mendukung Cara A):
+  - **Cara A (dipakai sistem ini)** — barang gratis dianggap bagian dari penjualan biasa, harga baris itu dikoreksi jadi Rp0, HPP-nya tetap lewat akun HPP normal. Sederhana, gak butuh akun baru.
+  - **Cara B (TIDAK diimplementasikan)** — barang gratis dipisah sebagai "Beban Promosi" (Debit Beban Promosi, Kredit Persediaan Barang Jadi), bukan lewat HPP. Lebih presisi buat lihat "total nilai barang gratis yang dikasih buat promo" sebagai angka laporan tersendiri, tapi butuh akun baru + pemisahan jurnal HPP normal vs promosi.
+- Berlaku sama persis di sisi admin (Sales Order/Goods Issue) maupun kasir (POS) — sama seperti Diskon Penjualan, dengan perbedaan titik komputasi yang sama (admin: dihitung aplikasi lalu dipercaya RPC; POS: dihitung ulang di dalam `create_pos_sale`).
+- 1 barang pemicu boleh punya LEBIH DARI 1 aturan bundle aktif sekaligus, dengan barang hadiah yang berbeda-beda (misal "beli 2 Sabun gratis 1 Shampo" DAN "beli 3 Sabun gratis 1 Kondisioner" boleh aktif bersamaan) — beda dari Diskon Penjualan yang dibatasi 1 aturan aktif per barang, karena di sini ambiguitasnya dicegah lewat kombinasi (barang pemicu, barang hadiah), bukan per barang pemicu doang.
+
+**Aturan Bisnis**
+- Barang pemicu wajib barang spesifik (gak boleh kategori).
+- Barang hadiah wajib ada sebagai baris tersendiri di invoice/keranjang yang sama — sistem gak pernah menambahkan barang secara otomatis.
+- Diskon (harga jadi Rp0) dibatasi qty gratis yang beneran didapat dari perhitungan kelipatan, DAN gak boleh melebihi qty barang hadiah yang ada di baris itu.
+- Promo berulang tiap kelipatan penuh dari qty beli minimal, sisa yang gak cukup 1 kelipatan dibayar harga penuh.
+- Gak ada baris jurnal "Beban Promosi" — barang hadiah tetap lewat HPP normal (Cara A).
+- Berlaku di semua jalur penjualan barang fisik (Sales Order, Goods Issue, POS) — sama seperti Diskon Penjualan.
+- Boleh lebih dari 1 aturan aktif per barang pemicu, asal kombinasi (barang pemicu, barang hadiah)-nya beda.
+
+**Skenario**
+- Beli 2 Sabun (Rp10.000/pcs), promo aktif "beli 2 Sabun gratis 1 Shampo" (Rp15.000/pcs), customer juga ambil 1 Shampo — baris Sabun tetap Rp20.000, baris Shampo jadi Rp0 (HPP Shampo tetap diakui normal).
+- Customer beli 5 Sabun (bukan kelipatan bersih dari 2) dengan promo yang sama, ambil 2 Shampo — dapat 2 set penuh (4 Sabun terpakai) = 2 Shampo gratis, sisa 1 Sabun dibayar penuh. Kedua baris Shampo jadi Rp0 (pas dengan qty gratis yang didapat).
+- Customer beli 2 Sabun tapi gak ambil Shampo sama sekali — invoice cuma ada baris Sabun, harga penuh, gak ada yang gratis.
+- Customer beli 2 Sabun, ambil 3 Shampo — cuma 1 Shampo yang jadi Rp0 (sesuai qty gratis yang didapat dari 1 set), 2 Shampo lainnya dibayar harga penuh.
+
+**Common Mistakes**
+- Menambahkan barang hadiah otomatis ke invoice/keranjang tanpa staf/kasir pilih — barang fisik gak boleh "dipaksa keluar" dari gudang tanpa benar-benar dipilih.
+- Mencatat barang hadiah sebagai Beban Promosi terpisah — sistem ini pakai Cara A, bukan Cara B.
+- Membolehkan barang pemicu berupa kategori — sengaja dibatasi ke barang spesifik biar gak ada ambiguitas penjumlahan qty lintas barang beda dalam 1 kategori.
+- Cuma menghitung 1x diskon berapa pun qty yang dibeli — harusnya berulang tiap kelipatan penuh dari qty beli minimal.
+- Diskon baris hadiah melebihi qty yang beneran ada di baris itu — harus dibatasi qty barang hadiah yang benar-benar dipilih, gak boleh "berutang" gratis ke qty yang belum ada.
+
 ### Retur Barang (Credit Note)
 
 Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo excess retur yang direklasifikasi keluar dari Piutang Usaha, sama seperti di sisi AP.

@@ -5,6 +5,10 @@ export const giLineSchema = z.object({
   item_id: z.string().uuid("Pilih barang jadi"),
   qty_issued: z.coerce.number().positive("Qty harus lebih dari 0"),
   order_line_id: z.string().uuid().optional(),
+  unit_price: z.coerce.number().nonnegative().optional(),
+  discount_rule_id: z.string().uuid().optional(),
+  discount_amount: z.coerce.number().nonnegative().optional(),
+  bundle_promo_rule_id: z.string().uuid().optional(),
 });
 
 export const createGoodsIssueSchema = z.object({
@@ -17,6 +21,7 @@ export const createGoodsIssueSchema = z.object({
   finished_good_account_id: z.string().uuid("Pilih akun Persediaan Barang Jadi"),
   lines: z.array(giLineSchema).min(1, "Minimal 1 baris item"),
   apply_tax: z.boolean().default(false),
+  discount_amount: z.coerce.number().nonnegative().default(0),
 });
 
 export type CreateGoodsIssueInput = z.infer<typeof createGoodsIssueSchema>;
