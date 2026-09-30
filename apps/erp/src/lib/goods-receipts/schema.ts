@@ -39,6 +39,7 @@ export type GoodsReceiptNote = {
   delivery_note_ref: string | null;
   note_date: string;
   created_at: string;
+  created_by: string | null;
   orders: { source_ref: string; counterparties: { name: string } } | null;
   ap_bills: { source_ref: string; amount: number; counterparties: { name: string } };
   goods_note_lines: {

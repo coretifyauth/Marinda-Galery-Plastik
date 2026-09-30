@@ -1,12 +1,12 @@
-/** Preview client-side dari trade discount (item_discount_rules) -- MURNI buat tampilan
- * kasir (hitung kembalian sebelum checkout dikonfirmasi), BUKAN otoritatif. Nilai yang
+/** Preview client-side dari trade discount (promotion_item_discount_rules) -- MURNI buat
+ * tampilan kasir (hitung kembalian sebelum checkout dikonfirmasi), BUKAN otoritatif. Nilai yang
  * beneran dijurnal dihitung ULANG server-side di dalam RPC create_pos_sale lewat fungsi SQL
- * resolve_item_discount (supabase/migrations/0046_bundle_promo_rules_schema.sql) -- drift-risk
- * 2-tempat yang disadari, pola sama report_cash_flow_investing_financing vs reference
- * implementation TS-nya (lihat memory/architecture/app/tech-stack-decisions.md). Logic di
- * bawah ini WAJIB tetap mirror apps/erp/src/lib/item-discount-rules/schema.ts kalau salah
- * satu diubah. Ref: docs/domain/accounts-receivable.md submodule "Diskon Penjualan (Trade
- * Discount)", docs/architecture/item-discount-rules-schema.md. */
+ * resolve_item_discount (supabase/migrations/0047_rename_promotion_rules_tables.sql) --
+ * drift-risk 2-tempat yang disadari, pola sama report_cash_flow_investing_financing vs
+ * reference implementation TS-nya (lihat memory/architecture/app/tech-stack-decisions.md).
+ * Logic di bawah ini WAJIB tetap mirror apps/erp/src/lib/promotion-item-discount-rules/schema.ts
+ * kalau salah satu diubah. Ref: docs/domain/accounts-receivable.md submodule "Diskon Penjualan
+ * (Trade Discount)", docs/architecture/promotion-item-discount-rules-schema.md. */
 import { supabase } from "./supabase/client";
 import { getKeyValue, setKeyValue } from "./local-db";
 
@@ -23,15 +23,15 @@ export type ItemDiscountRule = {
 export async function fetchActiveItemDiscountRules(): Promise<ItemDiscountRule[]> {
   try {
     const { data, error } = await supabase
-      .from("item_discount_rules")
+      .from("promotion_item_discount_rules")
       .select("id, item_id, category_id, discount_type, discount_value")
       .is("archived_at", null);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as ItemDiscountRule[];
-    await setKeyValue("item_discount_rules", rows);
+    await setKeyValue("promotion_item_discount_rules", rows);
     return rows;
   } catch (err) {
-    const cached = await getKeyValue<ItemDiscountRule[]>("item_discount_rules");
+    const cached = await getKeyValue<ItemDiscountRule[]>("promotion_item_discount_rules");
     if (cached) return cached;
     throw err;
   }

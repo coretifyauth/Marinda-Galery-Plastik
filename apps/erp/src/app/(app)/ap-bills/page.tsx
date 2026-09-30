@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
 import type { ApBillOrigin, ApBillStatus } from "@/lib/ap-bills/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useApBills } from "@/lib/ap-bills/queries";
+import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
@@ -77,6 +78,7 @@ export default function ApBillsPage() {
   };
   const billsQuery = useApBills(filters);
   const bills = billsQuery.data?.rows ?? [];
+  const userEmails = useUserEmails(bills.map((b) => b.created_by)).data ?? {};
   const total = billsQuery.data?.total ?? 0;
 
   const loadSuppliers = useCallback(async () => {
@@ -157,6 +159,7 @@ export default function ApBillsPage() {
               <th className="px-4 py-2 text-right">Jumlah</th>
               <th className="px-4 py-2 text-right">Outstanding</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5">
@@ -240,6 +243,7 @@ export default function ApBillsPage() {
                   <option value="dibatalkan">Dibatalkan</option>
                 </select>
               </th>
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -287,12 +291,13 @@ export default function ApBillsPage() {
                       {status}
                     </span>
                   </td>
+                  <td className="px-4 py-2 text-slate-500">{(bill.created_by && userEmails[bill.created_by]) ?? "-"}</td>
                 </tr>
               );
             })}
             {bills.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={9} className="px-4 py-6 text-center text-slate-400">
                   {billsQuery.isLoading ? <InlineSpinner /> : "Belum ada bill."}
                 </td>
               </tr>

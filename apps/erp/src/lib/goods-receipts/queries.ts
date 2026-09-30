@@ -14,7 +14,7 @@ export type GoodsReceiptFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))";
+  "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, created_by, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))";
 
 export async function fetchGoodsReceipts(
   filters: GoodsReceiptFilters

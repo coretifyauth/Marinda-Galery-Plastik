@@ -27,7 +27,7 @@ export type ResolvedItemDiscount = { discount_rule_id: string; discount_amount: 
  * diskon otomatis (sistem yang mencocokkan, staf gak pernah pilih manual). */
 export async function fetchActiveItemDiscountRules(): Promise<ItemDiscountRule[]> {
   const { data } = await supabase
-    .from("item_discount_rules")
+    .from("promotion_item_discount_rules")
     .select("id, name, item_id, category_id, discount_type, discount_value, archived_at")
     .is("archived_at", null);
   return (data ?? []) as ItemDiscountRule[];

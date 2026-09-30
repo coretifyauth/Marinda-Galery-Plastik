@@ -33,6 +33,7 @@ export type GoodsIssue = {
   note_date: string;
   source_ref: string;
   created_at: string;
+  created_by: string | null;
   ar_invoices: { source_ref: string; amount: number; counterparties: { name: string } };
   goods_note_lines: {
     id: string;

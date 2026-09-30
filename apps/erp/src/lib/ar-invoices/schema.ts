@@ -60,6 +60,7 @@ export type ArInvoiceListRow = {
   returned: number;
   status: ArInvoiceStatus;
   origin: ArInvoiceOrigin;
+  created_by: string | null;
   counterparties: { name: string };
 };
 

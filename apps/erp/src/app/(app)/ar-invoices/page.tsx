@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { Customer } from "@/lib/customers/schema";
 import { type ArInvoiceOrigin, type ArInvoiceStatus } from "@/lib/ar-invoices/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useArInvoices } from "@/lib/ar-invoices/queries";
+import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
@@ -75,6 +76,7 @@ export default function ArInvoicesPage() {
   };
   const invoicesQuery = useArInvoices(filters);
   const invoices = invoicesQuery.data?.rows ?? [];
+  const userEmails = useUserEmails(invoices.map((inv) => inv.created_by)).data ?? {};
   const total = invoicesQuery.data?.total ?? 0;
 
   const loadCustomers = useCallback(async () => {
@@ -158,6 +160,7 @@ export default function ArInvoicesPage() {
               <th className="px-4 py-2 text-right">Jumlah</th>
               <th className="px-4 py-2 text-right">Outstanding</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5">
@@ -232,6 +235,7 @@ export default function ArInvoicesPage() {
                   <option value="dibatalkan">Dibatalkan</option>
                 </select>
               </th>
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -277,12 +281,13 @@ export default function ArInvoicesPage() {
                       {status}
                     </span>
                   </td>
+                  <td className="px-4 py-2 text-slate-500">{(inv.created_by && userEmails[inv.created_by]) ?? "-"}</td>
                 </tr>
               );
             })}
             {invoices.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={9} className="px-4 py-6 text-center text-slate-400">
                   {invoicesQuery.isLoading ? <InlineSpinner /> : "Belum ada invoice."}
                 </td>
               </tr>

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsIssues } from "@/lib/goods-issues/queries";
+import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
@@ -44,6 +45,7 @@ export default function GoodsIssuesPage() {
   };
   const issuesQuery = useGoodsIssues(filters);
   const issues = issuesQuery.data?.rows ?? [];
+  const userEmails = useUserEmails(issues.map((gi) => gi.created_by)).data ?? {};
   const total = issuesQuery.data?.total ?? 0;
 
   useEffect(() => {
@@ -114,6 +116,7 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-2">Item Keluar (HPP, satuan dasar)</th>
               <th className="px-4 py-2 text-right">Pendapatan</th>
               <th className="px-4 py-2 text-right">Total HPP</th>
+              <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5" />
@@ -147,6 +150,7 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -174,12 +178,13 @@ export default function GoodsIssuesPage() {
                     {gi.ar_invoices.amount.toLocaleString("id-ID")}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{totalHpp.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2 text-slate-500">{(gi.created_by && userEmails[gi.created_by]) ?? "-"}</td>
                 </tr>
               );
             })}
             {issues.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
                   {issuesQuery.isLoading ? <InlineSpinner /> : "Belum ada barang keluar."}
                 </td>
               </tr>

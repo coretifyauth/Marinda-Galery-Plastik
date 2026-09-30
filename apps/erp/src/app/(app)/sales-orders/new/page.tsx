@@ -22,12 +22,12 @@ import {
   fetchActiveItemDiscountRules,
   resolveItemDiscount,
   type ItemDiscountRule,
-} from "@/lib/item-discount-rules/schema";
+} from "@/lib/promotion-item-discount-rules/schema";
 import {
   fetchActiveBundlePromoRules,
   resolveBundlePromoDiscounts,
   type BundlePromoRule,
-} from "@/lib/bundle-promo-rules/schema";
+} from "@/lib/promotion-bundle-rules/schema";
 
 type LineInput = {
   item_id: string;

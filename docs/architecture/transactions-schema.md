@@ -34,7 +34,7 @@ Piutang timbul dan utang timbul disimpan di 1 tabel generic `transactions`, dibe
 | `origin` | `financial_only` / `order` / `goods_movement` | Asal-usul transaksi: murni catatan finansial, lahir dari Order (SO/PO), atau dari pergerakan barang fisik di luar Order |
 | `supplier_document_ref` | Nomor nota asli dari supplier | Cuma keisi kalau `type='INBOUND'` — satu-satunya kolom yang cuma relevan untuk salah satu arah, sisanya sama struktur antara piutang dan utang |
 | `journal_entry_id` | Jurnal yang tercipta bareng transaksi ini | Setiap transaksi wajib punya 1 jurnal pendamping |
-| `discount_amount` | Total diskon yang sudah baked-in ke `amount` | Murni breakdown tampilan (subtotal/diskon/total) — TIDAK dipakai `create_transaction` buat menghitung ulang saldo jurnal, `p_lines` yang dikirim ke situ sudah net dari awal. OUTBOUND: akumulasi diskon per baris (`item-discount-rules-schema.md`). INBOUND: nominal manual admin saat bikin Bill/Goods Receipt |
+| `discount_amount` | Total diskon yang sudah baked-in ke `amount` | Murni breakdown tampilan (subtotal/diskon/total) — TIDAK dipakai `create_transaction` buat menghitung ulang saldo jurnal, `p_lines` yang dikirim ke situ sudah net dari awal. OUTBOUND: akumulasi diskon per baris (`promotion-item-discount-rules-schema.md`). INBOUND: nominal manual admin saat bikin Bill/Goods Receipt |
 
 Transaksi **gak bisa diubah atau dihapus** setelah tersimpan (sama seperti Jurnal Umum) — koreksi salah input pakai jurnal pembalik, bukan edit langsung.
 

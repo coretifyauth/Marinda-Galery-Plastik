@@ -57,6 +57,7 @@ export type ApBillListRow = {
   outstanding: number;
   status: ApBillStatus;
   origin: ApBillOrigin;
+  created_by: string | null;
   counterparties: { name: string };
 };
 

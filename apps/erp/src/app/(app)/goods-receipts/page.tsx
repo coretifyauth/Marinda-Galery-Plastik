@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsReceipts } from "@/lib/goods-receipts/queries";
+import { useUserEmails } from "@/lib/user-emails/queries";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
@@ -45,6 +46,7 @@ export default function GoodsReceiptsPage() {
   };
   const receiptsQuery = useGoodsReceipts(filters);
   const receipts = receiptsQuery.data?.rows ?? [];
+  const userEmails = useUserEmails(receipts.map((grn) => grn.created_by)).data ?? {};
   const total = receiptsQuery.data?.total ?? 0;
 
   useEffect(() => {
@@ -122,6 +124,7 @@ export default function GoodsReceiptsPage() {
               <th className="px-4 py-2">Barang Diterima</th>
               <th className="px-4 py-2">Tagihan</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
+              <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5" />
@@ -161,6 +164,7 @@ export default function GoodsReceiptsPage() {
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -194,11 +198,12 @@ export default function GoodsReceiptsPage() {
                 <td className="px-4 py-2 text-right font-mono">
                   {grn.ap_bills.amount.toLocaleString("id-ID")}
                 </td>
+                <td className="px-4 py-2 text-slate-500">{(grn.created_by && userEmails[grn.created_by]) ?? "-"}</td>
               </tr>
             ))}
             {receipts.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
                   {receiptsQuery.isLoading ? <InlineSpinner /> : "Belum ada barang masuk."}
                 </td>
               </tr>

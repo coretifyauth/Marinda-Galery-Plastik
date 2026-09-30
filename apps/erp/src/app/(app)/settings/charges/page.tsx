@@ -6,10 +6,6 @@ import { supabase } from "@/lib/supabase/client";
 import { getLeafAccounts, type Account } from "@/lib/accounts/schema";
 import type { TaxSettings } from "@/lib/tax-settings/schema";
 import { updateCompanySettingsSchema, type CompanySettings } from "@/lib/company-settings/schema";
-import { itemDiscountRuleSchema, type ItemDiscountRule } from "@/lib/item-discount-rules/schema";
-import { bundlePromoRuleSchema, type BundlePromoRule } from "@/lib/bundle-promo-rules/schema";
-import type { Item } from "@/lib/items/schema";
-import type { ItemCategory } from "@/lib/item-categories/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -174,451 +170,6 @@ function CatalogManager({
                   </option>
                 ))}
               </Select>
-            </div>
-            {error && <FormError>{error}</FormError>}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-                Batal
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "..." : "+ Tambah"}
-              </Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-/** Kelola item_discount_rules -- trade discount sisi penjualan, ditempel ke 1 item ATAU 1
- * category (mutual exclusive, ditegakkan constraint DB). Resolusi "aturan mana yang dipakai"
- * (item menang atas category) dilakukan client-side saat Sales Order/Goods Issue dibuat, lihat
- * @/lib/item-discount-rules/schema.ts. Ref: docs/domain/accounts-receivable.md submodule
- * "Diskon Penjualan (Trade Discount)". */
-function ItemDiscountRulesManager({
-  items,
-  categories,
-  canWrite,
-}: {
-  items: Item[];
-  categories: ItemCategory[];
-  canWrite: boolean;
-}) {
-  const [rows, setRows] = useState<(ItemDiscountRule & { items: { name: string } | null; item_categories: { name: string } | null })[]>(
-    []
-  );
-  const [name, setName] = useState("");
-  const [targetType, setTargetType] = useState<"item" | "category">("item");
-  const [targetId, setTargetId] = useState("");
-  const [discountType, setDiscountType] = useState<"PERCENT" | "NOMINAL">("PERCENT");
-  const [discountValue, setDiscountValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-
-  const activeItems = items.filter((i) => !i.archived_at);
-  const activeCategories = categories.filter((c) => !c.archived_at);
-
-  const load = useCallback(async () => {
-    const { data } = await supabase
-      .from("item_discount_rules")
-      .select("id, name, item_id, category_id, discount_type, discount_value, archived_at, items(name), item_categories(name)")
-      .order("name");
-    setRows((data ?? []) as unknown as typeof rows);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (active) await load();
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load]);
-
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    const parsed = itemDiscountRuleSchema.safeParse({
-      name,
-      item_id: targetType === "item" ? targetId : null,
-      category_id: targetType === "category" ? targetId : null,
-      discount_type: discountType,
-      discount_value: discountValue,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    if (!targetId) {
-      setError(targetType === "item" ? "Pilih barang" : "Pilih kategori");
-      return;
-    }
-    setSubmitting(true);
-    const { error: err } = await supabase.from("item_discount_rules").insert(parsed.data);
-    setSubmitting(false);
-    if (err) {
-      setError(err.message);
-      return;
-    }
-    setName("");
-    setTargetId("");
-    setDiscountValue("");
-    setShowForm(false);
-    await load();
-  }
-
-  async function toggleArchive(row: ItemDiscountRule) {
-    await supabase
-      .from("item_discount_rules")
-      .update({ archived_at: row.archived_at ? null : new Date().toISOString() })
-      .eq("id", row.id);
-    await load();
-  }
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-black">Aturan Diskon Barang</h2>
-        {canWrite && (
-          <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-            + Tambah
-          </Button>
-        )}
-      </div>
-      <p className="mb-3 text-sm text-slate-500">
-        Trade discount sisi penjualan — otomatis dicocokkan sistem saat Sales Order/Jual Barang
-        Langsung dibuat (staf gak pilih manual). Maksimal 1 aturan aktif per barang dan per
-        kategori; kalau 1 barang match ke aturan barang DAN aturan kategorinya sekaligus, aturan
-        barang yang menang.
-      </p>
-      <table className="mb-3 w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
-            <th className="py-1.5">Nama</th>
-            <th className="py-1.5">Target</th>
-            <th className="py-1.5">Diskon</th>
-            <th className="py-1.5">Status</th>
-            {canWrite && <th className="py-1.5" />}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-b border-slate-100">
-              <td className="py-1.5">{row.name}</td>
-              <td className="py-1.5">
-                {row.items ? `Barang: ${row.items.name}` : `Kategori: ${row.item_categories?.name ?? "-"}`}
-              </td>
-              <td className="py-1.5">
-                {row.discount_type === "PERCENT" ? `${row.discount_value}%` : `Rp${row.discount_value.toLocaleString("id-ID")}/unit`}
-              </td>
-              <td className="py-1.5">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${
-                    row.archived_at ? "bg-slate-100 text-slate-400" : "bg-emerald-50 text-emerald-700"
-                  }`}
-                >
-                  {row.archived_at ? "Nonaktif" : "Aktif"}
-                </span>
-              </td>
-              {canWrite && (
-                <td className="py-1.5 text-right">
-                  <Button type="button" variant="toolbar" onClick={() => toggleArchive(row)}>
-                    {row.archived_at ? "Aktifkan" : "Nonaktifkan"}
-                  </Button>
-                </td>
-              )}
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={5} className="py-3 text-center text-slate-400">
-                Belum ada aturan diskon.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      {canWrite && (
-        <Modal open={showForm} onClose={() => setShowForm(false)} title="Aturan Diskon Barang">
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="discount-name">Nama Aturan</Label>
-              <Input
-                id="discount-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="mis. Promo Kopi Robusta 10%"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="discount-target-type">Berlaku Untuk</Label>
-              <Select
-                id="discount-target-type"
-                value={targetType}
-                onChange={(e) => {
-                  setTargetType(e.target.value as "item" | "category");
-                  setTargetId("");
-                }}
-              >
-                <option value="item">Barang tertentu</option>
-                <option value="category">Kategori barang</option>
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="discount-target">{targetType === "item" ? "Barang" : "Kategori"}</Label>
-              <Select id="discount-target" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
-                <option value="">Pilih...</option>
-                {(targetType === "item" ? activeItems : activeCategories).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="discount-type">Tipe</Label>
-                <Select
-                  id="discount-type"
-                  value={discountType}
-                  onChange={(e) => setDiscountType(e.target.value as "PERCENT" | "NOMINAL")}
-                >
-                  <option value="PERCENT">Persen (%)</option>
-                  <option value="NOMINAL">Nominal (Rp/unit)</option>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="discount-value">Nilai</Label>
-                <Input
-                  id="discount-value"
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={discountValue}
-                  onChange={(e) => setDiscountValue(e.target.value)}
-                  placeholder={discountType === "PERCENT" ? "mis. 10" : "mis. 2000"}
-                />
-              </div>
-            </div>
-            {error && <FormError>{error}</FormError>}
-            <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>
-                Batal
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting ? "..." : "+ Tambah"}
-              </Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-/** Kelola bundle_promo_rules -- "Beli N Gratis X", berbasis kuantitas (beda dari
- * item_discount_rules yang berbasis harga). Barang pemicu WAJIB spesifik (gak ada opsi
- * kategori), barang hadiah boleh sama/beda dari pemicu. Ref: docs/domain/accounts-receivable.md
- * submodule "Beli N Gratis X (Bundle Promo)". */
-function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite: boolean }) {
-  const [rows, setRows] = useState<
-    (BundlePromoRule & { trigger: { name: string }; reward: { name: string } })[]
-  >([]);
-  const [name, setName] = useState("");
-  const [triggerItemId, setTriggerItemId] = useState("");
-  const [buyQty, setBuyQty] = useState("");
-  const [rewardItemId, setRewardItemId] = useState("");
-  const [freeQty, setFreeQty] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [showForm, setShowForm] = useState(false);
-
-  const activeItems = items.filter((i) => !i.archived_at);
-
-  const load = useCallback(async () => {
-    const { data } = await supabase
-      .from("bundle_promo_rules")
-      .select("id, name, trigger_item_id, buy_qty, reward_item_id, free_qty, archived_at, trigger:items!bundle_promo_rules_trigger_item_id_fkey(name), reward:items!bundle_promo_rules_reward_item_id_fkey(name)")
-      .order("name");
-    setRows((data ?? []) as unknown as typeof rows);
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (active) await load();
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load]);
-
-  async function handleCreate(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    const parsed = bundlePromoRuleSchema.safeParse({
-      name,
-      trigger_item_id: triggerItemId,
-      buy_qty: buyQty,
-      reward_item_id: rewardItemId,
-      free_qty: freeQty,
-    });
-    if (!parsed.success) {
-      setError(parsed.error.issues[0]?.message ?? "Input gak valid");
-      return;
-    }
-    setSubmitting(true);
-    const { error: err } = await supabase.from("bundle_promo_rules").insert(parsed.data);
-    setSubmitting(false);
-    if (err) {
-      setError(err.message);
-      return;
-    }
-    setName("");
-    setTriggerItemId("");
-    setBuyQty("");
-    setRewardItemId("");
-    setFreeQty("");
-    setShowForm(false);
-    await load();
-  }
-
-  async function toggleArchive(row: BundlePromoRule) {
-    await supabase
-      .from("bundle_promo_rules")
-      .update({ archived_at: row.archived_at ? null : new Date().toISOString() })
-      .eq("id", row.id);
-    await load();
-  }
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="font-semibold text-black">Promo Beli N Gratis X</h2>
-        {canWrite && (
-          <Button variant="toolbar-primary" onClick={() => setShowForm(true)}>
-            + Tambah
-          </Button>
-        )}
-      </div>
-      <p className="mb-3 text-sm text-slate-500">
-        Berbasis kuantitas — barang hadiah boleh beda dari barang pemicu, berulang tiap kelipatan
-        qty beli. Barang hadiah TETAP harus dipilih/scan manual di invoice/keranjang — sistem gak
-        pernah menambahkannya otomatis, cuma mengoreksi harganya jadi Rp0 sampai batas qty gratis.
-      </p>
-      <table className="mb-3 w-full text-left text-sm">
-        <thead>
-          <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
-            <th className="py-1.5">Nama</th>
-            <th className="py-1.5">Syarat</th>
-            <th className="py-1.5">Hadiah</th>
-            <th className="py-1.5">Status</th>
-            {canWrite && <th className="py-1.5" />}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-b border-slate-100">
-              <td className="py-1.5">{row.name}</td>
-              <td className="py-1.5">
-                Beli {row.buy_qty} {row.trigger.name}
-              </td>
-              <td className="py-1.5">
-                Gratis {row.free_qty} {row.reward.name}
-              </td>
-              <td className="py-1.5">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs ${
-                    row.archived_at ? "bg-slate-100 text-slate-400" : "bg-emerald-50 text-emerald-700"
-                  }`}
-                >
-                  {row.archived_at ? "Nonaktif" : "Aktif"}
-                </span>
-              </td>
-              {canWrite && (
-                <td className="py-1.5 text-right">
-                  <Button type="button" variant="toolbar" onClick={() => toggleArchive(row)}>
-                    {row.archived_at ? "Aktifkan" : "Nonaktifkan"}
-                  </Button>
-                </td>
-              )}
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={5} className="py-3 text-center text-slate-400">
-                Belum ada promo bundle.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      {canWrite && (
-        <Modal open={showForm} onClose={() => setShowForm(false)} title="Promo Beli N Gratis X">
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="bundle-name">Nama Promo</Label>
-              <Input
-                id="bundle-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="mis. Beli 2 Sabun Gratis 1 Shampo"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="bundle-trigger">Barang Pemicu</Label>
-                <Select id="bundle-trigger" value={triggerItemId} onChange={(e) => setTriggerItemId(e.target.value)}>
-                  <option value="">Pilih...</option>
-                  {activeItems.map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {it.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="bundle-buy-qty">Qty Beli Minimal</Label>
-                <Input
-                  id="bundle-buy-qty"
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={buyQty}
-                  onChange={(e) => setBuyQty(e.target.value)}
-                  placeholder="mis. 2"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="bundle-reward">Barang Hadiah</Label>
-                <Select id="bundle-reward" value={rewardItemId} onChange={(e) => setRewardItemId(e.target.value)}>
-                  <option value="">Pilih...</option>
-                  {activeItems.map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {it.name}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="bundle-free-qty">Qty Gratis</Label>
-                <Input
-                  id="bundle-free-qty"
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={freeQty}
-                  onChange={(e) => setFreeQty(e.target.value)}
-                  placeholder="mis. 1"
-                />
-              </div>
             </div>
             {error && <FormError>{error}</FormError>}
             <div className="flex justify-end gap-2 pt-2">
@@ -1039,8 +590,6 @@ function TaxSettingsCard({ canWrite }: { canWrite: boolean }) {
 const settingsTabs: TabDef[] = [
   { key: "default_accounts", label: "Default Akun" },
   { key: "charge_categories", label: "Kategori Tambahan" },
-  { key: "item_discount_rules", label: "Aturan Diskon Barang" },
-  { key: "bundle_promo_rules", label: "Promo Beli N Gratis X" },
   { key: "tax", label: "Pajak" },
   { key: "print_documents", label: "Dokumen Cetak" },
 ];
@@ -1049,8 +598,6 @@ export default function ChargesSettingsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-  const [itemCategories, setItemCategories] = useState<ItemCategory[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string>(settingsTabs[0].key);
 
@@ -1060,15 +607,6 @@ export default function ChargesSettingsPage() {
       .select("id, code, name, category, normal_balance, parent_id, archived_at")
       .order("code");
     setAccounts((data ?? []) as Account[]);
-  }, []);
-
-  const loadItemsAndCategories = useCallback(async () => {
-    const [{ data: itemRows }, { data: catRows }] = await Promise.all([
-      supabase.from("items").select("id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at").order("name"),
-      supabase.from("item_categories").select("id, name, archived_at").order("name"),
-    ]);
-    setItems((itemRows ?? []) as Item[]);
-    setItemCategories((catRows ?? []) as ItemCategory[]);
   }, []);
 
   useEffect(() => {
@@ -1084,13 +622,13 @@ export default function ChargesSettingsPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadAccounts(), loadItemsAndCategories()]);
+      await loadAccounts();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadAccounts, loadItemsAndCategories]);
+  }, [router, loadAccounts]);
 
   if (checkingSession) {
     return <LoadingScreen />;
@@ -1103,9 +641,8 @@ export default function ChargesSettingsPage() {
       <div>
         <h1 className="text-xl font-semibold text-black">Pengaturan</h1>
         <p className="text-sm text-slate-500">
-          Setup Default Akun, katalog kategori biaya tambahan (POS/AR/AP), aturan diskon barang
-          (sisi penjualan), pengaturan PPN, dan identitas perusahaan/penandatangan buat cetakan
-          dokumen.{" "}
+          Setup Default Akun, katalog kategori biaya tambahan (POS/AR/AP), pengaturan PPN, dan
+          identitas perusahaan/penandatangan buat cetakan dokumen.{" "}
           {!canWrite && "Cuma role admin yang bisa ubah — kamu cuma bisa lihat."}
         </p>
       </div>
@@ -1133,10 +670,6 @@ export default function ChargesSettingsPage() {
           />
         </div>
       )}
-      {activeTab === "item_discount_rules" && (
-        <ItemDiscountRulesManager items={items} categories={itemCategories} canWrite={canWrite} />
-      )}
-      {activeTab === "bundle_promo_rules" && <BundlePromoRulesManager items={items} canWrite={canWrite} />}
       {activeTab === "tax" && <TaxSettingsCard canWrite={canWrite} />}
       {activeTab === "print_documents" && <CompanySettingsCard canWrite={canWrite} />}
     </div>

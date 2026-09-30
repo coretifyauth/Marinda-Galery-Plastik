@@ -52,8 +52,8 @@ cuma tabel penyimpanannya.
 | `unit_cost` | Harga beli riil per unit | Wajib diisi **HANYA INBOUND** — input manual, boleh beda dari harga di order line (selisih murni informasional) |
 | `total_cost` | Total biaya pokok (extended, bukan per-unit) | Wajib diisi **HANYA OUTBOUND** — dihitung dari harga rata-rata tertimbang saat konsumsi (Weighted Average, `inventory-ledger-schema.md`), bukan input manual |
 | `unit_price` | Harga jual per unit | Cuma keisi sisi OUTBOUND jalur langsung (POS/walk-in tanpa Sales Order) — kalau ada `order_line_id`, harga tetap bersumber dari `order_lines.unit_price` |
-| `discount_rule_id`, `discount_amount` | Diskon barang (lihat `item-discount-rules-schema.md`) | **OUTBOUND**: resolusi FRESH dari aturan aktif saat baris ini dibuat (bukan diwarisi dari `order_lines`), sudah baked-in ke `unit_price`/jumlah yang dikirim ke `create_goods_issue` — murni audit trail. **INBOUND**: porsi dari diskon header (nominal manual admin, lihat submodule "Diskon Pembelian" di bawah) yang diproratakan `create_goods_receipt` ke baris ini berdasar `qty * unit_cost` — satu-satunya kasus di mana kolom ini dipakai buat aritmatika (mengoreksi `avg_cost`) |
-| `bundle_promo_rule_id` | "Beli N Gratis X" (lihat `bundle-promo-rules-schema.md`) | Cuma OUTBOUND — `discount_amount` di atas bisa nampung kontribusi dari `item_discount_rules` DAN `bundle_promo_rules` sekaligus (dijumlah, dibatasi gak lebih dari `qty*unit_price` baris itu). Dari jalur POS, diisi `create_pos_sale` sendiri (server-side); dari Sales Order/Goods Issue manual, dari resolusi TypeScript client (informational, sama pola `discount_rule_id`) |
+| `discount_rule_id`, `discount_amount` | Diskon barang (lihat `promotion-item-discount-rules-schema.md`) | **OUTBOUND**: resolusi FRESH dari aturan aktif saat baris ini dibuat (bukan diwarisi dari `order_lines`), sudah baked-in ke `unit_price`/jumlah yang dikirim ke `create_goods_issue` — murni audit trail. **INBOUND**: porsi dari diskon header (nominal manual admin, lihat submodule "Diskon Pembelian" di bawah) yang diproratakan `create_goods_receipt` ke baris ini berdasar `qty * unit_cost` — satu-satunya kasus di mana kolom ini dipakai buat aritmatika (mengoreksi `avg_cost`) |
+| `bundle_promo_rule_id` | "Beli N Gratis X" (lihat `promotion-bundle-rules-schema.md`) | Cuma OUTBOUND — `discount_amount` di atas bisa nampung kontribusi dari `promotion_item_discount_rules` DAN `promotion_bundle_rules` sekaligus (dijumlah, dibatasi gak lebih dari `qty*unit_price` baris itu). Dari jalur POS, diisi `create_pos_sale` sendiri (server-side); dari Sales Order/Goods Issue manual, dari resolusi TypeScript client (informational, sama pola `discount_rule_id`) |
 
 **Alur Teknis (RPC)**
 
@@ -88,8 +88,8 @@ cuma tabel penyimpanannya.
 | `goods_note_lines.goods_note_id` | banyak-ke-satu | `goods_notes` |
 | `goods_note_lines.order_line_id` | banyak-ke-satu (opsional) | `order_lines` (arah harus cocok `type` header) |
 | `goods_note_lines.item_id` | banyak-ke-satu | `items` |
-| `goods_note_lines.discount_rule_id` | banyak-ke-satu, opsional | `item_discount_rules` (`item-discount-rules-schema.md`), cuma keisi buat `type='OUTBOUND'` |
-| `goods_note_lines.bundle_promo_rule_id` | banyak-ke-satu, opsional | `bundle_promo_rules` (`bundle-promo-rules-schema.md`), cuma keisi buat `type='OUTBOUND'` |
+| `goods_note_lines.discount_rule_id` | banyak-ke-satu, opsional | `promotion_item_discount_rules` (`promotion-item-discount-rules-schema.md`), cuma keisi buat `type='OUTBOUND'` |
+| `goods_note_lines.bundle_promo_rule_id` | banyak-ke-satu, opsional | `promotion_bundle_rules` (`promotion-bundle-rules-schema.md`), cuma keisi buat `type='OUTBOUND'` |
 | `goods_note_lines` (tiap insert) | memicu update/konsumsi | Saldo stok (`inventory-ledger-schema.md`) |
 
 Catatan lintas modul: retur customer (pembalikan stok+HPP dari OUTBOUND) dan retur ke supplier

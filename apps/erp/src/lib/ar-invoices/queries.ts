@@ -21,7 +21,7 @@ export type ArInvoiceFilters = {
 // ar_payments/ar_credit_notes/dst/goods_issues cuma buat dihitung ulang di client (itu tetap
 // dipakai di halaman detail [id]/view.tsx).
 const SELECT_COLUMNS =
-  "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, outstanding, returned, status, origin, counterparties(name)";
+  "id, customer_id, invoice_date, due_date, description, source_ref, amount, journal_entry_id, created_at, outstanding, returned, status, origin, created_by, counterparties(name)";
 
 export async function fetchArInvoices(
   filters: ArInvoiceFilters

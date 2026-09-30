@@ -34,6 +34,9 @@ import {
   ShoppingBag,
   NotebookPen,
   Store,
+  Megaphone,
+  Percent,
+  Gift,
   Settings,
   UserCog,
   X,
@@ -82,6 +85,14 @@ const navGroups = [
       { href: "/pos-sales", label: "Penjualan POS", icon: ShoppingCart },
       { href: "/ar-invoices", label: "Invoice", icon: FileText },
       { href: "/ar-deposits", label: "Uang Muka AR", icon: PiggyBank },
+    ],
+  },
+  {
+    label: "Kampanye",
+    icon: Megaphone,
+    items: [
+      { href: "/discount-rules", label: "Aturan Diskon", icon: Percent },
+      { href: "/promo-rules", label: "Aturan Promo", icon: Gift },
     ],
   },
   {

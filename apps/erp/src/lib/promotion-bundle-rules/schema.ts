@@ -2,8 +2,8 @@ import { z } from "zod";
 import { supabase } from "@/lib/supabase/client";
 
 /** Ref: docs/domain/accounts-receivable.md submodule "Beli N Gratis X (Bundle Promo)",
- * docs/architecture/bundle-promo-rules-schema.md. Mirror SQL: resolve_bundle_promo_discounts
- * (supabase/migrations/0046_bundle_promo_rules_schema.sql), dipakai create_pos_sale
+ * docs/architecture/promotion-bundle-rules-schema.md. Mirror SQL: resolve_bundle_promo_discounts
+ * (supabase/migrations/0047_rename_promotion_rules_tables.sql), dipakai create_pos_sale
  * server-side -- versi TypeScript ini dipakai sisi admin (client-computed, RPC trust) DAN
  * preview tampilan POS (non-otoritatif, lihat apps/pos). */
 export const bundlePromoRuleSchema = z.object({
@@ -26,7 +26,7 @@ export type BundlePromoRule = {
 
 export async function fetchActiveBundlePromoRules(): Promise<BundlePromoRule[]> {
   const { data } = await supabase
-    .from("bundle_promo_rules")
+    .from("promotion_bundle_rules")
     .select("id, name, trigger_item_id, buy_qty, reward_item_id, free_qty, archived_at")
     .is("archived_at", null);
   return (data ?? []) as BundlePromoRule[];

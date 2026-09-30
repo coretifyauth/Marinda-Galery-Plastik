@@ -16,8 +16,8 @@ import { nextOfflineSourceRef } from "@/lib/device-id";
 import { isLikelyNetworkError, probeSupabase, useOnlineStatus } from "@/lib/online-status";
 import { syncOutbox } from "@/lib/offline-sync";
 import { useLiveQuery } from "dexie-react-hooks";
-import { fetchActiveItemDiscountRules, resolveItemDiscount } from "@/lib/item-discount-rules";
-import { fetchActiveBundlePromoRules, resolveBundlePromoDiscounts } from "@/lib/bundle-promo-rules";
+import { fetchActiveItemDiscountRules, resolveItemDiscount } from "@/lib/promotion-item-discount-rules";
+import { fetchActiveBundlePromoRules, resolveBundlePromoDiscounts } from "@/lib/promotion-bundle-rules";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -437,6 +437,12 @@ function ReceiptPreview({ data }: { data: ReceiptData }) {
         <span>Subtotal</span>
         <span>{rp(data.subtotal)}</span>
       </div>
+      {data.discountTotal > 0 && (
+        <div className="flex justify-between">
+          <span>Diskon</span>
+          <span>-{rp(data.discountTotal)}</span>
+        </div>
+      )}
       {data.extraLines.map((l, i) => (
         <div key={i} className="flex justify-between">
           <span>{l.label}</span>
@@ -582,15 +588,16 @@ export default function CheckoutPage() {
   });
   // Diskon otomatis (Diskon Penjualan + Beli N Gratis X) -- query ini PREVIEW doang buat
   // tampilan kembalian sebelum checkout; nilai otoritatif yang beneran dijurnal dihitung
-  // ULANG server-side di dalam create_pos_sale (lihat item-discount-rules.ts/bundle-promo-rules.ts).
+  // ULANG server-side di dalam create_pos_sale (lihat
+  // promotion-item-discount-rules.ts/promotion-bundle-rules.ts).
   const discountRulesQuery = useQuery({
-    queryKey: ["item_discount_rules"],
+    queryKey: ["promotion_item_discount_rules"],
     queryFn: fetchActiveItemDiscountRules,
     enabled: !checkingSession,
     staleTime: 10 * 60_000,
   });
   const bundleRulesQuery = useQuery({
-    queryKey: ["bundle_promo_rules"],
+    queryKey: ["promotion_bundle_rules"],
     queryFn: fetchActiveBundlePromoRules,
     enabled: !checkingSession,
     staleTime: 10 * 60_000,

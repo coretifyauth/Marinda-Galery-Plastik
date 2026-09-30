@@ -5,7 +5,7 @@ Discount)" dan `docs/domain/accounts-payable.md` submodule "Diskon Pembelian (Tr
 File ini fokus ke struktur datanya. Detail teknis (SQL persis) ada di
 `supabase/migrations/0045_item_discount_rules_schema.sql`.
 
-`item_discount_rules` cuma dipakai sisi **penjualan** (OUTBOUND) — sisi pembelian (INBOUND)
+`promotion_item_discount_rules` cuma dipakai sisi **penjualan** (OUTBOUND) — sisi pembelian (INBOUND)
 sengaja gak pakai master data ini sama sekali, diskonnya nominal manual per dokumen (lihat
 submodule "Diskon Pembelian" di `goods-notes-schema.md` bagian `create_goods_receipt`).
 
@@ -13,11 +13,11 @@ submodule "Diskon Pembelian" di `goods-notes-schema.md` bagian `create_goods_rec
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `item_discount_rules` | Master aturan diskon, ditempelkan ke 1 barang ATAU 1 kategori barang | `items-schema.md` (`item_id`, `category_id`) |
+| `promotion_item_discount_rules` | Master aturan diskon, ditempelkan ke 1 barang ATAU 1 kategori barang | `items-schema.md` (`item_id`, `category_id`) |
 
 ## Konsep Inti
 
-**Struktur `item_discount_rules`**
+**Struktur `promotion_item_discount_rules`**
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
@@ -46,10 +46,10 @@ submodule "Diskon Pembelian" di `goods-notes-schema.md` bagian `create_goods_rec
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `item_discount_rules.item_id` | banyak-ke-satu, opsional | `items` |
-| `item_discount_rules.category_id` | banyak-ke-satu, opsional | `item_categories` |
-| `order_lines.discount_rule_id` | banyak-ke-satu, opsional | `item_discount_rules` (lihat `orders-schema.md`) |
-| `goods_note_lines.discount_rule_id` | banyak-ke-satu, opsional | `item_discount_rules` (lihat `goods-notes-schema.md`) |
+| `promotion_item_discount_rules.item_id` | banyak-ke-satu, opsional | `items` |
+| `promotion_item_discount_rules.category_id` | banyak-ke-satu, opsional | `item_categories` |
+| `order_lines.discount_rule_id` | banyak-ke-satu, opsional | `promotion_item_discount_rules` (lihat `orders-schema.md`) |
+| `goods_note_lines.discount_rule_id` | banyak-ke-satu, opsional | `promotion_item_discount_rules` (lihat `goods-notes-schema.md`) |
 
 ## Siapa Boleh Apa
 

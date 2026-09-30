@@ -81,6 +81,7 @@ export type ApDepositListRow = {
   created_at: string;
   remaining: number;
   status: ApDepositStatus;
+  created_by: string | null;
   counterparties: { name: string };
 };
 

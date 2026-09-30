@@ -7,6 +7,7 @@ import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
 import type { Customer } from "@/lib/customers/schema";
 import { type ArDepositStatus } from "@/lib/ar-deposits/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useArDeposits } from "@/lib/ar-deposits/queries";
+import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
@@ -66,6 +67,7 @@ export default function ArDepositsPage() {
   };
   const depositsQuery = useArDeposits(filters);
   const deposits = depositsQuery.data?.rows ?? [];
+  const userEmails = useUserEmails(deposits.map((d) => d.created_by)).data ?? {};
   const total = depositsQuery.data?.total ?? 0;
 
   const loadCustomers = useCallback(async () => {
@@ -147,6 +149,7 @@ export default function ArDepositsPage() {
               <th className="px-4 py-2 text-right">Jumlah</th>
               <th className="px-4 py-2 text-right">Sisa</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5">
@@ -206,6 +209,7 @@ export default function ArDepositsPage() {
                   <option value="selesai">{statusLabel.selesai}</option>
                 </select>
               </th>
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -229,11 +233,12 @@ export default function ArDepositsPage() {
                     {statusLabel[dep.status]}
                   </span>
                 </td>
+                <td className="px-4 py-2 text-slate-500">{(dep.created_by && userEmails[dep.created_by]) ?? "-"}</td>
               </tr>
             ))}
             {deposits.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
                   {depositsQuery.isLoading ? <InlineSpinner /> : "Belum ada uang muka."}
                 </td>
               </tr>
