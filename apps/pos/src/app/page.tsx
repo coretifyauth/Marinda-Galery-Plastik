@@ -19,6 +19,17 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { fetchActiveItemDiscountRules, resolveItemDiscount } from "@/lib/promotion-item-discount-rules";
 import { fetchActiveBundlePromoRules, resolveBundlePromoDiscounts } from "@/lib/promotion-bundle-rules";
 import {
+  addUnitToCart,
+  buildStockMap,
+  changeLineUnit,
+  normalizeCart,
+  removeLine as removeCartLine,
+  resolveScan,
+  setLineQty,
+  type CartResult,
+  type StockMap,
+} from "@/lib/scan";
+import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
@@ -50,22 +61,10 @@ type CatalogItem = {
   qtyOnHand: number;
 };
 
-// 1 baris per satuan jual (item_units) yang punya barcode -- dipakai buat lookup
-// scan, BUKAN cuma satuan dasar seperti CatalogItem. Ref: docs/domain/inventory.md
-// submodule "Kode Scan Barang (Barcode/QR per Satuan Jual)".
-type ScannableUnit = {
-  itemId: string;
-  itemName: string;
-  unitLabel: string;
-  conversionFactor: number;
-  price: number;
-  qtyOnHand: number;
-  barcode: string;
-};
-
-// unit_price & qty_sold di sini SELALU dalam satuan jual baris ini (bisa base
-// unit ATAU satuan lain kayak lusin/pack kalau ditambah lewat scan) -- konversi
-// ke satuan dasar (dipakai RPC create_pos_sale) baru terjadi pas checkout().
+// unit_price & qty_sold di CartLine SELALU dalam satuan jual baris itu (bisa base unit ATAU
+// satuan lain kayak lusin/pack, dari scan atau dropdown satuan) -- konversi ke satuan dasar
+// (dipakai RPC create_pos_sale) baru terjadi pas checkout(). Logika scan & operasi keranjang
+// (stok dicek gabungan per barang) ada di lib/scan.ts.
 
 type ExtraLine = { category_id: string; amount: string };
 
@@ -96,7 +95,7 @@ async function fetchItemRows(): Promise<ItemRow[]> {
     const { data, error } = await supabase
       .from("items")
       .select(
-        "id, name, uom, category_id, item_units(unit_label, conversion_factor, price, is_base, barcode), inventory_balances(qty_on_hand)"
+        "id, name, uom, category_id, barcode, item_units(unit_label, conversion_factor, price, is_base, barcode, is_default_sale), inventory_balances(qty_on_hand)"
       )
       .is("archived_at", null)
       .order("name");
@@ -305,24 +304,6 @@ function mapItemRowsToCatalog(rows: ItemRow[]): CatalogItem[] {
     .filter((item) => item.units.length > 0);
 }
 
-// Semua satuan jual (base ATAU bukan) yang punya barcode + harga -- dipakai lookup
-// scan, beda dari CatalogItem yang cuma nampilin satuan dasar di grid.
-function mapItemRowsToScannableUnits(rows: ItemRow[]): ScannableUnit[] {
-  return rows.flatMap((row) =>
-    (row.item_units ?? [])
-      .filter((u) => u.barcode && u.price != null)
-      .map((u) => ({
-        itemId: row.id,
-        itemName: row.name,
-        unitLabel: u.unit_label,
-        conversionFactor: u.conversion_factor,
-        price: u.price as number,
-        qtyOnHand: row.inventory_balances?.qty_on_hand ?? 0,
-        barcode: u.barcode as string,
-      }))
-  );
-}
-
 function CatalogCard({
   item,
   cart,
@@ -504,6 +485,11 @@ export default function CheckoutPage() {
   const [isPrinting, setIsPrinting] = useState(false);
 
   const [cart, setCart] = useState<CartLine[]>([]);
+  // Keputusan keranjang (stok cukup/gak) dibaca dari ref, bukan closure `cart` -- handler
+  // keyboard/scan yang di-bind sekali gak boleh megang keranjang basi. Semua perubahan
+  // keranjang lewat commitCart/runCartOp biar ref & state selalu sama.
+  const cartRef = useRef<CartLine[]>([]);
+  const stockRef = useRef<StockMap>(new Map());
   const [scanInput, setScanInput] = useState("");
   const [scanError, setScanError] = useState<string | null>(null);
   const scanInputRef = useRef<HTMLInputElement>(null);
@@ -604,7 +590,11 @@ export default function CheckoutPage() {
   });
 
   const catalog = useMemo(() => mapItemRowsToCatalog(itemsQuery.data ?? []), [itemsQuery.data]);
-  const scannableUnits = useMemo(() => mapItemRowsToScannableUnits(itemsQuery.data ?? []), [itemsQuery.data]);
+  const stockByItem = useMemo(() => buildStockMap(itemsQuery.data ?? []), [itemsQuery.data]);
+  const catalogById = useMemo(() => new Map(catalog.map((c) => [c.id, c])), [catalog]);
+  useEffect(() => {
+    stockRef.current = stockByItem;
+  }, [stockByItem]);
   const accountIds = accountsQuery.data ?? {};
   const customers = customersQuery.data ?? [];
   const chargeTypes = chargeTypesQuery.data ?? [];
@@ -689,89 +679,66 @@ export default function CheckoutPage() {
     setExtraLines((prev) => prev.filter((_, i) => i !== index));
   }
 
-  const addToCart = useCallback((item: CatalogItem, unit: PricedUnit) => {
-    setCheckoutError(null);
-    setCart((prev) => {
-      const existing = prev.find((l) => l.item_id === item.id && l.unit_label === unit.unit_label);
-      if (existing) {
-        return prev.map((l) =>
-          l === existing ? { ...l, qty_sold: l.qty_sold + 1 } : l
-        );
-      }
-      return [
-        ...prev,
-        {
-          item_id: item.id,
-          name: item.name,
-          unit_label: unit.unit_label,
-          conversion_factor: unit.conversion_factor,
-          unit_price: unit.price,
-          qty_sold: 1,
-          available: item.qtyOnHand,
-        },
-      ];
-    });
+  const commitCart = useCallback((next: CartLine[]) => {
+    cartRef.current = next;
+    setCart(next);
   }, []);
 
-  // Tambah ke keranjang lewat kode scan/ketik manual -- BEDA dari addToCart (klik
-  // katalog, selalu satuan dasar). Satuan bisa apa aja (base atau bukan), harga &
-  // qty_sold tetap dalam satuan itu -- konversi ke satuan dasar baru terjadi pas
-  // checkout() manggil create_pos_sale. Ref: docs/domain/inventory.md submodule
-  // "Kode Scan Barang (Barcode/QR per Satuan Jual)".
-  function addScannedUnit(unit: ScannableUnit) {
-    setCheckoutError(null);
-    const available = Math.floor(unit.qtyOnHand / unit.conversionFactor);
-    if (available <= 0) {
-      setScanError(`Stok ${unit.itemName} (${unit.unitLabel}) habis`);
-      return;
-    }
-    setScanError(null);
-    setCart((prev) => {
-      const existing = prev.find((l) => l.item_id === unit.itemId && l.unit_label === unit.unitLabel);
-      if (existing) {
-        if (existing.qty_sold >= available) return prev;
-        return prev.map((l) => (l === existing ? { ...l, qty_sold: l.qty_sold + 1 } : l));
-      }
-      return [
-        ...prev,
-        {
-          item_id: unit.itemId,
-          name: unit.itemName,
-          unit_label: unit.unitLabel,
-          conversion_factor: unit.conversionFactor,
-          unit_price: unit.price,
-          qty_sold: 1,
-          available,
-        },
-      ];
-    });
-  }
+  // Semua operasi keranjang (lib/scan.ts) mengecek stok GABUNGAN per barang di satuan dasar,
+  // jadi 100 pcs + 1 bal (125 pcs) ditolak di layar kalau stok total cuma 150 pcs -- bukan
+  // nunggu create_pos_sale nolak pas bayar. Error ke pesan di bawah kolom scan (sumber scan)
+  // atau error area keranjang (klik katalog, dropdown satuan, qty).
+  const runCartOp = useCallback(
+    (op: (cart: CartLine[], stock: StockMap) => CartResult, errorSink: "scan" | "checkout" = "checkout") => {
+      const result = op(cartRef.current, stockRef.current);
+      if (result.cart !== cartRef.current) commitCart(result.cart);
+      if (errorSink === "scan") setScanError(result.error);
+      else setCheckoutError(result.error);
+      if (errorSink === "scan" && !result.error) setCheckoutError(null);
+    },
+    [commitCart]
+  );
 
+  const addToCart = useCallback(
+    (item: CatalogItem, unit: PricedUnit) => runCartOp((c, s) => addUnitToCart(c, item, unit, s)),
+    [runCartOp]
+  );
+
+  // Scan: kode satuan dulu (satuan persis), baru kode barang (satuan jual default, fallback
+  // satuan dasar). Harga & qty_sold tetap dalam satuan itu -- konversi ke satuan dasar baru
+  // terjadi pas checkout() manggil create_pos_sale. Ref: docs/domain/inventory.md submodule
+  // "Kode Scan Barang".
   function handleScanSubmit(e: FormEvent) {
     e.preventDefault();
     const code = scanInput.trim();
     setScanInput("");
     if (!code) return;
-    const unit = scannableUnits.find((u) => u.barcode === code);
-    if (!unit) {
+    const result = resolveScan(code, itemsQuery.data ?? []);
+    if (result.kind === "not_found") {
       setScanError("Kode gak ketemu — cari manual dari katalog di bawah");
       return;
     }
-    addScannedUnit(unit);
+    if (result.kind === "no_price") {
+      setScanError(`${result.itemName} (${result.unitLabel}) belum punya harga jual — isi dulu di halaman barang`);
+      return;
+    }
+    runCartOp((c, s) => addUnitToCart(c, result.item, result.unit, s), "scan");
   }
 
   function updateQty(itemId: string, unitLabel: string, qty: number) {
-    if (qty <= 0) {
-      setCart((prev) => prev.filter((l) => !(l.item_id === itemId && l.unit_label === unitLabel)));
-      return;
-    }
-    setCart((prev) =>
-      prev.map((l) => (l.item_id === itemId && l.unit_label === unitLabel ? { ...l, qty_sold: qty } : l))
-    );
+    runCartOp((c, s) => setLineQty(c, itemId, unitLabel, qty, s));
   }
 
   function removeLine(itemId: string, unitLabel: string) {
-    setCart((prev) => prev.filter((l) => !(l.item_id === itemId && l.unit_label === unitLabel)));
+    commitCart(removeCartLine(cartRef.current, itemId, unitLabel, stockRef.current));
+  }
+
+  // Dropdown satuan di baris keranjang -- harga ikut katalog satuan baru; digabung kalau barang
+  // yang sama sudah punya baris di satuan tujuan.
+  function changeUnit(itemId: string, fromLabel: string, toLabel: string) {
+    const to = catalogById.get(itemId)?.units.find((u) => u.unit_label === toLabel);
+    if (!to) return;
+    runCartOp((c, s) => changeLineUnit(c, itemId, fromLabel, to, s));
   }
 
   const checkoutMutation = useMutation({
@@ -922,7 +889,7 @@ export default function CheckoutPage() {
         mode: "success",
       });
 
-      setCart([]);
+      commitCart([]);
       setCustomerId("");
       setExtraLines([]);
       setCashReceived("");
@@ -1103,36 +1070,27 @@ export default function CheckoutPage() {
         return;
       }
       if (e.key === "Escape") {
-        setCart([]);
+        commitCart([]);
         return;
       }
       if (e.key === "Backspace") {
-        setCart((prev) => prev.slice(0, -1));
+        commitCart(normalizeCart(cartRef.current.slice(0, -1), stockRef.current));
         return;
       }
-      if (e.key === "+") {
-        setCart((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.qty_sold >= last.available) return prev;
-          return prev.map((l, i) => (i === prev.length - 1 ? { ...l, qty_sold: l.qty_sold + 1 } : l));
-        });
-        return;
-      }
-      if (e.key === "-") {
-        setCart((prev) => {
-          if (prev.length === 0) return prev;
-          const last = prev[prev.length - 1];
-          if (last.qty_sold <= 1) return prev.slice(0, -1);
-          return prev.map((l, i) => (i === prev.length - 1 ? { ...l, qty_sold: l.qty_sold - 1 } : l));
-        });
+      // "+"/"-" ngubah qty baris terakhir -- lewat setLineQty biar cek stok gabungan tetap jalan
+      // (qty 0 menghapus baris, sama kayak sebelumnya).
+      if (e.key === "+" || e.key === "-") {
+        const last = cartRef.current[cartRef.current.length - 1];
+        if (!last) return;
+        const delta = e.key === "+" ? 1 : -1;
+        runCartOp((c, s) => setLineQty(c, last.item_id, last.unit_label, last.qty_sold + delta, s));
         return;
       }
     }
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filteredCatalog, showHistory, showPaymentModal, receiptModal, openPaymentModal, addToCart]);
+  }, [filteredCatalog, showHistory, showPaymentModal, receiptModal, openPaymentModal, addToCart, commitCart, runCartOp]);
 
   // Bug ketemu (kode barcode contoh "SKU-2026-00015"): klik apa pun di halaman (kartu
   // katalog, tombol qty +/-, dst) mindahin fokus browser ke elemen yang diklik itu.
@@ -1371,10 +1329,25 @@ export default function CheckoutPage() {
               className="flex items-center justify-between gap-3 rounded-md border border-slate-100 px-2 py-2.5 text-sm"
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">
-                  {line.name}
-                  {line.conversion_factor !== 1 && (
-                    <span className="ml-1 text-xs text-slate-400">({line.unit_label})</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="min-w-0 truncate font-medium">{line.name}</span>
+                  {(catalogById.get(line.item_id)?.units.length ?? 0) > 1 ? (
+                    <select
+                      value={line.unit_label}
+                      onChange={(e) => changeUnit(line.item_id, line.unit_label, e.target.value)}
+                      aria-label={`Satuan ${line.name}`}
+                      className="shrink-0 rounded border border-slate-300 bg-white px-1 py-0.5 text-xs"
+                    >
+                      {catalogById.get(line.item_id)?.units.map((u) => (
+                        <option key={u.unit_label} value={u.unit_label}>
+                          {u.unit_label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    line.conversion_factor !== 1 && (
+                      <span className="shrink-0 text-xs text-slate-400">({line.unit_label})</span>
+                    )
                   )}
                 </div>
                 <div className="text-xs text-slate-400">

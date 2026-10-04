@@ -37,4 +37,6 @@ export type Item = {
   archived_at: string | null;
   created_by: string | null;
   created_at: string;
+  /** Kode scan level barang (opsional) -- cuma di-select halaman detail item. */
+  barcode?: string | null;
 };

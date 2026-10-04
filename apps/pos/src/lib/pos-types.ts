@@ -38,8 +38,18 @@ export type ItemRow = {
   name: string;
   uom: string;
   category_id: string | null;
+  /** Kode scan level barang. Opsional: cache offline lama (Dexie) belum punya field ini. */
+  barcode?: string | null;
   item_units:
-    | { unit_label: string; conversion_factor: number; price: number | null; is_base: boolean; barcode: string | null }[]
+    | {
+        unit_label: string;
+        conversion_factor: number;
+        price: number | null;
+        is_base: boolean;
+        barcode: string | null;
+        /** Satuan jual default buat scan kode barang. Opsional: cache offline lama belum punya. */
+        is_default_sale?: boolean;
+      }[]
     | null;
   inventory_balances: { qty_on_hand: number } | null;
 };

@@ -42,6 +42,10 @@ const itemTypeLabel: Record<string, string> = {
 
 const EMPTY_MOVEMENT_PAGE: MovementPage = { rows: [], total: 0, openingBalance: 0 };
 
+// Key khusus di state printingUnitId / settingDefaultUnitId buat aksi level barang (bukan baris satuan).
+const ITEM_LABEL_KEY = "__item__";
+const CLEAR_DEFAULT_KEY = "__clear_default__";
+
 export function ItemDetailView({ id }: { id: string }) {
   const router = useRouter();
   const toast = useToast();
@@ -59,7 +63,11 @@ export function ItemDetailView({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false);
 
   const [generatingUnitId, setGeneratingUnitId] = useState<string | null>(null);
+  // printingUnitId juga dipakai buat label kode barang (key khusus ITEM_LABEL_KEY) -- 1 state
+  // cukup karena label cuma dicetak 1 per waktu.
   const [printingUnitId, setPrintingUnitId] = useState<string | null>(null);
+  const [generatingItemCode, setGeneratingItemCode] = useState(false);
+  const [settingDefaultUnitId, setSettingDefaultUnitId] = useState<string | null>(null);
 
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [editUnitPrice, setEditUnitPrice] = useState("");
@@ -79,7 +87,7 @@ export function ItemDetailView({ id }: { id: string }) {
         supabase
           .from("items")
           .select(
-            "id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at, created_by, created_at"
+            "id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at, created_by, created_at, barcode"
           )
           .eq("id", id)
           .single(),
@@ -89,7 +97,7 @@ export function ItemDetailView({ id }: { id: string }) {
         supabase.from("inventory_balances").select("item_id, qty_on_hand, avg_cost").eq("item_id", id).maybeSingle(),
         supabase
           .from("item_units")
-          .select("id, item_id, unit_label, conversion_factor, price, is_base, barcode")
+          .select("id, item_id, unit_label, conversion_factor, price, is_base, barcode, is_default_sale")
           .eq("item_id", id)
           .order("is_base", { ascending: false }),
         supabase.from("item_categories").select("id, name, archived_at").order("name"),
@@ -167,6 +175,10 @@ export function ItemDetailView({ id }: { id: string }) {
   const totalValue = (balance?.qty_on_hand ?? 0) * (balance?.avg_cost ?? 0);
   const category = categories.find((c) => c.id === item.category_id);
   const brand = brands.find((b) => b.id === item.brand_id);
+  // Satuan yang bakal masuk keranjang POS pas kode barang discan: default kalau ada, kalau
+  // gak ada ya satuan dasar (fallback yang sama dipakai POS).
+  const defaultSaleUnit = units.find((u) => u.is_default_sale);
+  const scanUnit = defaultSaleUnit ?? units.find((u) => u.is_base);
 
   const detailGroups = [
     {
@@ -304,20 +316,17 @@ export function ItemDetailView({ id }: { id: string }) {
   // sama sekali pas print), dan trik "visibility:hidden semua elemen lain" gampang
   // nyisain halaman kosong karena elemen yang disembunyiin tetap makan document
   // flow. Window terpisah = gak ada chrome/dialog yang perlu disembunyiin sama sekali.
-  async function handlePrintLabel(u: ItemUnit) {
-    if (!u.barcode || !item) return;
-    setPrintingUnitId(u.id);
+  async function printLabel(key: string, code: string, subtitle: string) {
+    if (!item) return;
+    setPrintingUnitId(key);
     try {
-      const qrDataUrl = await QRCode.toDataURL(u.barcode, { width: 220, margin: 1 });
+      const qrDataUrl = await QRCode.toDataURL(code, { width: 220, margin: 1 });
       const printWindow = window.open("", "_blank", "width=420,height=520");
       if (!printWindow) {
         toast.error("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
         return;
       }
-      const priceLine =
-        u.price != null
-          ? `Rp${u.price.toLocaleString("id-ID")}/${escapeHtml(u.unit_label)}`
-          : escapeHtml(u.unit_label);
+      const priceLine = escapeHtml(subtitle);
       printWindow.document.write(`<!doctype html>
 <html>
 <head>
@@ -330,7 +339,7 @@ export function ItemDetailView({ id }: { id: string }) {
 </style>
 </head>
 <body>
-  <img src="${qrDataUrl}" alt="QR ${escapeHtml(u.barcode)}" />
+  <img src="${qrDataUrl}" alt="QR ${escapeHtml(code)}" />
   <div class="name">${escapeHtml(item.name)}</div>
   <div class="meta">${priceLine}</div>
   <script>window.onload = function () { window.print(); };</script>
@@ -342,6 +351,64 @@ export function ItemDetailView({ id }: { id: string }) {
     } finally {
       setPrintingUnitId(null);
     }
+  }
+
+  function handlePrintLabel(u: ItemUnit) {
+    if (!u.barcode) return;
+    const subtitle =
+      u.price != null ? `Rp${u.price.toLocaleString("id-ID")}/${u.unit_label}` : u.unit_label;
+    return printLabel(u.id, u.barcode, subtitle);
+  }
+
+  // Label kode barang -- subtitle nunjukin satuan jual default (atau satuan dasar kalau belum
+  // ada yang ditandai), konsisten sama satuan yang bakal masuk keranjang POS pas discan.
+  function handlePrintItemLabel() {
+    if (!item?.barcode) return;
+    const target = units.find((u) => u.is_default_sale) ?? units.find((u) => u.is_base);
+    const subtitle = target
+      ? target.price != null
+        ? `Rp${target.price.toLocaleString("id-ID")}/${target.unit_label}`
+        : target.unit_label
+      : item.uom;
+    return printLabel(ITEM_LABEL_KEY, item.barcode, subtitle);
+  }
+
+  async function handleGenerateItemBarcode() {
+    if (!item) return;
+    setGeneratingItemCode(true);
+    const { error } = await supabase.rpc("generate_item_barcode", { p_item_id: item.id });
+    setGeneratingItemCode(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Kode scan barang berhasil dibuat.");
+    await load();
+  }
+
+  async function handleSetDefaultUnit(unitId: string) {
+    setSettingDefaultUnitId(unitId);
+    const { error } = await supabase.rpc("set_item_default_sale_unit", { p_unit_id: unitId });
+    setSettingDefaultUnitId(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Satuan jual default berhasil diatur.");
+    await load();
+  }
+
+  async function handleClearDefaultUnit() {
+    if (!item) return;
+    setSettingDefaultUnitId(CLEAR_DEFAULT_KEY);
+    const { error } = await supabase.rpc("clear_item_default_sale_unit", { p_item_id: item.id });
+    setSettingDefaultUnitId(null);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success("Satuan jual default dicabut — scan kode barang pakai satuan dasar.");
+    await load();
   }
 
   return (
@@ -376,6 +443,43 @@ export function ItemDetailView({ id }: { id: string }) {
 
       <DetailRows groups={detailGroups} />
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div className="max-w-xl">
+          <p className="text-sm font-medium text-black">Kode Scan Barang</p>
+          <p className="text-xs text-slate-500">
+            Cukup 1 label per barang. Scan di kasir (POS) masuk keranjang dalam satuan{" "}
+            <span className="font-medium text-slate-700">{scanUnit?.unit_label ?? item.uom}</span>
+            {defaultSaleUnit ? " (default jual)" : " (satuan dasar — belum ada default jual)"}; kasir bisa
+            ganti satuannya di keranjang. Kode per satuan di tabel bawah opsional, buat kemasan yang punya
+            label sendiri.
+          </p>
+          {scanUnit && scanUnit.price == null && (
+            <p className="mt-1 text-xs text-amber-600">
+              Satuan {scanUnit.unit_label} belum punya harga — kode barang ini belum bisa dijual di kasir.
+            </p>
+          )}
+        </div>
+        {item.barcode ? (
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-sm text-slate-700">{item.barcode}</span>
+            <button
+              type="button"
+              onClick={handlePrintItemLabel}
+              disabled={printingUnitId === ITEM_LABEL_KEY}
+              className="text-xs font-medium text-blue-600 underline hover:text-blue-700 disabled:opacity-50"
+            >
+              {printingUnitId === ITEM_LABEL_KEY ? "Menyiapkan..." : "Cetak Label"}
+            </button>
+          </div>
+        ) : canWrite ? (
+          <Button type="button" variant="toolbar" onClick={handleGenerateItemBarcode} disabled={generatingItemCode}>
+            {generatingItemCode ? "Membuat..." : "Buat Kode Barang"}
+          </Button>
+        ) : (
+          <span className="text-xs text-slate-400">Belum ada kode</span>
+        )}
+      </div>
+
       <Tabs
         tabs={[
           { key: "units", label: "Satuan Jual & Harga", badge: units.length },
@@ -406,6 +510,7 @@ export function ItemDetailView({ id }: { id: string }) {
               <th className="px-4 py-2">Satuan</th>
               <th className="px-4 py-2 text-right">Faktor Konversi</th>
               <th className="px-4 py-2 text-right">Harga</th>
+              <th className="px-4 py-2">Default Jual</th>
               <th className="px-4 py-2">Kode Scan</th>
               <th className="px-4 py-2" />
             </tr>
@@ -436,6 +541,36 @@ export function ItemDetailView({ id }: { id: string }) {
                     </div>
                   ) : (
                     (u.price != null ? u.price.toLocaleString("id-ID") : "-")
+                  )}
+                </td>
+                <td className="px-4 py-2">
+                  {u.is_default_sale ? (
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700">
+                        default
+                      </span>
+                      {canWrite && (
+                        <button
+                          type="button"
+                          onClick={handleClearDefaultUnit}
+                          disabled={settingDefaultUnitId === CLEAR_DEFAULT_KEY}
+                          className="text-xs text-slate-400 underline hover:text-slate-600 disabled:opacity-50"
+                        >
+                          Cabut
+                        </button>
+                      )}
+                    </div>
+                  ) : canWrite && u.price != null ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSetDefaultUnit(u.id)}
+                      disabled={settingDefaultUnitId === u.id}
+                      className="text-xs font-medium text-blue-600 underline hover:text-blue-700 disabled:opacity-50"
+                    >
+                      {settingDefaultUnitId === u.id ? "Menyimpan..." : "Jadikan default"}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-slate-400">—</span>
                   )}
                 </td>
                 <td className="px-4 py-2">
@@ -512,7 +647,7 @@ export function ItemDetailView({ id }: { id: string }) {
             ))}
             {units.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
                   Belum ada satuan jual — item ini belum bisa dipakai di Barang Keluar.
                 </td>
               </tr>

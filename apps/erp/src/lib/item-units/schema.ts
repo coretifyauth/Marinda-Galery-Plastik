@@ -21,4 +21,7 @@ export type ItemUnit = {
   price: number | null;
   is_base: boolean;
   barcode: string | null;
+  /** Satuan jual default buat scan kode barang di POS. Opsional di tipe: query yang gak butuh
+   * field ini (form PO/GRN dst) gak nge-select-nya. */
+  is_default_sale?: boolean;
 };

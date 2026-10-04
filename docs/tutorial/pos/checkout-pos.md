@@ -15,10 +15,13 @@ Setiap transaksi jual-beli langsung di toko (retail, tunai atau non-tunai) — d
 1. Buka halaman **Kasir** (halaman utama `apps/pos`).
 2. Tambahkan barang ke **Keranjang** dengan salah satu cara:
    - Klik kartu barang di katalog (kalau barang punya lebih dari 1 satuan jual, pilih dulu satuannya di dropdown kecil pada kartu sebelum klik).
-   - Ketik/scan kode barcode ke kolom **"Scan / ketik kode..."** lalu Enter — atau klik **📷 Kamera** untuk scan pakai kamera device.
+   - Ketik/scan kode barcode ke kolom **"Scan / ketik kode..."** lalu Enter — atau klik **📷 Kamera** untuk scan pakai kamera device. **Kode barang** masuk keranjang dalam satuan jual default barang itu (atau satuan dasar kalau belum diatur); **kode satuan** masuk dalam satuan persis itu.
    - Cari nama barang di kolom pencarian (`Ctrl+F` atau `/` untuk fokus cepat ke situ).
    - Shortcut keyboard: tombol angka **1–9** menambahkan barang sesuai posisi grid yang sedang tampil di layar.
-3. Atur qty tiap baris di keranjang pakai tombol **−**/**+** atau ketik langsung angkanya.
+3. Atur tiap baris di keranjang:
+   - Qty pakai tombol **−**/**+** atau ketik langsung angkanya.
+   - **Satuan** — kalau barang punya lebih dari 1 satuan berharga, ganti lewat dropdown kecil di samping nama barang (mis. dari "ikat" ke "bal"). Angka qty tetap, harga otomatis ikut satuan baru. Kalau barang yang sama sudah punya baris di satuan tujuan, kedua baris digabung.
+   - Stok dicek **gabungan per barang** di satuan dasar: kalau stok 150 pcs dan keranjang sudah berisi 100 pcs, menambah 1 bal (125 pcs) ditolak langsung dengan pesan stok tidak cukup.
 4. (Opsional) Klik **Detail Transaksi (Biaya Tambahan, PPN)** untuk buka bagian tambahan:
    - Tambah baris **Biaya Tambahan** (mis. biaya packing) — pilih kategori dan nominal.
    - Centang **Kena PPN** kalau transaksi ini kena pajak (checkbox ini menimpa pengaturan default PPN toko, khusus untuk transaksi ini saja).
@@ -41,6 +44,7 @@ Setiap transaksi jual-beli langsung di toko (retail, tunai atau non-tunai) — d
 
 - **Checkout dengan Uang Diterima kurang dari total** — tombol Checkout tetap disabled sampai uang diterima mencukupi; kalau butuh mencatat DP/pembayaran sebagian, itu bukan alur POS, harus lewat AR Invoice.
 - **Bingung barang tidak muncul di katalog** — cek apakah barang itu sudah punya harga jual di satuan manapun; barang tanpa harga tidak akan tampil sama sekali di kasir, meski stoknya ada.
-- **Scan barcode tidak ketemu** — pesan error "Kode gak ketemu" muncul kalau barcode belum didaftarkan ke satuan jual barang manapun; cari manual lewat katalog/pencarian sebagai gantinya.
+- **Scan barcode tidak ketemu** — pesan error "Kode gak ketemu" muncul kalau kode belum didaftarkan sebagai kode barang maupun kode satuan manapun; cari manual lewat katalog/pencarian sebagai gantinya.
+- **Scan ditolak dengan pesan "belum punya harga jual"** — kode dikenali tapi satuan hasilnya (default atau satuan dasar) belum berharga. Minta admin mengisi harganya atau menandai satuan lain yang berharga sebagai default di halaman barang.
 - **Menekan tombol angka 1–9 tanpa sadar sedang browsing katalog hasil pencarian** — shortcut angka mengikuti posisi grid yang **sedang tampil di layar** (bisa berubah kalau sedang mencari/filter), bukan posisi tetap per barang.
 - **Lupa transaksi POS beda alur dari AR Invoice** — POS selalu tunai/langsung lunas saat itu juga (walau boleh atas nama pelanggan terdaftar untuk keperluan struk), bukan tagihan bertermin. Untuk penjualan dengan termin, pakai [buat-invoice-ar.md](../accounts-receivable/buat-invoice-ar.md), bukan kasir POS.

@@ -121,7 +121,8 @@ Barang bisa dijual ke customer dalam satuan yang beda dari satuan dasarnya — m
 | `conversion_factor` | Berapa satuan dasar = 1 satuan jual ini | Baris satuan dasar wajib bernilai 1; antar satuan dalam 1 barang harus kelipatan bulat rapi (mis. pcs=1, pack=12, box=144 — bukan box=100), dijaga sistem otomatis biar tampilan stok gabungan ("1 box, 2 pack, 4 pcs") selalu presisi |
 | `price` | Harga jual per satuan ini | Nullable, independen — bukan hasil kali otomatis dari harga satuan dasar (harga per lusin boleh didiskon grosir, gak wajib proporsional) |
 | `is_base` | Penanda satuan dasar | Maksimal 1 baris `is_base = true` per barang |
-| `barcode` | Kode scan (lihat submodule di bawah) | Opsional, unik lintas seluruh `item_units` |
+| `is_default_sale` | Penanda satuan jual default (dipakai scan kode barang di POS) | Maksimal 1 baris `true` per barang; wajib punya `price`; kalau belum ada yang ditandai, aplikasi fallback ke satuan dasar. Lihat submodule Kode Scan Barang |
+| `barcode` | Kode scan (lihat submodule di bawah) | Opsional, unik lintas seluruh `item_units` dan `items.barcode` |
 
 **Alur Teknis (RPC)**
 
@@ -152,21 +153,27 @@ Barang bisa dijual ke customer dalam satuan yang beda dari satuan dasarnya — m
 | Melihat satuan jual barang | Semua user yang sudah login |
 | Menambah/mengubah/menghapus satuan jual | Role `admin` |
 
-## Kode Scan Barang (Barcode/QR per Satuan Jual)
+## Kode Scan Barang (Barcode/QR per Barang & per Satuan Jual)
 
 **Peta Data (ERD)**
 
 | Tabel | Fungsi | Terhubung ke |
 |---|---|---|
-| `item_units.barcode` (kolom) | Kode identitas scan per satuan jual | Tidak ada tabel baru — nempel ke sebagian baris `item_units` yang dipilih untuk digenerate |
+| `item_units.barcode` (kolom) | Kode identitas scan per satuan jual — satuan persis yang discan | Tidak ada tabel baru — nempel ke sebagian baris `item_units` |
+| `items.barcode` (kolom) | Kode identitas scan per barang — masuk keranjang POS di satuan jual default | Tidak ada tabel baru — nempel ke baris `items` |
+| `item_units.is_default_sale` (kolom) | Penanda satuan jual default per barang | Tidak ada tabel baru — nempel ke 1 baris `item_units` per barang |
 
-Kode scan ditaruh di level satuan jual (`item_units`), bukan di level barang (`items`), karena kemasan fisik beda (dus/pack/pcs) biasanya punya label/barcode berbeda-beda di dunia nyata — kalau ditaruh di level barang, scan gak bisa langsung tahu satuan mana yang sedang dipegang kasir.
+Ada 2 level kode scan, keduanya opsional dan boleh dipakai bareng. **Kode satuan** (`item_units.barcode`) cocok buat barang pabrikan yang tiap kemasannya sudah punya label sendiri — scan langsung tahu satuan mana yang dipegang kasir. **Kode barang** (`items.barcode`) cocok buat barang tanpa label pabrik (dikemas sendiri): admin cukup cetak 1 label per barang, bukan 1 per satuan; scan masuk ke keranjang dalam satuan jual default (`is_default_sale`), atau satuan dasar kalau belum ada yang ditandai. Satuan default cuma dipakai scan kode barang di POS — Sales Order, Goods Issue, dan klik katalog POS gak berubah. RPC transaksi (`create_pos_sale`) tidak berubah sama sekali.
 
 **Alur Teknis (RPC)**
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Simpan barcode pabrik | — (update langsung kolom `barcode`) | Kode dari label EAN-13/UPC produsen disimpan apa adanya | Constraint unik global lintas seluruh `item_units` |
+| Simpan barcode pabrik | — (update langsung kolom `barcode`, di `item_units` atau `items`) | Kode dari label EAN-13/UPC produsen disimpan apa adanya | Constraint unik per tabel + trigger `check_scan_code_unique_across_tables` (unik lintas `items` & `item_units`, advisory lock per kode biar aman dari 2 insert bersamaan) |
+| Generate kode internal untuk barang | `generate_item_barcode(p_item_id)` | Pola sama `generate_item_unit_barcode`, pakai counter `item_unit_barcodes` yang SAMA (prefix `SKU-`) sehingga kode barang & kode satuan hasil generate gak pernah bentrok; retry otomatis kalau `unique_violation` (maks 20x) | Role `admin` (dicek dalam fungsi, `security definer`) |
+| Ganti satuan jual default | `set_item_default_sale_unit(p_unit_id)` | Atomik: cabut tanda default satuan lama barang itu, pasang ke satuan baru (unique index parsial gak bisa deferred, jadi gak bisa 2 UPDATE terpisah dari client) | Role `admin`; satuan wajib punya `price` |
+| Cabut satuan jual default | `clear_item_default_sale_unit(p_item_id)` | Barang balik ke fallback satuan dasar | Role `admin` |
+| Harga satuan default dikosongkan | — (trigger `item_units_clear_default_on_price_null`) | Tanda `is_default_sale` dicabut otomatis, bukan update ditolak | `before update of price` — jalan sebelum CHECK constraint |
 | Generate kode internal | `generate_item_unit_barcode(p_unit_id)` (1 transaksi atomik) | Di dalamnya panggil `generate_document_number('item_unit_barcodes')` (reuse, lihat `document-numbering-schema.md`) lalu langsung `update item_units set barcode = ...` pada baris yang sama — kalau ternyata kode itu sudah kepake baris lain (`unique_violation`, mis. barcode lama yang diketik manual saat seed/testing bukan lewat RPC ini), loop otomatis coba nomor berikutnya (maks 20x) tanpa error ke user | Role `admin` (dicek manual dalam fungsi, `security definer` sehingga bypass RLS) + `doc_type = 'item_unit_barcodes'` — pengecualian dari konvensi "doc_type = nama tabel transaksional", karena tidak ada tabel `item_unit_barcodes` sungguhan |
 | Cetak label QR | — (murni fitur UI, client-side) | Render QR dari nilai `barcode` yang tersimpan | Tidak ada tabel/kolom penyimpanan gambar |
 
@@ -174,8 +181,11 @@ Kode scan ditaruh di level satuan jual (`item_units`), bukan di level barang (`i
 
 | Aturan (dari docs/domain) | Dijaga oleh |
 |---|---|
-| Kode scan harus unik lintas SELURUH satuan jual, gak boleh 2 barang/satuan beda punya kode sama | Constraint `unique` pada kolom `item_units.barcode` (global, bukan scoped per barang) |
+| Kode scan harus unik lintas SEMUA kode (kode barang & kode satuan), gak boleh 2 barang/satuan beda punya kode sama, dan kode barang gak boleh sama dengan kode satuan manapun | Constraint `unique` pada `item_units.barcode` dan `items.barcode` (global per tabel) + trigger `check_scan_code_unique_across_tables` buat keunikan lintas kedua tabel |
 | Kode scan gak wajib diisi, dan gak ada aturan "kalau 1 satuan punya kode semua satuan harus punya" | Kolom nullable, independen per baris |
+| Satuan jual default harus milik barang itu sendiri, maksimal 1 per barang, wajib punya harga | Partial unique index `item_units_one_default_sale_per_item` + check constraint `item_units_default_sale_needs_price`; RPC `set_item_default_sale_unit` memastikan penggantian atomik |
+| Belum ada satuan default → fallback satuan dasar; harga default dikosongkan → default balik ke satuan dasar | Fallback di sisi aplikasi (POS); trigger `item_units_clear_default_on_price_null` buat kasus harga dikosongkan |
+| Stok di keranjang POS dicek gabungan per barang (satuan dasar), bukan per baris satuan | Murni logic UI POS — validasi oversell otoritatif tetap di `create_pos_sale` seperti sebelumnya |
 | Gak ada validasi format ketat (bukan EAN-13/UPC checksum) | Kolom menerima teks apa saja — mendukung kode QR generate-sendiri yang gak wajib ikut standar retail resmi |
 | Mengubah/menghapus kode gak berdampak retroaktif ke transaksi lama | Transaksi menyimpan qty & harga hasil resolusinya sendiri, tidak balik menunjuk ke kode barcode |
 
@@ -183,11 +193,14 @@ Kode scan ditaruh di level satuan jual (`item_units`), bukan di level barang (`i
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `item_units.barcode` | kolom pada baris yang sama, dipakai saat lookup scan | `item_units` itu sendiri |
+| `item_units.barcode` | kolom pada baris yang sama, dipakai saat lookup scan (dicocokkan duluan) | `item_units` itu sendiri |
+| `items.barcode` | kolom pada baris yang sama, dipakai saat lookup scan setelah kode satuan gak ketemu | `items` itu sendiri |
+| `items.barcode` ↔ `item_units.barcode` | saling eksklusif — nilai yang sama gak boleh ada di keduanya | trigger `check_scan_code_unique_across_tables` |
 
 ### Siapa Boleh Apa (Kode Scan Barang)
 
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat/scan kode barang | Semua user yang sudah login |
-| Mengisi/generate/mengubah kode scan | Role `admin` (sama seperti hak akses `item_units` secara umum) |
+| Mengisi/generate/mengubah kode scan (barang maupun satuan) | Role `admin` (sama seperti hak akses `items`/`item_units` secara umum) |
+| Mengatur satuan jual default | Role `admin` (lewat RPC `set_item_default_sale_unit` / `clear_item_default_sale_unit`) |

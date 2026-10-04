@@ -21,7 +21,20 @@ Setelah item master dibuat ([tambah-item-master.md](tambah-item-master.md)), seb
 5. (Opsional) Isi **Harga** — kalau kosong, satuan ini tidak akan muncul sebagai pilihan barang yang bisa dijual (harga wajib ada untuk bisa dijual, tidak ada input harga manual saat transaksi).
 6. Klik **Simpan**.
 
-### Buat & cetak kode barcode/QR (opsional, per satuan)
+### Buat kode scan untuk 1 barang (cara paling praktis — cukup 1 label per barang)
+
+Cocok untuk barang tanpa barcode pabrik (dikemas sendiri). Satu label dipakai untuk semua satuan; kasir memilih satuannya di layar.
+
+1. Di detail item, lihat kotak **Kode Scan Barang** (di atas tabel satuan). Klik **Buat Kode Barang** — kode digenerate otomatis (format `SKU-TAHUN-nnnnn`).
+2. Klik **Cetak Label** untuk mencetak QR yang ditempel di rak/kemasan barang.
+3. (Disarankan) Tentukan **satuan jual default** — satuan yang otomatis masuk keranjang kasir saat kode barang discan:
+   - Di tabel **Satuan Jual & Harga**, kolom **Default Jual**, klik **Jadikan default** pada satuan yang dimau (mis. "ikat" kalau barang itu paling sering dijual per ikat).
+   - Hanya satuan yang sudah punya **harga** yang bisa dijadikan default.
+   - Belum ada yang ditandai = scan masuk dalam **satuan dasar**. Klik **Cabut** untuk kembali ke satuan dasar.
+
+### Buat & cetak kode barcode/QR per satuan (opsional)
+
+Dipakai untuk barang yang tiap kemasannya sudah punya label sendiri (mis. barang pabrikan: dus dan pcs beda kode) — scan langsung masuk dalam satuan persis itu, tanpa lewat satuan default.
 
 1. Di baris satuan yang sudah punya harga, klik **Buat Kode** — kode akan digenerate otomatis oleh sistem (bukan diketik manual).
 2. Setelah kode terbentuk, klik **Cetak Label** untuk mencetak QR code fisik yang bisa ditempel di rak/barang.
@@ -29,7 +42,8 @@ Setelah item master dibuat ([tambah-item-master.md](tambah-item-master.md)), seb
 ## Hasil Akhir
 
 - Satuan jual yang sudah punya harga langsung bisa dipilih di [jual-barang-goods-issue.md](jual-barang-goods-issue.md) dan kasir POS ([checkout-pos.md](../pos/checkout-pos.md)).
-- Satuan yang sudah punya barcode bisa di-scan langsung di kasir POS untuk menambah ke keranjang tanpa cari manual.
+- Kode barang atau kode satuan yang sudah dibuat bisa di-scan langsung di kasir POS untuk menambah ke keranjang tanpa cari manual. Kode barang masuk dalam satuan default (atau satuan dasar); kode satuan masuk dalam satuan persis itu.
+- Satuan default hanya mempengaruhi scan kode barang di kasir POS — form Goods Issue/Sales Order dan klik katalog POS tidak berubah.
 - Faktor konversi dipakai otomatis oleh sistem untuk mengonversi qty ke satuan dasar tiap kali transaksi (PO, GRN, Goods Issue, POS) memakai satuan selain satuan dasar.
 
 ## Kesalahan Umum
@@ -37,4 +51,7 @@ Setelah item master dibuat ([tambah-item-master.md](tambah-item-master.md)), seb
 - **Menambah item lalu lupa tambahkan satuan jual sama sekali** — item seperti itu tidak akan muncul di form Goods Issue maupun katalog kasir POS, meski stoknya ada.
 - **Salah isi Faktor Konversi** — ini menentukan berapa banyak stok satuan dasar yang berkurang tiap 1 unit satuan itu terjual; faktor yang salah bikin qty stok tercatat tidak sesuai kenyataan.
 - **Coba buat kode barcode untuk satuan yang belum ada harganya** — tombol **Buat Kode** cuma tersedia untuk satuan yang sudah punya harga (kode QR memang khusus untuk barang yang bisa dijual).
+- **Mencetak kode barang tapi satuan dasarnya belum berharga** — scan di kasir akan menolak dengan pesan "belum punya harga jual". Isi harga satuan dasar, atau tandai satuan lain yang berharga sebagai default.
+- **Mengosongkan harga satuan yang sedang jadi default** — tanda default dicabut otomatis, scan kode barang kembali memakai satuan dasar.
+- **Menempel label kode barang ke tiap kemasan berbeda** — tidak perlu; 1 label per barang cukup, satuannya dipilih kasir di keranjang. Label per satuan hanya perlu kalau kemasannya memang berlabel sendiri.
 - **Mengedit Faktor Konversi satuan yang sudah pernah dipakai transaksi** — perubahan ini tidak retroaktif ke transaksi lama, tapi bisa membingungkan kalau dilakukan sembarangan; sebaiknya buat satuan baru daripada mengubah faktor konversi satuan yang sudah berjalan.

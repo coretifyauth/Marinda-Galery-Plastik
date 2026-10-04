@@ -176,10 +176,14 @@ Rata-Rata Tertimbang adalah satu-satunya metode costing yang dipakai sistem — 
 - Pakai pola "isi qty campur beberapa satuan sekaligus" di layar jual/beli (Sales Order/Goods Issue/Purchase Order) — itu cocoknya buat internal doang. Jual butuh pilih 1 satuan biar harga bisa otomatis muncul; beli butuh pilih 1 satuan biar harganya jelas per baris (bisa beda-beda per satuan).
 - Nyoba samain harga beli dari supplier dengan harga jual ke customer yang tersimpan di data satuan barang — dua hal yang gak berhubungan, harga beli PO/Terima Barang selalu ketik manual.
 
-### Kode Scan Barang (Barcode/QR per Satuan Jual)
+### Kode Scan Barang (Barcode/QR per Barang & per Satuan Jual)
 
 **Cara Kerja**
-- Kasir toko fisik butuh cara cepat identifikasi barang pas checkout — scan kode di kemasan, bukan cari manual satu-satu dari katalog. Tiap **satuan jual** (bukan barang secara umum) boleh, opsional, dikasih 1 kode scan unik — konsisten sama alasan kenapa harga & faktor konversi juga per satuan jual di submodule sebelumnya: kemasan fisik beda (dus vs pcs) biasanya punya label/barcode beda juga di dunia nyata. Kalau kode ditaruh di level barang (bukan per satuan), scan gak bisa langsung tau satuan mana yang lagi dipegang kasir.
+- Kasir toko fisik butuh cara cepat identifikasi barang pas checkout — scan kode di kemasan, bukan cari manual satu-satu dari katalog. Ada **2 level kode scan**, keduanya opsional dan bisa dipakai bareng:
+  - **Kode barang** (1 kode per barang) — buat barang tanpa label pabrik per kemasan (kasus umum toko plastik: ikat/bal/dus dikemas sendiri). Admin cukup cetak **1 label** per barang, bukan 1 label per satuan. Scan kode ini masuk keranjang dalam **satuan jual default** barang itu (lihat di bawah), dan kasir bisa ganti satuannya lewat dropdown di baris keranjang tanpa scan ulang.
+  - **Kode satuan** (1 kode per satuan jual) — buat barang pabrikan yang kemasannya memang sudah punya label sendiri-sendiri (dus beda kode dari pcs). Scan kode ini langsung masuk keranjang dalam satuan persis itu, tanpa lewat satuan default.
+- **Satuan jual default**: tiap barang punya 1 satuan jual yang ditandai sebagai default scan kode barang. Kalau admin belum menandai, otomatis **satuan dasar**, jadi barang lama tetap jalan tanpa diisi ulang. Satuan default **wajib salah satu satuan yang punya harga jual** (satuan tanpa harga memang gak bisa dijual).
+- Saat scan, sistem cocokkan teks kode ke kode satuan dulu (hasilnya satuan persis), baru ke kode barang (hasilnya satuan default).
 - Kode bisa dari 2 sumber, dan sistem memperlakukan keduanya **sama persis** — cuma teks yang dicocokkan pas scan, gak peduli asal-usulnya:
   - **Barcode pabrik** — barang bermerek yang udah ada label EAN-13/UPC dari produsen, tinggal discan & disimpan apa adanya pas input satuan jual itu.
   - **Kode internal** — buat barang yang gak punya label pabrik (barang curah, racikan sendiri, atau produk lokal kecil yang emang gak pernah didaftarin ke standar barcode resmi). Sistem sediakan tombol generate kode urutan internal (format `SKU-TAHUN-00001`, sama polanya kayak nomor dokumen lain di sistem ini) + render QR siap-print langsung dari halaman barang, tanpa perlu aplikasi/alat cetak label terpisah.
@@ -187,16 +191,23 @@ Rata-Rata Tertimbang adalah satu-satunya metode costing yang dipakai sistem — 
 - Gak wajib diisi — barang/satuan yang gak pernah discan (dijual manual, ditimbang, atau dipilih dari katalog POS) boleh dibiarkan kosong selamanya, gak ada dampak ke bagian modul lain.
 
 **Aturan Bisnis**
-- Kode scan harus unik lintas SELURUH satuan jual (gak boleh 2 barang/satuan beda punya kode yang sama) — kalau bentrok, scan jadi ambigu dan bisa keliru nge-charge harga barang lain.
-- Kode scan gak wajib diisi buat tiap satuan jual, dan gak ada aturan "kalau 1 satuan barang X punya kode, semua satuan barang X juga harus punya" — independen per baris.
+- Kode scan harus unik lintas **SEMUA kode, baik kode barang maupun kode satuan** (gak boleh 2 barang/satuan beda punya kode yang sama, dan kode barang gak boleh sama dengan kode satuan manapun) — kalau bentrok, scan jadi ambigu dan bisa keliru nge-charge harga barang lain.
+- Kode barang dan kode satuan gak wajib diisi, dan gak ada aturan "kalau 1 satuan barang X punya kode, semua satuan barang X juga harus punya" — independen per baris. Barang yang pakai kode barang boleh sekaligus punya kode satuan untuk sebagian kemasannya.
+- Satuan jual default harus salah satu satuan jual milik barang itu sendiri, dan harus punya harga jual. Kalau harga satuan default dikosongkan/dihapus, default balik ke satuan dasar.
+- Satuan jual default cuma dipakai di **scan kode barang di kasir (POS)**. Klik barang dari katalog POS dan form Sales Order/Jual Barang gak berubah dari cara kerjanya sekarang.
+- Di keranjang kasir, tiap kombinasi (barang, satuan) satu baris — pembeli boleh beli 1 dus + 3 pcs barang yang sama sebagai 2 baris. Kalau kasir mengganti satuan sebuah baris jadi satuan yang sudah ada barisnya untuk barang yang sama, kedua baris digabung (qty dijumlahkan). **Stok dicek gabungan semua baris barang yang sama, di satuan dasar** (bukan per baris), jadi 100 pcs + 1 bal (125 pcs) ditolak langsung kalau stok total cuma 150 pcs, tanpa nunggu kasir klik bayar.
 - Kode scan murni identitas lookup, sama sekali gak menyentuh perhitungan stok/HPP/jurnal — mengubah atau menghapus kode gak berdampak retroaktif ke transaksi yang udah pernah pakai satuan itu (transaksi udah menyimpan qty & harga hasil resolusinya sendiri, gak balik nunjuk ke kode).
 
 **Skenario**
 - Piring Plastik dijual 3 satuan: pcs, lusin, pack isi 6. Toko Makmur Jaya cuma bikinin kode buat "pack isi 6" (paling sering dijual retail & discan) — pcs dan lusin dibiarkan tanpa kode, tetap dijual manual lewat katalog seperti biasa.
 - Ember Plastik 10L gak ada barcode dari PT Plastindo Jaya (pabrik plastik lokal kecil). Pak Herman generate kode internal dari sistem, cetak label QR-nya, tempel ke rak/kemasan ember — Mbak Rina discan kode itu di kasir buat checkout cepat.
+- Kantong Plastik A dijual per pcs, ikat (isi 5), bal (isi 125), dos (isi 1250), semuanya kemasan sendiri tanpa barcode pabrik. Pak Herman cukup bikin **1 kode barang** dan set satuan jual default = ikat. Kasir scan kode itu sekali: masuk keranjang "Kantong Plastik A — 1 ikat". Pelanggan ternyata beli 2 bal: kasir ganti dropdown ke bal dan qty ke 2 (harga ikut harga bal), stok terpotong 2 × 125 = 250 pcs.
+- Stok Kantong Plastik B tinggal 3.000 pcs. Kasir scan lalu ganti ke 3 dos (3 × 1.250 = 3.750 pcs) — ditolak langsung di layar kasir karena melebihi stok, tanpa nunggu server menolak pas bayar.
 
 **Common Mistakes**
-- Nyimpen kode scan di level barang (bukan per satuan jual) — begitu barang itu ternyata dijual >1 satuan (kemasan fisiknya beda-beda), sistem cuma bisa nyimpen 1 kode padahal tiap kemasan biasanya punya kode/label sendiri-sendiri, scan jadi gak bisa bedain satuan mana yang lagi discan.
+- Cuma nyediain kode di level barang tanpa satuan default yang jelas — scan gak tau satuan mana yang harus dimasukkan ke keranjang. Makanya kode barang selalu dipasangkan dengan satuan jual default (otomatis satuan dasar kalau belum diset).
+- Cuma nyediain kode per satuan jual buat barang yang kemasannya dikemas sendiri — admin dipaksa cetak dan tempel 1 label per satuan per barang (barang 4 satuan = 4 label), dan salah tempel label berarti salah harga. Kode per satuan paling cocok buat barang pabrikan yang labelnya memang sudah ada dari produsen.
+- Mengira harga ikut dari kodenya — yang menentukan harga adalah satuan yang terpilih di keranjang, bukan kode yang discan.
 - Mewajibkan format ketat (EAN-13/UPC numerik + checksum) buat semua kode — menolak kode generate-sendiri (apalagi QR yang bisa encode teks bebas) yang emang gak dirancang ikutin standar itu.
 
 ### Stock Opname (Penyesuaian Stok Fisik)
