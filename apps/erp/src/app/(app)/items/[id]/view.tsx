@@ -62,7 +62,6 @@ export function ItemDetailView({ id }: { id: string }) {
 
   const [deleting, setDeleting] = useState(false);
 
-  const [generatingUnitId, setGeneratingUnitId] = useState<string | null>(null);
   // printingUnitId juga dipakai buat label kode barang (key khusus ITEM_LABEL_KEY) -- 1 state
   // cukup karena label cuma dicetak 1 per waktu.
   const [printingUnitId, setPrintingUnitId] = useState<string | null>(null);
@@ -262,7 +261,13 @@ export function ItemDetailView({ id }: { id: string }) {
     if (!ok) return;
     const { error } = await supabase.from("item_units").delete().eq("id", unitId);
     if (error) {
-      toast.error(error.message);
+      // 23503 = foreign key violation: satuan ini dirujuk aturan promo (syarat minimal diskon /
+      // qty beli / qty hadiah bundle) atau transaksi.
+      toast.error(
+        error.code === "23503"
+          ? "Satuan ini masih dipakai aturan promo atau transaksi, jadi gak bisa dihapus."
+          : error.message
+      );
       return;
     }
     toast.success("Satuan jual berhasil dihapus.");
@@ -289,25 +294,6 @@ export function ItemDetailView({ id }: { id: string }) {
     }
     setEditingUnitId(null);
     toast.success("Harga satuan berhasil diperbarui.");
-    await load();
-  }
-
-  async function handleGenerateBarcode(unitId: string) {
-    const unit = units.find((u) => u.id === unitId);
-    if (unit && unit.price == null) {
-      toast.error("Satuan ini belum punya harga — QR code cuma buat barang yang dijual.");
-      return;
-    }
-    setGeneratingUnitId(unitId);
-    // RPC generate+assign 1 transaksi atomik dengan retry-on-conflict (bukan generate_document_number
-    // + update terpisah) -- lihat generate_item_unit_barcode di supabase/migrations/0005_items_schema.sql.
-    const { error } = await supabase.rpc("generate_item_unit_barcode", { p_unit_id: unitId });
-    setGeneratingUnitId(null);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-    toast.success("Kode scan berhasil dibuat.");
     await load();
   }
 
@@ -450,8 +436,7 @@ export function ItemDetailView({ id }: { id: string }) {
             Cukup 1 label per barang. Scan di kasir (POS) masuk keranjang dalam satuan{" "}
             <span className="font-medium text-slate-700">{scanUnit?.unit_label ?? item.uom}</span>
             {defaultSaleUnit ? " (default jual)" : " (satuan dasar — belum ada default jual)"}; kasir bisa
-            ganti satuannya di keranjang. Kode per satuan di tabel bawah opsional, buat kemasan yang punya
-            label sendiri.
+            ganti satuannya di keranjang.
           </p>
           {scanUnit && scanUnit.price == null && (
             <p className="mt-1 text-xs text-amber-600">
@@ -590,15 +575,6 @@ export function ItemDetailView({ id }: { id: string }) {
                     <span className="text-xs text-slate-400" title="Isi harga dulu — QR code cuma buat barang yang dijual">
                       Belum ada harga
                     </span>
-                  ) : canWrite ? (
-                    <button
-                      type="button"
-                      onClick={() => handleGenerateBarcode(u.id)}
-                      disabled={generatingUnitId === u.id}
-                      className="text-xs font-medium text-blue-600 underline hover:text-blue-700 disabled:opacity-50"
-                    >
-                      {generatingUnitId === u.id ? "Membuat..." : "Buat Kode"}
-                    </button>
                   ) : (
                     <span className="text-xs text-slate-400">—</span>
                   )}

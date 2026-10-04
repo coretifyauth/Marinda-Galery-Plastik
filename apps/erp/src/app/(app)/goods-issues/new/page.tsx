@@ -11,7 +11,7 @@ import { createGoodsIssueSchema } from "@/lib/goods-issues/schema";
 import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
 import {
   fetchActiveItemDiscountRules,
-  resolveItemDiscount,
+  resolveLineItemDiscounts,
   type ItemDiscountRule,
 } from "@/lib/promotion-item-discount-rules/schema";
 import {
@@ -44,12 +44,10 @@ type LineInput = {
   qty: string;
   amount: number;
   baseQty: number;
-  discountRuleId: string | null;
-  discountAmount: number;
 };
 
 function emptyLine(): LineInput {
-  return { item_id: "", qty: "", amount: 0, baseQty: 0, discountRuleId: null, discountAmount: 0 };
+  return { item_id: "", qty: "", amount: 0, baseQty: 0 };
 }
 
 export default function NewGoodsIssuePage() {
@@ -133,17 +131,8 @@ export default function NewGoodsIssuePage() {
     setLines((prev) =>
       prev.map((l, i) => {
         if (i !== index) return l;
-        if (!change) return { ...l, qty: "", amount: 0, baseQty: 0, discountRuleId: null, discountAmount: 0 };
-        const item = items.find((it) => it.id === itemId);
-        const resolved = resolveItemDiscount(itemId, item?.category_id ?? null, change.baseQty, change.amount, discountRules);
-        return {
-          ...l,
-          qty: String(change.baseQty),
-          amount: change.amount,
-          baseQty: change.baseQty,
-          discountRuleId: resolved?.discount_rule_id ?? null,
-          discountAmount: resolved?.discount_amount ?? 0,
-        };
+        if (!change) return { ...l, qty: "", amount: 0, baseQty: 0 };
+        return { ...l, qty: String(change.baseQty), amount: change.amount, baseQty: change.baseQty };
       })
     );
   }
@@ -163,10 +152,28 @@ export default function NewGoodsIssuePage() {
     lines.map((l) => ({ item_id: l.item_id, qty: l.baseQty, unit_price: l.baseQty > 0 ? l.amount / l.baseQty : 0 })),
     bundleRules
   );
+  // Diskon barang (termasuk syarat minimal qty) juga derived: syarat dicek ke TOTAL qty satuan dasar
+  // barang itu lintas semua baris, jadi diskon 1 baris bisa berubah kalau baris lain berubah.
+  const itemDiscounts = resolveLineItemDiscounts(
+    lines.map((l) => ({
+      item_id: l.item_id,
+      category_id: items.find((it) => it.id === l.item_id)?.category_id ?? null,
+      baseQty: l.baseQty,
+      amount: l.amount,
+    })),
+    discountRules
+  );
   const linesWithBundle = lines.map((l, i) => {
     const bundle = bundleResolved.get(i);
-    const combinedDiscount = Math.min(l.discountAmount + (bundle?.discount_amount ?? 0), l.amount);
-    return { ...l, bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null, combinedDiscount };
+    const itemDiscount = itemDiscounts[i];
+    const combinedDiscount = Math.min((itemDiscount?.discount_amount ?? 0) + (bundle?.discount_amount ?? 0), l.amount);
+    return {
+      ...l,
+      discountRuleId: itemDiscount?.discount_rule_id ?? null,
+      discountAmount: itemDiscount?.discount_amount ?? 0,
+      bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null,
+      combinedDiscount,
+    };
   });
 
   const grossAmount = lines.reduce((sum, l) => sum + l.amount, 0);

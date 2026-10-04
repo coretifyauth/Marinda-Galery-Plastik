@@ -32,12 +32,9 @@ Cocok untuk barang tanpa barcode pabrik (dikemas sendiri). Satu label dipakai un
    - Hanya satuan yang sudah punya **harga** yang bisa dijadikan default.
    - Belum ada yang ditandai = scan masuk dalam **satuan dasar**. Klik **Cabut** untuk kembali ke satuan dasar.
 
-### Buat & cetak kode barcode/QR per satuan (opsional)
+### Kode lama per satuan
 
-Dipakai untuk barang yang tiap kemasannya sudah punya label sendiri (mis. barang pabrikan: dus dan pcs beda kode) — scan langsung masuk dalam satuan persis itu, tanpa lewat satuan default.
-
-1. Di baris satuan yang sudah punya harga, klik **Buat Kode** — kode akan digenerate otomatis oleh sistem (bukan diketik manual).
-2. Setelah kode terbentuk, klik **Cetak Label** untuk mencetak QR code fisik yang bisa ditempel di rak/barang.
+Kode scan per satuan (yang dibuat sebelum ada kode barang) **tidak bisa dibuat baru lagi dari halaman ini** — pakai kode barang di atas. Kode per satuan yang sudah ada tetap tampil di kolom **Kode Scan**, tetap bisa di-**Cetak Label**, dan tetap bekerja di kasir: scan kode itu langsung masuk keranjang dalam satuan persis itu, tanpa lewat satuan default.
 
 ## Hasil Akhir
 
@@ -50,8 +47,7 @@ Dipakai untuk barang yang tiap kemasannya sudah punya label sendiri (mis. barang
 
 - **Menambah item lalu lupa tambahkan satuan jual sama sekali** — item seperti itu tidak akan muncul di form Goods Issue maupun katalog kasir POS, meski stoknya ada.
 - **Salah isi Faktor Konversi** — ini menentukan berapa banyak stok satuan dasar yang berkurang tiap 1 unit satuan itu terjual; faktor yang salah bikin qty stok tercatat tidak sesuai kenyataan.
-- **Coba buat kode barcode untuk satuan yang belum ada harganya** — tombol **Buat Kode** cuma tersedia untuk satuan yang sudah punya harga (kode QR memang khusus untuk barang yang bisa dijual).
 - **Mencetak kode barang tapi satuan dasarnya belum berharga** — scan di kasir akan menolak dengan pesan "belum punya harga jual". Isi harga satuan dasar, atau tandai satuan lain yang berharga sebagai default.
 - **Mengosongkan harga satuan yang sedang jadi default** — tanda default dicabut otomatis, scan kode barang kembali memakai satuan dasar.
-- **Menempel label kode barang ke tiap kemasan berbeda** — tidak perlu; 1 label per barang cukup, satuannya dipilih kasir di keranjang. Label per satuan hanya perlu kalau kemasannya memang berlabel sendiri.
+- **Menempel label kode barang ke tiap kemasan berbeda** — tidak perlu; 1 label per barang cukup, satuannya dipilih kasir di keranjang.
 - **Mengedit Faktor Konversi satuan yang sudah pernah dipakai transaksi** — perubahan ini tidak retroaktif ke transaksi lama, tapi bisa membingungkan kalau dilakukan sembarangan; sebaiknya buat satuan baru daripada mengubah faktor konversi satuan yang sudah berjalan.

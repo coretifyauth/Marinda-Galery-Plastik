@@ -16,6 +16,8 @@ export type ItemDiscountRule = {
   category_id: string | null;
   discount_type: "PERCENT" | "NOMINAL";
   discount_value: number;
+  /** Syarat minimal qty dalam SATUAN DASAR (diisi trigger DB). null/undefined (juga di cache offline lama) = tanpa syarat. */
+  min_qty_base?: number | null;
 };
 
 // Pola sama fetchItemRows/fetchCustomers di page.tsx: coba online -> tulis-tembus ke cache
@@ -24,7 +26,7 @@ export async function fetchActiveItemDiscountRules(): Promise<ItemDiscountRule[]
   try {
     const { data, error } = await supabase
       .from("promotion_item_discount_rules")
-      .select("id, item_id, category_id, discount_type, discount_value")
+      .select("id, item_id, category_id, discount_type, discount_value, min_qty_base")
       .is("archived_at", null);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as ItemDiscountRule[];
@@ -39,19 +41,25 @@ export async function fetchActiveItemDiscountRules(): Promise<ItemDiscountRule[]
 
 export type ResolvedItemDiscount = { discount_rule_id: string; discount_amount: number };
 
-/** Mirror persis resolveItemDiscount() di apps/erp. */
+/** Mirror persis resolveItemDiscount() di apps/erp (dan resolve_item_discount SQL, 0050): aturan
+ * barang yang syarat minimalnya terpenuhi (tingkat tertinggi) menang atas kategori; kalau gak ada
+ * yang terpenuhi, jatuh ke aturan kategori. `totalQty` = total qty satuan dasar barang ini lintas
+ * SEMUA baris keranjang (cuma buat cek syarat); diskon dihitung ke baseQty/amount baris ini. */
 export function resolveItemDiscount(
   itemId: string,
   categoryId: string | null,
-  qty: number,
+  baseQty: number,
   amount: number,
-  rules: ItemDiscountRule[]
+  rules: ItemDiscountRule[],
+  totalQty: number = baseQty
 ): ResolvedItemDiscount | null {
-  const rule =
-    rules.find((r) => r.item_id === itemId) ?? (categoryId ? rules.find((r) => r.category_id === categoryId) : undefined);
+  const itemRule = rules
+    .filter((r) => r.item_id === itemId && (r.min_qty_base ?? 0) <= totalQty)
+    .sort((a, b) => (b.min_qty_base ?? 0) - (a.min_qty_base ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  const rule = itemRule ?? (categoryId ? rules.find((r) => r.category_id === categoryId) : undefined);
   if (!rule) return null;
 
-  const raw = rule.discount_type === "PERCENT" ? (amount * rule.discount_value) / 100 : qty * rule.discount_value;
+  const raw = rule.discount_type === "PERCENT" ? (amount * rule.discount_value) / 100 : baseQty * rule.discount_value;
   const discount_amount = Math.min(Math.round(raw * 100) / 100, amount);
   if (discount_amount <= 0) return null;
   return { discount_rule_id: rule.id, discount_amount };

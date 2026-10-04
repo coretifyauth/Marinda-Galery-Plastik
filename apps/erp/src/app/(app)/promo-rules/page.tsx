@@ -17,6 +17,25 @@ import { LoadingScreen } from "@/components/ui/loading-screen";
  * promotion_item_discount_rules yang berbasis harga). Barang pemicu WAJIB spesifik (gak ada
  * opsi kategori), barang hadiah boleh sama/beda dari pemicu. Ref:
  * docs/domain/accounts-receivable.md submodule "Beli N Gratis X (Bundle Promo)". */
+type UnitOption = { id: string; unit_label: string; conversion_factor: number };
+
+// Satuan NON-dasar milik 1 barang -- "satuan dasar" sendiri dipilih lewat opsi kosong (null).
+async function fetchNonBaseUnits(itemId: string): Promise<UnitOption[]> {
+  const { data } = await supabase
+    .from("item_units")
+    .select("id, unit_label, conversion_factor")
+    .eq("item_id", itemId)
+    .eq("is_base", false)
+    .order("conversion_factor");
+  return (data ?? []) as UnitOption[];
+}
+
+function rewardLabel(row: { reward_type?: string; reward_value?: number | null }): string {
+  if (row.reward_type === "PERCENT") return `diskon ${row.reward_value}%`;
+  if (row.reward_type === "NOMINAL") return `diskon Rp${(row.reward_value ?? 0).toLocaleString("id-ID")}/unit dasar`;
+  return "gratis";
+}
+
 function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite: boolean }) {
   const [rows, setRows] = useState<
     (BundlePromoRule & {
@@ -24,13 +43,21 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
       created_by: string | null;
       trigger: { name: string };
       reward: { name: string };
+      buy_unit: { unit_label: string } | null;
+      reward_unit: { unit_label: string } | null;
     })[]
   >([]);
   const [name, setName] = useState("");
   const [triggerItemId, setTriggerItemId] = useState("");
   const [buyQty, setBuyQty] = useState("");
+  const [buyUnitId, setBuyUnitId] = useState("");
+  const [triggerUnits, setTriggerUnits] = useState<UnitOption[]>([]);
   const [rewardItemId, setRewardItemId] = useState("");
   const [freeQty, setFreeQty] = useState("");
+  const [rewardUnitId, setRewardUnitId] = useState("");
+  const [rewardUnits, setRewardUnits] = useState<UnitOption[]>([]);
+  const [rewardType, setRewardType] = useState<"FREE" | "PERCENT" | "NOMINAL">("FREE");
+  const [rewardValue, setRewardValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -46,7 +73,9 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
   const load = useCallback(async () => {
     const { data } = await supabase
       .from("promotion_bundle_rules")
-      .select("id, name, trigger_item_id, buy_qty, reward_item_id, free_qty, archived_at, created_at, created_by, trigger:items!promotion_bundle_rules_trigger_item_id_fkey(name), reward:items!promotion_bundle_rules_reward_item_id_fkey(name)")
+      .select(
+        "id, name, trigger_item_id, buy_qty, reward_item_id, free_qty, archived_at, created_at, created_by, reward_type, reward_value, buy_unit_id, buy_unit_qty, reward_unit_id, reward_unit_qty, trigger:items!promotion_bundle_rules_trigger_item_id_fkey(name), reward:items!promotion_bundle_rules_reward_item_id_fkey(name), buy_unit:item_units!promotion_bundle_rules_buy_unit_id_fkey(unit_label), reward_unit:item_units!promotion_bundle_rules_reward_unit_id_fkey(unit_label)"
+      )
       .order("name");
     setRows((data ?? []) as unknown as typeof rows);
   }, []);
@@ -61,15 +90,35 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
     };
   }, [load]);
 
+  async function handleTriggerItemChange(id: string) {
+    setTriggerItemId(id);
+    setBuyUnitId("");
+    setTriggerUnits(id ? await fetchNonBaseUnits(id) : []);
+  }
+
+  async function handleRewardItemChange(id: string) {
+    setRewardItemId(id);
+    setRewardUnitId("");
+    setRewardUnits(id ? await fetchNonBaseUnits(id) : []);
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    // Kalau satuan dipilih, buy_qty/free_qty yang dikirim cuma placeholder (qty ketikan) -- trigger
+    // DB yang menghitung nilai kanonik satuan dasarnya (qty x faktor satuan).
     const parsed = bundlePromoRuleSchema.safeParse({
       name,
       trigger_item_id: triggerItemId,
       buy_qty: buyQty,
+      buy_unit_id: buyUnitId || null,
+      buy_unit_qty: buyUnitId ? buyQty : null,
       reward_item_id: rewardItemId,
       free_qty: freeQty,
+      reward_unit_id: rewardUnitId || null,
+      reward_unit_qty: rewardUnitId ? freeQty : null,
+      reward_type: rewardType,
+      reward_value: rewardType === "FREE" ? null : rewardValue,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -79,14 +128,24 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
     const { error: err } = await supabase.from("promotion_bundle_rules").insert(parsed.data);
     setSubmitting(false);
     if (err) {
-      setError(err.message);
+      setError(
+        err.code === "23505"
+          ? "Sudah ada promo aktif dengan barang pemicu dan barang hadiah yang sama — nonaktifkan yang lama dulu."
+          : err.message
+      );
       return;
     }
     setName("");
     setTriggerItemId("");
     setBuyQty("");
+    setBuyUnitId("");
+    setTriggerUnits([]);
     setRewardItemId("");
     setFreeQty("");
+    setRewardUnitId("");
+    setRewardUnits([]);
+    setRewardType("FREE");
+    setRewardValue("");
     setShowForm(false);
     await load();
   }
@@ -111,8 +170,12 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
       </div>
       <p className="mb-3 text-sm text-slate-500">
         Berbasis kuantitas — barang hadiah boleh beda dari barang pemicu, berulang tiap kelipatan
-        qty beli. Barang hadiah TETAP harus dipilih/scan manual di invoice/keranjang — sistem gak
-        pernah menambahkannya otomatis, cuma mengoreksi harganya jadi Rp0 sampai batas qty gratis.
+        qty beli. Qty beli dan qty hadiah boleh ditulis dalam satuan tertentu (mis. beli 10 dos
+        gratis 1 dos) — sistem yang mengonversi ke satuan dasar, qty pemicu dijumlah lintas baris.
+        Hadiah bisa gratis penuh atau diskon (persen/nominal) hanya untuk qty yang berhak. Barang
+        hadiah TETAP harus dipilih/scan manual di invoice/keranjang — sistem gak pernah
+        menambahkannya otomatis. Untuk Sales Order yang dikirim bertahap, promo dihitung per
+        pengiriman.
       </p>
       <div className="mb-3 flex items-center gap-2">
         <Label htmlFor="promo-status-filter" className="text-xs">
@@ -147,10 +210,17 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
             <tr key={row.id} className="border-b border-slate-100">
               <td className="py-1.5">{row.name}</td>
               <td className="py-1.5">
-                Beli {row.buy_qty} {row.trigger.name}
+                Beli{" "}
+                {row.buy_unit && row.buy_unit_qty != null
+                  ? `${row.buy_unit_qty} ${row.buy_unit.unit_label}`
+                  : row.buy_qty}{" "}
+                {row.trigger.name}
               </td>
               <td className="py-1.5">
-                Gratis {row.free_qty} {row.reward.name}
+                {row.reward_unit && row.reward_unit_qty != null
+                  ? `${row.reward_unit_qty} ${row.reward_unit.unit_label}`
+                  : row.free_qty}{" "}
+                {row.reward.name} ({rewardLabel(row)})
               </td>
               <td className="py-1.5">
                 <span
@@ -197,7 +267,7 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bundle-trigger">Barang Pemicu</Label>
-                <Select id="bundle-trigger" value={triggerItemId} onChange={(e) => setTriggerItemId(e.target.value)}>
+                <Select id="bundle-trigger" value={triggerItemId} onChange={(e) => handleTriggerItemChange(e.target.value)}>
                   <option value="">Pilih...</option>
                   {activeItems.map((it) => (
                     <option key={it.id} value={it.id}>
@@ -208,21 +278,33 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bundle-buy-qty">Qty Beli Minimal</Label>
-                <Input
-                  id="bundle-buy-qty"
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={buyQty}
-                  onChange={(e) => setBuyQty(e.target.value)}
-                  placeholder="mis. 2"
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    id="bundle-buy-qty"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={buyQty}
+                    onChange={(e) => setBuyQty(e.target.value)}
+                    placeholder="mis. 10"
+                  />
+                  <Select aria-label="Satuan qty beli" value={buyUnitId} onChange={(e) => setBuyUnitId(e.target.value)}>
+                    <option value="">
+                      {`Satuan dasar${items.find((i) => i.id === triggerItemId) ? ` (${items.find((i) => i.id === triggerItemId)?.uom})` : ""}`}
+                    </option>
+                    {triggerUnits.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.unit_label} (×{u.conversion_factor})
+                      </option>
+                    ))}
+                  </Select>
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bundle-reward">Barang Hadiah</Label>
-                <Select id="bundle-reward" value={rewardItemId} onChange={(e) => setRewardItemId(e.target.value)}>
+                <Select id="bundle-reward" value={rewardItemId} onChange={(e) => handleRewardItemChange(e.target.value)}>
                   <option value="">Pilih...</option>
                   {activeItems.map((it) => (
                     <option key={it.id} value={it.id}>
@@ -232,18 +314,71 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
                 </Select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="bundle-free-qty">Qty Gratis</Label>
-                <Input
-                  id="bundle-free-qty"
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={freeQty}
-                  onChange={(e) => setFreeQty(e.target.value)}
-                  placeholder="mis. 1"
-                />
+                <Label htmlFor="bundle-free-qty">Qty Hadiah</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    id="bundle-free-qty"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={freeQty}
+                    onChange={(e) => setFreeQty(e.target.value)}
+                    placeholder="mis. 1"
+                  />
+                  <Select
+                    aria-label="Satuan qty hadiah"
+                    value={rewardUnitId}
+                    onChange={(e) => setRewardUnitId(e.target.value)}
+                  >
+                    <option value="">
+                      {`Satuan dasar${items.find((i) => i.id === rewardItemId) ? ` (${items.find((i) => i.id === rewardItemId)?.uom})` : ""}`}
+                    </option>
+                    {rewardUnits.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.unit_label} (×{u.conversion_factor})
+                      </option>
+                    ))}
+                  </Select>
+                </div>
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="bundle-reward-type">Jenis Hadiah</Label>
+                <Select
+                  id="bundle-reward-type"
+                  value={rewardType}
+                  onChange={(e) => {
+                    setRewardType(e.target.value as "FREE" | "PERCENT" | "NOMINAL");
+                    setRewardValue("");
+                  }}
+                >
+                  <option value="FREE">Gratis (harga Rp0)</option>
+                  <option value="PERCENT">Diskon persen (%)</option>
+                  <option value="NOMINAL">Diskon nominal (Rp/unit dasar)</option>
+                </Select>
+              </div>
+              {rewardType !== "FREE" && (
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="bundle-reward-value">
+                    {rewardType === "PERCENT" ? "Diskon (%)" : "Diskon (Rp per unit satuan dasar)"}
+                  </Label>
+                  <Input
+                    id="bundle-reward-value"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={rewardValue}
+                    onChange={(e) => setRewardValue(e.target.value)}
+                    placeholder={rewardType === "PERCENT" ? "mis. 50" : "mis. 4000"}
+                  />
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              Satuan yang dipilih tidak bisa diubah faktor konversinya lagi. Diskon hadiah cuma berlaku
+              untuk qty hadiah yang berhak (kelipatan syarat), bukan seluruh baris hadiah.
+            </p>
             {error && <FormError>{error}</FormError>}
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>

@@ -20,7 +20,7 @@ import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-q
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import {
   fetchActiveItemDiscountRules,
-  resolveItemDiscount,
+  resolveLineItemDiscounts,
   type ItemDiscountRule,
 } from "@/lib/promotion-item-discount-rules/schema";
 import {
@@ -33,12 +33,10 @@ type LineInput = {
   item_id: string;
   qty_ordered: string;
   unit_price: string;
-  discountRuleId: string | null;
-  discountAmount: number;
 };
 
 function emptyLine(): LineInput {
-  return { item_id: "", qty_ordered: "", unit_price: "", discountRuleId: null, discountAmount: 0 };
+  return { item_id: "", qty_ordered: "", unit_price: "" };
 }
 
 export default function NewSalesOrderPage() {
@@ -135,17 +133,10 @@ export default function NewSalesOrderPage() {
 
   function updateLineQty(index: number, itemId: string, change: UomQtyChange | null) {
     if (!change) {
-      updateLine(index, { qty_ordered: "", unit_price: "", discountRuleId: null, discountAmount: 0 });
+      updateLine(index, { qty_ordered: "", unit_price: "" });
       return;
     }
-    const item = items.find((it) => it.id === itemId);
-    const resolved = resolveItemDiscount(itemId, item?.category_id ?? null, change.baseQty, change.amount, discountRules);
-    updateLine(index, {
-      qty_ordered: String(change.baseQty),
-      unit_price: String(change.basePrice),
-      discountRuleId: resolved?.discount_rule_id ?? null,
-      discountAmount: resolved?.discount_amount ?? 0,
-    });
+    updateLine(index, { qty_ordered: String(change.baseQty), unit_price: String(change.basePrice) });
   }
 
   function addLine() {
@@ -166,11 +157,32 @@ export default function NewSalesOrderPage() {
     })),
     bundleRules
   );
+  // Diskon barang (termasuk syarat minimal qty) derived: syarat dicek ke TOTAL qty satuan dasar
+  // barang itu lintas semua baris. qty_ordered/unit_price di state sudah satuan dasar.
+  const itemDiscounts = resolveLineItemDiscounts(
+    lines.map((l) => {
+      const baseQty = parseFloat(l.qty_ordered) || 0;
+      return {
+        item_id: l.item_id,
+        category_id: items.find((it) => it.id === l.item_id)?.category_id ?? null,
+        baseQty,
+        amount: baseQty * (parseFloat(l.unit_price) || 0),
+      };
+    }),
+    discountRules
+  );
   const linesWithBundle = lines.map((l, i) => {
     const bundle = bundleResolved.get(i);
+    const itemDiscount = itemDiscounts[i];
     const gross = (parseFloat(l.qty_ordered) || 0) * (parseFloat(l.unit_price) || 0);
-    const combinedDiscount = Math.min(l.discountAmount + (bundle?.discount_amount ?? 0), gross);
-    return { ...l, bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null, combinedDiscount };
+    const combinedDiscount = Math.min((itemDiscount?.discount_amount ?? 0) + (bundle?.discount_amount ?? 0), gross);
+    return {
+      ...l,
+      discountRuleId: itemDiscount?.discount_rule_id ?? null,
+      discountAmount: itemDiscount?.discount_amount ?? 0,
+      bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null,
+      combinedDiscount,
+    };
   });
 
   const grossValue = lines.reduce(
@@ -286,8 +298,6 @@ export default function NewSalesOrderPage() {
                           item_id: e.target.value,
                           qty_ordered: "",
                           unit_price: "",
-                          discountRuleId: null,
-                          discountAmount: 0,
                         })
                       }
                     >

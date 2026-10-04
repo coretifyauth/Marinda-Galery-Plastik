@@ -15,13 +15,16 @@ export type BundlePromoRule = {
   buy_qty: number;
   reward_item_id: string;
   free_qty: number;
+  /** FREE (harga jadi Rp0) / PERCENT / NOMINAL (Rp per satuan dasar barang hadiah). Cache offline lama belum punya -> FREE. */
+  reward_type?: "FREE" | "PERCENT" | "NOMINAL";
+  reward_value?: number | null;
 };
 
 export async function fetchActiveBundlePromoRules(): Promise<BundlePromoRule[]> {
   try {
     const { data, error } = await supabase
       .from("promotion_bundle_rules")
-      .select("id, trigger_item_id, buy_qty, reward_item_id, free_qty")
+      .select("id, trigger_item_id, buy_qty, reward_item_id, free_qty, reward_type, reward_value")
       .is("archived_at", null);
     if (error) throw new Error(error.message);
     const rows = (data ?? []) as BundlePromoRule[];
@@ -37,9 +40,24 @@ export async function fetchActiveBundlePromoRules(): Promise<BundlePromoRule[]> 
 export type BundlePromoLineInput = { item_id: string; qty: number; unit_price: number };
 export type ResolvedBundlePromo = { bundle_promo_rule_id: string; discount_amount: number };
 
-/** Mirror persis resolveBundlePromoDiscounts() di apps/erp (termasuk kasus khusus
- * trigger_item_id = reward_item_id: 1 "set" = buy_qty+free_qty unit, bukan buy_qty doang --
- * kalau tidak, unit yang udah digratiskan ikut kehitung lagi jadi basis gratis berikutnya). */
+/** Diskon per 1 unit satuan dasar barang hadiah menurut jenis hadiah. */
+function rewardDiscountPerUnit(rule: BundlePromoRule, unitPrice: number): number {
+  switch (rule.reward_type ?? "FREE") {
+    case "PERCENT":
+      return (unitPrice * (rule.reward_value ?? 0)) / 100;
+    case "NOMINAL":
+      return Math.min(rule.reward_value ?? 0, unitPrice);
+    default:
+      return unitPrice;
+  }
+}
+
+/** Mirror persis resolveBundlePromoDiscounts() di apps/erp (dan resolve_bundle_promo_discounts SQL,
+ * 0050): jatah hadiah tiap aturan = POOL yang dibagi berurutan antar baris (barang hadiah di >1
+ * baris gak bisa ngeklaim jatah penuh masing-masing), jenis hadiah FREE/PERCENT/NOMINAL, baris
+ * berharga 0 dilewati, dan kasus khusus trigger_item_id = reward_item_id: 1 "set" = buy_qty+free_qty
+ * unit, bukan buy_qty doang -- kalau tidak, unit yang udah digratiskan ikut kehitung lagi jadi basis
+ * gratis berikutnya. */
 export function resolveBundlePromoDiscounts(
   lines: BundlePromoLineInput[],
   rules: BundlePromoRule[]
@@ -49,25 +67,36 @@ export function resolveBundlePromoDiscounts(
     qtyByItem.set(line.item_id, (qtyByItem.get(line.item_id) ?? 0) + line.qty);
   }
 
+  const pool = new Map<string, number>();
   const result = new Map<number, ResolvedBundlePromo>();
   lines.forEach((line, index) => {
-    const matchingRules = rules.filter((r) => r.reward_item_id === line.item_id);
-    if (matchingRules.length === 0) return;
+    if (line.unit_price <= 0) return;
 
-    let earned = 0;
+    const matchingRules = rules
+      .filter((r) => r.reward_item_id === line.item_id)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+
+    let remaining = line.qty;
+    let discount = 0;
+    let firstRuleId: string | null = null;
     for (const rule of matchingRules) {
-      const triggerQty = qtyByItem.get(rule.trigger_item_id) ?? 0;
-      const setSize = rule.trigger_item_id === rule.reward_item_id ? rule.buy_qty + rule.free_qty : rule.buy_qty;
-      earned += Math.floor(triggerQty / setSize) * rule.free_qty;
+      if (remaining <= 0) break;
+      if (!pool.has(rule.id)) {
+        const triggerQty = qtyByItem.get(rule.trigger_item_id) ?? 0;
+        const setSize = rule.trigger_item_id === rule.reward_item_id ? rule.buy_qty + rule.free_qty : rule.buy_qty;
+        pool.set(rule.id, Math.floor(triggerQty / setSize) * rule.free_qty);
+      }
+      const take = Math.min(pool.get(rule.id) ?? 0, remaining);
+      if (take <= 0) continue;
+      discount += take * rewardDiscountPerUnit(rule, line.unit_price);
+      remaining -= take;
+      pool.set(rule.id, (pool.get(rule.id) ?? 0) - take);
+      firstRuleId ??= rule.id;
     }
 
-    const cappedQty = Math.min(earned, line.qty);
-    if (cappedQty <= 0) return;
-
-    result.set(index, {
-      bundle_promo_rule_id: [...matchingRules].sort((a, b) => a.id.localeCompare(b.id))[0].id,
-      discount_amount: Math.round(cappedQty * line.unit_price * 100) / 100,
-    });
+    if (discount > 0 && firstRuleId) {
+      result.set(index, { bundle_promo_rule_id: firstRuleId, discount_amount: Math.round(discount * 100) / 100 });
+    }
   });
 
   return result;

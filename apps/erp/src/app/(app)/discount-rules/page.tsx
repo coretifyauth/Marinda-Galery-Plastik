@@ -14,6 +14,8 @@ import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
+type UnitOption = { id: string; unit_label: string; conversion_factor: number };
+
 function ItemDiscountRulesManager({
   items,
   categories,
@@ -29,8 +31,14 @@ function ItemDiscountRulesManager({
       created_by: string | null;
       items: { name: string } | null;
       item_categories: { name: string } | null;
+      min_unit: { unit_label: string } | null;
     })[]
   >([]);
+  // Syarat minimal qty (opsional, cuma aturan barang): satuan yang boleh dipilih = satuan jual
+  // milik barang target.
+  const [minQty, setMinQty] = useState("");
+  const [minQtyUnitId, setMinQtyUnitId] = useState("");
+  const [targetUnits, setTargetUnits] = useState<UnitOption[]>([]);
   const [name, setName] = useState("");
   const [targetType, setTargetType] = useState<"item" | "category">("item");
   const [targetId, setTargetId] = useState("");
@@ -52,7 +60,9 @@ function ItemDiscountRulesManager({
   const load = useCallback(async () => {
     const { data } = await supabase
       .from("promotion_item_discount_rules")
-      .select("id, name, item_id, category_id, discount_type, discount_value, archived_at, created_at, created_by, items(name), item_categories(name)")
+      .select(
+        "id, name, item_id, category_id, discount_type, discount_value, archived_at, created_at, created_by, min_qty, min_qty_unit_id, min_qty_base, items(name), item_categories(name), min_unit:item_units!promotion_item_discount_rules_min_qty_unit_id_fkey(unit_label)"
+      )
       .order("name");
     setRows((data ?? []) as unknown as typeof rows);
   }, []);
@@ -67,15 +77,33 @@ function ItemDiscountRulesManager({
     };
   }, [load]);
 
+  // Pilih barang target -> muat satuan jualnya (buat pilihan satuan syarat minimal) dan reset syarat.
+  async function handleTargetChange(id: string) {
+    setTargetId(id);
+    setMinQty("");
+    setMinQtyUnitId("");
+    setTargetUnits([]);
+    if (targetType !== "item" || !id) return;
+    const { data } = await supabase
+      .from("item_units")
+      .select("id, unit_label, conversion_factor")
+      .eq("item_id", id)
+      .order("conversion_factor");
+    setTargetUnits((data ?? []) as UnitOption[]);
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    const hasMinQty = targetType === "item" && minQty.trim() !== "";
     const parsed = itemDiscountRuleSchema.safeParse({
       name,
       item_id: targetType === "item" ? targetId : null,
       category_id: targetType === "category" ? targetId : null,
       discount_type: discountType,
       discount_value: discountValue,
+      min_qty: hasMinQty ? minQty : null,
+      min_qty_unit_id: hasMinQty ? minQtyUnitId || null : null,
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -89,12 +117,20 @@ function ItemDiscountRulesManager({
     const { error: err } = await supabase.from("promotion_item_discount_rules").insert(parsed.data);
     setSubmitting(false);
     if (err) {
-      setError(err.message);
+      // 23505 = unique violation: sudah ada aturan aktif dengan target & syarat minimal yang sama.
+      setError(
+        err.code === "23505"
+          ? "Sudah ada aturan aktif untuk barang/kategori ini dengan syarat minimal yang sama — nonaktifkan yang lama dulu, atau pakai syarat minimal yang beda (bertingkat)."
+          : err.message
+      );
       return;
     }
     setName("");
     setTargetId("");
     setDiscountValue("");
+    setMinQty("");
+    setMinQtyUnitId("");
+    setTargetUnits([]);
     setShowForm(false);
     await load();
   }
@@ -119,9 +155,11 @@ function ItemDiscountRulesManager({
       </div>
       <p className="mb-3 text-sm text-slate-500">
         Trade discount sisi penjualan — otomatis dicocokkan sistem saat Sales Order/Jual Barang
-        Langsung dibuat (staf gak pilih manual). Maksimal 1 aturan aktif per barang dan per
-        kategori; kalau 1 barang match ke aturan barang DAN aturan kategorinya sekaligus, aturan
-        barang yang menang.
+        Langsung/kasir (staf gak pilih manual). Aturan barang boleh punya syarat minimal qty
+        (mis. ≥10 dos) dan bertingkat: beberapa aturan aktif dengan syarat berbeda, yang dipakai
+        cuma satu tingkat tertinggi yang terpenuhi, berlaku ke seluruh qty. Qty dijumlah lintas
+        baris/satuan. Maksimal 1 aturan aktif per kategori (tanpa syarat). Kalau aturan barang
+        belum terpenuhi, sistem jatuh ke aturan kategorinya.
       </p>
       <div className="mb-3 flex items-center gap-2">
         <Label htmlFor="discount-status-filter" className="text-xs">
@@ -144,6 +182,7 @@ function ItemDiscountRulesManager({
           <tr className="border-b border-slate-200 text-xs font-medium uppercase text-slate-500">
             <th className="py-1.5">Nama</th>
             <th className="py-1.5">Target</th>
+            <th className="py-1.5">Syarat Minimal</th>
             <th className="py-1.5">Diskon</th>
             <th className="py-1.5">Status</th>
             <th className="py-1.5">Dibuat</th>
@@ -157,6 +196,11 @@ function ItemDiscountRulesManager({
               <td className="py-1.5">{row.name}</td>
               <td className="py-1.5">
                 {row.items ? `Barang: ${row.items.name}` : `Kategori: ${row.item_categories?.name ?? "-"}`}
+              </td>
+              <td className="py-1.5 text-slate-600">
+                {row.min_qty != null && row.min_unit
+                  ? `≥ ${row.min_qty.toLocaleString("id-ID")} ${row.min_unit.unit_label}`
+                  : "—"}
               </td>
               <td className="py-1.5">
                 {row.discount_type === "PERCENT" ? `${row.discount_value}%` : `Rp${row.discount_value.toLocaleString("id-ID")}/unit`}
@@ -183,7 +227,7 @@ function ItemDiscountRulesManager({
           ))}
           {visibleRows.length === 0 && (
             <tr>
-              <td colSpan={7} className="py-3 text-center text-slate-400">
+              <td colSpan={8} className="py-3 text-center text-slate-400">
                 Belum ada aturan diskon.
               </td>
             </tr>
@@ -211,6 +255,9 @@ function ItemDiscountRulesManager({
                 onChange={(e) => {
                   setTargetType(e.target.value as "item" | "category");
                   setTargetId("");
+                  setMinQty("");
+                  setMinQtyUnitId("");
+                  setTargetUnits([]);
                 }}
               >
                 <option value="item">Barang tertentu</option>
@@ -219,7 +266,7 @@ function ItemDiscountRulesManager({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="discount-target">{targetType === "item" ? "Barang" : "Kategori"}</Label>
-              <Select id="discount-target" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+              <Select id="discount-target" value={targetId} onChange={(e) => handleTargetChange(e.target.value)}>
                 <option value="">Pilih...</option>
                 {(targetType === "item" ? activeItems : activeCategories).map((t) => (
                   <option key={t.id} value={t.id}>
@@ -253,6 +300,40 @@ function ItemDiscountRulesManager({
                 />
               </div>
             </div>
+            {targetType === "item" && targetId && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="discount-min-qty">Syarat Minimal Qty (opsional)</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    id="discount-min-qty"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={minQty}
+                    onChange={(e) => setMinQty(e.target.value)}
+                    placeholder="mis. 10"
+                  />
+                  <Select
+                    aria-label="Satuan syarat minimal"
+                    value={minQtyUnitId}
+                    onChange={(e) => setMinQtyUnitId(e.target.value)}
+                  >
+                    <option value="">Satuan...</option>
+                    {targetUnits.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.unit_label} (×{u.conversion_factor})
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Kosongkan kalau diskon berlaku dari unit pertama. Qty dijumlah lintas baris dan satuan
+                  (dalam satuan dasar); begitu terpenuhi, diskon berlaku ke seluruh qty. Buat beberapa
+                  aturan dengan syarat berbeda untuk diskon bertingkat. Satuan yang dipilih tidak bisa
+                  diubah faktor konversinya lagi.
+                </p>
+              </div>
+            )}
             {error && <FormError>{error}</FormError>}
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="secondary" onClick={() => setShowForm(false)}>

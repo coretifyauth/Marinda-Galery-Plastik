@@ -25,7 +25,7 @@ import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accoun
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import {
   fetchActiveItemDiscountRules,
-  resolveItemDiscount,
+  resolveLineItemDiscounts,
   type ItemDiscountRule,
 } from "@/lib/promotion-item-discount-rules/schema";
 import {
@@ -41,8 +41,6 @@ type FulfillLineInput = {
   item_label: string;
   qty_issued: string;
   unit_price: number;
-  discountRuleId: string | null;
-  discountAmount: number;
 };
 
 type SoLineWithCategory = SalesOrder["order_lines"][number] & {
@@ -84,13 +82,11 @@ export default function FulfillSalesOrderPage() {
     }
     const typedSo = soData as unknown as SalesOrder;
     setSo(typedSo);
-    const rules = discountRules.length > 0 ? discountRules : await fetchActiveItemDiscountRules();
     setFulfillLines(
       (typedSo.order_lines as SoLineWithCategory[])
         .filter((l) => lineRemaining(l) > 0)
         .map((l) => {
           const remaining = lineRemaining(l);
-          const resolved = resolveItemDiscount(l.item_id, l.items.category_id, remaining, remaining * l.unit_price, rules);
           return {
             order_line_id: l.id,
             item_id: l.item_id,
@@ -98,13 +94,11 @@ export default function FulfillSalesOrderPage() {
             item_label: `${l.items.name} (sisa ${remaining} ${l.items.uom})`,
             qty_issued: String(remaining),
             unit_price: l.unit_price,
-            discountRuleId: resolved?.discount_rule_id ?? null,
-            discountAmount: resolved?.discount_amount ?? 0,
           };
         })
     );
     setLoadError(null);
-  }, [id, discountRules]);
+  }, [id]);
 
   useEffect(() => {
     let active = true;
@@ -137,12 +131,7 @@ export default function FulfillSalesOrderPage() {
     setFulfillLines((prev) =>
       prev.map((l, i) => {
         if (i !== index) return l;
-        const qtyNum = Number(qty);
-        if (Number.isNaN(qtyNum) || qtyNum <= 0) {
-          return { ...l, qty_issued: qty, discountRuleId: null, discountAmount: 0 };
-        }
-        const resolved = resolveItemDiscount(l.item_id, l.category_id, qtyNum, qtyNum * l.unit_price, discountRules);
-        return { ...l, qty_issued: qty, discountRuleId: resolved?.discount_rule_id ?? null, discountAmount: resolved?.discount_amount ?? 0 };
+        return { ...l, qty_issued: qty };
       })
     );
   }
@@ -153,11 +142,34 @@ export default function FulfillSalesOrderPage() {
     fulfillLines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty_issued) || 0, unit_price: l.unit_price })),
     bundleRules
   );
+  // Diskon barang: syarat minimal qty dicek ke TOTAL qty yang DIPESAN di SO (satuan dasar, semua
+  // baris SO barang itu), sementara diskon dihitung ke qty yang dikirim -- SO 12 dos dikirim 6+6
+  // tetap dapat diskon ">=10 dos" di kedua pengiriman, dan gak bisa diakali dengan memecah pengiriman.
+  // (Bundle sengaja tetap dihitung per pengiriman -- jatah hadiahnya gak dilacak antar pengiriman.)
+  const orderedTotals = new Map<string, number>();
+  for (const ol of so?.order_lines ?? []) {
+    orderedTotals.set(ol.item_id, (orderedTotals.get(ol.item_id) ?? 0) + Number(ol.qty_ordered));
+  }
+  const itemDiscounts = resolveLineItemDiscounts(
+    fulfillLines.map((l) => {
+      const qty = Number(l.qty_issued) || 0;
+      return { item_id: l.item_id, category_id: l.category_id, baseQty: qty, amount: qty * l.unit_price };
+    }),
+    discountRules,
+    orderedTotals
+  );
   const linesWithBundle = fulfillLines.map((l, i) => {
     const bundle = bundleResolved.get(i);
+    const itemDiscount = itemDiscounts[i];
     const qty = Number(l.qty_issued) || 0;
-    const combinedDiscount = Math.min(l.discountAmount + (bundle?.discount_amount ?? 0), qty * l.unit_price);
-    return { ...l, bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null, combinedDiscount };
+    const combinedDiscount = Math.min((itemDiscount?.discount_amount ?? 0) + (bundle?.discount_amount ?? 0), qty * l.unit_price);
+    return {
+      ...l,
+      discountRuleId: itemDiscount?.discount_rule_id ?? null,
+      discountAmount: itemDiscount?.discount_amount ?? 0,
+      bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null,
+      combinedDiscount,
+    };
   });
 
   const grossAmount = fulfillLines.reduce((sum, l) => {

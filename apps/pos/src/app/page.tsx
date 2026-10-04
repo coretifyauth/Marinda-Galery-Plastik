@@ -16,8 +16,9 @@ import { nextOfflineSourceRef } from "@/lib/device-id";
 import { isLikelyNetworkError, probeSupabase, useOnlineStatus } from "@/lib/online-status";
 import { syncOutbox } from "@/lib/offline-sync";
 import { useLiveQuery } from "dexie-react-hooks";
-import { fetchActiveItemDiscountRules, resolveItemDiscount } from "@/lib/promotion-item-discount-rules";
-import { fetchActiveBundlePromoRules, resolveBundlePromoDiscounts } from "@/lib/promotion-bundle-rules";
+import { fetchActiveItemDiscountRules } from "@/lib/promotion-item-discount-rules";
+import { fetchActiveBundlePromoRules } from "@/lib/promotion-bundle-rules";
+import { previewCartDiscounts } from "@/lib/cart-discount";
 import {
   addUnitToCart,
   buildStockMap,
@@ -616,35 +617,18 @@ export default function CheckoutPage() {
 
   // Preview diskon (Diskon Penjualan + Beli N Gratis X) -- cart-wide, sama pola sisi admin
   // (apps/erp). item.category_id diambil dari katalog yang udah di-fetch, bukan query baru.
-  const cartWithDiscount = useMemo(() => {
-    const discountRules = discountRulesQuery.data ?? [];
-    const bundleRules = bundleRulesQuery.data ?? [];
-    const itemLookup = new Map((itemsQuery.data ?? []).map((it) => [it.id, it]));
-
-    const itemResolved = cart.map((line) => {
-      const item = itemLookup.get(line.item_id);
-      const amount = line.qty_sold * line.unit_price;
-      const resolved = resolveItemDiscount(line.item_id, item?.category_id ?? null, line.qty_sold, amount, discountRules);
-      return { discountRuleId: resolved?.discount_rule_id ?? null, discountAmount: resolved?.discount_amount ?? 0 };
-    });
-
-    const bundleResolved = resolveBundlePromoDiscounts(
-      cart.map((line) => ({ item_id: line.item_id, qty: line.qty_sold, unit_price: line.unit_price })),
-      bundleRules
-    );
-
-    return cart.map((line, i) => {
-      const bundle = bundleResolved.get(i);
-      const gross = line.qty_sold * line.unit_price;
-      const combinedDiscount = Math.min(itemResolved[i].discountAmount + (bundle?.discount_amount ?? 0), gross);
-      return {
-        ...line,
-        discountRuleId: itemResolved[i].discountRuleId,
-        bundlePromoRuleId: bundle?.bundle_promo_rule_id ?? null,
-        combinedDiscount,
-      };
-    });
-  }, [cart, discountRulesQuery.data, bundleRulesQuery.data, itemsQuery.data]);
+  // Logika di lib/cart-discount.ts -- resolver dipanggil dengan qty/harga SATUAN DASAR (sama
+  // seperti yang dikirim ke create_pos_sale), bukan qty satuan baris keranjang.
+  const cartWithDiscount = useMemo(
+    () =>
+      previewCartDiscounts(
+        cart,
+        new Map((itemsQuery.data ?? []).map((it) => [it.id, it.category_id])),
+        discountRulesQuery.data ?? [],
+        bundleRulesQuery.data ?? []
+      ),
+    [cart, discountRulesQuery.data, bundleRulesQuery.data, itemsQuery.data]
+  );
 
   const totalDiscountPreview = useMemo(
     () => cartWithDiscount.reduce((sum, l) => sum + l.combinedDiscount, 0),
