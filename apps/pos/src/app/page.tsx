@@ -218,7 +218,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "id, source_ref, date, created_at, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, discount_amount, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
+      "id, source_ref, date, created_at, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, discount_amount, manual_discount_amount, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
     )
     .eq("type", "OUTBOUND")
     .eq("date", date)
@@ -236,6 +236,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
         qty: number;
         unit_price: number | null;
         discount_amount: number;
+        manual_discount_amount: number;
         items: { name: string; uom: string } | null;
       }[];
     }[];
@@ -282,7 +283,12 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
         .filter((l) => !l.is_tax && chargeAccountIds.has(l.account_id))
         .reduce((s, l) => s + l.amount, 0),
       taxTotal: row.transaction_lines.filter((l) => l.is_tax).reduce((s, l) => s + l.amount, 0),
-      discountTotal: goodsIssueLines.reduce((s, l) => s + (l.discount_amount ?? 0), 0),
+      // Struk gabungan diskon otomatis + manual jadi 1 baris "Diskon" -- keduanya sama-sama
+      // potongan dari harga kotor; pemisahan ada di kolom DB (buat laporan), bukan di struk.
+      discountTotal: goodsIssueLines.reduce(
+        (s, l) => s + (l.discount_amount ?? 0) + (l.manual_discount_amount ?? 0),
+        0
+      ),
     };
   });
 }
@@ -496,6 +502,10 @@ export default function CheckoutPage() {
   const scanInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [extraLines, setExtraLines] = useState<ExtraLine[]>([]);
+  // Diskon manual kasir (Rp, 1 nominal per transaksi) -- ditumpuk di atas diskon otomatis.
+  // Ref: docs/domain/pos.md submodule "Diskon Manual Kasir". Direset tiap keranjang kosong
+  // (lihat commitCart) biar gak kebawa ke pelanggan berikutnya.
+  const [manualDiscount, setManualDiscount] = useState("");
   // null = ikut default tax_settings.is_active; true/false = kasir override manual
   // buat transaksi ini doang (reset ke null lagi abis checkout sukses).
   const [taxOverride, setTaxOverride] = useState<boolean | null>(null);
@@ -635,7 +645,22 @@ export default function CheckoutPage() {
     [cartWithDiscount]
   );
 
-  const itemTotal = grossItemTotal - totalDiscountPreview;
+  const itemTotalAfterAutoDiscount = grossItemTotal - totalDiscountPreview;
+
+  // Diskon manual -- basisnya total setelah diskon otomatis. Harus < total itu (transaksi gak
+  // boleh jadi Rp0/negatif; create_pos_sale menolak hal yang sama di server). Kalau gak valid
+  // gak dipakai di hitungan dan tombol Bayar dikunci, jadi total yang tampil selalu yang dibayar.
+  const manualDiscountNum = useMemo(() => {
+    const n = Number(manualDiscount);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0; // Rupiah bulat, sama aturan server
+  }, [manualDiscount]);
+  const manualDiscountError =
+    manualDiscountNum > 0 && manualDiscountNum >= itemTotalAfterAutoDiscount
+      ? "Diskon manual harus lebih kecil dari total belanja"
+      : null;
+  const manualDiscountApplied = manualDiscountError ? 0 : manualDiscountNum;
+
+  const itemTotal = itemTotalAfterAutoDiscount - manualDiscountApplied;
 
   const extraTotal = useMemo(
     () =>
@@ -666,6 +691,7 @@ export default function CheckoutPage() {
   const commitCart = useCallback((next: CartLine[]) => {
     cartRef.current = next;
     setCart(next);
+    if (next.length === 0) setManualDiscount("");
   }, []);
 
   // Semua operasi keranjang (lib/scan.ts) mengecek stok GABUNGAN per barang di satuan dasar,
@@ -737,6 +763,8 @@ export default function CheckoutPage() {
           return { account_id: type?.account_id ?? "", amount: Number(l.amount) };
         });
 
+      if (manualDiscountError) throw new Error(manualDiscountError);
+
       const cashReceivedNum = paymentMethod === "CASH" && cashReceived.trim() !== "" ? Number(cashReceived) : null;
       const changeNum = cashReceivedNum != null ? cashReceivedNum - total : null;
 
@@ -749,6 +777,9 @@ export default function CheckoutPage() {
         p_finished_good_account_id: accountIds[ACCOUNT_CODES.PERSEDIAAN_BARANG_JADI],
         p_extra_credit_lines: resolvedExtraLines,
         p_apply_tax: applyTax && !!taxSettings?.is_active,
+        // Diskon manual 1 nominal per transaksi -- server yang validasi (< total net) & bagi ke
+        // baris, UI cuma kirim angkanya.
+        p_manual_discount: manualDiscountApplied,
         // create_pos_sale SELALU nerima qty di satuan dasar (0 perubahan RPC, pola
         // sama item_units di modul lain) -- baris keranjang yang qty_sold/unit_price-
         // nya dalam satuan bukan-dasar (dari scan) dikonversi di sini, tepat sebelum
@@ -779,7 +810,7 @@ export default function CheckoutPage() {
         }),
         extraTotal,
         taxTotal: taxAmount,
-        discountTotal: totalDiscountPreview,
+        discountTotal: totalDiscountPreview + manualDiscountApplied,
       };
 
       // Probe dulu SEBELUM nyoba RPC beneran -- bedain "gak bisa dijangkau" (offline,
@@ -876,6 +907,7 @@ export default function CheckoutPage() {
       commitCart([]);
       setCustomerId("");
       setExtraLines([]);
+      setManualDiscount("");
       setCashReceived("");
       setTaxOverride(null);
       setScanError(null);
@@ -949,14 +981,14 @@ export default function CheckoutPage() {
   // + metode bayar (Tunai/Bank) + uang diterima (kalau Tunai). Konfirmasi transaksi
   // beneran (RPC create_pos_sale) baru kejadian dari tombol di DALAM modal.
   const openPaymentModal = useCallback(() => {
-    if (cart.length === 0) return;
+    if (cart.length === 0 || manualDiscountError) return;
     setShowPaymentModal(true);
-  }, [cart]);
+  }, [cart, manualDiscountError]);
 
   const confirmCheckout = useCallback(() => {
-    if (cart.length === 0 || checkoutMutation.isPending) return;
+    if (cart.length === 0 || manualDiscountError || checkoutMutation.isPending) return;
     checkoutMutation.mutate();
-  }, [cart, checkoutMutation]);
+  }, [cart, manualDiscountError, checkoutMutation]);
 
   function receiptFromSale(
     sale: SaleHistoryItem,
@@ -1456,6 +1488,12 @@ export default function CheckoutPage() {
                 <span>-Rp{totalDiscountPreview.toLocaleString("id-ID")}</span>
               </div>
             )}
+            {manualDiscountApplied > 0 && (
+              <div className="flex justify-between text-emerald-600">
+                <span>Diskon Manual</span>
+                <span>-Rp{manualDiscountApplied.toLocaleString("id-ID")}</span>
+              </div>
+            )}
             {extraTotal > 0 && (
               <div className="flex justify-between">
                 <span>Biaya Tambahan</span>
@@ -1470,6 +1508,26 @@ export default function CheckoutPage() {
             )}
           </div>
 
+          {cart.length > 0 && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2 text-sm text-slate-500">
+                <label htmlFor="manual-discount">Diskon Manual (Rp)</label>
+                <input
+                  id="manual-discount"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  placeholder="0"
+                  className="w-28 rounded border border-slate-300 px-2 py-1 text-right text-sm text-slate-900"
+                  value={manualDiscount}
+                  onChange={(e) => setManualDiscount(e.target.value)}
+                />
+              </div>
+              {manualDiscountError && <p className="text-xs text-red-600">{manualDiscountError}</p>}
+            </div>
+          )}
+
           <div className="flex justify-between font-semibold">
             <span>Total</span>
             <span>Rp{total.toLocaleString("id-ID")}</span>
@@ -1481,7 +1539,7 @@ export default function CheckoutPage() {
 
           <button
             className="w-full rounded bg-blue-600 py-3 font-medium text-white hover:bg-blue-700 disabled:opacity-40"
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || !!manualDiscountError}
             onClick={openPaymentModal}
           >
             Bayar

@@ -31,7 +31,7 @@ export type ReceiptData = {
   taxAmount: number;
   taxRate: number | null;
   subtotal: number;
-  /** Total diskon (Diskon Penjualan + Beli N Gratis X) yang mengurangi subtotal -- baris
+  /** Total diskon (Diskon Penjualan + Beli N Gratis X + diskon manual kasir) yang mengurangi subtotal -- baris
    * item.amount TETAP gross (qty x unitPrice, gak dikurangi di sini) biar mathnya jelas per
    * baris, diskon ditampilkan 1 baris ringkasan setelah Subtotal. */
   discountTotal: number;

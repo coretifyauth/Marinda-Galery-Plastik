@@ -54,6 +54,7 @@ cuma tabel penyimpanannya.
 | `unit_price` | Harga jual per unit | Cuma keisi sisi OUTBOUND jalur langsung (POS/walk-in tanpa Sales Order) — kalau ada `order_line_id`, harga tetap bersumber dari `order_lines.unit_price` |
 | `discount_rule_id`, `discount_amount` | Diskon barang (lihat `promotion-item-discount-rules-schema.md`) | **OUTBOUND**: resolusi FRESH dari aturan aktif saat baris ini dibuat (bukan diwarisi dari `order_lines`), sudah baked-in ke `unit_price`/jumlah yang dikirim ke `create_goods_issue` — murni audit trail. **INBOUND**: porsi dari diskon header (nominal manual admin, lihat submodule "Diskon Pembelian" di bawah) yang diproratakan `create_goods_receipt` ke baris ini berdasar `qty * unit_cost` — satu-satunya kasus di mana kolom ini dipakai buat aritmatika (mengoreksi `avg_cost`) |
 | `bundle_promo_rule_id` | "Beli N Gratis X" (lihat `promotion-bundle-rules-schema.md`) | Cuma OUTBOUND — `discount_amount` di atas bisa nampung kontribusi dari `promotion_item_discount_rules` DAN `promotion_bundle_rules` sekaligus (dijumlah, dibatasi gak lebih dari `qty*unit_price` baris itu). Dari jalur POS, diisi `create_pos_sale` sendiri (server-side); dari Sales Order/Goods Issue manual, dari resolusi TypeScript client (informational, sama pola `discount_rule_id`) |
+| `manual_discount_amount` | Diskon manual kasir POS (lihat `pos-schema.md` bagian "Diskon Manual Kasir") | Cuma OUTBOUND dari POS, default `0`, `CHECK >= 0`. **Terpisah dari `discount_amount`** (diskon otomatis) biar laporan bisa membedakan potongan promo vs nego kasir. Porsi baris ini dari 1 nominal per transaksi, dibagi proporsional oleh `create_pos_sale`. Sudah baked-in ke jurnal (murni audit trail); kasirnya = `goods_notes.created_by` |
 
 **Alur Teknis (RPC)**
 
@@ -75,7 +76,7 @@ cuma tabel penyimpanannya.
 | Order yang sudah dibatalkan gak bisa jadi dasar Goods Note baru | Guard di awal kedua RPC — cek `cancelled_at` order sebelum lanjut |
 | Tiap transaksi harus tertelusur ke dokumen sumber | `transaction_id` wajib diisi di `goods_notes`, gak pernah berdiri sendiri |
 | Data yang sudah tercatat gak boleh diubah/dihapus diam-diam | Trigger immutability pada `goods_notes` dan `goods_note_lines` |
-| Diskon penjualan gak pernah jadi baris jurnal terpisah (trade discount) | `create_goods_issue` cuma menyimpan `discount_rule_id`/`discount_amount` per baris (audit trail) — nilai yang dijurnal sudah net dari `p_credit_lines`, RPC gak menghitung ulang |
+| Diskon penjualan gak pernah jadi baris jurnal terpisah (trade discount) | `create_goods_issue` cuma menyimpan `discount_rule_id`/`discount_amount`/`manual_discount_amount` per baris (audit trail) — nilai yang dijurnal sudah net dari `p_credit_lines`, RPC gak menghitung ulang. `transactions.discount_amount` mengakumulasi `discount_amount` + `manual_discount_amount` |
 | Diskon pembelian gak boleh bikin nilai Persediaan (GL) menyimpang dari valuasi Kartu Stok (`avg_cost`) | `create_goods_receipt` memprorata `p_discount_amount` ke tiap baris SEBELUM menghitung `avg_cost`, bukan cuma mengurangi angka agregat |
 
 **Interaksi Antar Tabel**

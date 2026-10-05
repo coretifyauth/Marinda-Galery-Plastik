@@ -19,6 +19,8 @@ export type OutboxSalePayload = {
   p_finished_good_account_id: string;
   p_extra_credit_lines: { account_id: string; amount: number }[];
   p_apply_tax: boolean;
+  /** Diskon manual kasir (Rp, per transaksi). Opsional: row outbox lama (sebelum fitur ini) gak punya, server default 0. */
+  p_manual_discount?: number;
   p_lines: { item_id: string; qty_sold: number; unit_price: number }[];
 };
 

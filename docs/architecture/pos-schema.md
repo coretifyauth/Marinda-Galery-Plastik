@@ -39,7 +39,7 @@ yang disebut di dokumen ini historis.
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Buat penjualan | `create_pos_sale` | Bikin transaksi keluar barang (konsumsi stok + jurnal Piutang↔Pendapatan + HPP↔Persediaan), lalu lunasi penuh seketika (jurnal Kas↔Piutang) — alur checkout kasir gak berubah. Sejak `promotion-item-discount-rules-schema.md`/`promotion-bundle-rules-schema.md`: RPC ini SENDIRI (bukan client) yang meresolusi diskon per barang (`promotion_item_discount_rules`) dan promo "Beli N Gratis X" (`promotion_bundle_rules`) lewat fungsi `resolve_item_discount`/`resolve_bundle_promo_discounts`, sebelum menghitung total yang dijurnal — beda dari sisi admin (Sales Order/Goods Issue) yang trust hasil resolusi client | Stok gak cukup → transaksi gagal total, gak ada yang tercatat sebagian. Diskon dari kedua mekanisme digabung per baris, dibatasi gak lebih dari nilai baris itu sendiri — HPP tetap dari cost barang keluar, gak kepengaruh diskon harga jual |
+| Buat penjualan | `create_pos_sale` | Bikin transaksi keluar barang (konsumsi stok + jurnal Piutang↔Pendapatan + HPP↔Persediaan), lalu lunasi penuh seketika (jurnal Kas↔Piutang) — alur checkout kasir gak berubah. Sejak `promotion-item-discount-rules-schema.md`/`promotion-bundle-rules-schema.md`: RPC ini SENDIRI (bukan client) yang meresolusi diskon per barang (`promotion_item_discount_rules`) dan promo "Beli N Gratis X" (`promotion_bundle_rules`) lewat fungsi `resolve_item_discount`/`resolve_bundle_promo_discounts`, sebelum menghitung total yang dijurnal — beda dari sisi admin (Sales Order/Goods Issue) yang trust hasil resolusi client | Stok gak cukup → transaksi gagal total, gak ada yang tercatat sebagian. Diskon dari kedua mekanisme digabung per baris, dibatasi gak lebih dari nilai baris itu sendiri — HPP tetap dari cost barang keluar, gak kepengaruh diskon harga jual. Parameter opsional `p_manual_discount` (diskon manual kasir) — lihat bagian "Diskon Manual Kasir" di bawah |
 | Batalkan (Void) | `void_pos_transaction` | Membalikkan KETIGA jurnal (pelunasan, keluar barang, transaksi), stok balik | Ditolak kalau transaksinya bukan pola "penjualan kios sederhana" (persis 1 keluar-barang + 1 pelunasan penuh, tanpa retur/DP), atau udah pernah dibatalkan |
 
 **Aturan Bisnis → RPC**
@@ -94,3 +94,38 @@ Penjualan kios yang tercatat sebelum sistem ini diunifikasi ke mesin transaksi u
 | PPN gak boleh diketik kasir | Dihitung otomatis dari pengaturan PPN, bukan dari input checkout |
 | Basket item tetap gak bisa dimanipulasi klien | Total item dihitung server dari baris keranjang |
 | Biaya tambahan & PPN ikut kebalik kalau transaksi dibatalkan | Nempel di jurnal yang sama dengan basket item — `void_pos_transaction` reverse semua baris sekaligus |
+
+## Diskon Manual Kasir
+
+Konsep bisnisnya di `docs/domain/pos.md` submodule "Diskon Manual Kasir". Detail SQL: `supabase/migrations/0051_pos_manual_discount.sql`.
+
+**Peta Data (ERD)**
+
+| Objek | Fungsi | Terhubung ke |
+|---|---|---|
+| `goods_note_lines.manual_discount_amount` (kolom baru) | Porsi diskon manual kasir yang kena baris ini, terpisah dari `discount_amount` (diskon otomatis) | `goods_notes` → `transactions` (lihat `goods-notes-schema.md`) |
+| `transactions.discount_amount` | Total diskon yang baked-in; sekarang mengakumulasi otomatis + manual | `transactions-schema.md` |
+| `create_pos_sale(..., p_manual_discount numeric default 0)` | Parameter baru: 1 nominal Rupiah per transaksi | `create_goods_issue` (field opsional per baris `manual_discount_amount`) |
+
+Tidak ada tabel baru, tidak ada akun COA baru, tidak ada jurnal baru: diskon dicatat **net** (kredit Pendapatan = total setelah diskon), sama seperti diskon otomatis.
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Checkout dengan diskon manual | `create_pos_sale` | Setelah diskon otomatis per baris dihitung, diskon manual dikurangkan dari total net lalu **dibagi proporsional ke nilai net tiap baris** (sisa pembulatan masuk ke baris net terbesar, jadi jumlah bagian persis = nominal input). PPN dihitung `create_transaction` dari total setelah diskon. Disimpan ke `goods_note_lines.manual_discount_amount` | Nominal harus ≥ 0, **Rupiah bulat** (pecahan ditolak), dan **< total net setelah diskon otomatis** (guard integritas: `transaction_lines.amount` wajib > 0). Tanpa plafon %, tanpa alasan wajib, tanpa persetujuan — keputusan owner. Row outbox offline lama tanpa parameter ini tetap valid (default 0) |
+| Batalkan (Void) | `void_pos_transaction` | Tidak berubah — membalik jurnal yang sama, diskon ikut terbalik | — |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Diskon manual ditumpuk di atas diskon otomatis | Basis validasi & alokasi = total net setelah diskon otomatis, dihitung di dalam RPC |
+| Diskon manual terpisah dari diskon otomatis di data | Kolom `manual_discount_amount` sendiri; `discount_amount` tetap hanya diskon aturan promo |
+| Kasir gak bisa mengakali nilai dari UI | Validasi & alokasi di server (`create_pos_sale` `security definer`), UI hanya mengirim 1 angka |
+| Siapa yang memberi diskon bisa dilacak | `goods_notes.created_by` (kasir) + `manual_discount_amount` per baris → laporan "diskon manual per kasir per hari" bisa dibuat dengan query |
+
+**Interaksi Antar Tabel**
+
+- Retur penjualan POS tetap manual (belum ada alur resmi); alur retur otomatis memakai `order_lines.unit_price`, yang tidak ada untuk penjualan POS — jadi diskon manual tidak berdampak ke sana.
+- Struk & riwayat POS menggabungkan diskon otomatis + manual jadi 1 baris "Diskon"; pemisahan hanya di kolom DB.
