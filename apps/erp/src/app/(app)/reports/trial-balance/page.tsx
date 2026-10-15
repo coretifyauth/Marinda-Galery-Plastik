@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { getTrialBalance } from "@/lib/reports/trial-balance";
-import { accountDepth } from "@/lib/reports/balances";
+import { accountDepth, moneyEquals } from "@/lib/reports/balances";
 import type { TrialBalance } from "@/lib/reports/types";
 import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
@@ -57,7 +57,7 @@ export default function TrialBalancePage() {
     return <LoadingScreen />;
   }
 
-  const isBalanced = report ? report.totalDebit === report.totalCredit : false;
+  const isBalanced = report ? moneyEquals(report.totalDebit, report.totalCredit) : false;
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">

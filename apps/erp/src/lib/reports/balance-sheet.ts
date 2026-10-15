@@ -1,5 +1,5 @@
 import { getTrialBalance } from "./trial-balance";
-import { sumBalances } from "./balances";
+import { sumBalances, sumMoney } from "./balances";
 import type { BalanceSheet, TrialBalance } from "./types";
 
 /**
@@ -16,11 +16,11 @@ export function computeBalanceSheet(trialBalance: TrialBalance): BalanceSheet {
 
   const revenueTotal = sumBalances(trialBalance.balances.filter((b) => b.category === "revenue"));
   const expenseTotal = sumBalances(trialBalance.balances.filter((b) => b.category === "expense"));
-  const retainedEarnings = revenueTotal - expenseTotal;
+  const retainedEarnings = sumMoney([revenueTotal, -expenseTotal]);
 
   const totalAssets = sumBalances(assets);
   const totalLiabilities = sumBalances(liabilities);
-  const totalEquity = sumBalances(equity) + retainedEarnings;
+  const totalEquity = sumMoney([sumBalances(equity), retainedEarnings]);
 
   return {
     asOfDate: trialBalance.asOfDate,

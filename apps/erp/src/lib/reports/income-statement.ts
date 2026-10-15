@@ -1,5 +1,5 @@
 import type { Account } from "@/lib/accounts/schema";
-import { computeAccountBalances, fetchAccountBalancesBetween, fetchAccounts, sumBalances } from "./balances";
+import { computeAccountBalances, fetchAccountBalancesBetween, fetchAccounts, sumBalances, sumMoney } from "./balances";
 import { fetchClosingJournalEntryIds } from "./period-closing";
 import type { EntryLine, IncomeStatement } from "./types";
 
@@ -38,7 +38,7 @@ export function computeIncomeStatement(
     expenses,
     totalRevenue,
     totalExpense,
-    netIncome: totalRevenue - totalExpense,
+    netIncome: sumMoney([totalRevenue, -totalExpense]),
   };
 }
 

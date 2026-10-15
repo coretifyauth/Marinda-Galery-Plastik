@@ -5,17 +5,31 @@ import type { AccountBalance, EntryLine, ReportLine } from "./types";
 const ACCOUNT_COLUMNS = "id, code, name, category, normal_balance, is_contra, parent_id, archived_at";
 
 /**
+ * Uang di laporan dijumlah dalam SEN (integer), bukan float -- Core Invariant "money never
+ * float". Dengan `+` biasa, saldo bernilai sen (mis. Rp0,40 dari selisih pembulatan pelunasan)
+ * bikin total kayak 845000.3999999985 vs 845000.4, dan cek `===` balance gagal padahal buku
+ * besar balance persis di database.
+ */
+export const toCents = (n: number): number => Math.round(Number(n) * 100);
+export const fromCents = (c: number): number => c / 100;
+/** Jumlah uang presisi sen. */
+export const sumMoney = (values: number[]): number => fromCents(values.reduce((s, v) => s + toCents(v), 0));
+/** Bandingkan 2 nilai uang di level sen -- dipakai cek "balance" Trial Balance/Balance Sheet. */
+export const moneyEquals = (a: number, b: number): boolean => toCents(a) === toCents(b);
+
+/**
  * Reduce `ReportLine[]` jadi saldo per akun. Arah saldo (debit-credit vs
  * credit-debit) ngikutin `normal_balance` masing-masing akun — sama rumus
  * yang dipakai tab Ledger `/accounts/[id]`. Akun yang gak pernah punya baris
  * (termasuk akun header — leaf-only posting rule) gak muncul di hasil.
  */
 export function computeAccountBalances(accounts: Account[], lines: ReportLine[]): AccountBalance[] {
+  // Akumulasi dalam sen (lihat toCents) -- saldo akhir per akun dikonversi balik ke rupiah.
   const totals = new Map<string, { debit: number; credit: number }>();
   for (const line of lines) {
     const t = totals.get(line.account_id) ?? { debit: 0, credit: 0 };
-    t.debit += line.debit;
-    t.credit += line.credit;
+    t.debit += toCents(line.debit);
+    t.credit += toCents(line.credit);
     totals.set(line.account_id, t);
   }
 
@@ -23,7 +37,7 @@ export function computeAccountBalances(accounts: Account[], lines: ReportLine[])
   for (const account of accounts) {
     const t = totals.get(account.id);
     if (!t) continue;
-    const balance = account.normal_balance === "debit" ? t.debit - t.credit : t.credit - t.debit;
+    const balance = fromCents(account.normal_balance === "debit" ? t.debit - t.credit : t.credit - t.debit);
     balances.push({ ...account, balance });
   }
   return balances;
@@ -85,7 +99,7 @@ export async function fetchAccountBalancesBetween(
  * apa adanya (kontra tetap tampil sebagai baris kredit di Trial Balance).
  */
 export function sumBalances(balances: AccountBalance[]): number {
-  return balances.reduce((sum, b) => sum + (b.is_contra ? -b.balance : b.balance), 0);
+  return sumMoney(balances.map((b) => (b.is_contra ? -b.balance : b.balance)));
 }
 
 /**
@@ -114,7 +128,7 @@ export function rollupAccountBalances(accounts: Account[], leafBalances: Account
     const children = childrenOf.get(a.id) ?? [];
     const total =
       children.length > 0
-        ? children.reduce((sum, c) => sum + (c.is_contra ? -resolve(c) : resolve(c)), 0)
+        ? sumMoney(children.map((c) => (c.is_contra ? -resolve(c) : resolve(c))))
         : (direct.get(a.id) ?? 0);
     resolved.set(a.id, total);
     return total;

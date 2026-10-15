@@ -1,5 +1,5 @@
 import type { Account } from "@/lib/accounts/schema";
-import { computeAccountBalances, fetchAccounts, fetchLinesUpTo, rollupAccountBalances } from "./balances";
+import { computeAccountBalances, fetchAccounts, fetchLinesUpTo, rollupAccountBalances, sumMoney } from "./balances";
 import type { ReportLine, TrialBalance } from "./types";
 
 /**
@@ -12,12 +12,8 @@ export function computeTrialBalance(
   asOfDate: string
 ): TrialBalance {
   const balances = computeAccountBalances(accounts, lines);
-  const totalDebit = balances
-    .filter((b) => b.normal_balance === "debit")
-    .reduce((sum, b) => sum + b.balance, 0);
-  const totalCredit = balances
-    .filter((b) => b.normal_balance === "credit")
-    .reduce((sum, b) => sum + b.balance, 0);
+  const totalDebit = sumMoney(balances.filter((b) => b.normal_balance === "debit").map((b) => b.balance));
+  const totalCredit = sumMoney(balances.filter((b) => b.normal_balance === "credit").map((b) => b.balance));
   const rolledBalances = rollupAccountBalances(accounts, balances);
 
   return { asOfDate, balances, rolledBalances, totalDebit, totalCredit };

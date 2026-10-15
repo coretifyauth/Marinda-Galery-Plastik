@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// balances.ts mengimpor klien Supabase (butuh env) -- yang dites cuma fungsi compute murni.
+vi.mock("@/lib/supabase/client", () => ({ supabase: {} }));
+
 import type { Account } from "@/lib/accounts/schema";
-import { computeAccountBalances, rollupAccountBalances, sumBalances } from "./balances";
+import { computeAccountBalances, moneyEquals, rollupAccountBalances, sumBalances } from "./balances";
 import { computeTrialBalance } from "./trial-balance";
 import { computeIncomeStatement } from "./income-statement";
 import { computeBalanceSheet } from "./balance-sheet";
@@ -359,5 +363,31 @@ describe("sumBalances", () => {
     const naiveSum = balances.reduce((sum, b) => sum + b.balance, 0);
     // Akumulasi Penyusutan (250.000) harus dikurangkan, bukan ditambah — bedanya 2x nilainya.
     expect(sumBalances(balances)).toBe(naiveSum - 2 * 250_000);
+  });
+});
+
+describe("saldo bernilai sen -- jumlah presisi sen, bukan float", () => {
+  // 0,1 + 0,2 di float = 0.30000000000000004 -- dulu bikin Trial Balance/Balance Sheet
+  // nampilin "Gak balance" padahal buku besar balance persis (kasus Pendapatan Selisih
+  // Pembulatan Rp0,40, migration 0054).
+  const senLines: EntryLine[] = [
+    { journal_entry_id: "s1", account_id: kas.id, debit: 0.1, credit: 0 },
+    { journal_entry_id: "s1", account_id: pendapatan.id, debit: 0, credit: 0.1 },
+    { journal_entry_id: "s2", account_id: piutang.id, debit: 0.2, credit: 0 },
+    { journal_entry_id: "s2", account_id: pendapatan.id, debit: 0, credit: 0.2 },
+  ];
+
+  it("Trial Balance balance persis", () => {
+    const tb = computeTrialBalance(accounts, senLines, "2026-10-15");
+    expect(tb.totalDebit).toBe(0.3);
+    expect(tb.totalCredit).toBe(0.3);
+    expect(moneyEquals(tb.totalDebit, tb.totalCredit)).toBe(true);
+  });
+
+  it("Balance Sheet: Aset = Liabilitas + Ekuitas", () => {
+    const bs = computeBalanceSheet(computeTrialBalance(accounts, senLines, "2026-10-15"));
+    expect(bs.totalAssets).toBe(0.3);
+    expect(bs.retainedEarnings).toBe(0.3);
+    expect(moneyEquals(bs.totalAssets, bs.totalLiabilities + bs.totalEquity)).toBe(true);
   });
 });
