@@ -65,7 +65,13 @@ export type SaleHistoryItem = {
   createdAt: string;
   customerName: string | null;
   customerContact: string | null;
-  cashAccountId: string;
+  /** Pelunasan (migration 0054). Opsional: snapshot outbox offline lama belum punya field ini
+   * (dulu `cashAccountId`), dan transaksi lama di DB bisa method NULL. */
+  paymentMethod?: "TUNAI" | "BANK" | null;
+  cashTendered?: number | null;
+  changeGiven?: number | null;
+  /** + kembalian gak diambil (pendapatan), - pembulatan ditanggung toko (beban). */
+  roundingAmount?: number;
   lines: SaleHistoryLine[];
   extraTotal: number;
   taxTotal: number;

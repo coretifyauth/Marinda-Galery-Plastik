@@ -11,6 +11,7 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - **Supplier** — master data, pihak yang perusahaan berutang ke dia (bisa lebih dari 1 supplier langganan). Punya termin pembayaran default (syarat yang **diterima** dari supplier, bukan yang kita tetapkan sendiri) yang dipakai ngitung jatuh tempo tiap bill baru. Bukan data transaksional — kalau terminnya berubah (misal supplier naikin kepercayaan jadi termin lebih panjang), cukup diubah di data yang sama, gak bikin baris baru; perubahan cuma berlaku ke bill **baru** ke depan, bill lama yang jatuh temponya udah ditetapkan gak ikut geser.
 - **AP Bill** — utang timbul, 1 kejadian "ambil barang, belum bayar". Tiap bill bikin 1 jurnal: **Debit Persediaan atau Beban (tergantung jenis pembelian, bisa lebih dari 1 kategori sekaligus — lihat submodule "Kategori Campur & PPN"), Kredit Utang Usaha**. Akun debit dipilih manual tiap bill dibuat — beli bahan baku masuk Persediaan (asset), beli jasa/sewa/listrik langsung ke Beban (expense) — bukan hasil deteksi otomatis sistem. Jatuh tempo dihitung sekali saat bill dicatat (dari termin supplier saat itu) dan gak berubah lagi setelahnya, walau termin supplier berubah belakangan.
 - **AP Payment** — utang berkurang, kejadian bayar beneran ke supplier (bukan jadwal terjadwal). Selalu nutup **1 bill spesifik** (gak ada bayar gabungan beberapa bill sekaligus), boleh **dicicil** (kurang dari sisa tagihan, 1 bill boleh dibayar berkali-kali dari waktu ke waktu), tapi gak boleh **lebih dari sisa tagihan** (overpay ditolak keras — sama alasan kenapa overpay ditolak di AR, biar gak ada saldo mengambang yang gak jelas pertanggungjawabannya). Tiap pembayaran bikin 1 jurnal: **Debit Utang Usaha, Kredit Kas/Bank**, sejumlah yang beneran dibayar. Pembayaran wajib fokus ke 1 obligasi spesifik, sama kebijakan penagihan AR — cicil boleh, nyebar ke banyak obligasi dalam 1 transaksi gak boleh.
+  - Pengecualian sempit: kalau nominal yang dibayar adalah sisa tagihan **dibulatkan** (ke bawah atau ke atas) karena uang riil gak bisa membayar pecahan sen/receh, pembayaran itu dianggap **lunas** dan selisihnya dicatat sebagai selisih pembulatan — lihat submodule "Selisih Pembulatan Pelunasan".
 - **Status bill** (lunas/sebagian/belum/dibatalkan) — selalu dihitung ulang dari total pembayaran yang sudah diterima dibanding nilai bill, bukan status yang disimpan/di-update manual. Sama pola persis AR.
 
 **Aturan Bisnis**
@@ -142,3 +143,45 @@ Form retur memvalidasi kategori akun: akun Persediaan gak bisa "diretur" lewat j
 **Common Mistakes**
 - Memaksa transaksi campuran jadi 1 kategori saja — bikin laporan biaya per kategori jadi gak akurat (ongkir ketumpuk jadi Persediaan).
 - Membiarkan PPN Masukan diketik manual — beresiko salah hitung atau lupa dicatat sama sekali.
+
+### Selisih Pembulatan Pelunasan
+
+**Cara Kerja**
+- Nota supplier kadang bernilai pecahan, misal Rp387.239,40 (hasil konversi harga per dus ke per pcs, atau PPN 11%). Bill wajib dicatat **persis sesuai nota** — nota adalah dokumen sumber, sistem gak boleh membulatkannya sendiri.
+- Tapi uang riil gak bisa membayar pecahan: transfer bank gak bisa mengirim sen, dan uang tunai praktis gak punya pecahan di bawah Rp100. Jadi perusahaan membayar angka bulat, misal Rp387.239, dan supplier menyatakan tagihan **lunas**. Secara hukum perikatan tagihan itu memang sudah selesai (kesepakatan kedua pihak) — arah pembulatan (ke bawah atau ke atas) ditentukan kesepakatan dengan supplier, bukan aturan "kurang dari 5 dibulatkan ke bawah".
+- Yang dicatat sebagai pembayaran selalu **uang yang benar-benar berpindah** (sesuai mutasi bank / kuitansi tunai) — gak pernah mengetik sen yang gak ada di rekening. Sistem yang membaca apakah nominal itu pelunasan dengan pembulatan:
+  - Sisa tagihan dibulatkan ke bawah dan ke atas ke **kelipatan satuan pembulatan**. Kalau nominal bayar sama dengan salah satu dari dua angka itu, tagihan dianggap **lunas** dan selisihnya dijurnal otomatis.
+  - Satuan pembulatan tergantung **metode bayar** yang dipilih saat mencatat pembayaran (bukan dari akun kas yang dipakai): Transfer Bank Rp1, Tunai Rp100 (default, bisa diubah admin di Pengaturan). Metode bayar ikut disimpan di pembayaran, jadi tiap selisih bisa ditelusuri alasannya.
+  - Selain dua angka itu, aturan lama berlaku: kurang dari sisa = cicilan biasa, lebih dari sisa = ditolak.
+- Jurnal pembulatan ke bawah (kita bayar kurang, supplier merelakan) — posisi kita diuntungkan, jadi **Pendapatan**:
+  ```
+  Debit Utang Usaha [sisa tagihan]   Kredit Kas/Bank [uang yang dibayar]
+                                      Kredit Pendapatan Selisih Pembulatan [selisih]
+  ```
+- Jurnal pembulatan ke atas (supplier minta digenapkan, kita bayar lebih) — posisi kita dirugikan, jadi **Beban**:
+  ```
+  Debit Utang Usaha [sisa tagihan]                 Kredit Kas/Bank [uang yang dibayar]
+  Debit Beban Selisih Pembulatan [selisih]
+  ```
+- Baris pembulatan ada di **jurnal yang sama** dengan pembayarannya, bukan jurnal terpisah — kalau pembayaran suatu saat dibalik, selisihnya ikut terbalik otomatis.
+
+**Aturan Bisnis**
+- Bill tetap dicatat sesuai nota (termasuk pecahannya). Pembulatan hanya terjadi di titik pelunasan.
+- Pendapatan dan Beban Selisih Pembulatan adalah **2 akun terpisah** (bukan 1 akun yang dinetto) — laporan Laba Rugi tetap menunjukkan berapa yang untung dan berapa yang rugi dari pembulatan, sama seperti Selisih Persediaan.
+- Selisih yang **bukan pembulatan** (misal supplier bilang "Rp500-nya gak usah" pada pembayaran transfer) bukan bagian fitur ini — itu potongan harga, keputusan yang harus disadari orang, bukan diserap diam-diam ke akun pembulatan.
+- Aturan selalu membaca **sisa tagihan saat itu** (setelah cicilan, retur, DP), bukan nilai awal bill.
+- Kalau sisa tagihan tinggal receh di bawah satuan (misal Rp0,40 sisa dari pembayaran lama), bisa ditutup dengan mencatat pembayaran **Rp0** — itu juga "sisa dibulatkan ke bawah", jurnalnya cuma Debit Utang / Kredit Pendapatan Selisih Pembulatan tanpa baris kas.
+
+**Skenario**
+- Nota Rp387.239,40, transfer Rp387.239 → lunas, Pendapatan Selisih Pembulatan Rp0,40.
+- Nota Rp387.239,40, supplier minta Rp387.240, transfer Rp387.240 → lunas, Beban Selisih Pembulatan Rp0,60.
+- Nota Rp387.239,40, transfer Rp387.200 → cicilan biasa, sisa Rp39,40 (lewat transfer, kurang Rp39 bukan pembulatan). Kalau nanti dilunasi transfer Rp39 → lunas, Pendapatan Rp0,40.
+- Nota Rp387.239,40 dibayar tunai Rp387.200 → lunas, Pendapatan Selisih Pembulatan Rp39,40 (satuan tunai Rp100).
+- Transfer Rp387.300 → ditolak (kelebihan bayar).
+
+**Common Mistakes**
+- Mencatat pembayaran Rp387.239,40 padahal yang ditransfer Rp387.239 — saldo Kas/Bank di sistem lebih besar dari rekening asli, selisihnya menumpuk tiap transaksi dan rekonsiliasi bank gak pernah cocok.
+- Membulatkan nilai bill saat dicatat — bill jadi gak sama dengan nota supplier (dokumen sumber).
+- Memakai batas toleransi lebar (Rp1.000 dsb) supaya "otomatis lunas" — mencampur pembulatan dengan potongan harga.
+- Menebak metode bayar dari nama/kode akun kas — akun bisa diganti nama atau dipetakan ulang kapan saja; metode bayar harus fakta yang dicatat di pembayaran.
+- Menyebut selisih pembulatan "selisih kurs" — selisih kurs adalah untung/rugi perubahan nilai tukar mata uang asing, konsep yang beda sama sekali.

@@ -30,12 +30,20 @@ type CategoryLine = { id: string; accountName: string; amount: number; isTax: bo
 // tambahan+PPN dari transaction_lines -- baris basket item dikeluarkan dari tab "Kategori"
 // lewat MEMBERSHIP ke charge_categories (module 'pos'), bukan amount-matching, pola sama
 // ar-invoices/[id]/view.tsx (chargeLabelByAccountId).
+const rpDetail = (n: number) => `Rp${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
+
 type PosSaleDetail = {
   id: string; // = transaction_id, dipakai buat void_pos_transaction
   saleDate: string;
   sourceRef: string;
   customerName: string | null;
   cashAccountName: string | null;
+  // Pelunasan (migration 0054): metode bayar, uang diterima & kembalian (kasir tunai), selisih
+  // pembulatan (+ pendapatan / - beban). Transaksi lama: method bisa null, cash/change null, rounding 0.
+  paymentMethod: "TUNAI" | "BANK" | null;
+  cashTendered: number | null;
+  changeGiven: number | null;
+  roundingAmount: number;
   isCancelled: boolean;
   total: number;
   totalCost: number;
@@ -70,7 +78,12 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
       .eq("transaction_id", id)
       .eq("type", "OUTBOUND")
       .maybeSingle(),
-    supabase.from("payments").select("id, journal_entry_id").eq("transaction_id", id).eq("type", "OUTBOUND").maybeSingle(),
+    supabase
+      .from("payments")
+      .select("id, journal_entry_id, payment_method, cash_tendered, change_given, rounding_amount")
+      .eq("transaction_id", id)
+      .eq("type", "OUTBOUND")
+      .maybeSingle(),
   ]);
   if (giErr) throw new Error(giErr.message);
   if (payErr) throw new Error(payErr.message);
@@ -81,7 +94,14 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
     journal_entry_id: string;
     goods_note_lines: { id: string; qty: number; unit_price: number | null; total_cost: number; items: { name: string; uom: string } | null }[];
   };
-  const payment = pay as unknown as { id: string; journal_entry_id: string } | null;
+  const payment = pay as unknown as {
+    id: string;
+    journal_entry_id: string;
+    payment_method: "TUNAI" | "BANK" | null;
+    cash_tendered: number | null;
+    change_given: number | null;
+    rounding_amount: number;
+  } | null;
 
   const journalEntryIds = [transaction.journal_entry_id, goodsIssue.journal_entry_id];
   if (payment) journalEntryIds.push(payment.journal_entry_id);
@@ -90,7 +110,18 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
     supabase.from("transaction_lines").select("id, account_id, amount, is_tax, accounts(name)").eq("transaction_id", id),
     supabase.from("charge_categories").select("account_id").eq("module", "pos"),
     payment
-      ? supabase.from("journal_lines").select("account_id, accounts(name)").eq("journal_entry_id", payment.journal_entry_id).gt("debit", 0).maybeSingle()
+      ? // Jurnal pelunasan bisa punya 2 baris debit sejak 0054 (Kas + Beban Selisih Pembulatan) --
+        // baris kas = debit ke akun berkategori asset (sama logika view pos_sales_with_status).
+        // Pelunasan Rp0 gak punya baris kas -> null.
+        supabase
+          .from("journal_lines")
+          .select("account_id, accounts!inner(name, category)")
+          .eq("journal_entry_id", payment.journal_entry_id)
+          .gt("debit", 0)
+          .eq("accounts.category", "asset")
+          .order("debit", { ascending: false })
+          .limit(1)
+          .maybeSingle()
       : Promise.resolve({ data: null }),
     supabase
       .from("journal_entries")
@@ -118,6 +149,10 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
     sourceRef: transaction.source_ref,
     customerName: transaction.counterparties?.name ?? null,
     cashAccountName: (cashDebitLine as unknown as { accounts: { name: string } | null } | null)?.accounts?.name ?? null,
+    paymentMethod: payment?.payment_method ?? null,
+    cashTendered: payment?.cash_tendered ?? null,
+    changeGiven: payment?.change_given ?? null,
+    roundingAmount: payment?.rounding_amount ?? 0,
     isCancelled: transaction.status === "dibatalkan",
     total: transaction.amount,
     totalCost: goodsIssue.goods_note_lines.reduce((sum, l) => sum + l.total_cost, 0),
@@ -225,7 +260,24 @@ export function PosSaleDetailView({ id }: { id: string }) {
         { label: "Pelanggan", value: sale.customerName ?? "Pelanggan Umum (anonim)" },
         { label: "Rujukan Dokumen", value: sale.sourceRef },
         { label: "Tanggal", value: sale.saleDate },
-        { label: "Bayar via", value: sale.cashAccountName ?? "—" },
+        {
+          label: "Bayar via",
+          value: `${sale.paymentMethod === "TUNAI" ? "Tunai — " : sale.paymentMethod === "BANK" ? "Bank — " : ""}${sale.cashAccountName ?? "—"}`,
+        },
+        ...(sale.cashTendered != null
+          ? [
+              { label: "Uang Diterima", value: rpDetail(sale.cashTendered) },
+              { label: "Kembalian Diberikan", value: rpDetail(sale.changeGiven ?? 0) },
+            ]
+          : []),
+        ...(sale.roundingAmount !== 0
+          ? [
+              {
+                label: sale.roundingAmount > 0 ? "Pendapatan Selisih Pembulatan" : "Beban Selisih Pembulatan",
+                value: rpDetail(Math.abs(sale.roundingAmount)),
+              },
+            ]
+          : []),
         {
           label: "Status",
           value: sale.isCancelled ? (

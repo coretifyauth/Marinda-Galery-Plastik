@@ -587,10 +587,114 @@ function TaxSettingsCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+/** Satuan pembulatan pembayaran (app_settings.rounding_unit_cash/bank, migration 0054) --
+ * pelunasan AR/AP dianggap lunas kalau nominal = sisa tagihan dibulatkan ke kelipatan satuan
+ * metode bayarnya; di kasir, satuan tunai juga batas maksimal toko nombok. Konsep:
+ * docs/domain/accounts-payable.md submodule "Selisih Pembulatan Pelunasan". */
+function RoundingSettingsCard({ canWrite }: { canWrite: boolean }) {
+  const [loaded, setLoaded] = useState(false);
+  const [cashUnit, setCashUnit] = useState("100");
+  const [bankUnit, setBankUnit] = useState("1");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from("app_settings").select("rounding_unit_cash, rounding_unit_bank").maybeSingle();
+    if (data) {
+      setCashUnit(String(data.rounding_unit_cash));
+      setBankUnit(String(data.rounding_unit_bank));
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (active) await load();
+    })();
+    return () => {
+      active = false;
+    };
+  }, [load]);
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaved(false);
+    const cash = Number(cashUnit);
+    const bank = Number(bankUnit);
+    if (!(cash > 0) || !(bank > 0)) {
+      setError("Satuan pembulatan harus lebih dari 0");
+      return;
+    }
+    setSubmitting(true);
+    const { error: err } = await supabase
+      .from("app_settings")
+      .update({ rounding_unit_cash: cash, rounding_unit_bank: bank })
+      .eq("id", true);
+    setSubmitting(false);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    setSaved(true);
+    await load();
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h2 className="mb-1 font-semibold text-black">Pembulatan Pembayaran</h2>
+      <p className="mb-3 text-sm text-slate-500">
+        Uang riil gak bisa membayar pecahan sen/receh. Pelunasan dianggap lunas kalau nominalnya sama dengan
+        sisa tagihan dibulatkan ke bawah/atas ke kelipatan satuan ini; selisihnya dicatat ke Pendapatan/Beban
+        Selisih Pembulatan. Di kasir, satuan tunai juga jadi batas maksimal toko menanggung kekurangan.
+      </p>
+      <form onSubmit={handleSave} className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="rounding_unit_cash">Satuan Tunai (Rp)</Label>
+            <Input
+              id="rounding_unit_cash"
+              type="number"
+              min="0"
+              step="1"
+              value={cashUnit}
+              onChange={(e) => setCashUnit(e.target.value)}
+              disabled={!canWrite}
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="rounding_unit_bank">Satuan Transfer Bank / QRIS (Rp)</Label>
+            <Input
+              id="rounding_unit_bank"
+              type="number"
+              min="0"
+              step="1"
+              value={bankUnit}
+              onChange={(e) => setBankUnit(e.target.value)}
+              disabled={!canWrite}
+            />
+          </div>
+        </div>
+        {canWrite && (
+          <Button type="submit" disabled={submitting} className="w-fit">
+            {submitting ? "Menyimpan..." : "Simpan Pembulatan"}
+          </Button>
+        )}
+        {saved && <p className="text-sm text-emerald-600">Tersimpan.</p>}
+        {error && <FormError>{error}</FormError>}
+      </form>
+    </div>
+  );
+}
+
 const settingsTabs: TabDef[] = [
   { key: "default_accounts", label: "Default Akun" },
   { key: "charge_categories", label: "Kategori Tambahan" },
-  { key: "tax", label: "Pajak" },
+  { key: "tax", label: "Pajak & Pembulatan" },
   { key: "print_documents", label: "Dokumen Cetak" },
 ];
 
@@ -670,7 +774,12 @@ export default function ChargesSettingsPage() {
           />
         </div>
       )}
-      {activeTab === "tax" && <TaxSettingsCard canWrite={canWrite} />}
+      {activeTab === "tax" && (
+        <div className="flex flex-col gap-6">
+          <TaxSettingsCard canWrite={canWrite} />
+          <RoundingSettingsCard canWrite={canWrite} />
+        </div>
+      )}
       {activeTab === "print_documents" && <CompanySettingsCard canWrite={canWrite} />}
     </div>
   );

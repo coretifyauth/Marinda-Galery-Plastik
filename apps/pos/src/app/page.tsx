@@ -19,6 +19,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { fetchActiveItemDiscountRules } from "@/lib/promotion-item-discount-rules";
 import { fetchActiveBundlePromoRules } from "@/lib/promotion-bundle-rules";
 import { previewCartDiscounts } from "@/lib/cart-discount";
+import { bankCharge, defaultChangeGiven, DEFAULT_ROUNDING_UNITS, settleCash, type RoundingUnits } from "@/lib/cash-rounding";
 import {
   addUnitToCart,
   buildStockMap,
@@ -79,9 +80,9 @@ type CheckoutResult = {
   receiptSnapshot: OutboxReceiptSnapshot;
 };
 
+// Akun kas TIDAK lagi dipilih client (dulu KAS_TOKO/KAS_BANK di sini) -- sejak migration 0054
+// server menurunkannya dari metode bayar lewat Default Akun cash.tunai/cash.bank.
 const ACCOUNT_CODES = {
-  KAS_TOKO: "1100",
-  KAS_BANK: "1200",
   PENDAPATAN_TOKO: "4100",
   HPP: "5100",
   PERSEDIAAN_BARANG_JADI: "1420",
@@ -191,6 +192,29 @@ async function fetchTaxSettings(): Promise<TaxSettings | null> {
   }
 }
 
+// Satuan pembulatan (app_settings, migration 0054) -- tunai = batas toko nombok + kelipatan
+// pembulatan kembalian default, bank = pembulatan nominal QRIS. Cache offline sama pola lain.
+async function fetchRoundingUnits(): Promise<RoundingUnits> {
+  try {
+    const { data, error } = await supabase
+      .from("app_settings")
+      .select("rounding_unit_cash, rounding_unit_bank")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const units: RoundingUnits = data
+      ? { TUNAI: Number(data.rounding_unit_cash), BANK: Number(data.rounding_unit_bank) }
+      : DEFAULT_ROUNDING_UNITS;
+    await setKeyValue("rounding_units", units);
+    return units;
+  } catch (err) {
+    const cached = await getKeyValue<RoundingUnits>("rounding_units");
+    if (cached) return cached;
+    throw err;
+  }
+}
+
+const rpx = (n: number) => `Rp${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
+
 async function fetchCompanyName(): Promise<string | null> {
   try {
     const { data, error } = await supabase.from("app_settings").select("name").maybeSingle();
@@ -218,7 +242,7 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
   const { data, error } = await supabase
     .from("transactions")
     .select(
-      "id, source_ref, date, created_at, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, discount_amount, manual_discount_amount, items(name, uom))), payments!inner(id, journal_entry_id), transaction_lines(account_id, amount, is_tax)"
+      "id, source_ref, date, created_at, counterparties(name, contact), goods_notes!inner(goods_note_lines(qty, unit_price, discount_amount, manual_discount_amount, items(name, uom))), payments!inner(id, payment_method, cash_tendered, change_given, rounding_amount), transaction_lines(account_id, amount, is_tax)"
     )
     .eq("type", "OUTBOUND")
     .eq("date", date)
@@ -240,38 +264,33 @@ async function fetchRecentSales(date: string, chargeAccountIds: Set<string>): Pr
         items: { name: string; uom: string } | null;
       }[];
     }[];
-    payments: { id: string; journal_entry_id: string }[];
+    payments: {
+      id: string;
+      payment_method: "TUNAI" | "BANK" | null;
+      cash_tendered: number | null;
+      change_given: number | null;
+      rounding_amount: number;
+    }[];
     transaction_lines: { account_id: string; amount: number; is_tax: boolean }[];
   };
 
   const rows = (data ?? []) as unknown as Row[];
 
-  // Cari akun kas per transaksi dari baris debit jurnal pelunasan (record_payment selalu
-  // tulis persis 2 baris: debit akun kas, kredit akun kontrol) -- query terpisah (bukan
-  // embed 2-level payments->journal_entries->journal_lines lewat PostgREST), pola sama
-  // "loadAux" terpisah di apps/erp/pos-sales/page.tsx.
-  const journalEntryIds = rows.flatMap((r) => r.payments.map((p) => p.journal_entry_id));
-  const cashAccountByEntry = new Map<string, string>();
-  if (journalEntryIds.length > 0) {
-    const { data: jlData, error: jlError } = await supabase
-      .from("journal_lines")
-      .select("journal_entry_id, account_id")
-      .in("journal_entry_id", journalEntryIds)
-      .gt("debit", 0);
-    if (jlError) throw new Error(jlError.message);
-    for (const l of jlData ?? []) cashAccountByEntry.set(l.journal_entry_id as string, l.account_id as string);
-  }
-
+  // Metode bayar/uang diterima/kembalian/selisih langsung dari payments (migration 0054) --
+  // dulu metode ditebak dari akun kas di baris debit jurnal pelunasan.
   return rows.map((row) => {
     const goodsIssueLines = row.goods_notes.flatMap((gi) => gi.goods_note_lines);
-    const paymentEntryId = row.payments[0]?.journal_entry_id ?? "";
+    const payment = row.payments[0];
     return {
       id: row.id,
       sourceRef: row.source_ref,
       createdAt: row.created_at,
       customerName: row.counterparties?.name ?? null,
       customerContact: row.counterparties?.contact ?? null,
-      cashAccountId: cashAccountByEntry.get(paymentEntryId) ?? "",
+      paymentMethod: payment?.payment_method ?? null,
+      cashTendered: payment?.cash_tendered ?? null,
+      changeGiven: payment?.change_given ?? null,
+      roundingAmount: payment?.rounding_amount ?? 0,
       lines: goodsIssueLines.map((l) => ({
         name: l.items?.name ?? "-",
         uom: l.items?.uom ?? "",
@@ -458,6 +477,12 @@ function ReceiptPreview({ data }: { data: ReceiptData }) {
           <span>{rp(data.change)}</span>
         </div>
       )}
+      {data.roundingAmount !== 0 && (
+        <div className="flex justify-between">
+          <span>{data.roundingAmount < 0 ? "Pembulatan (toko)" : "Kembalian tdk diambil"}</span>
+          <span>{rpx(Math.abs(data.roundingAmount))}</span>
+        </div>
+      )}
       {data.customerName && <div className="mt-1">Pelanggan: {data.customerName}</div>}
       <div className="mt-2 text-center">Terima kasih!</div>
     </div>
@@ -511,6 +536,9 @@ export default function CheckoutPage() {
   const [taxOverride, setTaxOverride] = useState<boolean | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"CASH" | "BANK">("CASH");
   const [cashReceived, setCashReceived] = useState("");
+  // Kembalian yang benar-benar diserahkan kasir. null = pakai saran (kembalian seharusnya
+  // dibulatkan ke atas ke satuan tunai); direset ke null tiap Uang Diterima diubah.
+  const [changeGivenInput, setChangeGivenInput] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string>("");
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
@@ -565,6 +593,12 @@ export default function CheckoutPage() {
   const taxSettingsQuery = useQuery({
     queryKey: ["tax_settings"],
     queryFn: fetchTaxSettings,
+    enabled: !checkingSession,
+    staleTime: 10 * 60_000,
+  });
+  const roundingUnitsQuery = useQuery({
+    queryKey: ["rounding_units"],
+    queryFn: fetchRoundingUnits,
     enabled: !checkingSession,
     staleTime: 10 * 60_000,
   });
@@ -678,6 +712,17 @@ export default function CheckoutPage() {
 
   const total = itemTotal + extraTotal + taxAmount;
 
+  // Kembalian & selisih pembulatan -- PRATINJAU aturan create_pos_sale (server hitung ulang).
+  // Ref: docs/domain/pos.md submodule "Kembalian & Selisih Pembulatan Kasir".
+  const roundingUnits = roundingUnitsQuery.data ?? DEFAULT_ROUNDING_UNITS;
+  const tenderedNum = cashReceived.trim() === "" ? null : Number(cashReceived);
+  const suggestedChange = tenderedNum != null ? defaultChangeGiven(total, tenderedNum, roundingUnits.TUNAI) : 0;
+  const changeGivenNum = changeGivenInput != null ? Number(changeGivenInput || 0) : suggestedChange;
+  const cashSettlement =
+    tenderedNum != null ? settleCash(total, tenderedNum, changeGivenNum, roundingUnits.TUNAI) : null;
+  const bankSettlement = bankCharge(total, roundingUnits.BANK);
+  const cashInvalid = paymentMethod === "CASH" && (tenderedNum == null || !cashSettlement?.ok);
+
   function addExtraLine() {
     setExtraLines((prev) => [...prev, { category_id: "", amount: "" }]);
   }
@@ -753,9 +798,6 @@ export default function CheckoutPage() {
 
   const checkoutMutation = useMutation({
     mutationFn: async (): Promise<CheckoutResult> => {
-      const cashAccountId =
-        paymentMethod === "CASH" ? accountIds[ACCOUNT_CODES.KAS_TOKO] : accountIds[ACCOUNT_CODES.KAS_BANK];
-
       const resolvedExtraLines = extraLines
         .filter((l) => l.category_id && l.amount.trim() !== "")
         .map((l) => {
@@ -765,13 +807,19 @@ export default function CheckoutPage() {
 
       if (manualDiscountError) throw new Error(manualDiscountError);
 
-      const cashReceivedNum = paymentMethod === "CASH" && cashReceived.trim() !== "" ? Number(cashReceived) : null;
-      const changeNum = cashReceivedNum != null ? cashReceivedNum - total : null;
+      const isCash = paymentMethod === "CASH";
+      if (isCash && (tenderedNum == null || !cashSettlement?.ok)) {
+        throw new Error(cashSettlement && !cashSettlement.ok ? cashSettlement.error : "Isi uang diterima dulu");
+      }
+      // Bank: "Bayar" di struk = nominal yang ditagih di mesin EDC/QRIS.
+      const cashReceivedNum = isCash ? tenderedNum : bankSettlement.cash;
+      const changeNum = isCash ? changeGivenNum : null;
+      const roundingAmount = isCash ? (cashSettlement?.ok ? cashSettlement.gain : 0) : bankSettlement.gain;
 
       const payload: OutboxSalePayload = {
         p_sale_date: new Date().toISOString().slice(0, 10),
         p_customer_id: customerId || null,
-        p_cash_account_id: cashAccountId,
+        p_cash_account_id: null,
         p_revenue_account_id: accountIds[ACCOUNT_CODES.PENDAPATAN_TOKO],
         p_hpp_account_id: accountIds[ACCOUNT_CODES.HPP],
         p_finished_good_account_id: accountIds[ACCOUNT_CODES.PERSEDIAAN_BARANG_JADI],
@@ -780,6 +828,10 @@ export default function CheckoutPage() {
         // Diskon manual 1 nominal per transaksi -- server yang validasi (< total net) & bagi ke
         // baris, UI cuma kirim angkanya.
         p_manual_discount: manualDiscountApplied,
+        // Pelunasan (0054): server turunkan akun kas dari metode, hitung ulang selisih pembulatan.
+        p_payment_method: isCash ? "TUNAI" : "BANK",
+        p_cash_tendered: isCash ? tenderedNum : null,
+        p_change_given: isCash ? changeGivenNum : null,
         // create_pos_sale SELALU nerima qty di satuan dasar (0 perubahan RPC, pola
         // sama item_units di modul lain) -- baris keranjang yang qty_sold/unit_price-
         // nya dalam satuan bukan-dasar (dari scan) dikonversi di sini, tepat sebelum
@@ -801,7 +853,10 @@ export default function CheckoutPage() {
       const receiptSnapshot: OutboxReceiptSnapshot = {
         customerName: customer?.name ?? null,
         customerContact: customer?.contact ?? null,
-        cashAccountId,
+        paymentMethod: isCash ? "TUNAI" : "BANK",
+        cashTendered: isCash ? tenderedNum : null,
+        changeGiven: changeNum,
+        roundingAmount,
         lines: cart.map((l) => {
           const baseUom = catalog.find((c) => c.id === l.item_id)?.uom ?? l.unit_label;
           const qty = l.qty_sold * l.conversion_factor;
@@ -909,12 +964,15 @@ export default function CheckoutPage() {
       setExtraLines([]);
       setManualDiscount("");
       setCashReceived("");
+      setChangeGivenInput(null);
       setTaxOverride(null);
       setScanError(null);
       setShowPaymentModal(false);
       scanInputRef.current?.focus();
     },
   });
+
+  const payDisabled = checkoutMutation.isPending || cashInvalid;
 
   // Window desktop (Tauri) gak punya tombol reload browser & bisa dibiarkan fokus
   // terus seharian di kios kasir -- refetchOnWindowFocus react-query jadi gak cukup
@@ -995,6 +1053,8 @@ export default function CheckoutPage() {
     meta?: { cashReceived: number | null; change: number | null }
   ): ReceiptData {
     const subtotal = sale.lines.reduce((s, l) => s + l.amount, 0);
+    const saleTotal = subtotal - sale.discountTotal + sale.extraTotal + sale.taxTotal;
+    const roundingAmount = sale.roundingAmount ?? 0;
     return {
       companyName,
       sourceRef: sale.sourceRef,
@@ -1006,10 +1066,13 @@ export default function CheckoutPage() {
       taxRate: taxSettings?.ppn_rate ?? null,
       subtotal,
       discountTotal: sale.discountTotal,
-      total: subtotal - sale.discountTotal + sale.extraTotal + sale.taxTotal,
-      paymentLabel: sale.cashAccountId === accountIds[ACCOUNT_CODES.KAS_TOKO] ? "Tunai" : "Bank",
-      cashReceived: meta?.cashReceived ?? null,
-      change: meta?.change ?? null,
+      total: saleTotal,
+      paymentLabel: sale.paymentMethod === "TUNAI" ? "Tunai" : sale.paymentMethod === "BANK" ? "Bank" : "-",
+      // Riwayat: uang diterima/kembalian tersimpan di payments sejak 0054; Bank = nominal ditagih.
+      cashReceived:
+        meta?.cashReceived ?? sale.cashTendered ?? (sale.paymentMethod === "BANK" ? saleTotal + roundingAmount : null),
+      change: meta?.change ?? sale.changeGiven ?? null,
+      roundingAmount,
     };
   }
 
@@ -1620,15 +1683,74 @@ export default function CheckoutPage() {
                     autoFocus
                     className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
                     value={cashReceived}
-                    onChange={(e) => setCashReceived(e.target.value)}
+                    onChange={(e) => {
+                      setCashReceived(e.target.value);
+                      setChangeGivenInput(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !payDisabled) confirmCheckout();
+                    }}
                   />
-                  {cashReceived.trim() !== "" && (
-                    <div
-                      className={`mt-1 text-xs ${Number(cashReceived) < total ? "text-red-600" : "text-slate-500"}`}
-                    >
-                      {Number(cashReceived) < total
-                        ? `Kurang Rp${(total - Number(cashReceived)).toLocaleString("id-ID")}`
-                        : `Kembalian: Rp${(Number(cashReceived) - total).toLocaleString("id-ID")}`}
+                  {tenderedNum != null && tenderedNum >= total && (
+                    <div className="mt-2 space-y-1.5 rounded border border-slate-200 bg-slate-50 p-2 text-xs">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Kembalian seharusnya</span>
+                        <span className="font-mono">{rpx(tenderedNum - total)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <label htmlFor="change-given" className="text-slate-600">
+                          Kembalian diberikan
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            id="change-given"
+                            type="number"
+                            min="0"
+                            step={roundingUnits.TUNAI}
+                            className="w-28 rounded border border-slate-300 px-2 py-1 text-right text-sm"
+                            value={changeGivenInput ?? String(suggestedChange)}
+                            onChange={(e) => setChangeGivenInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !payDisabled) confirmCheckout();
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="rounded border border-slate-300 bg-white px-2 py-1 hover:bg-slate-100"
+                            onClick={() => setChangeGivenInput("0")}
+                          >
+                            Tidak diambil
+                          </button>
+                        </div>
+                      </div>
+                      {cashSettlement &&
+                        (cashSettlement.ok ? (
+                          cashSettlement.gain < 0 ? (
+                            <div className="text-slate-500">Pembulatan −{rpx(-cashSettlement.gain)} ditanggung toko</div>
+                          ) : cashSettlement.gain > 0 ? (
+                            <div className="text-emerald-700">Kembalian tidak diambil +{rpx(cashSettlement.gain)}</div>
+                          ) : null
+                        ) : (
+                          <div className="text-red-600">{cashSettlement.error}</div>
+                        ))}
+                    </div>
+                  )}
+                  {tenderedNum != null && tenderedNum < total && (
+                    <div className={`mt-1 text-xs ${cashSettlement?.ok ? "text-amber-600" : "text-red-600"}`}>
+                      {cashSettlement?.ok
+                        ? `Kurang ${rpx(total - tenderedNum)} — ditanggung toko (pembulatan)`
+                        : cashSettlement?.error}
+                    </div>
+                  )}
+                </div>
+              )}
+              {paymentMethod === "BANK" && (
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Nominal ditagih (ketik di mesin EDC/QRIS)</label>
+                  <div className="font-mono text-base font-semibold">{rpx(bankSettlement.cash)}</div>
+                  {bankSettlement.gain !== 0 && (
+                    <div className="mt-1 text-xs text-slate-500">
+                      Pembulatan −{rpx(-bankSettlement.gain)} ditanggung toko
                     </div>
                   )}
                 </div>
@@ -1642,10 +1764,7 @@ export default function CheckoutPage() {
             <button
               type="button"
               onClick={confirmCheckout}
-              disabled={
-                checkoutMutation.isPending ||
-                (paymentMethod === "CASH" && (cashReceived.trim() === "" || Number(cashReceived) < total))
-              }
+              disabled={payDisabled}
               className="mt-5 w-full rounded bg-blue-600 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40"
             >
               {checkoutMutation.isPending ? "Memproses..." : "Bayar"}

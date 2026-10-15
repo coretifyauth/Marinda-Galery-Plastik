@@ -39,7 +39,20 @@ export type ReceiptData = {
   paymentLabel: string;
   cashReceived: number | null;
   change: number | null;
+  /** Selisih pembulatan pelunasan (0054): + kembalian gak diambil, - ditanggung toko, 0 = gak ada. */
+  roundingAmount: number;
 };
+
+const rpFine = (n: number) => `Rp${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
+
+/** Baris struk selisih pembulatan, null kalau gak ada -- dipakai HTML, teks WA, dan thermal. */
+export function roundingReceiptLine(data: ReceiptData): { label: string; value: string } | null {
+  if (!data.roundingAmount) return null;
+  return {
+    label: data.roundingAmount < 0 ? "Pembulatan (toko)" : "Kembalian tdk diambil",
+    value: rpFine(Math.abs(data.roundingAmount)),
+  };
+}
 
 export function buildReceiptHtml(data: ReceiptData): string {
   const lineRows = data.lines
@@ -71,6 +84,10 @@ export function buildReceiptHtml(data: ReceiptData): string {
     <div class="row bold total"><span>Total</span><span>${rp(data.total)}</span></div>
     <div class="row"><span>Bayar (${escapeHtml(data.paymentLabel)})</span><span>${data.cashReceived != null ? rp(data.cashReceived) : "-"}</span></div>
     ${data.change != null ? `<div class="row"><span>Kembalian</span><span>${rp(data.change)}</span></div>` : ""}
+    ${(() => {
+      const r = roundingReceiptLine(data);
+      return r ? `<div class="row"><span>${r.label}</span><span>${r.value}</span></div>` : "";
+    })()}
     ${data.customerName ? `<div class="meta" style="margin-top:6px">Pelanggan: ${escapeHtml(data.customerName)}</div>` : ""}
     <div class="center meta" style="margin-top:10px">Terima kasih!</div>
   `;
@@ -125,6 +142,8 @@ export function buildWhatsappReceiptText(data: ReceiptData): string {
   lines.push(`Total: ${rp(data.total)}`);
   lines.push(`Bayar (${data.paymentLabel}): ${data.cashReceived != null ? rp(data.cashReceived) : "-"}`);
   if (data.change != null) lines.push(`Kembalian: ${rp(data.change)}`);
+  const rounding = roundingReceiptLine(data);
+  if (rounding) lines.push(`${rounding.label}: ${rounding.value}`);
   lines.push("");
   lines.push("Terima kasih!");
   return lines.join("\n");

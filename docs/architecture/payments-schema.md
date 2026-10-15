@@ -1,6 +1,6 @@
 # Pembayaran — Struktur Data
 
-Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang berkurang, `INBOUND` = utang berkurang) — mirror pola tabel induknya, `transactions` (lihat `docs/architecture/transactions-schema.md`). Baca `docs/domain/accounts-receivable.md` (bagian "AR Payment") dan `docs/domain/accounts-payable.md` (bagian pelunasan utang) buat konteks lengkap. Detail teknis penuh (DDL/trigger/RPC persis) ada di `supabase/migrations/0016_payments_schema.sql`.
+Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, dibedakan kolom arah (`type`: `OUTBOUND` = piutang berkurang, `INBOUND` = utang berkurang) — mirror pola tabel induknya, `transactions` (lihat `docs/architecture/transactions-schema.md`). Baca `docs/domain/accounts-receivable.md` (bagian "AR Payment") dan `docs/domain/accounts-payable.md` (bagian pelunasan utang) buat konteks lengkap. Detail teknis penuh (DDL/trigger/RPC persis) ada di `supabase/migrations/0016_payments_schema.sql`, plus `0054_payment_rounding.sql` (metode bayar + selisih pembulatan, lihat section "Selisih Pembulatan Pelunasan" di bawah).
 
 > **Migration final (2026-09-07):** `supabase/migrations/0016_payments_schema.sql` -- konsolidasi dari migration incremental lama (0001-0084, sudah dihapus). Nomor migration `00XX` yang disebut di seluruh dokumen ini HISTORIS (isinya tetap akurat sebagai catatan evolusi keputusan, lihat `git log` kalau perlu baca file aslinya) -- SQL final yang AKTIF di database sekarang ada di file yang disebut di atas.
 
@@ -26,7 +26,10 @@ Pelunasan piutang dan pelunasan utang disimpan di 1 tabel generic `payments`, di
 | `counterparty_id` | Pihak yang membayar/dibayar | `OUTBOUND` wajib pihak berperan pelanggan, `INBOUND` wajib pihak berperan pemasok |
 | `transaction_id` | Invoice/tagihan spesifik yang dilunasi | Wajib nunjuk 1 transaksi tertentu — **gak ada bayar gabungan** untuk beberapa invoice/tagihan sekaligus |
 | `payment_date` | Tanggal pembayaran diterima/dilakukan | — |
-| `amount` | Nilai yang dibayar kali ini | Boleh kurang dari sisa tagihan (cicil), **gak boleh lebih** (overpay ditolak) |
+| `amount` | Nilai yang **melunasi** transaksi kali ini (dikurangkan dari sisa tagihan) | Boleh kurang dari sisa tagihan (cicil), **gak boleh lebih** (overpay ditolak). Sejak `0054` bisa beda dari uang riil yang pindah — selisihnya di `rounding_amount` |
+| `payment_method` | `TUNAI` / `BANK` — cara uang berpindah | Fakta yang dicatat saat bayar (sejak `0054`); sumber akun kas (lewat Default Akun `cash.tunai`/`cash.bank`) dan satuan pembulatan. NULL cuma baris lama yang akun kasnya gak bisa dipetakan |
+| `rounding_amount` | Selisih pembulatan dari sudut pandang perusahaan | `+` = Pendapatan Selisih Pembulatan, `−` = Beban Selisih Pembulatan, `0` = gak ada. Uang riil = `amount + rounding_amount` (OUTBOUND) / `amount − rounding_amount` (INBOUND) |
+| `cash_tendered`, `change_given` | Uang diterima & kembalian yang diserahkan | Cuma kasir POS metode TUNAI, NULL di jalur lain. Selalu berpasangan, kembalian ≤ uang diterima |
 | `journal_entry_id` | Jurnal yang tercipta bareng pembayaran ini | Setiap pembayaran wajib punya 1 jurnal pendamping |
 
 Sama seperti `transactions`, baris `payments` **gak bisa diubah atau dihapus** setelah tersimpan — bersifat permanen begitu tercatat.
@@ -35,8 +38,8 @@ Sama seperti `transactions`, baris `payments` **gak bisa diubah atau dihapus** s
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Catat pelunasan piutang | `record_payment('OUTBOUND', ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Kas/Bank, Kredit Piutang Usaha) sekaligus | Nilai bayar gak boleh melebihi sisa piutang riil (`ar_invoice_remaining`) — dicek sebelum jurnal apa pun dibuat |
-| Catat pelunasan utang | `record_payment('INBOUND', ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Utang Usaha, Kredit Kas/Bank) sekaligus | Nilai bayar gak boleh melebihi sisa utang riil (`ap_bill_remaining`) — dicek sebelum jurnal apa pun dibuat |
+| Catat pelunasan piutang | `record_payment('OUTBOUND', ..., p_payment_method, ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Kas/Bank, Kredit Piutang Usaha, + baris selisih pembulatan kalau ada) sekaligus, lewat fungsi inti `_post_payment` | Nilai bayar gak boleh melebihi sisa piutang riil (`ar_invoice_remaining`), kecuali pelunasan dengan pembulatan — dicek sebelum jurnal apa pun dibuat |
+| Catat pelunasan utang | `record_payment('INBOUND', ..., p_payment_method, ...)` | Insert 1 baris `payments` + 1 jurnal (Debit Utang Usaha, Kredit Kas/Bank, + baris selisih pembulatan kalau ada) sekaligus, lewat `_post_payment` | Nilai bayar gak boleh melebihi sisa utang riil (`ap_bill_remaining`), kecuali pelunasan dengan pembulatan — dicek sebelum jurnal apa pun dibuat |
 
 **Aturan Bisnis → RPC**
 
@@ -82,6 +85,53 @@ Gak ada tabel baru — ini soal 1 kolom (`payments.type`) yang isinya harus sela
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
 | `payments.type` | harus senada dengan | `transactions.type` (lewat `transaction_id`) |
+
+## Selisih Pembulatan Pelunasan
+
+Konsep bisnisnya: `docs/domain/accounts-payable.md` submodule "Selisih Pembulatan Pelunasan" (AR mirror di `accounts-receivable.md`, kasir di `pos.md` submodule "Kembalian & Selisih Pembulatan Kasir"). SQL: `supabase/migrations/0054_payment_rounding.sql`.
+
+**Peta Data (ERD)**
+
+Gak ada tabel baru. Perubahan:
+
+| Objek | Perubahan | Terhubung ke |
+|---|---|---|
+| `payments` | +4 kolom: `payment_method`, `rounding_amount`, `cash_tendered`, `change_given` (lihat tabel struktur di atas) | — (gak ada FK baru) |
+| `app_settings` | +2 kolom: `rounding_unit_cash` (default 100), `rounding_unit_bank` (default 1) | lihat `app-settings-schema.md` |
+| `accounts` | +2 akun template: `4500` Pendapatan Selisih Pembulatan (revenue), `6300` Beban Selisih Pembulatan (expense) — baris data, bukan tabel | lihat `coa-schema.md` |
+| `app_default_account_settings` | +2 role: `rounding.revenue`, `rounding.expense` | lihat `default-account-settings-schema.md` |
+
+Keputusan desain terpenting: **`payments.amount` gak berubah arti** — tetap "nilai yang melunasi transaksi". Karena itu semua yang membaca `amount` (`ar_invoice_remaining`/`ap_bill_remaining`, `recompute_transaction_status`, `void_pos_transaction`, `cancel_*`, view status) tetap benar tanpa diubah. Uang riil diturunkan dari `amount ± rounding_amount`, dan tercatat di baris kas jurnalnya.
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Satuan pembulatan per metode | `payment_rounding_unit(method)` | Baca `rounding_unit_cash`/`rounding_unit_bank` dari `app_settings` | NULL kalau metode gak valid/aplikasi belum di-setup — pemanggil menolak |
+| Inti pencatatan (dipakai bersama) | `_post_payment(...)` | Insert `payments` + 1 jurnal: sisi kontrol (Piutang/Utang) = nilai pelunasan, sisi kas = uang riil (baris dilewati kalau Rp0), selisih ke akun `rounding.revenue` (untung) / `rounding.expense` (rugi). Akun kas diturunkan dari metode bayar lewat Default Akun | Nilai pelunasan > 0 dan ≤ sisa tagihan; rugi selalu < satuan metode; untung < satuan kecuali jalur kasir tunai; tanpa metode bayar (row outbox POS lama) wajib tanpa selisih |
+| Catat pelunasan AR/AP | `record_payment(p_type, p_counterparty_id, p_payment_date, p_amount, p_source_ref, p_payment_method, p_control_account_id, p_transaction_id)` | `p_amount` = uang riil. Sama dengan sisa → biasa; sama dengan sisa dibulatkan ke bawah/atas ke kelipatan satuan → **lunas** + selisih; kurang → cicilan | Lebih dari sisa (selain pembulatan ke atas) ditolak; Rp0 cuma sah kalau sisa < satuan (sisa receh lama ditutup tanpa uang) |
+| Checkout kasir | `create_pos_sale(..., p_payment_method, p_cash_tendered, p_change_given)` | Lihat `pos-schema.md` section "Kembalian & Selisih Pembulatan Kasir" | — |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Bill/invoice tetap sesuai nota, pembulatan cuma di pelunasan | Gak ada perubahan di `create_transaction`; pembulatan hanya di `record_payment`/`create_pos_sale` |
+| Yang dicatat selalu uang riil | `p_amount` = uang riil; baris kas jurnal = uang riil |
+| Satuan pembulatan dari metode bayar, bukan dari akun | `payment_method` disimpan; satuan dari `app_settings`; akun kas diturunkan dari metode (bukan sebaliknya) |
+| 2 akun terpisah, bukan netto | `rounding.revenue` dan `rounding.expense` — role Default Akun terpisah |
+| Selisih ikut terbalik kalau pembayaran dibalik | Baris pembulatan ada di jurnal pembayaran yang sama (`journal_entry_id`) |
+| Selisih besar bukan pembulatan | Pagar "rugi < satuan" & "untung < satuan (non-kasir)" di `_post_payment` |
+
+**Interaksi Antar Tabel**
+
+| Tabel A | Relasi | Tabel B |
+|---|---|---|
+| `payments.payment_method` | menentukan (lewat role `cash.tunai`/`cash.bank`) | akun kas di `journal_lines` pembayaran |
+| `payments.rounding_amount` | dijurnal ke (lewat role `rounding.revenue`/`rounding.expense`) | `journal_lines` pembayaran yang sama |
+| `record_payment`/`create_pos_sale` | baca konfigurasi, gak ada FK | `app_settings.rounding_unit_*` |
+
+Data lama: `payment_method` baris yang sudah ada di-backfill sekali dari akun kas di jurnalnya (satu-satunya tempat akun dipakai menurunkan metode — data historis memang gak pernah menyimpan metodenya; akun yang dipetakan ke kedua role dibiarkan NULL).
 
 ## Siapa Boleh Apa
 

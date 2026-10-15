@@ -17,6 +17,7 @@ AR nutup gap ini: nambah lapisan "siapa berutang, berapa, kapan jatuh tempo, uda
 - **AR Invoice** — piutang timbul, 1 kejadian "kirim barang, belum dibayar". Tiap invoice bikin 1 jurnal: **Debit Piutang Usaha, Kredit Pendapatan**. Jatuh tempo dihitung sekali saat invoice dibuat (dari termin customer saat itu) dan gak berubah lagi setelahnya, walau termin customer berubah belakangan.
 - **AR Payment** — piutang berkurang, kejadian bayar beneran. Selalu nutup **1 invoice spesifik** (gak ada bayar gabungan beberapa invoice sekaligus), boleh **dicicil** (kurang dari sisa tagihan, 1 invoice boleh dibayar berkali-kali dari waktu ke waktu), tapi gak boleh **lebih dari sisa tagihan** (overpay ditolak keras — gak ada kelebihan bayar yang jadi saldo mengambang). Tiap pembayaran bikin 1 jurnal: **Debit Kas/Bank, Kredit Piutang Usaha**, sejumlah yang beneran dibayar.
   - **Kenapa cicil boleh tapi overpay gak boleh**: cicil adalah praktik dagang wajar — customer bayar sebagian, sisanya nanti, tetap taat ke invoice yang sama. Overpay beda soal — kalau dibiarkan, kelebihannya jadi saldo bebas yang bisa dipakai kapan saja ke invoice mana saja, rawan gak jelas pertanggungjawabannya. Makanya: cicil bebas, kelebihan bayar ditolak dari titik pencatatan.
+  - Pengecualian sempit: pelunasan dengan sisa tagihan **dibulatkan** (uang riil gak bisa membayar sen/receh) dianggap lunas — lihat submodule "Selisih Pembulatan Pelunasan".
 - **Status invoice** (lunas/sebagian/belum) — selalu dihitung ulang dari total pembayaran yang sudah diterima dibanding nilai invoice, bukan status yang disimpan/di-update manual.
 
 ### Credit Hold
@@ -258,3 +259,31 @@ Tidak ada mekanisme write-off untuk piutang yang beneran gak akan tertagih — p
 **Common Mistakes**
 - Memaksa invoice campuran jadi 1 kategori saja — bikin laporan pendapatan per channel jadi gak akurat.
 - Membiarkan PPN Keluaran diketik manual di luar invoice — beresiko lupa dicatat atau gak nempel ke dokumen sumber yang benar.
+
+### Selisih Pembulatan Pelunasan
+
+**Cara Kerja**
+- Mekanismenya sama persis dengan sisi AP — konsep lengkap (kenapa bill/invoice tetap dicatat dengan pecahan, kenapa yang dicatat selalu uang riil, satuan pembulatan per metode bayar) dijelaskan di `docs/domain/accounts-payable.md` submodule "Selisih Pembulatan Pelunasan", gak didobel di sini.
+- Yang beda cuma **arah jurnalnya**, karena di AR kita yang menerima uang. Prinsipnya tetap satu: kalau posisi kita diuntungkan = Pendapatan, kalau dirugikan = Beban.
+- Pelanggan membayar kurang (dibulatkan ke bawah, kita merelakan receh) — **Beban**:
+  ```
+  Debit Kas/Bank [uang yang diterima]          Kredit Piutang Usaha [sisa tagihan]
+  Debit Beban Selisih Pembulatan [selisih]
+  ```
+- Pelanggan membayar lebih (dibulatkan ke atas, misal "kembaliannya gak usah") — **Pendapatan**:
+  ```
+  Debit Kas/Bank [uang yang diterima]   Kredit Piutang Usaha [sisa tagihan]
+                                         Kredit Pendapatan Selisih Pembulatan [selisih]
+  ```
+
+**Aturan Bisnis**
+- Sistem gak pernah menaikkan tagihan pelanggan. Pembulatan ke atas hanya terjadi kalau pelanggan sendiri yang menyerahkan uang lebih — sesuai prinsip perlindungan konsumen (gak boleh membulatkan ke atas secara sepihak).
+- Batas, satuan, dan pengecualian lainnya sama dengan sisi AP.
+
+**Skenario**
+- Sisa invoice Rp254.861,70 (setelah cicilan transfer Rp1.000.000), pelanggan bayar tunai Rp254.800 → lunas, Beban Selisih Pembulatan Rp61,70.
+- Sisa yang sama, pelanggan bayar tunai Rp254.900 dan merelakan kembalian → lunas, Pendapatan Selisih Pembulatan Rp38,30.
+- Bayar tunai Rp254.000 → cicilan biasa, sisa Rp861,70. Bayar tunai Rp255.000 → ditolak (kasih kembalian dulu).
+
+**Common Mistakes**
+- Sama dengan sisi AP. Tambahan khusus AR: membulatkan ke atas tagihan pelanggan secara sepihak (misal invoice Rp387.239,60 "ditagih" Rp387.240 tanpa kembalian) — itu bukan keputusan sistem, dan berisiko melanggar perlindungan konsumen.

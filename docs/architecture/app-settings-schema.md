@@ -13,6 +13,9 @@ Isinya 3 domain bisnis independen dalam 1 baris:
   cetakan (AR Invoice, Purchase Order).
 - **Pelanggan Walk-in (POS)** — dibahas `docs/domain/pos.md`, id `counterparties` default
   buat penjualan kios tanpa customer dipilih manual.
+- **Satuan Pembulatan Pembayaran** — dibahas `docs/domain/accounts-payable.md` submodule
+  "Selisih Pembulatan Pelunasan" dan `docs/domain/pos.md` submodule "Kembalian & Selisih
+  Pembulatan Kasir" (kolom dari migration `0054_payment_rounding.sql`).
 
 Detail teknis (SQL, nama fungsi persis) ada di `supabase/migrations/0006_app_settings_schema.sql`.
 
@@ -39,6 +42,8 @@ Tabel ini **bukan child dari modul manapun** — konfigurasi lintas-modul (dipak
 | `ppn_keluaran_account_id` | Akun buat PPN yang dipungut dari customer (AR/POS) | tax_settings | FK ke `accounts` |
 | `ppn_masukan_account_id` | Akun buat PPN yang dibayar ke supplier (AP) | tax_settings | FK ke `accounts` |
 | `walk_in_customer_id` | Id customer default "Pelanggan Umum" buat penjualan kios | pos_settings | FK ke `counterparties`, wajib diisi (`not null`) |
+| `rounding_unit_cash` | Satuan pembulatan pembayaran Tunai (default 100) | pembulatan (`0054`) | > 0. Pelunasan AR/AP dianggap lunas kalau nominal = sisa dibulatkan ke kelipatan ini; di kasir jadi batas maksimal toko nombok. Lihat `payments-schema.md` section "Selisih Pembulatan Pelunasan" |
+| `rounding_unit_bank` | Satuan pembulatan pembayaran Bank/transfer/QRIS (default 1) | pembulatan (`0054`) | > 0 |
 
 **Alur Teknis (RPC)**
 
@@ -58,6 +63,7 @@ Tabel ini **bukan child dari modul manapun** — konfigurasi lintas-modul (dipak
 | PPN cuma boleh dipungut kalau bisnis memang berstatus wajib pungut PPN | Guard `is_active=false` di `create_transaction`/`create_pos_sale` |
 | Kop surat & identitas perusahaan ikut aturan "Live Data" — perubahan langsung kepakai tanpa perlu ubah kode | Dibaca ulang setiap kali halaman detail dokumen dibuka, bukan disalin/dibekukan sekali di awal |
 | Kasir gak wajib pilih customer — sistem otomatis pakai walk-in default | `walk_in_customer_id` dibaca RPC `create_pos_sale` kalau parameter customer kosong |
+| Satuan pembulatan tergantung metode bayar, bisa diubah admin | `payment_rounding_unit()` baca `rounding_unit_cash`/`rounding_unit_bank`, dipakai `record_payment`/`create_pos_sale` |
 
 **Interaksi Antar Tabel**
 

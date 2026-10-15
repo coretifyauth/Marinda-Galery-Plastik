@@ -5,7 +5,7 @@
  * dipilih karena kasir butuh cetak cepat tanpa interupsi tiap transaksi.
  */
 import { invoke } from "@tauri-apps/api/core";
-import type { ReceiptData } from "./print-window";
+import { roundingReceiptLine, type ReceiptData } from "./print-window";
 
 const ESC = 0x1b;
 const GS = 0x1d;
@@ -79,6 +79,8 @@ export function buildReceiptEscPos(data: ReceiptData): Uint8Array {
   b.raw(CMD.boldOn).text(padRow("Total", rp(data.total))).raw(CMD.boldOff);
   b.text(padRow(`Bayar (${data.paymentLabel})`, data.cashReceived != null ? rp(data.cashReceived) : "-"));
   if (data.change != null) b.text(padRow("Kembalian", rp(data.change)));
+  const rounding = roundingReceiptLine(data);
+  if (rounding) b.text(padRow(rounding.label, rounding.value));
   if (data.customerName) b.text(`Pelanggan: ${data.customerName}`);
   b.raw(CMD.alignCenter).text("Terima kasih!").raw(CMD.feed(3));
 

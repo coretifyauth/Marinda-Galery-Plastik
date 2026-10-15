@@ -15,6 +15,8 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { DEFAULT_ROUNDING_UNITS, fetchRoundingUnits, previewPayment, type RoundingUnits } from "@/lib/payments/rounding";
+import { PaymentPreviewNote, roundingLeg } from "@/components/ui/payment-preview-note";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function ApBillBayarPage() {
@@ -23,6 +25,7 @@ export default function ApBillBayarPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [bill, setBill] = useState<ApBill | null>(null);
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
+  const [roundingUnits, setRoundingUnits] = useState<RoundingUnits>(DEFAULT_ROUNDING_UNITS);
   const [isCancelled, setIsCancelled] = useState(false);
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -49,8 +52,9 @@ export default function ApBillBayarPage() {
     const loadedBill = b as unknown as ApBill;
     setBill(loadedBill);
 
-    const [defaultAccountsMap, { data: reversedRows }] = await Promise.all([
+    const [defaultAccountsMap, units, { data: reversedRows }] = await Promise.all([
       fetchDefaultAccounts(),
+      fetchRoundingUnits(),
       supabase
         .from("journal_entries")
         .select("reverses_entry_id")
@@ -58,6 +62,7 @@ export default function ApBillBayarPage() {
     ]);
 
     setDefaultAccounts(defaultAccountsMap);
+    setRoundingUnits(units);
     const reversedIds = new Set(
       ((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id)
     );
@@ -96,7 +101,7 @@ export default function ApBillBayarPage() {
       payment_date: payDate,
       amount: payAmount,
       payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
-      cash_account_id: resolveCashAccount(payCashMethod, defaultAccounts)?.id ?? "",
+      payment_method: payCashMethod,
       bill_id: bill.id,
     });
     if (!parsed.success) {
@@ -119,7 +124,7 @@ export default function ApBillBayarPage() {
       p_payment_date: parsed.data.payment_date,
       p_amount: parsed.data.amount,
       p_source_ref: sourceRef,
-      p_cash_account_id: parsed.data.cash_account_id,
+      p_payment_method: parsed.data.payment_method,
       p_control_account_id: parsed.data.payable_account_id,
       p_transaction_id: parsed.data.bill_id,
     });
@@ -142,6 +147,8 @@ export default function ApBillBayarPage() {
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const { outstanding } = billStatus(bill, isCancelled);
+  const preview = previewPayment("INBOUND", outstanding, payAmount, roundingUnits[payCashMethod]);
+  const blocked = preview.kind === "overpay" || preview.kind === "invalid";
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
@@ -156,7 +163,8 @@ export default function ApBillBayarPage() {
         </div>
         <p className="text-sm text-slate-500">
           Payment selalu nutup bill ini spesifik, boleh cicil (kurang dari sisa outstanding), tapi gak boleh lebih
-          (overpay ditolak).
+          (overpay ditolak). Isi uang yang benar-benar ditransfer/dibayar — kalau sisa tagihan ada pecahannya
+          dan supplier menerima angka bulat, sistem otomatis mencatat lunas + selisih pembulatan.
         </p>
       </div>
 
@@ -176,7 +184,9 @@ export default function ApBillBayarPage() {
                 <Input id="pay_date" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="pay_amount">Jumlah dibayar (boleh cicil, maks {outstanding.toLocaleString("id-ID")})</Label>
+                <Label htmlFor="pay_amount">
+                  Uang yang dibayar (sisa tagihan {outstanding.toLocaleString("id-ID", { maximumFractionDigits: 2 })})
+                </Label>
                 <Input
                   id="pay_amount"
                   type="number"
@@ -185,6 +195,7 @@ export default function ApBillBayarPage() {
                   value={payAmount}
                   onChange={(e) => setPayAmount(e.target.value)}
                 />
+                <PaymentPreviewNote preview={preview} remaining={outstanding} unit={roundingUnits[payCashMethod]} />
               </div>
               <LockedAccountField
                 label="Akun Utang Usaha (debit)"
@@ -212,6 +223,7 @@ export default function ApBillBayarPage() {
                   resolved: resolveCashAccount(payCashMethod, defaultAccounts),
                   side: "credit",
                 },
+                roundingLeg(preview, defaultAccounts),
               ],
             ]}
           />
@@ -224,7 +236,7 @@ export default function ApBillBayarPage() {
           {payError && <FormError>{payError}</FormError>}
 
           <div className="flex flex-col gap-2">
-            <Button type="submit" disabled={paySubmitting}>
+            <Button type="submit" disabled={paySubmitting || blocked}>
               {paySubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => router.back()}>

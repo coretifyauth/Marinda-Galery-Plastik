@@ -15,7 +15,7 @@ Kios bukan sekadar "AR Invoice versi lebih sederhana". Bedanya fundamental: penj
   ```
   Pendapatan kios dicatat ke akun "Pendapatan Penjualan Toko" — terpisah dari "Pendapatan Penjualan Grosir" yang dipakai penjualan termin ke warung, biar dua channel jualan ini kelihatan terpisah di laporan, walau sama-sama jual barang yang sama. Biaya pokok dihitung dari Rata-Rata Tertimbang (metode yang sama dipakai di Inventory), per jenis barang, persis titik yang sama tempat Harga Pokok Penjualan diakui di penjualan termin.
 - **Piutang Usaha gak pernah OUTSTANDING** — beda paling mendasar dari AR Invoice. Gak ada jatuh tempo, gak ada status lunas/sebagian, gak ada credit hold, karena pelunasan selalu terjadi penuh, seketika, di transaksi yang sama (secara mesin, penjualan kios sempat "numpang lewat" Piutang sesaat sebelum langsung dilunasi — detail teknis, gak kelihatan dari sisi pemilik usaha maupun kasir).
-- **Metode bayar nentuin akun kas yang kena** — bayar tunai fisik masuk ke akun Kas, bayar QRIS masuk ke akun Bank (uangnya beneran masuk rekening, bukan laci kas) — dua akun berbeda, biar rekonsiliasi kas fisik vs rekonsiliasi bank sama-sama akurat.
+- **Metode bayar nentuin akun kas yang kena** — bayar tunai fisik masuk ke akun Kas, bayar QRIS masuk ke akun Bank (uangnya beneran masuk rekening, bukan laci kas) — dua akun berbeda, biar rekonsiliasi kas fisik vs rekonsiliasi bank sama-sama akurat. Metode bayar (Tunai/Bank) adalah fakta yang dicatat di pembayaran; akun kasnya diturunkan dari metode itu lewat Default Akun — bukan sebaliknya (akun gak pernah dipakai buat menebak metode bayar).
 - **Kaitan ke customer WAJIB ada, tapi kasir gak wajib pilih** — tiap transaksi tetap harus terhubung ke 1 customer (aturan umum semua modul). Kios biasanya jual ke pembeli yang gak perlu dicatat identitasnya, jadi kalau kasir gak pilih siapa-siapa, sistem otomatis pakai 1 customer default ("Pelanggan Umum"). Transaksi ini boleh juga dikaitkan ke customer yang sudah terdaftar di AR (misal salah satu warung langganan lagi kena Tahan Kredit, tapi tetap mau beli sekarang secara tunai) — itu tetap sah sebagai penjualan tunai biasa, sama sekali gak lewat jalur piutang yang bisa outstanding.
 - **Stok wajib akurat real-time, gak ada kondisi "jual dulu, sesuaikan belakangan"** — sama seperti Penjualan & Pengakuan HPP di Inventory, penjualan gak boleh jalan kalau stok barangnya gak cukup. Ini berarti kios wajib selalu terkoneksi saat transaksi (gak ada mode kerja tanpa koneksi buat proses bayar) — kalau dilonggarkan, dua kasir yang jual barang yang sama di waktu bersamaan bisa sama-sama "berhasil" padahal stoknya cuma cukup buat satu, dan begitu tersambung lagi ketauan stok jadi minus. Kecepatan/kenyamanan kasir ditangani lewat cara lain (bukan dengan melonggarkan aturan stok ini) — biar bisa transaksi tetap terasa cepat.
 - **Kios belum menerima retur barang** — beda dari penjualan termin (barang dikirim ke warung, retur karena masalah di jalan/waktu itu wajar), transaksi kios tatap muka langsung, jadi kebijakan returnya belum ditentukan. Sampai pemilik usaha eksplisit memutuskan, transaksi yang mau diretur ditangani manual di luar sistem, gak lewat mekanisme resmi.
@@ -89,3 +89,44 @@ Kios bukan sekadar "AR Invoice versi lebih sederhana". Bedanya fundamental: penj
 - Mengira diskon mengurangi biaya pokok — gak, barang yang keluar tetap sama; yang berkurang hanya laba kotor.
 - Menumpuk diskon manual ke kolom diskon otomatis — bikin laporan gak bisa membedakan potongan dari aturan promo dengan potongan hasil nego kasir.
 - Menganggap "tanpa batas" berarti "tanpa pengawasan" — karena gak ada plafon, laporan diskon manual per kasir adalah satu-satunya alat untuk mendeteksi pemberian diskon yang gak wajar.
+
+### Kembalian & Selisih Pembulatan Kasir
+
+**Cara Kerja**
+- Total belanja bisa bernilai pecahan (PPN 11% menghasilkan sen) atau receh yang gak bisa dibayar/dikembalikan pas (kasir gak punya koin Rp50). Kalau kasir tetap mencatat "dibayar persis total", saldo Kas di sistem pelan-pelan beda dari isi laci.
+- Karena itu kasir mencatat **dua fakta uang fisik**: **Uang Diterima** dari pelanggan dan **Kembalian Diberikan** yang benar-benar diserahkan. Uang yang masuk laci = Uang Diterima − Kembalian Diberikan. Selisihnya terhadap total belanja dicatat otomatis:
+  - **Plus** (pelanggan gak mengambil sebagian/seluruh kembalian) → **Pendapatan Selisih Pembulatan**, berapa pun jumlahnya.
+  - **Minus** (toko "nombok" karena gak punya receh, atau pelanggan kurang bayar sedikit) → **Beban Selisih Pembulatan**, dibatasi **di bawah satuan pembulatan tunai** (default Rp100).
+- Kembalian Diberikan otomatis terisi **dibulatkan ke atas** ke kelipatan satuan tunai (menguntungkan pelanggan) — kasir cukup menekan Enter di kasus umum. Kasir boleh mengubahnya, misal pelanggan bilang "kembaliannya gak usah".
+- Bayar Bank/QRIS: nominal yang ditagih = total **dibulatkan ke bawah** ke Rp1 (menguntungkan pelanggan), kasir gak bisa mengubahnya; selisih sen-nya jadi Beban Selisih Pembulatan.
+- Contoh jurnal pelunasan (total Rp12.350, uang Rp20.000, kembalian diberikan Rp7.700):
+  ```
+  Debit Kas Toko [12.300]                      Kredit Piutang Usaha [12.350]
+  Debit Beban Selisih Pembulatan [50]
+  ```
+  Pelanggan merelakan kembalian Rp650 (kembalian diberikan Rp7.000):
+  ```
+  Debit Kas Toko [13.000]   Kredit Piutang Usaha [12.350]
+                            Kredit Pendapatan Selisih Pembulatan [650]
+  ```
+- Baris pembulatan ada di jurnal pelunasan yang sama — kalau transaksi di-void, ikut terbalik otomatis.
+
+**Aturan Bisnis**
+- Kembalian yang gak diambil pelanggan dicatat sebagai **pendapatan toko** (keputusan owner), bukan titipan donasi. Konsekuensinya kasir **gak boleh menyebutnya "donasi"** ke pelanggan — begitu disebut donasi, uangnya milik pihak penerima dan seharusnya jadi utang, bukan pendapatan. Kalau toko ingin menyumbang, itu sumbangan dari kas toko sendiri (jurnal beban lewat preset jurnal).
+- Nombok ≥ satuan tunai ditolak — potongan sebesar itu harus lewat **Diskon Manual** supaya tercatat sebagai diskon, bukan diserap diam-diam ke akun pembulatan.
+- Kembalian gak boleh diganti permen/barang — kewajiban pembayaran wajib dengan Rupiah, dan barang yang keluar tanpa transaksi bikin stok gak cocok.
+- Server menghitung ulang selisih & batasnya — angka di layar kasir hanya pratinjau.
+- Transaksi offline mengikuti aturan yang sama; dicek ulang server saat sinkronisasi.
+
+**Skenario**
+- Uang pas → tanpa baris pembulatan.
+- Kasir gak punya koin Rp50, kembalian Rp7.650 dibulatkan Rp7.700 → Beban Rp50.
+- Pelanggan merelakan kembalian Rp650 → Pendapatan Rp650.
+- Pelanggan menyerahkan Rp12.300 untuk total Rp12.350, toko merelakan → Beban Rp50.
+- Pelanggan menyerahkan Rp12.000 untuk total Rp12.350 → ditolak (kurang Rp350), kasir isi Diskon Manual kalau memang mau memberi potongan.
+- Total Rp13.702,95 via QRIS → ditagih Rp13.702, Beban Rp0,95.
+
+**Common Mistakes**
+- Mencatat Kas sebesar total belanja padahal laci menerima angka lain — selisih kas harian jadi misteri.
+- Membiarkan kembalian dibulatkan ke bawah (pelanggan dirugikan) tanpa persetujuan pelanggan.
+- Menyerap potongan besar lewat jalur "nombok" — harusnya Diskon Manual, supaya laporan diskon per kasir tetap jujur.

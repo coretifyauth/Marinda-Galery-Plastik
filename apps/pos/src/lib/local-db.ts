@@ -13,7 +13,8 @@ export type OutboxStatus = "pending" | "syncing" | "failed_stock" | "failed_othe
 export type OutboxSalePayload = {
   p_sale_date: string;
   p_customer_id: string | null;
-  p_cash_account_id: string;
+  /** Row lama: akun kas pilihan client. Row baru (sejak 0054): null -- server turunkan dari p_payment_method. */
+  p_cash_account_id: string | null;
   p_revenue_account_id: string;
   p_hpp_account_id: string;
   p_finished_good_account_id: string;
@@ -21,6 +22,10 @@ export type OutboxSalePayload = {
   p_apply_tax: boolean;
   /** Diskon manual kasir (Rp, per transaksi). Opsional: row outbox lama (sebelum fitur ini) gak punya, server default 0. */
   p_manual_discount?: number;
+  /** Pelunasan (0054). Opsional: row outbox lama gak punya -> server pakai perilaku lama. */
+  p_payment_method?: "TUNAI" | "BANK";
+  p_cash_tendered?: number | null;
+  p_change_given?: number | null;
   p_lines: { item_id: string; qty_sold: number; unit_price: number }[];
 };
 

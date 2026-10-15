@@ -15,8 +15,8 @@ import { LoadingScreen } from "@/components/ui/loading-screen";
 // wajib sebagai tabel (mirip halaman Pengaturan > Default Akun), 1 tombol nge-generate
 // semuanya; langkah 2 (identitas usaha + pajak) baru aktif setelah langkah 1 selesai.
 
-// Daftar peran akun wajib -- persis 19 role_key di RPC bootstrap_default_accounts
-// (supabase/migrations/0033_onboarding_bootstrap.sql). Duplikasi label di sini SENGAJA
+// Daftar peran akun wajib -- persis 21 role_key di RPC bootstrap_default_accounts
+// (supabase/migrations/0033_onboarding_bootstrap.sql, diperluas 0054_payment_rounding.sql). Duplikasi label di sini SENGAJA
 // (bukan di-fetch) -- sebelum langkah 1 dijalankan, app_default_account_settings masih
 // kosong, gak ada tempat lain buat baca daftar "apa yang BAKAL dibuat".
 const DEFAULT_ACCOUNT_ROLES = [
@@ -39,6 +39,8 @@ const DEFAULT_ACCOUNT_ROLES = [
   { roleKey: "inventory.surplus_revenue", label: "Pendapatan Selisih Persediaan" },
   { roleKey: "cash.tunai", label: "Kas Toko" },
   { roleKey: "cash.bank", label: "Kas di Bank" },
+  { roleKey: "rounding.revenue", label: "Pendapatan Selisih Pembulatan" },
+  { roleKey: "rounding.expense", label: "Beban Selisih Pembulatan" },
 ] as const;
 
 type ResolvedRow = { roleKey: string; label: string; code: string | null; name: string | null };

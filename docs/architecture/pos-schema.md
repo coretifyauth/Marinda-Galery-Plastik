@@ -33,7 +33,7 @@ yang disebut di dokumen ini historis.
 |---|---|---|
 | Baris keluar-barang | Barang, qty, harga satuan per baris | 1 transaksi boleh banyak baris (keranjang) |
 | Baris jurnal transaksi | Kategori biaya tambahan + PPN | Baris "harga barang" dibedakan dari baris "beneran tambahan" lewat katalog kategori biaya resmi, bukan tebak-tebakan nominal |
-| Baris jurnal pelunasan | Akun kas/bank yang dipakai bayar | Dipakai buat label "Tunai"/"Bank" |
+| Pelunasan (`payments`) | Metode bayar, uang diterima, kembalian, selisih pembulatan | Label "Tunai"/"Bank" dari `payment_method` (sejak `0054`; sebelumnya ditebak dari akun kas di jurnal) |
 
 **Alur Teknis (RPC)**
 
@@ -129,3 +129,34 @@ Tidak ada tabel baru, tidak ada akun COA baru, tidak ada jurnal baru: diskon dic
 
 - Retur penjualan POS tetap manual (belum ada alur resmi); alur retur otomatis memakai `order_lines.unit_price`, yang tidak ada untuk penjualan POS — jadi diskon manual tidak berdampak ke sana.
 - Struk & riwayat POS menggabungkan diskon otomatis + manual jadi 1 baris "Diskon"; pemisahan hanya di kolom DB.
+
+## Kembalian & Selisih Pembulatan Kasir
+
+Konsep bisnisnya di `docs/domain/pos.md` submodule "Kembalian & Selisih Pembulatan Kasir". Detail SQL: `supabase/migrations/0054_payment_rounding.sql`. Mekanisme pencatatan (kolom `payments`, akun, `_post_payment`) dijelaskan di `payments-schema.md` section "Selisih Pembulatan Pelunasan" — di sini cuma yang khusus kasir.
+
+**Peta Data (ERD)**
+
+| Objek | Fungsi | Terhubung ke |
+|---|---|---|
+| `payments.payment_method` / `cash_tendered` / `change_given` / `rounding_amount` | Metode bayar, uang diterima, kembalian diserahkan, selisih — dulu uang diterima & kembalian cuma tampil di layar/struk, gak pernah disimpan | `payments-schema.md` |
+| `create_pos_sale(..., p_payment_method text, p_cash_tendered numeric, p_change_given numeric)` | 3 parameter trailing baru (default NULL) | `_post_payment` |
+| `pos_sales_with_status` | +4 kolom pembayaran di ujung; baris kas dipilih eksplisit (bukan "baris debit apa pun") karena jurnal pelunasan sekarang bisa punya 2 baris debit (Kas + Beban Selisih Pembulatan) | — |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Checkout Tunai | `create_pos_sale` (`p_payment_method='TUNAI'`) | Uang masuk laci = `p_cash_tendered − p_change_given`; selisih terhadap total → plus = Pendapatan Selisih Pembulatan (berapa pun), minus = Beban Selisih Pembulatan | Uang diterima & kembalian wajib diisi, `0 ≤ kembalian ≤ uang diterima`; kurang bayar (toko nombok) wajib **< satuan tunai** — di atas itu ditolak, pakai Diskon Manual |
+| Checkout Bank/QRIS | `create_pos_sale` (`p_payment_method='BANK'`) | Uang = total **dibulatkan ke bawah** ke satuan bank (menguntungkan pelanggan); selisih sen → Beban Selisih Pembulatan | Uang diterima/kembalian gak boleh diisi |
+| Sinkronisasi row outbox lama | `create_pos_sale` (`p_payment_method` NULL) | Perilaku persis sebelum `0054`: akun kas = `p_cash_account_id`, lunas persis total, tanpa selisih | — |
+| Batalkan (Void) | `void_pos_transaction` | Tidak berubah — `payments.amount` tetap = total; jurnal pelunasan (termasuk baris pembulatan) dibalik utuh | — |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Kas di sistem = isi laci | Baris kas jurnal = uang diterima − kembalian diserahkan |
+| Kembalian gak diambil = pendapatan toko, berapa pun | `_post_payment` gak membatasi untung di jalur kasir tunai (`cash_tendered` diisi) |
+| Nombok besar harus lewat Diskon Manual | Guard "kurang < satuan tunai" di `create_pos_sale` (dan pagar sama di `_post_payment`) |
+| Angka layar cuma pratinjau | Server menghitung ulang selisih dari uang diterima & kembalian |
+| Kasir gak lagi memilih akun kas | Akun kas diturunkan server dari metode bayar lewat Default Akun (`p_cash_account_id` cuma dipakai row outbox lama) |

@@ -15,6 +15,8 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
+import { DEFAULT_ROUNDING_UNITS, fetchRoundingUnits, previewPayment, type RoundingUnits } from "@/lib/payments/rounding";
+import { PaymentPreviewNote, roundingLeg } from "@/components/ui/payment-preview-note";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function RecordArPaymentPage() {
@@ -23,6 +25,7 @@ export default function RecordArPaymentPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [invoice, setInvoice] = useState<ArInvoice | null>(null);
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
+  const [roundingUnits, setRoundingUnits] = useState<RoundingUnits>(DEFAULT_ROUNDING_UNITS);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -48,11 +51,13 @@ export default function RecordArPaymentPage() {
     }
     setInvoice(inv as unknown as ArInvoice);
 
-    const [defAccs, { data: reversedRows }] = await Promise.all([
+    const [defAccs, units, { data: reversedRows }] = await Promise.all([
       fetchDefaultAccounts(),
+      fetchRoundingUnits(),
       supabase.from("journal_entries").select("reverses_entry_id").not("reverses_entry_id", "is", null),
     ]);
     setDefaultAccounts(defAccs);
+    setRoundingUnits(units);
     setReversedEntryIds(
       new Set(((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
     );
@@ -89,7 +94,7 @@ export default function RecordArPaymentPage() {
       customer_id: invoice.customer_id,
       payment_date: payDate,
       amount: payAmount,
-      cash_account_id: resolveCashAccount(payMethod, defaultAccounts)?.id ?? "",
+      payment_method: payMethod,
       receivable_account_id: defaultAccounts["ar.receivable"]?.id ?? "",
       invoice_id: invoice.id,
     });
@@ -113,7 +118,7 @@ export default function RecordArPaymentPage() {
       p_payment_date: parsed.data.payment_date,
       p_amount: parsed.data.amount,
       p_source_ref: sourceRef,
-      p_cash_account_id: parsed.data.cash_account_id,
+      p_payment_method: parsed.data.payment_method,
       p_control_account_id: parsed.data.receivable_account_id,
       p_transaction_id: parsed.data.invoice_id,
     });
@@ -136,6 +141,8 @@ export default function RecordArPaymentPage() {
 
   const isCancelled = reversedEntryIds.has(invoice.journal_entry_id);
   const { outstanding } = invoiceStatus(invoice, isCancelled);
+  const preview = previewPayment("OUTBOUND", outstanding, payAmount, roundingUnits[payMethod]);
+  const blocked = preview.kind === "overpay" || preview.kind === "invalid";
   const canWrite = roles.includes("admin") || roles.includes("accountant");
 
   return (
@@ -150,7 +157,8 @@ export default function RecordArPaymentPage() {
       </div>
       <p className="-mt-4 text-sm text-slate-500">
         Payment selalu nutup invoice ini spesifik, boleh cicil (kurang dari sisa outstanding),
-        tapi gak boleh lebih (overpay ditolak).
+        tapi gak boleh lebih (overpay ditolak). Isi uang yang benar-benar diterima — kalau sisa tagihan ada
+        pecahannya dan pelanggan membayar angka bulat, sistem otomatis mencatat lunas + selisih pembulatan.
       </p>
 
       {!canWrite && (
@@ -169,7 +177,7 @@ export default function RecordArPaymentPage() {
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="pay_amount">
-                  Jumlah dibayar (boleh cicil, maks {outstanding.toLocaleString("id-ID")})
+                  Uang yang diterima (sisa tagihan {outstanding.toLocaleString("id-ID", { maximumFractionDigits: 2 })})
                 </Label>
                 <Input
                   id="pay_amount"
@@ -179,6 +187,7 @@ export default function RecordArPaymentPage() {
                   value={payAmount}
                   onChange={(e) => setPayAmount(e.target.value)}
                 />
+                <PaymentPreviewNote preview={preview} remaining={outstanding} unit={roundingUnits[payMethod]} />
               </div>
               <CashMethodField
                 label="Akun Kas/Bank (debit)"
@@ -206,6 +215,7 @@ export default function RecordArPaymentPage() {
                   side: "debit",
                 },
                 { label: "Akun Piutang Usaha (kredit)", resolved: defaultAccounts["ar.receivable"], side: "credit" },
+                roundingLeg(preview, defaultAccounts),
               ],
             ]}
           />
@@ -213,7 +223,7 @@ export default function RecordArPaymentPage() {
           {payError && <FormError>{payError}</FormError>}
 
           <div className="flex flex-col gap-2">
-            <Button type="submit" disabled={paySubmitting}>
+            <Button type="submit" disabled={paySubmitting || blocked}>
               {paySubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => router.back()}>
