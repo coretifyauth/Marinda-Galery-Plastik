@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { soStatus, type SalesOrder } from "@/lib/sales-orders/schema";
+import { issuedQty, soStatus, type SalesOrder } from "@/lib/sales-orders/schema";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
@@ -50,7 +50,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
     const { data: soData, error: soErr } = await supabase
       .from("orders")
       .select(
-        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty, goods_notes(transactions(status))))"
       )
       .eq("id", id)
       .eq("direction", "SALE")
@@ -185,7 +185,7 @@ export function SalesOrderDetailView({ id }: { id: string }) {
             </thead>
             <tbody>
               {so.order_lines.map((l) => {
-                const issued = l.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
+                const issued = issuedQty(l.goods_note_lines);
                 return (
                   <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium text-black">

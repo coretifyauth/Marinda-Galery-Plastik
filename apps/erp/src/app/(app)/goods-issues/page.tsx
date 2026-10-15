@@ -7,6 +7,7 @@ import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsIssues } from "@/lib/good
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
+import { CancelledBadge, cancelledRowClass } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
@@ -23,13 +24,14 @@ export default function GoodsIssuesPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [refSearchInput, setRefSearchInput] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"aktif" | "" | "dibatalkan">("aktif");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
   // lihat journal-entries/page.tsx).
-  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${pageSize}`;
+  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${statusFilter}|${pageSize}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -40,6 +42,7 @@ export default function GoodsIssuesPage() {
     dateFrom,
     dateTo,
     sourceRefSearch: debouncedRefSearch,
+    status: statusFilter,
     page,
     pageSize,
   };
@@ -116,6 +119,7 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-2">Item Keluar (HPP, satuan dasar)</th>
               <th className="px-4 py-2 text-right">Pendapatan</th>
               <th className="px-4 py-2 text-right">Total HPP</th>
+              <th className="px-4 py-2">Status</th>
               <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
@@ -150,16 +154,31 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter status"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as "aktif" | "" | "dibatalkan")}
+                  className={compactFilterInputClass}
+                >
+                  <option value="aktif">Aktif (tanpa dibatalkan)</option>
+                  <option value="">Semua status</option>
+                  <option value="dibatalkan">Dibatalkan</option>
+                </select>
+              </th>
               <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
             {issues.map((gi) => {
               const totalHpp = gi.goods_note_lines.reduce((sum, l) => sum + l.total_cost, 0);
+              const cancelled = gi.ar_invoices.status === "dibatalkan";
               return (
                 <tr
                   key={gi.id}
-                  className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                  className={`cursor-pointer border-b border-slate-100 align-top ${
+                    cancelled ? cancelledRowClass : "hover:bg-slate-50"
+                  }`}
                   onClick={() => router.push(`/goods-issues/${gi.id}`)}
                 >
                   <td className="px-4 py-2 font-medium text-black">{gi.ar_invoices.counterparties.name}</td>
@@ -178,13 +197,20 @@ export default function GoodsIssuesPage() {
                     {gi.ar_invoices.amount.toLocaleString("id-ID")}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{totalHpp.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2">
+                    {cancelled ? (
+                      <CancelledBadge />
+                    ) : (
+                      <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Normal</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-slate-500">{(gi.created_by && userEmails[gi.created_by]) ?? "-"}</td>
                 </tr>
               );
             })}
             {issues.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
                   {issuesQuery.isLoading ? <InlineSpinner /> : "Belum ada barang keluar."}
                 </td>
               </tr>

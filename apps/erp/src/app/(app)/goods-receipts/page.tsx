@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsReceipts } from "@/lib/goods-receipts/queries";
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { Button } from "@/components/ui/button";
+import { CancelledBadge, cancelledRowClass } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
@@ -25,12 +26,13 @@ export default function GoodsReceiptsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [purchaseOrderFilter, setPurchaseOrderFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"aktif" | "" | "dibatalkan">("aktif");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
   // lihat journal-entries/page.tsx).
-  const filterKey = `${dateFrom}|${dateTo}|${purchaseOrderFilter}|${pageSize}`;
+  const filterKey = `${dateFrom}|${dateTo}|${purchaseOrderFilter}|${statusFilter}|${pageSize}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -41,6 +43,7 @@ export default function GoodsReceiptsPage() {
     dateFrom,
     dateTo,
     purchaseOrderId: purchaseOrderFilter,
+    status: statusFilter,
     page,
     pageSize,
   };
@@ -124,6 +127,7 @@ export default function GoodsReceiptsPage() {
               <th className="px-4 py-2">Barang Diterima</th>
               <th className="px-4 py-2">Tagihan</th>
               <th className="px-4 py-2 text-right">Jumlah</th>
+              <th className="px-4 py-2">Status</th>
               <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
@@ -164,14 +168,30 @@ export default function GoodsReceiptsPage() {
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter status"
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value as "aktif" | "" | "dibatalkan")}
+                  className={compactFilterInputClass}
+                >
+                  <option value="aktif">Aktif (tanpa dibatalkan)</option>
+                  <option value="">Semua status</option>
+                  <option value="dibatalkan">Dibatalkan</option>
+                </select>
+              </th>
               <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
-            {receipts.map((grn) => (
+            {receipts.map((grn) => {
+              const cancelled = grn.ap_bills.status === "dibatalkan";
+              return (
               <tr
                 key={grn.id}
-                className="cursor-pointer border-b border-slate-100 align-top hover:bg-slate-50"
+                className={`cursor-pointer border-b border-slate-100 align-top ${
+                  cancelled ? cancelledRowClass : "hover:bg-slate-50"
+                }`}
                 onClick={() => router.push(`/goods-receipts/${grn.id}`)}
               >
                 <td className="px-4 py-2 font-medium text-black">
@@ -198,12 +218,20 @@ export default function GoodsReceiptsPage() {
                 <td className="px-4 py-2 text-right font-mono">
                   {grn.ap_bills.amount.toLocaleString("id-ID")}
                 </td>
+                <td className="px-4 py-2">
+                  {cancelled ? (
+                    <CancelledBadge />
+                  ) : (
+                    <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Normal</span>
+                  )}
+                </td>
                 <td className="px-4 py-2 text-slate-500">{(grn.created_by && userEmails[grn.created_by]) ?? "-"}</td>
               </tr>
-            ))}
+              );
+            })}
             {receipts.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
                   {receiptsQuery.isLoading ? <InlineSpinner /> : "Belum ada barang masuk."}
                 </td>
               </tr>

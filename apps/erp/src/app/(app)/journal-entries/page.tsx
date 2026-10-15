@@ -25,6 +25,7 @@ export default function JournalEntriesPage() {
   const [dateTo, setDateTo] = useState("");
   const [descSearchInput, setDescSearchInput] = useState("");
   const [refSearchInput, setRefSearchInput] = useState("");
+  const [showReversals, setShowReversals] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedDescSearch = useDebouncedValue(descSearchInput, 300);
@@ -34,7 +35,7 @@ export default function JournalEntriesPage() {
   // halaman 3 terus filter dipersempit sampai cuma 1 halaman). Reset dilakukan pas render
   // (pola "adjust state during render" React), BUKAN di useEffect -- setState sinkron di
   // effect kena lint react-hooks/set-state-in-effect (cascading render).
-  const filterKey = `${dateFrom}|${dateTo}|${debouncedDescSearch}|${debouncedRefSearch}|${pageSize}`;
+  const filterKey = `${dateFrom}|${dateTo}|${debouncedDescSearch}|${debouncedRefSearch}|${showReversals}|${pageSize}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -46,6 +47,7 @@ export default function JournalEntriesPage() {
     dateTo,
     descriptionSearch: debouncedDescSearch,
     sourceRefSearch: debouncedRefSearch,
+    showReversals,
     page,
     pageSize,
   };
@@ -102,6 +104,15 @@ export default function JournalEntriesPage() {
             </span>
           </div>
           <div className="flex items-center gap-1.5">
+            <label className="mr-2 flex items-center gap-1.5 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                className="rounded border-slate-300"
+                checked={showReversals}
+                onChange={(e) => setShowReversals(e.target.checked)}
+              />
+              Tampilkan pembalikan
+            </label>
             <Button variant="toolbar" onClick={() => router.push("/journal-entries/presets")}>
               Kelola Preset
             </Button>

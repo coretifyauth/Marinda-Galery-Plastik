@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import { generateDocumentNumber } from "@/lib/document-numbers";
+import { Button } from "@/components/ui/button";
+import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
@@ -16,7 +19,7 @@ type GoodsIssueDetail = {
   note_date: string;
   source_ref: string;
   created_at: string;
-  ar_invoices: { source_ref: string; amount: number; counterparties: { name: string } };
+  ar_invoices: { source_ref: string; amount: number; status: string; counterparties: { name: string } };
   goods_note_lines: {
     id: string;
     qty: number;
@@ -40,12 +43,15 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("jurnal");
+  const [roles, setRoles] = useState<string[]>([]);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async () => {
     const { data: gi, error: giErr } = await supabase
       .from("goods_notes")
       .select(
-        "id, transaction_id, journal_entry_id, note_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, counterparties(name)), goods_note_lines(id, qty, total_cost, items(name, uom))"
+        "id, transaction_id, journal_entry_id, note_date, source_ref, created_at, ar_invoices:transactions(source_ref, amount, status, counterparties(name)), goods_note_lines(id, qty, total_cost, items(name, uom))"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -74,7 +80,12 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
         router.replace("/login");
         return;
       }
+      const { data: roleRows } = await supabase
+        .from("app_user_roles")
+        .select("role_name")
+        .eq("user_id", session.user.id);
       if (!active) return;
+      setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await load();
       if (active) setCheckingSession(false);
     });
@@ -82,6 +93,40 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
       active = false;
     };
   }, [router, load]);
+
+  // Barang keluar dan invoice-nya dibuat 1 RPC, jadi dibatalkan juga lewat 1 RPC (cancel_ar_invoice):
+  // jurnal invoice + HPP dibalik, stok dikembalikan, qty SO dibebaskan.
+  async function handleCancel() {
+    if (!issue) return;
+    if (
+      !window.confirm(
+        `Batalkan barang keluar ${issue.ar_invoices.source_ref}? Stok barang akan dikembalikan dan invoice (Rp${issue.ar_invoices.amount.toLocaleString("id-ID")}) ikut dibatalkan.`
+      )
+    )
+      return;
+
+    setCancelError(null);
+    setCancelling(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("journal_entries");
+    } catch (err) {
+      setCancelling(false);
+      setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+    const { error } = await supabase.rpc("cancel_ar_invoice", {
+      p_invoice_id: issue.transaction_id,
+      p_entry_date: new Date().toISOString().slice(0, 10),
+      p_source_ref: sourceRef,
+    });
+    setCancelling(false);
+    if (error) {
+      setCancelError(error.message);
+      return;
+    }
+    await load();
+  }
 
   if (checkingSession) {
     return <LoadingScreen />;
@@ -92,6 +137,8 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
   }
 
   const totalHpp = issue.goods_note_lines.reduce((sum, l) => sum + l.total_cost, 0);
+  const isCancelled = issue.ar_invoices.status === "dibatalkan";
+  const canCancel = !isCancelled && (roles.includes("admin") || roles.includes("accountant"));
 
   const detailGroups = [
     {
@@ -135,10 +182,22 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {issue.source_ref}
           </span>
+          {isCancelled && <CancelledBadge />}
         </div>
+        {canCancel && (
+          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+            {cancelling ? "Membatalkan..." : "Batalkan Barang Keluar"}
+          </Button>
+        )}
       </div>
 
+      {isCancelled && (
+        <CancelledBanner>
+          barang keluar ini tidak valid. Stok sudah dikembalikan dan invoice-nya dibatalkan.
+        </CancelledBanner>
+      )}
       {loadError && <FormError>{loadError}</FormError>}
+      {cancelError && <FormError>{cancelError}</FormError>}
 
       <DetailRows groups={detailGroups} />
 

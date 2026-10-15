@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import type { GoodsReceiptNote } from "@/lib/goods-receipts/schema";
+import { generateDocumentNumber } from "@/lib/document-numbers";
+import { Button } from "@/components/ui/button";
+import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
@@ -25,12 +28,15 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("lines");
+  const [roles, setRoles] = useState<string[]>([]);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async () => {
     const { data: grnData, error: grnErr } = await supabase
       .from("goods_notes")
       .select(
-        "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, journal_entry_id, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))"
+        "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, status, journal_entry_id, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -60,6 +66,12 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         router.replace("/login");
         return;
       }
+      const { data: roleRows } = await supabase
+        .from("app_user_roles")
+        .select("role_name")
+        .eq("user_id", session.user.id);
+      if (!active) return;
+      setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await load();
       if (active) setCheckingSession(false);
     });
@@ -68,6 +80,40 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
+  // Barang masuk dan tagihannya dibuat 1 RPC, jadi dibatalkan juga lewat 1 RPC (cancel_ap_bill):
+  // jurnal dibalik + stok dikurangi lagi + qty PO dibebaskan.
+  async function handleCancel() {
+    if (!grn) return;
+    if (
+      !window.confirm(
+        `Batalkan barang masuk ${grn.ap_bills.source_ref}? Stok barang akan dikurangi lagi dan tagihan (Rp${grn.ap_bills.amount.toLocaleString("id-ID")}) ikut dibatalkan.`
+      )
+    )
+      return;
+
+    setCancelError(null);
+    setCancelling(true);
+    let sourceRef: string;
+    try {
+      sourceRef = await generateDocumentNumber("journal_entries");
+    } catch (err) {
+      setCancelling(false);
+      setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+      return;
+    }
+    const { error } = await supabase.rpc("cancel_ap_bill", {
+      p_bill_id: grn.transaction_id,
+      p_entry_date: new Date().toISOString().slice(0, 10),
+      p_source_ref: sourceRef,
+    });
+    setCancelling(false);
+    if (error) {
+      setCancelError(error.message);
+      return;
+    }
+    await load();
+  }
+
   if (checkingSession) {
     return <LoadingScreen />;
   }
@@ -75,6 +121,9 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   if (!grn) {
     return <FormError>{loadError ?? "Goods receipt gak ditemukan."}</FormError>;
   }
+
+  const isCancelled = grn.ap_bills.status === "dibatalkan";
+  const canCancel = !isCancelled && (roles.includes("admin") || roles.includes("accountant"));
 
   const detailGroups = [
     {
@@ -133,10 +182,22 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
           >
             {grn.ap_bills.source_ref}
           </span>
+          {isCancelled && <CancelledBadge />}
         </div>
+        {canCancel && (
+          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+            {cancelling ? "Membatalkan..." : "Batalkan Barang Masuk"}
+          </Button>
+        )}
       </div>
 
+      {isCancelled && (
+        <CancelledBanner>
+          barang masuk ini tidak valid. Stok sudah dikurangi lagi dan tagihannya dibatalkan.
+        </CancelledBanner>
+      )}
       {loadError && <FormError>{loadError}</FormError>}
+      {cancelError && <FormError>{cancelError}</FormError>}
 
       <DetailRows groups={detailGroups} />
 

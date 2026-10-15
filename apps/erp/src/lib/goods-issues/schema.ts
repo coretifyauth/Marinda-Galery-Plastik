@@ -34,7 +34,7 @@ export type GoodsIssue = {
   source_ref: string;
   created_at: string;
   created_by: string | null;
-  ar_invoices: { source_ref: string; amount: number; counterparties: { name: string } };
+  ar_invoices: { source_ref: string; amount: number; status: string; counterparties: { name: string } };
   goods_note_lines: {
     id: string;
     item_id: string;

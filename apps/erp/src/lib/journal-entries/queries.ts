@@ -10,12 +10,17 @@ export type JournalEntryFilters = {
   dateTo: string;
   descriptionSearch: string;
   sourceRefSearch: string;
+  showReversals: boolean; // default false: sembunyikan jurnal pembalikan + jurnal asli yang sudah dibalik
   page: number;
   pageSize: number;
 };
 
 const SELECT_COLUMNS =
   "id, entry_date, description, source_ref, reverses_entry_id, created_at, journal_lines(id, journal_entry_id, account_id, debit, credit, accounts(code, name))";
+
+// Embed balik self-FK: `reversed_by` = jurnal pembalik dari baris ini. `.is("reversed_by", null)` =
+// anti-join (jurnal yang belum pernah dibalik).
+const SELECT_HIDING_REVERSALS = `${SELECT_COLUMNS}, reversed_by:journal_entries!reverses_entry_id(id)`;
 
 export async function fetchJournalEntries(
   filters: JournalEntryFilters
@@ -25,12 +30,14 @@ export async function fetchJournalEntries(
 
   let query = supabase
     .from("journal_entries")
-    .select(SELECT_COLUMNS, { count: "exact" })
+    .select(filters.showReversals ? SELECT_COLUMNS : SELECT_HIDING_REVERSALS, { count: "exact" })
     .order("entry_date", { ascending: false })
     .range(from, to);
 
   if (filters.dateFrom) query = query.gte("entry_date", filters.dateFrom);
   if (filters.dateTo) query = query.lte("entry_date", filters.dateTo);
+
+  if (!filters.showReversals) query = query.is("reverses_entry_id", null).is("reversed_by", null);
 
   const descriptionTerm = filters.descriptionSearch.trim();
   if (descriptionTerm) query = query.ilike("description", `%${descriptionTerm}%`);

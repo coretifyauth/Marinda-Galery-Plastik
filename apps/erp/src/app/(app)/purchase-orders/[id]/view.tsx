@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { poStatus, type PurchaseOrder } from "@/lib/purchase-orders/schema";
+import { poStatus, receivedQty, type PurchaseOrder } from "@/lib/purchase-orders/schema";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { Button } from "@/components/ui/button";
@@ -45,7 +45,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     const { data: poData, error: poErr } = await supabase
       .from("orders")
       .select(
-        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty, goods_notes(transactions(status))))"
       )
       .eq("id", id)
       .eq("direction", "PURCHASE")
@@ -232,7 +232,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
             </thead>
             <tbody>
               {po.order_lines.map((l) => {
-                const received = l.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
+                const received = receivedQty(l.goods_note_lines);
                 return (
                   <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium text-black">

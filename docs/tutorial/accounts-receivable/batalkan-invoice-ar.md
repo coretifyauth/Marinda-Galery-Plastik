@@ -8,6 +8,7 @@ Saat invoice yang dibuat ternyata salah total (mis. salah input, salah customer)
 
 - Login dengan role **admin** atau **accountant**.
 - Invoice ini **belum punya pembayaran sama sekali** — begitu ada pembayaran, tombol batalkan tidak akan tersedia (piutangnya sudah "kesentuh" transaksi lain, nasibnya jadi keputusan bisnis terpisah).
+- Invoice dari barang keluar (Goods Issue) **boleh** dibatalkan, asal belum ada retur atau penggantian barang. Bisa dibatalkan dari detail invoice atau dari detail **Barang Keluar** (tombol **Batalkan Barang Keluar**) — hasilnya sama.
 
 ## Langkah-Langkah
 
@@ -20,6 +21,7 @@ Saat invoice yang dibuat ternyata salah total (mis. salah input, salah customer)
 - Jurnal pembalik (reversing entry) otomatis terbentuk, membalik seluruh efek jurnal invoice ini — bukan menghapus record invoice-nya (invoice tetap ada, ditandai dibatalkan, untuk jejak audit).
 - Status invoice berubah jadi **dibatalkan** di daftar AR Invoices.
 - Kalau invoice ini sebelumnya juga punya `ar_deposit_applications` (DP yang sudah diterapkan ke sini), penerapan DP itu ikut otomatis di-unwind (dibalik) — DP-nya kembali jadi saldo tersedia, tidak "nyangkut" ke invoice yang dibatalkan.
+- **Invoice dari barang keluar:** stok dikembalikan, jurnal HPP ikut dibalik, qty Sales Order (kalau ada) bebas lagi, dan barisnya di daftar Invoice & Barang Keluar tampil merah bertanda DIBATALKAN.
 
 ## Kesalahan Umum
 

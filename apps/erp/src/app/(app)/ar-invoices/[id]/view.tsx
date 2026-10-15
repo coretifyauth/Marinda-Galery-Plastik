@@ -11,6 +11,7 @@ import { returnCreditRemaining, type ArReturnCredit } from "@/lib/ar-return-cred
 import type { ChargeCategoryWithAccount } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Button } from "@/components/ui/button";
+import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
@@ -245,7 +246,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
   async function handleCancel() {
     if (!invoice) return;
-    if (!window.confirm(`Batalkan invoice ${invoice.source_ref} (Rp${invoice.amount.toLocaleString("id-ID")})?`)) return;
+    const stockNote = goodsIssue ? " Barang keluarnya ikut dibatalkan dan stok dikembalikan." : "";
+    if (!window.confirm(`Batalkan invoice ${invoice.source_ref} (Rp${invoice.amount.toLocaleString("id-ID")})?${stockNote}`)) return;
 
     setCancelError(null);
     setCancelling(true);
@@ -417,7 +419,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         {
           label: "Status",
           value: (
-            <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>{status}</span>
+            status === "dibatalkan" ? (
+              <CancelledBadge />
+            ) : (
+              <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>{status}</span>
+            )
           ),
         },
       ],
@@ -481,6 +487,9 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         </div>
       </div>
 
+      {status === "dibatalkan" && (
+        <CancelledBanner>invoice ini tidak valid dan tidak dihitung lagi sebagai piutang.</CancelledBanner>
+      )}
       {loadError && <FormError>{loadError}</FormError>}
       {cancelError && <FormError>{cancelError}</FormError>}
 

@@ -15,13 +15,23 @@ export const createPurchaseOrderSchema = z.object({
 
 export type CreatePurchaseOrderInput = z.infer<typeof createPurchaseOrderSchema>;
 
+// goods_notes.transactions.status dipakai buat ngabaikan penerimaan yang sudah dibatalkan
+// (cancel_ap_bill) -- qty-nya kebebas lagi, sama kayak recompute_order_status di DB.
+export type GoodsNoteLineQty = { qty: number; goods_notes?: { transactions: { status: string } | null } | null };
+
+export function receivedQty(lines: GoodsNoteLineQty[]): number {
+  return lines
+    .filter((r) => r.goods_notes?.transactions?.status !== "dibatalkan")
+    .reduce((sum, r) => sum + r.qty, 0);
+}
+
 export type PurchaseOrderLine = {
   id: string;
   item_id: string;
   qty_ordered: number;
   unit_price: number;
   items: { name: string; uom: string };
-  goods_note_lines: { qty: number }[];
+  goods_note_lines: GoodsNoteLineQty[];
 };
 
 export type PurchaseOrder = {
@@ -66,7 +76,7 @@ export function poStatus(po: Pick<PurchaseOrder, "order_lines" | "cancelled_at">
   if (po.cancelled_at) return "CANCELLED";
   const totals = po.order_lines.map((line) => ({
     ordered: line.qty_ordered,
-    received: line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0),
+    received: receivedQty(line.goods_note_lines),
   }));
   const allReceived = totals.every((t) => t.received >= t.ordered - 0.0005);
   const noneReceived = totals.every((t) => t.received <= 0.0005);
@@ -76,6 +86,6 @@ export function poStatus(po: Pick<PurchaseOrder, "order_lines" | "cancelled_at">
 }
 
 export function lineRemaining(line: Pick<PurchaseOrderLine, "qty_ordered" | "goods_note_lines">): number {
-  const received = line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
+  const received = receivedQty(line.goods_note_lines);
   return Math.max(0, line.qty_ordered - received);
 }

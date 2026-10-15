@@ -9,12 +9,13 @@ export type GoodsReceiptFilters = {
   dateFrom: string;
   dateTo: string;
   purchaseOrderId: string;
+  status: "aktif" | "" | "dibatalkan"; // "aktif" = default, sembunyikan yang dibatalkan
   page: number;
   pageSize: number;
 };
 
 const SELECT_COLUMNS =
-  "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, created_by, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))";
+  "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, created_by, orders(source_ref, counterparties(name)), ap_bills:transactions!inner(source_ref, amount, status, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))";
 
 export async function fetchGoodsReceipts(
   filters: GoodsReceiptFilters
@@ -33,6 +34,9 @@ export async function fetchGoodsReceipts(
   if (filters.dateTo) query = query.lte("note_date", filters.dateTo);
 
   if (filters.purchaseOrderId) query = query.eq("order_id", filters.purchaseOrderId);
+
+  if (filters.status === "aktif") query = query.neq("ap_bills.status", "dibatalkan");
+  else if (filters.status) query = query.eq("ap_bills.status", filters.status);
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);

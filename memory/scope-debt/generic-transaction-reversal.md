@@ -29,6 +29,10 @@ User minta konkretnya: "reversal buat penerimaan dan pengeluaran barang serta pe
 
 Belum ada satu baris migration/kode pun yang ditulis untuk ini — kalau dilanjutkan, mulai dari memutuskan pendekatan avg_cost di atas dulu, baru lanjut ke schema.
 
+## Update (2026-10-15) — sisi GRN selesai
+
+Reversal GRN diimplementasikan lewat perluasan `cancel_ap_bill` (migration `0052_cancel_goods_receipt.sql`), bukan RPC baru. Blocker avg_cost diputuskan user: "hitung ulang" — diwujudkan pakai nilai persediaan (`qty*avg_cost` dikurangi nilai bersih baris GRN, dibagi qty sisa), bukan replay seluruh riwayat mutasi, supaya valuasi Kartu Stok tetap cocok dengan GL. Goods Issue/Invoice AR juga selesai di migration yang sama (`cancel_ar_invoice`, scope-debt `cancel-ar-invoice-goods-movement-guard` ditutup). Sisa scope: payment standalone.
+
 ## Referensi
 
 - `docs/architecture/transactions-schema.md` — RPC `cancel_ar_invoice`/`cancel_ap_bill` existing beserta guard-nya.

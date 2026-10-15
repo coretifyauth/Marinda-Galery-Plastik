@@ -10,7 +10,7 @@ export type PurchaseOrderFilters = {
   dateTo: string;
   sourceRefSearch: string;
   supplierId: string;
-  status: PoStatus | "";
+  status: PoStatus | "" | "aktif"; // "aktif" = default, sembunyikan yang dibatalkan
   page: number;
   pageSize: number;
 };
@@ -42,7 +42,8 @@ export async function fetchPurchaseOrders(
   if (sourceRefTerm) query = query.ilike("source_ref", `%${sourceRefTerm}%`);
 
   if (filters.supplierId) query = query.eq("counterparty_id", filters.supplierId);
-  if (filters.status) query = query.eq("status", filters.status);
+  if (filters.status === "aktif") query = query.neq("status", "CANCELLED");
+  else if (filters.status) query = query.eq("status", filters.status);
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);

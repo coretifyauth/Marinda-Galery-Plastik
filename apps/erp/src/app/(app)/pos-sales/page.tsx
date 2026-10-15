@@ -28,7 +28,7 @@ export default function PosSalesPage() {
   const [dateTo, setDateTo] = useState("");
   const [refSearchInput, setRefSearchInput] = useState("");
   const [customerId, setCustomerId] = useState("");
-  const [statusFilter, setStatusFilter] = useState<PosSaleStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<PosSaleStatus | "" | "aktif">("aktif");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
@@ -174,9 +174,10 @@ export default function PosSalesPage() {
                 <select
                   aria-label="Filter status"
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as PosSaleStatus | "")}
+                  onChange={(e) => setStatusFilter(e.target.value as PosSaleStatus | "" | "aktif")}
                   className={compactFilterInputClass}
                 >
+                  <option value="aktif">Aktif (tanpa dibatalkan)</option>
                   <option value="">Semua status</option>
                   <option value="normal">Normal</option>
                   <option value="dibatalkan">Dibatalkan</option>

@@ -43,7 +43,7 @@ export default function SalesOrdersPage() {
   const [dateTo, setDateTo] = useState("");
   const [refSearchInput, setRefSearchInput] = useState("");
   const [customerFilter, setCustomerFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<SoStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<SoStatus | "" | "aktif">("aktif");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
@@ -204,9 +204,10 @@ export default function SalesOrdersPage() {
                 <select
                   aria-label="Filter status"
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as SoStatus | "")}
+                  onChange={(e) => setStatusFilter(e.target.value as SoStatus | "" | "aktif")}
                   className={compactFilterInputClass}
                 >
+                  <option value="aktif">Aktif (tanpa dibatalkan)</option>
                   <option value="">Semua status</option>
                   <option value="OPEN">{statusLabel.OPEN}</option>
                   <option value="PARTIALLY_FULFILLED">{statusLabel.PARTIALLY_FULFILLED}</option>

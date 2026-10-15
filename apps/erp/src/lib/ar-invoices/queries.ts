@@ -10,7 +10,7 @@ export type ArInvoiceFilters = {
   dateTo: string;
   sourceRefSearch: string;
   customerId: string;
-  status: ArInvoiceStatus | "";
+  status: ArInvoiceStatus | "" | "aktif"; // "aktif" = default, sembunyikan yang dibatalkan
   origin: ArInvoiceOrigin | "";
   page: number;
   pageSize: number;
@@ -42,7 +42,8 @@ export async function fetchArInvoices(
   if (sourceRefTerm) query = query.ilike("source_ref", `%${sourceRefTerm}%`);
 
   if (filters.customerId) query = query.eq("customer_id", filters.customerId);
-  if (filters.status) query = query.eq("status", filters.status);
+  if (filters.status === "aktif") query = query.neq("status", "dibatalkan");
+  else if (filters.status) query = query.eq("status", filters.status);
   if (filters.origin) query = query.eq("origin", filters.origin);
 
   const { data, error, count } = await query;

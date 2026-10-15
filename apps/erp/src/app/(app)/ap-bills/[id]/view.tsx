@@ -8,6 +8,7 @@ import type { GoodsReceiptForBill } from "@/lib/ap-credit-notes/schema";
 import { depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Button } from "@/components/ui/button";
+import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
@@ -218,7 +219,8 @@ export function ApBillDetailView({ id }: { id: string }) {
 
   async function handleCancel() {
     if (!bill) return;
-    if (!window.confirm(`Batalkan bill ${bill.source_ref} (Rp${bill.amount.toLocaleString("id-ID")})?`)) return;
+    const stockNote = goodsReceipt ? " Barang masuknya ikut dibatalkan dan stok dikurangi lagi." : "";
+    if (!window.confirm(`Batalkan bill ${bill.source_ref} (Rp${bill.amount.toLocaleString("id-ID")})?${stockNote}`)) return;
 
     setCancelError(null);
     setCancelling(true);
@@ -300,7 +302,11 @@ export function ApBillDetailView({ id }: { id: string }) {
         {
           label: "Status",
           value: (
-            <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>{status}</span>
+            status === "dibatalkan" ? (
+              <CancelledBadge />
+            ) : (
+              <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>{status}</span>
+            )
           ),
         },
       ],
@@ -346,6 +352,9 @@ export function ApBillDetailView({ id }: { id: string }) {
         )}
       </div>
 
+      {status === "dibatalkan" && (
+        <CancelledBanner>tagihan ini tidak valid dan tidak dihitung lagi sebagai utang.</CancelledBanner>
+      )}
       {loadError && <FormError>{loadError}</FormError>}
       {cancelError && <FormError>{cancelError}</FormError>}
 

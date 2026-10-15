@@ -11,7 +11,7 @@ export type ApBillFilters = {
   sourceRefSearch: string;
   supplierDocumentRefSearch: string;
   supplierId: string;
-  status: ApBillStatus | "";
+  status: ApBillStatus | "" | "aktif"; // "aktif" = default, sembunyikan yang dibatalkan
   origin: ApBillOrigin | "";
   page: number;
   pageSize: number;
@@ -46,7 +46,8 @@ export async function fetchApBills(
   if (supplierDocumentRefTerm) query = query.ilike("supplier_document_ref", `%${supplierDocumentRefTerm}%`);
 
   if (filters.supplierId) query = query.eq("supplier_id", filters.supplierId);
-  if (filters.status) query = query.eq("status", filters.status);
+  if (filters.status === "aktif") query = query.neq("status", "dibatalkan");
+  else if (filters.status) query = query.eq("status", filters.status);
   if (filters.origin) query = query.eq("origin", filters.origin);
 
   const { data, error, count } = await query;

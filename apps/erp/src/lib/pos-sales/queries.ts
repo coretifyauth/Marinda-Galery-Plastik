@@ -10,7 +10,7 @@ export type PosSaleFilters = {
   dateTo: string;
   sourceRefSearch: string;
   customerId: string;
-  status: PosSaleStatus | "";
+  status: PosSaleStatus | "" | "aktif"; // "aktif" = default, sembunyikan yang dibatalkan
   page: number;
   pageSize: number;
 };
@@ -40,7 +40,8 @@ export async function fetchPosSales(
   if (sourceRefTerm) query = query.ilike("source_ref", `%${sourceRefTerm}%`);
 
   if (filters.customerId) query = query.eq("customer_id", filters.customerId);
-  if (filters.status) query = query.eq("status", filters.status);
+  if (filters.status === "aktif") query = query.neq("status", "dibatalkan");
+  else if (filters.status) query = query.eq("status", filters.status);
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);

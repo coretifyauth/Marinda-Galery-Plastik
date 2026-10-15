@@ -18,13 +18,23 @@ export const createSalesOrderSchema = z.object({
 
 export type CreateSalesOrderInput = z.infer<typeof createSalesOrderSchema>;
 
+// goods_notes.transactions.status dipakai buat ngabaikan pengiriman yang invoice-nya sudah dibatalkan
+// (cancel_ar_invoice) -- qty-nya kebebas lagi, sama kayak recompute_order_status di DB.
+export type GoodsNoteLineQty = { qty: number; goods_notes?: { transactions: { status: string } | null } | null };
+
+export function issuedQty(lines: GoodsNoteLineQty[]): number {
+  return lines
+    .filter((r) => r.goods_notes?.transactions?.status !== "dibatalkan")
+    .reduce((sum, r) => sum + r.qty, 0);
+}
+
 export type SalesOrderLine = {
   id: string;
   item_id: string;
   qty_ordered: number;
   unit_price: number;
   items: { name: string; uom: string };
-  goods_note_lines: { qty: number }[];
+  goods_note_lines: GoodsNoteLineQty[];
 };
 
 export type SalesOrder = {
@@ -69,7 +79,7 @@ export function soStatus(so: Pick<SalesOrder, "order_lines" | "cancelled_at">): 
   if (so.cancelled_at) return "CANCELLED";
   const totals = so.order_lines.map((line) => ({
     ordered: line.qty_ordered,
-    issued: line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0),
+    issued: issuedQty(line.goods_note_lines),
   }));
   const allIssued = totals.every((t) => t.issued >= t.ordered - 0.0005);
   const noneIssued = totals.every((t) => t.issued <= 0.0005);
@@ -79,6 +89,6 @@ export function soStatus(so: Pick<SalesOrder, "order_lines" | "cancelled_at">): 
 }
 
 export function lineRemaining(line: Pick<SalesOrderLine, "qty_ordered" | "goods_note_lines">): number {
-  const issued = line.goods_note_lines.reduce((sum, r) => sum + r.qty, 0);
+  const issued = issuedQty(line.goods_note_lines);
   return Math.max(0, line.qty_ordered - issued);
 }

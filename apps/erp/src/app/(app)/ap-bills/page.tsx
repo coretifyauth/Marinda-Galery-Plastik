@@ -9,6 +9,7 @@ import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useApBills } from "@/lib/ap-bills
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
+import { CancelledBadge, cancelledRowClass } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
@@ -49,7 +50,7 @@ export default function ApBillsPage() {
   const [refSearchInput, setRefSearchInput] = useState("");
   const [supplierDocRefSearchInput, setSupplierDocRefSearchInput] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<ApBillStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<ApBillStatus | "" | "aktif">("aktif");
   const [originFilter, setOriginFilter] = useState<ApBillOrigin | "">("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
@@ -233,9 +234,10 @@ export default function ApBillsPage() {
                 <select
                   aria-label="Filter status"
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as ApBillStatus | "")}
+                  onChange={(e) => setStatusFilter(e.target.value as ApBillStatus | "" | "aktif")}
                   className={compactFilterSelectClass}
                 >
+                  <option value="aktif">Aktif (tanpa dibatalkan)</option>
                   <option value="">Semua status</option>
                   <option value="belum">Belum</option>
                   <option value="sebagian">Sebagian</option>
@@ -254,7 +256,9 @@ export default function ApBillsPage() {
               return (
                 <tr
                   key={bill.id}
-                  className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                  className={`cursor-pointer border-b border-slate-100 ${
+                    status === "dibatalkan" ? cancelledRowClass : "hover:bg-slate-50"
+                  }`}
                   onClick={() => router.push(`/ap-bills/${bill.id}`)}
                 >
                   <td className="px-4 py-2 font-medium text-black">{bill.counterparties.name}</td>
@@ -287,9 +291,13 @@ export default function ApBillsPage() {
                     {outstanding.toLocaleString("id-ID")}
                   </td>
                   <td className="px-4 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
-                      {status}
-                    </span>
+                    {status === "dibatalkan" ? (
+                      <CancelledBadge />
+                    ) : (
+                      <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${statusStyle[status]}`}>
+                        {status}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-slate-500">{(bill.created_by && userEmails[bill.created_by]) ?? "-"}</td>
                 </tr>

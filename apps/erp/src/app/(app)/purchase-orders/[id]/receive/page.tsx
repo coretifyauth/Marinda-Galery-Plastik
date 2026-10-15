@@ -60,7 +60,7 @@ export default function ReceivePurchaseOrderPage() {
     const { data: poData, error: poErr } = await supabase
       .from("orders")
       .select(
-        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty, goods_notes(transactions(status))))"
       )
       .eq("id", id)
       .eq("direction", "PURCHASE")
