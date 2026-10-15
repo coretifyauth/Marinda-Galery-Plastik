@@ -1,22 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import type { Supplier } from "@/lib/suppliers/schema";
-import type { Item } from "@/lib/items/schema";
-import type { ItemUnit } from "@/lib/item-units/schema";
 import { createPurchaseOrderSchema, type CreatePurchaseOrderInput } from "@/lib/purchase-orders/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { ItemPicker } from "@/components/pickers/item-picker";
+import { useItemCache } from "@/lib/pickers/use-item-cache";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 type LineInput = { item_id: string; qty_ordered: string; unit_cost_expected: string };
 
@@ -27,9 +26,7 @@ function emptyLine(): LineInput {
 export default function NewPurchaseOrderPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
+  const { items, itemUnits, remember } = useItemCache();
   const [roles, setRoles] = useState<string[]>([]);
 
   const [supplierId, setSupplierId] = useState("");
@@ -37,27 +34,6 @@ export default function NewPurchaseOrderPage() {
   const [expectedDate, setExpectedDate] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const loadSuppliers = useCallback(async () => {
-    const { data } = await supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "supplier")
-      .order("name");
-    setSuppliers((data ?? []) as Supplier[]);
-  }, []);
-
-  const loadItems = useCallback(async () => {
-    const [{ data }, { data: units }] = await Promise.all([
-      supabase
-        .from("items")
-        .select("id, name, item_type, uom, inventory_account_id, archived_at")
-        .order("name"),
-      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
-    ]);
-    setItems((data ?? []) as Item[]);
-    setItemUnits((units ?? []) as ItemUnit[]);
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -72,13 +48,13 @@ export default function NewPurchaseOrderPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadSuppliers(), loadItems()]);
+      
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadItems]);
+  }, [router]);
 
   const createMutation = useMutation({
     mutationFn: async (input: CreatePurchaseOrderInput) => {
@@ -179,14 +155,7 @@ export default function NewPurchaseOrderPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="supplier">Supplier</Label>
-                <Select id="supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-                  <option value="">Pilih supplier...</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
+                <CounterpartyPicker id="supplier" role="supplier" value={supplierId} onChange={setSupplierId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="po_date">Tanggal PO</Label>
@@ -217,19 +186,11 @@ export default function NewPurchaseOrderPage() {
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
                 return (
                   <div key={i} className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2">
-                    <Select
+                    <ItemPicker
                       value={line.item_id}
-                      onChange={(e) =>
-                        updateLine(i, { item_id: e.target.value, qty_ordered: "", unit_cost_expected: "" })
-                      }
-                    >
-                      <option value="">Pilih item...</option>
-                      {items.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} ({item.uom})
-                        </option>
-                      ))}
-                    </Select>
+                      onChange={(id) => updateLine(i, { item_id: id, qty_ordered: "", unit_cost_expected: "" })}
+                      onResolve={remember}
+                    />
                     {line.item_id ? (
                       <UnitCostQtyInput
                         key={line.item_id}

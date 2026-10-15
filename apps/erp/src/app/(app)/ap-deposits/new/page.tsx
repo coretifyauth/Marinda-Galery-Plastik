@@ -4,12 +4,10 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import type { Supplier } from "@/lib/suppliers/schema";
 import { createApDepositSchema, type CreateApDepositInput } from "@/lib/ap-deposits/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
@@ -18,12 +16,12 @@ import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 export default function NewApDepositPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [supplierId, setSupplierId] = useState("");
@@ -32,15 +30,6 @@ export default function NewApDepositPage() {
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [cashMethod, setCashMethod] = useState<CashMethod>("TUNAI");
   const [formError, setFormError] = useState<string | null>(null);
-
-  const loadSuppliers = useCallback(async () => {
-    const { data } = await supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "supplier")
-      .order("name");
-    setSuppliers((data ?? []) as Supplier[]);
-  }, []);
 
   const loadDefaultAccounts = useCallback(async () => {
     setDefaultAccounts(await fetchDefaultAccounts());
@@ -59,13 +48,13 @@ export default function NewApDepositPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadSuppliers(), loadDefaultAccounts()]);
+      await Promise.all([loadDefaultAccounts()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadDefaultAccounts]);
+  }, [router, loadDefaultAccounts]);
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateApDepositInput) => {
@@ -139,14 +128,7 @@ export default function NewApDepositPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <Label htmlFor="supplier">Supplier</Label>
-                <Select id="supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-                  <option value="">Pilih supplier...</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
+                <CounterpartyPicker id="supplier" role="supplier" value={supplierId} onChange={setSupplierId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="deposit_date">Tanggal</Label>

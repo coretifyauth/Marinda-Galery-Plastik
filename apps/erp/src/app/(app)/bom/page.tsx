@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import type { Item } from "@/lib/items/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useBoms } from "@/lib/bom/queries";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
+import { ItemPicker } from "@/components/pickers/item-picker";
 
 // Input kecil buat baris filter di header tabel -- pola sama journal-entries/page.tsx.
 const compactFilterInputClass =
@@ -17,7 +17,6 @@ const compactFilterInputClass =
 export default function BomPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [items, setItems] = useState<Item[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [isActiveFilter, setIsActiveFilter] = useState<"" | "true" | "false">("");
@@ -25,7 +24,6 @@ export default function BomPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
-  const finishedGoods = items.filter((i) => i.item_type === "FINISHED_GOOD");
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", lihat
   // journal-entries/page.tsx -- BUKAN useEffect, biar gak kena lint react-hooks/set-state-in-effect).
@@ -46,14 +44,6 @@ export default function BomPage() {
   const boms = bomsQuery.data?.rows ?? [];
   const total = bomsQuery.data?.total ?? 0;
 
-  const loadItems = useCallback(async () => {
-    const { data } = await supabase
-      .from("items")
-      .select("id, name, item_type, uom, inventory_account_id, archived_at")
-      .order("name");
-    setItems((data ?? []) as Item[]);
-  }, []);
-
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -67,13 +57,12 @@ export default function BomPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await loadItems();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems]);
+  }, [router]);
 
   if (checkingSession) {
     return <LoadingScreen />;
@@ -122,19 +111,15 @@ export default function BomPage() {
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5">
-                <select
+                <ItemPicker
                   aria-label="Filter barang jadi"
+                  itemType="FINISHED_GOOD"
+                  includeArchived
                   value={finishedItemFilter}
-                  onChange={(e) => setFinishedItemFilter(e.target.value)}
+                  onChange={setFinishedItemFilter}
+                  emptyLabel="Semua Barang Jadi"
                   className={compactFilterInputClass}
-                >
-                  <option value="">Semua Barang Jadi</option>
-                  {finishedGoods.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </th>
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />

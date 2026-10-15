@@ -1,10 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
-import type { Customer } from "@/lib/customers/schema";
 import type { SoStatus } from "@/lib/sales-orders/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useSalesOrders } from "@/lib/sales-orders/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
@@ -12,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
@@ -36,7 +35,6 @@ const compactFilterInputClass =
 export default function SalesOrdersPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [dateFrom, setDateFrom] = useState("");
@@ -70,18 +68,6 @@ export default function SalesOrdersPage() {
   const orders = ordersQuery.data?.rows ?? [];
   const total = ordersQuery.data?.total ?? 0;
 
-  const loadCustomers = useCallback(async () => {
-    const walkInCustomerId = await fetchWalkInCustomerId();
-    let query = supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "customer")
-      .order("name");
-    if (walkInCustomerId) query = query.neq("id", walkInCustomerId);
-    const { data } = await query;
-    setCustomers((data ?? []) as unknown as Customer[]);
-  }, []);
-
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -95,13 +81,12 @@ export default function SalesOrdersPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await loadCustomers();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCustomers]);
+  }, [router]);
 
   if (checkingSession) {
     return <LoadingScreen />;
@@ -158,19 +143,15 @@ export default function SalesOrdersPage() {
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5">
-                <select
+                <CounterpartyPicker
+                  role="customer"
                   aria-label="Filter pelanggan"
                   value={customerFilter}
-                  onChange={(e) => setCustomerFilter(e.target.value)}
+                  onChange={setCustomerFilter}
+                  emptyLabel="Semua pelanggan"
+                  includeArchived
                   className={compactFilterInputClass}
-                >
-                  <option value="">Semua pelanggan</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </th>
               <th className="px-4 py-1.5">
                 <div className="flex gap-1">

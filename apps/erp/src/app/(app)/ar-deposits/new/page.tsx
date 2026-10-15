@@ -1,16 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
-import type { Customer } from "@/lib/customers/schema";
 import { createArDepositSchema, type CreateArDepositInput } from "@/lib/ar-deposits/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
@@ -19,11 +16,11 @@ import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 export default function NewArDepositPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [customerId, setCustomerId] = useState("");
@@ -32,18 +29,6 @@ export default function NewArDepositPage() {
   const [cashMethod, setCashMethod] = useState<CashMethod>("TUNAI");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [formError, setFormError] = useState<string | null>(null);
-
-  const loadCustomers = useCallback(async () => {
-    const walkInCustomerId = await fetchWalkInCustomerId();
-    let query = supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "customer")
-      .order("name");
-    if (walkInCustomerId) query = query.neq("id", walkInCustomerId);
-    const { data } = await query;
-    setCustomers((data ?? []) as unknown as Customer[]);
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -58,13 +43,13 @@ export default function NewArDepositPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadCustomers(), fetchDefaultAccounts().then(setDefaultAccounts)]);
+      await Promise.all([fetchDefaultAccounts().then(setDefaultAccounts)]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadCustomers]);
+  }, [router]);
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateArDepositInput) => {
@@ -138,14 +123,7 @@ export default function NewArDepositPage() {
             <div className="flex flex-col gap-5">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="customer">Pelanggan</Label>
-                <Select id="customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                  <option value="">Pilih pelanggan...</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </Select>
+                <CounterpartyPicker id="customer" role="customer" value={customerId} onChange={setCustomerId} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">

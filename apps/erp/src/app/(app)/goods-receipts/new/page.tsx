@@ -1,13 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { createGoodsReceiptSchema } from "@/lib/goods-receipts/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
-import type { ItemUnit } from "@/lib/item-units/schema";
-import type { Item } from "@/lib/items/schema";
-import type { Supplier } from "@/lib/suppliers/schema";
 import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
 import {
   resolveChargeLines,
@@ -17,7 +14,6 @@ import {
 } from "@/lib/charge-lines/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
@@ -27,6 +23,9 @@ import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { ItemPicker } from "@/components/pickers/item-picker";
+import { useItemCache } from "@/lib/pickers/use-item-cache";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 type LineInput = { item_id: string; qty_received: string; unit_cost: string };
 
@@ -37,9 +36,7 @@ function emptyLine(): LineInput {
 export default function NewGoodsReceiptPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const { items, itemUnits, remember } = useItemCache();
 
   const [supplierId, setSupplierId] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
@@ -55,24 +52,6 @@ export default function NewGoodsReceiptPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const loadSuppliers = useCallback(async () => {
-    const { data } = await supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "supplier")
-      .order("name");
-    setSuppliers((data ?? []) as Supplier[]);
-  }, []);
-
-  const loadItems = useCallback(async () => {
-    const [{ data: itemRows }, { data: unitRows }] = await Promise.all([
-      supabase.from("items").select("id, name, item_type, uom, inventory_account_id, archived_at").order("name"),
-      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
-    ]);
-    setItems((itemRows ?? []) as Item[]);
-    setItemUnits((unitRows ?? []) as ItemUnit[]);
-  }, []);
-
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -81,8 +60,6 @@ export default function NewGoodsReceiptPage() {
         return;
       }
       await Promise.all([
-        loadSuppliers(),
-        loadItems(),
         fetchDefaultAccounts().then(setDefaultAccounts),
         supabase
           .from("charge_categories")
@@ -97,7 +74,7 @@ export default function NewGoodsReceiptPage() {
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadItems]);
+  }, [router]);
 
   function updateLine(index: number, patch: Partial<LineInput>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
@@ -204,14 +181,7 @@ export default function NewGoodsReceiptPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="supplier">Supplier</Label>
-                <Select id="supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-                  <option value="">Pilih supplier...</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </Select>
+                <CounterpartyPicker id="supplier" role="supplier" value={supplierId} onChange={setSupplierId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="receipt_date">Tanggal Terima</Label>
@@ -258,17 +228,11 @@ export default function NewGoodsReceiptPage() {
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
                 return (
                   <div key={i} className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2">
-                    <Select
+                    <ItemPicker
                       value={line.item_id}
-                      onChange={(e) => updateLine(i, { item_id: e.target.value, qty_received: "", unit_cost: "" })}
-                    >
-                      <option value="">Pilih item...</option>
-                      {items.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} ({item.uom})
-                        </option>
-                      ))}
-                    </Select>
+                      onChange={(id) => updateLine(i, { item_id: id, qty_received: "", unit_cost: "" })}
+                      onResolve={remember}
+                    />
                     {line.item_id ? (
                       <UnitCostQtyInput
                         key={line.item_id}

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { bundlePromoRuleSchema, type BundlePromoRule } from "@/lib/promotion-bundle-rules/schema";
-import type { Item } from "@/lib/items/schema";
+import { ItemPicker } from "@/components/pickers/item-picker";
+import { useItemCache } from "@/lib/pickers/use-item-cache";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -36,7 +37,8 @@ function rewardLabel(row: { reward_type?: string; reward_value?: number | null }
   return "gratis";
 }
 
-function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite: boolean }) {
+function BundlePromoRulesManager({ canWrite }: { canWrite: boolean }) {
+  const { items, remember } = useItemCache();
   const [rows, setRows] = useState<
     (BundlePromoRule & {
       created_at: string;
@@ -63,7 +65,6 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
   const [showForm, setShowForm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
 
-  const activeItems = items.filter((i) => !i.archived_at);
   const visibleRows = rows.filter((row) => {
     if (statusFilter === "active") return !row.archived_at;
     if (statusFilter === "archived") return !!row.archived_at;
@@ -267,14 +268,7 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bundle-trigger">Barang Pemicu</Label>
-                <Select id="bundle-trigger" value={triggerItemId} onChange={(e) => handleTriggerItemChange(e.target.value)}>
-                  <option value="">Pilih...</option>
-                  {activeItems.map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {it.name}
-                    </option>
-                  ))}
-                </Select>
+                <ItemPicker id="bundle-trigger" value={triggerItemId} onChange={handleTriggerItemChange} onResolve={remember} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bundle-buy-qty">Qty Beli Minimal</Label>
@@ -304,14 +298,7 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bundle-reward">Barang Hadiah</Label>
-                <Select id="bundle-reward" value={rewardItemId} onChange={(e) => handleRewardItemChange(e.target.value)}>
-                  <option value="">Pilih...</option>
-                  {activeItems.map((it) => (
-                    <option key={it.id} value={it.id}>
-                      {it.name}
-                    </option>
-                  ))}
-                </Select>
+                <ItemPicker id="bundle-reward" value={rewardItemId} onChange={handleRewardItemChange} onResolve={remember} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bundle-free-qty">Qty Hadiah</Label>
@@ -398,16 +385,7 @@ function BundlePromoRulesManager({ items, canWrite }: { items: Item[]; canWrite:
 export default function PromoRulesPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [items, setItems] = useState<Item[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
-
-  const loadItems = useCallback(async () => {
-    const { data } = await supabase
-      .from("items")
-      .select("id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at")
-      .order("name");
-    setItems((data ?? []) as Item[]);
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -422,13 +400,12 @@ export default function PromoRulesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await loadItems();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems]);
+  }, [router]);
 
   if (checkingSession) {
     return <LoadingScreen />;
@@ -445,7 +422,7 @@ export default function PromoRulesPage() {
           {!canWrite && "Cuma role admin yang bisa ubah — kamu cuma bisa lihat."}
         </p>
       </div>
-      <BundlePromoRulesManager items={items} canWrite={canWrite} />
+      <BundlePromoRulesManager canWrite={canWrite} />
     </div>
   );
 }

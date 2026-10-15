@@ -1,18 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import { fetchWalkInCustomerId } from "@/lib/pos-settings/schema";
-import type { Customer } from "@/lib/customers/schema";
-import type { Item } from "@/lib/items/schema";
-import type { ItemUnit } from "@/lib/item-units/schema";
 import { createSalesOrderSchema, type CreateSalesOrderInput } from "@/lib/sales-orders/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
@@ -28,6 +23,9 @@ import {
   resolveBundlePromoDiscounts,
   type BundlePromoRule,
 } from "@/lib/promotion-bundle-rules/schema";
+import { ItemPicker } from "@/components/pickers/item-picker";
+import { useItemCache } from "@/lib/pickers/use-item-cache";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 type LineInput = {
   item_id: string;
@@ -42,9 +40,7 @@ function emptyLine(): LineInput {
 export default function NewSalesOrderPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
-  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
+  const { items, itemUnits, remember } = useItemCache();
   const [discountRules, setDiscountRules] = useState<ItemDiscountRule[]>([]);
   const [bundleRules, setBundleRules] = useState<BundlePromoRule[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -54,30 +50,6 @@ export default function NewSalesOrderPage() {
   const [expectedDate, setExpectedDate] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const loadCustomers = useCallback(async () => {
-    const walkInCustomerId = await fetchWalkInCustomerId();
-    let query = supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "customer")
-      .order("name");
-    if (walkInCustomerId) query = query.neq("id", walkInCustomerId);
-    const { data } = await query;
-    setCustomers((data ?? []) as unknown as Customer[]);
-  }, []);
-
-  const loadItems = useCallback(async () => {
-    const [{ data }, { data: units }] = await Promise.all([
-      supabase
-        .from("items")
-        .select("id, name, item_type, uom, inventory_account_id, category_id, archived_at")
-        .order("name"),
-      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
-    ]);
-    setItems((data ?? []) as Item[]);
-    setItemUnits((units ?? []) as ItemUnit[]);
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -93,8 +65,6 @@ export default function NewSalesOrderPage() {
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
       await Promise.all([
-        loadCustomers(),
-        loadItems(),
         fetchActiveItemDiscountRules().then(setDiscountRules),
         fetchActiveBundlePromoRules().then(setBundleRules),
       ]);
@@ -103,7 +73,7 @@ export default function NewSalesOrderPage() {
     return () => {
       active = false;
     };
-  }, [router, loadCustomers, loadItems]);
+  }, [router]);
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateSalesOrderInput) => {
@@ -225,10 +195,6 @@ export default function NewSalesOrderPage() {
   // Cuma barang yang punya minimal 1 item_units berharga yang bisa dipesan lewat form ini --
   // harga wajib otomatis dari item_units.price, gak ada lagi jalur input manual (lihat
   // docs/domain/inventory.md submodule "Satuan Jual & Harga").
-  const sellableItems = items.filter((item) =>
-    itemUnits.some((u) => u.item_id === item.id && u.price != null)
-  );
-
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/sales-orders" label="Kembali ke Sales Order" />
@@ -254,14 +220,7 @@ export default function NewSalesOrderPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="customer">Pelanggan</Label>
-                <Select id="customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                  <option value="">Pilih pelanggan...</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </Select>
+                <CounterpartyPicker id="customer" role="customer" value={customerId} onChange={setCustomerId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="so_date">Tanggal Pesan</Label>
@@ -291,23 +250,12 @@ export default function NewSalesOrderPage() {
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id && u.price != null);
                 return (
                   <div key={i} className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2">
-                    <Select
+                    <ItemPicker
                       value={line.item_id}
-                      onChange={(e) =>
-                        updateLine(i, {
-                          item_id: e.target.value,
-                          qty_ordered: "",
-                          unit_price: "",
-                        })
-                      }
-                    >
-                      <option value="">Pilih item...</option>
-                      {sellableItems.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} ({item.uom})
-                        </option>
-                      ))}
-                    </Select>
+                      onChange={(id) => updateLine(i, { item_id: id, qty_ordered: "", unit_price: "" })}
+                      onResolve={remember}
+                      sellableOnly
+                    />
                     {line.item_id && unitsForItem.length > 0 ? (
                       <div className="flex flex-col gap-0.5">
                         <UomPriceQtyInput
@@ -339,12 +287,6 @@ export default function NewSalesOrderPage() {
                   </div>
                 );
               })}
-              {sellableItems.length === 0 && (
-                <p className="text-xs text-amber-600">
-                  Belum ada barang dengan harga jual (item_units). Tambah satuan + harga di
-                  halaman Items dulu.
-                </p>
-              )}
               <Button type="button" variant="secondary" onClick={addLine} className="w-fit">
                 + Tambah item
               </Button>

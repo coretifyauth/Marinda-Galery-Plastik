@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import type { Supplier } from "@/lib/suppliers/schema";
 import { createApBillSchema, type CreateApBillInput } from "@/lib/ap-bills/schema";
 import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
 import {
@@ -26,12 +25,12 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 export default function NewApBillPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [supplierId, setSupplierId] = useState("");
@@ -49,15 +48,6 @@ export default function NewApBillPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   const activeExpenseCategories = expenseCategories.filter((c) => !c.archived_at);
-
-  const loadSuppliers = useCallback(async () => {
-    const { data } = await supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "supplier")
-      .order("name");
-    setSuppliers((data ?? []) as Supplier[]);
-  }, []);
 
   const loadDefaultAccounts = useCallback(async () => {
     setDefaultAccounts(await fetchDefaultAccounts());
@@ -89,13 +79,13 @@ export default function NewApBillPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadSuppliers(), loadDefaultAccounts(), loadExpenseCategories(), loadTaxSettings()]);
+      await Promise.all([loadDefaultAccounts(), loadExpenseCategories(), loadTaxSettings()]);
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers, loadDefaultAccounts, loadExpenseCategories, loadTaxSettings]);
+  }, [router, loadDefaultAccounts, loadExpenseCategories, loadTaxSettings]);
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateApBillInput) => {
@@ -188,14 +178,7 @@ export default function NewApBillPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="supplier">Supplier</Label>
-                <Select id="supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-                  <option value="">Pilih supplier...</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} (net-{s.payment_term_days})
-                    </option>
-                  ))}
-                </Select>
+                <CounterpartyPicker id="supplier" role="supplier" value={supplierId} onChange={setSupplierId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bill_date">Tanggal</Label>

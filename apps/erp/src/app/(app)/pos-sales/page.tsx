@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, usePosSales } from "@/lib/pos-sales/queries";
@@ -10,19 +10,17 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 // Input kecil buat baris filter di header tabel -- Input/Select biasa terlalu besar buat
 // muat di dalam <th>, jadi dibikin versi compact lokal (pola sama journal-entries/page.tsx).
 const compactFilterInputClass =
   "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
 
-type CustomerOption = { id: string; name: string };
 
 export default function PosSalesPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [customers, setCustomers] = useState<CustomerOption[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -55,22 +53,6 @@ export default function PosSalesPage() {
   const sales = salesQuery.data?.rows ?? [];
   const total = salesQuery.data?.total ?? 0;
 
-  // customers: query terpisah, orthogonal ke pagination -- murah dan cuma jalan sekali (bukan
-  // React Query, gak perlu ikut invalidate/refetch tabel pos_sales).
-  const loadAux = useCallback(async () => {
-    const { data: custData, error: custError } = await supabase
-      .from("counterparties")
-      .select("id, name, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "customer")
-      .order("name");
-    if (custError) {
-      setLoadError(custError.message);
-      return;
-    }
-    setLoadError(null);
-    setCustomers((custData ?? []) as CustomerOption[]);
-  }, []);
-
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -79,13 +61,12 @@ export default function PosSalesPage() {
         return;
       }
       if (!active) return;
-      await loadAux();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadAux]);
+  }, [router]);
 
   if (checkingSession) {
     return <LoadingScreen />;
@@ -100,7 +81,6 @@ export default function PosSalesPage() {
         </p>
       </div>
 
-      {loadError && <FormError>{loadError}</FormError>}
       {salesQuery.error && <FormError>{(salesQuery.error as Error).message}</FormError>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -154,19 +134,16 @@ export default function PosSalesPage() {
                 />
               </th>
               <th className="px-4 py-1.5">
-                <select
+                <CounterpartyPicker
+                  role="customer"
                   aria-label="Filter pelanggan"
                   value={customerId}
-                  onChange={(e) => setCustomerId(e.target.value)}
+                  onChange={setCustomerId}
+                  emptyLabel="Semua Pelanggan"
+                  includeArchived
+                  includeWalkIn
                   className={compactFilterInputClass}
-                >
-                  <option value="">Semua Pelanggan</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </th>
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />

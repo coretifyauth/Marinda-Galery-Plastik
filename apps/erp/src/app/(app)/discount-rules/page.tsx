@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { itemDiscountRuleSchema, type ItemDiscountRule } from "@/lib/promotion-item-discount-rules/schema";
-import type { Item } from "@/lib/items/schema";
+import { ItemPicker } from "@/components/pickers/item-picker";
 import type { ItemCategory } from "@/lib/item-categories/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -13,15 +13,14 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Modal } from "@/components/ui/modal";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { Combobox } from "@/components/ui/combobox";
 
 type UnitOption = { id: string; unit_label: string; conversion_factor: number };
 
 function ItemDiscountRulesManager({
-  items,
   categories,
   canWrite,
 }: {
-  items: Item[];
   categories: ItemCategory[];
   canWrite: boolean;
 }) {
@@ -49,7 +48,6 @@ function ItemDiscountRulesManager({
   const [showForm, setShowForm] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"active" | "archived" | "all">("active");
 
-  const activeItems = items.filter((i) => !i.archived_at);
   const activeCategories = categories.filter((c) => !c.archived_at);
   const visibleRows = rows.filter((row) => {
     if (statusFilter === "active") return !row.archived_at;
@@ -266,14 +264,18 @@ function ItemDiscountRulesManager({
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="discount-target">{targetType === "item" ? "Barang" : "Kategori"}</Label>
-              <Select id="discount-target" value={targetId} onChange={(e) => handleTargetChange(e.target.value)}>
-                <option value="">Pilih...</option>
-                {(targetType === "item" ? activeItems : activeCategories).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
+              {targetType === "item" ? (
+                <ItemPicker id="discount-target" value={targetId} onChange={handleTargetChange} />
+              ) : (
+                <Combobox id="discount-target" value={targetId} onChange={(e) => handleTargetChange(e.target.value)}>
+                  <option value="">Pilih...</option>
+                  {activeCategories.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </Combobox>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
@@ -353,16 +355,11 @@ function ItemDiscountRulesManager({
 export default function DiscountRulesPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [items, setItems] = useState<Item[]>([]);
   const [itemCategories, setItemCategories] = useState<ItemCategory[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const loadItemsAndCategories = useCallback(async () => {
-    const [{ data: itemRows }, { data: catRows }] = await Promise.all([
-      supabase.from("items").select("id, name, item_type, uom, inventory_account_id, category_id, brand_id, archived_at").order("name"),
-      supabase.from("item_categories").select("id, name, archived_at").order("name"),
-    ]);
-    setItems((itemRows ?? []) as Item[]);
+    const { data: catRows } = await supabase.from("item_categories").select("id, name, archived_at").order("name");
     setItemCategories((catRows ?? []) as ItemCategory[]);
   }, []);
 
@@ -402,7 +399,7 @@ export default function DiscountRulesPage() {
           {!canWrite && "Cuma role admin yang bisa ubah — kamu cuma bisa lihat."}
         </p>
       </div>
-      <ItemDiscountRulesManager items={items} categories={itemCategories} canWrite={canWrite} />
+      <ItemDiscountRulesManager categories={itemCategories} canWrite={canWrite} />
     </div>
   );
 }

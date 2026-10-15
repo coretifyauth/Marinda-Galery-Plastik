@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import type { Supplier } from "@/lib/suppliers/schema";
 import type { PoStatus } from "@/lib/purchase-orders/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, usePurchaseOrders } from "@/lib/purchase-orders/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
@@ -11,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
+import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
 const statusStyle: Record<string, string> = {
   OPEN: "bg-slate-100 text-slate-600",
@@ -33,7 +33,6 @@ const compactFilterInputClass =
 export default function PurchaseOrdersPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [dateFrom, setDateFrom] = useState("");
@@ -67,15 +66,6 @@ export default function PurchaseOrdersPage() {
   const orders = ordersQuery.data?.rows ?? [];
   const total = ordersQuery.data?.total ?? 0;
 
-  const loadSuppliers = useCallback(async () => {
-    const { data } = await supabase
-      .from("counterparties")
-      .select("id, name, contact, payment_term_days, archived_at, counterparty_type_mapping!inner(role)")
-      .eq("counterparty_type_mapping.role", "supplier")
-      .order("name");
-    setSuppliers((data ?? []) as Supplier[]);
-  }, []);
-
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -89,13 +79,12 @@ export default function PurchaseOrdersPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await loadSuppliers();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadSuppliers]);
+  }, [router]);
 
   if (checkingSession) {
     return <LoadingScreen />;
@@ -147,19 +136,15 @@ export default function PurchaseOrdersPage() {
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
               <th className="px-4 py-1.5">
-                <select
+                <CounterpartyPicker
+                  role="supplier"
                   aria-label="Filter supplier"
                   value={supplierFilter}
-                  onChange={(e) => setSupplierFilter(e.target.value)}
+                  onChange={setSupplierFilter}
+                  emptyLabel="Semua supplier"
+                  includeArchived
                   className={compactFilterInputClass}
-                >
-                  <option value="">Semua supplier</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </th>
               <th className="px-4 py-1.5">
                 <div className="flex gap-1">

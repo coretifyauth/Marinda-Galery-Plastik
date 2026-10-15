@@ -1,18 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import type { Item } from "@/lib/items/schema";
 import { createBomSchema, type CreateBomInput } from "@/lib/bom/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { ItemPicker } from "@/components/pickers/item-picker";
 
 type LineInput = { raw_material_item_id: string; qty_per_batch: string };
 
@@ -23,24 +22,12 @@ function emptyLine(): LineInput {
 export default function NewBomPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
-  const [items, setItems] = useState<Item[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [finishedItemId, setFinishedItemId] = useState("");
   const [outputQty, setOutputQty] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const finishedGoods = items.filter((i) => i.item_type === "FINISHED_GOOD");
-  const rawMaterials = items.filter((i) => i.item_type === "RAW_MATERIAL");
-
-  const loadItems = useCallback(async () => {
-    const { data } = await supabase
-      .from("items")
-      .select("id, name, item_type, uom, inventory_account_id, archived_at")
-      .order("name");
-    setItems((data ?? []) as Item[]);
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -55,13 +42,12 @@ export default function NewBomPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await loadItems();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems]);
+  }, [router]);
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateBomInput) => {
@@ -151,18 +137,13 @@ export default function NewBomPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="finished_item">Barang Jadi</Label>
-                <Select
+                <ItemPicker
                   id="finished_item"
+                  itemType="FINISHED_GOOD"
+                  placeholder="Pilih barang jadi..."
                   value={finishedItemId}
-                  onChange={(e) => setFinishedItemId(e.target.value)}
-                >
-                  <option value="">Pilih barang jadi...</option>
-                  {finishedGoods.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} ({item.uom})
-                    </option>
-                  ))}
-                </Select>
+                  onChange={setFinishedItemId}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="output_qty">Output per Batch</Label>
@@ -187,17 +168,12 @@ export default function NewBomPage() {
               </div>
               {lines.map((line, i) => (
                 <div key={i} className="grid grid-cols-[1fr_8rem_2.5rem] gap-2">
-                  <Select
+                  <ItemPicker
+                    itemType="RAW_MATERIAL"
+                    placeholder="Pilih bahan baku..."
                     value={line.raw_material_item_id}
-                    onChange={(e) => updateLine(i, { raw_material_item_id: e.target.value })}
-                  >
-                    <option value="">Pilih bahan baku...</option>
-                    {rawMaterials.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({item.uom})
-                      </option>
-                    ))}
-                  </Select>
+                    onChange={(id) => updateLine(i, { raw_material_item_id: id })}
+                  />
                   <Input
                     type="number"
                     min="0"

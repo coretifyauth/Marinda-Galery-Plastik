@@ -4,14 +4,11 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import type { Item } from "@/lib/items/schema";
-import type { ItemUnit } from "@/lib/item-units/schema";
 import type { InventoryBalance } from "@/lib/inventory/schema";
 import { recordStockOpnameSchema, type RecordStockOpnameInput } from "@/lib/stock-opnames/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
@@ -20,6 +17,8 @@ import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { MultiUomQtyInput } from "@/components/ui/multi-uom-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { ItemPicker } from "@/components/pickers/item-picker";
+import { useItemCache } from "@/lib/pickers/use-item-cache";
 
 type LineInput = { item_id: string; qty_actual: string };
 
@@ -31,8 +30,7 @@ export default function NewStockOpnamePage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
-  const [items, setItems] = useState<Item[]>([]);
-  const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
+  const { items, itemUnits, remember } = useItemCache();
   const [balances, setBalances] = useState<InventoryBalance[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
@@ -40,18 +38,14 @@ export default function NewStockOpnamePage() {
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const loadItems = useCallback(async () => {
-    const [{ data }, { data: bal }, { data: units }] = await Promise.all([
-      supabase
-        .from("items")
-        .select("id, name, item_type, uom, inventory_account_id, archived_at")
-        .order("name"),
-      supabase.from("inventory_balances").select("item_id, qty_on_hand, avg_cost"),
-      supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
-    ]);
-    setItems((data ?? []) as Item[]);
-    setBalances((bal ?? []) as InventoryBalance[]);
-    setItemUnits((units ?? []) as ItemUnit[]);
+  // Saldo sistem diambil per item yang dipilih (bukan seluruh inventory_balances di awal).
+  const loadBalance = useCallback(async (itemId: string) => {
+    const { data } = await supabase
+      .from("inventory_balances")
+      .select("item_id, qty_on_hand, avg_cost")
+      .eq("item_id", itemId)
+      .maybeSingle();
+    if (data) setBalances((prev) => [...prev.filter((b) => b.item_id !== itemId), data as InventoryBalance]);
   }, []);
 
   const loadDefaultAccounts = useCallback(async () => {
@@ -71,13 +65,13 @@ export default function NewStockOpnamePage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
-      await Promise.all([loadItems(), loadDefaultAccounts()]);
+      await loadDefaultAccounts();
       if (active) setCheckingSession(false);
     });
     return () => {
       active = false;
     };
-  }, [router, loadItems, loadDefaultAccounts]);
+  }, [router, loadDefaultAccounts]);
 
   function updateLine(index: number, patch: Partial<LineInput>) {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
@@ -225,17 +219,14 @@ export default function NewStockOpnamePage() {
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
                 return (
                   <div key={i} className="grid grid-cols-[1fr_6rem_minmax(12rem,auto)_2.5rem] gap-2">
-                    <Select
+                    <ItemPicker
                       value={line.item_id}
-                      onChange={(e) => updateLine(i, { item_id: e.target.value, qty_actual: "" })}
-                    >
-                      <option value="">Pilih item...</option>
-                      {items.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.name} ({item.uom})
-                        </option>
-                      ))}
-                    </Select>
+                      onChange={(id) => updateLine(i, { item_id: id, qty_actual: "" })}
+                      onResolve={(it) => {
+                        remember(it);
+                        loadBalance(it.id);
+                      }}
+                    />
                     <span className="flex items-center font-mono text-sm text-slate-500">
                       {line.item_id ? systemQtyFor(line.item_id) : "-"}
                     </span>
