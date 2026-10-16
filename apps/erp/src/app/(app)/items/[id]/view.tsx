@@ -302,32 +302,56 @@ export function ItemDetailView({ id }: { id: string }) {
   // sama sekali pas print), dan trik "visibility:hidden semua elemen lain" gampang
   // nyisain halaman kosong karena elemen yang disembunyiin tetap makan document
   // flow. Window terpisah = gak ada chrome/dialog yang perlu disembunyiin sama sekali.
+  // Hasil cetak = 1 lembar A4 berisi grid 4 kolom x 5 baris (20 label identik, siap jadi
+  // lembar stiker). Dibuka sebagai TAB biasa (bukan popup berukuran kecil) dan dialog print
+  // browser langsung muncul -- ukuran kertas/margin diatur lewat @page di halaman itu sendiri,
+  // jadi Ctrl+P ulang di tab itu menghasilkan layout yang sama.
+  const LABEL_COLUMNS = 4;
+  const LABEL_ROWS = 5;
+
   async function printLabel(key: string, code: string, subtitle: string) {
     if (!item) return;
     setPrintingUnitId(key);
     try {
-      const qrDataUrl = await QRCode.toDataURL(code, { width: 220, margin: 1 });
-      const printWindow = window.open("", "_blank", "width=420,height=520");
+      const qrDataUrl = await QRCode.toDataURL(code, { width: 300, margin: 1 });
+      const printWindow = window.open("", "_blank");
       if (!printWindow) {
         toast.error("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
         return;
       }
-      const priceLine = escapeHtml(subtitle);
+      const cell = `<div class="label">
+      <img src="${qrDataUrl}" alt="QR ${escapeHtml(code)}" />
+      <div class="name">${escapeHtml(item.name)}</div>
+      <div class="meta">${escapeHtml(subtitle)}</div>
+    </div>`;
+      const cells = Array.from({ length: LABEL_COLUMNS * LABEL_ROWS }, () => cell).join("\n    ");
       printWindow.document.write(`<!doctype html>
 <html>
 <head>
+<meta charset="utf-8" />
 <title>Label — ${escapeHtml(item.name)}</title>
 <style>
-  body { font-family: Arial, Helvetica, sans-serif; text-align: center; padding: 24px; }
-  img { width: 220px; height: 220px; }
-  .name { margin-top: 10px; font-weight: 600; font-size: 15px; }
-  .meta { margin-top: 2px; color: #64748b; font-size: 13px; }
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; }
+  /* area cetak A4 dikurangi margin 10mm: 190mm x 277mm -> sel 47.5mm x 55.4mm */
+  .sheet { display: grid; grid-template-columns: repeat(${LABEL_COLUMNS}, 1fr); grid-template-rows: repeat(${LABEL_ROWS}, 1fr); width: 190mm; height: 277mm; }
+  .label { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2mm; overflow: hidden; text-align: center; }
+  .label img { width: 32mm; height: 32mm; }
+  .name { margin-top: 1.5mm; font-weight: 600; font-size: 9pt; line-height: 1.2; max-height: 2.4em; overflow: hidden; }
+  .meta { margin-top: 0.5mm; font-size: 8pt; color: #334155; }
+  /* di layar saja: pratinjau kertas + garis bantu potong (gak ikut tercetak) */
+  @media screen {
+    body { background: #e2e8f0; padding: 16px; }
+    .sheet { background: #fff; margin: 0 auto; padding: 10mm; width: 210mm; height: 297mm; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+    .label { outline: 1px dashed #cbd5e1; }
+  }
 </style>
 </head>
 <body>
-  <img src="${qrDataUrl}" alt="QR ${escapeHtml(code)}" />
-  <div class="name">${escapeHtml(item.name)}</div>
-  <div class="meta">${priceLine}</div>
+  <div class="sheet">
+    ${cells}
+  </div>
   <script>window.onload = function () { window.print(); };</script>
 </body>
 </html>`);
