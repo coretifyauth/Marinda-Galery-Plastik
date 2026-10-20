@@ -302,12 +302,18 @@ export function ItemDetailView({ id }: { id: string }) {
   // sama sekali pas print), dan trik "visibility:hidden semua elemen lain" gampang
   // nyisain halaman kosong karena elemen yang disembunyiin tetap makan document
   // flow. Window terpisah = gak ada chrome/dialog yang perlu disembunyiin sama sekali.
-  // Hasil cetak = 1 lembar A4 berisi grid 4 kolom x 5 baris (20 label identik, siap jadi
-  // lembar stiker). Dibuka sebagai TAB biasa (bukan popup berukuran kecil) dan dialog print
-  // browser langsung muncul -- ukuran kertas/margin diatur lewat @page di halaman itu sendiri,
-  // jadi Ctrl+P ulang di tab itu menghasilkan layout yang sama.
-  const LABEL_COLUMNS = 4;
-  const LABEL_ROWS = 5;
+  // Hasil cetak = 1 lembar A4 berisi grid label identik (siap jadi lembar stiker). Scale-nya
+  // diatur di halaman cetak itu sendiri (slider %), BUKAN lewat scale dialog Ctrl+P -- scale
+  // bawaan browser gak bisa diandalkan buat ngubah jumlah label. Ukuran 1 sel = ukuran dasar x
+  // scale (CSS var --s); jumlah kolom/baris dihitung pasti pakai JS di halaman itu
+  // (floor(area / ukuran sel)) dan sel digenerate persis sebanyak itu -- BUKAN CSS auto-fill +
+  // overflow:hidden, karena sel berlebih bocor ke padding layar jadi baris gepeng. Area cetak
+  // A4 tetap (190 x 277 mm), jadi di 100% hasilnya 4 x 5 dan makin kecil scale makin banyak
+  // label. Cetak dari tombol "Cetak" di halaman itu dengan scale dialog Ctrl+P = 100%.
+  const LABEL_CELL_W_MM = 47;
+  const LABEL_CELL_H_MM = 55;
+  const SHEET_W_MM = 190;
+  const SHEET_H_MM = 277;
 
   async function printLabel(key: string, code: string, subtitle: string) {
     if (!item) return;
@@ -324,7 +330,6 @@ export function ItemDetailView({ id }: { id: string }) {
       <div class="name">${escapeHtml(item.name)}</div>
       <div class="meta">${escapeHtml(subtitle)}</div>
     </div>`;
-      const cells = Array.from({ length: LABEL_COLUMNS * LABEL_ROWS }, () => cell).join("\n    ");
       printWindow.document.write(`<!doctype html>
 <html>
 <head>
@@ -333,26 +338,76 @@ export function ItemDetailView({ id }: { id: string }) {
 <style>
   @page { size: A4 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
+  :root { --s: 1; }
   body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #000; }
-  /* area cetak A4 dikurangi margin 10mm: 190mm x 277mm -> sel 47.5mm x 55.4mm */
-  .sheet { display: grid; grid-template-columns: repeat(${LABEL_COLUMNS}, 1fr); grid-template-rows: repeat(${LABEL_ROWS}, 1fr); width: 190mm; height: 277mm; }
-  .label { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2mm; overflow: hidden; text-align: center; }
-  .label img { width: 32mm; height: 32mm; }
-  .name { margin-top: 1.5mm; font-weight: 600; font-size: 9pt; line-height: 1.2; max-height: 2.4em; overflow: hidden; }
-  .meta { margin-top: 0.5mm; font-size: 8pt; color: #334155; }
-  /* di layar saja: pratinjau kertas + garis bantu potong (gak ikut tercetak) */
+  /* sheet = area cetak A4 dikurangi margin 10mm (${SHEET_W_MM} x ${SHEET_H_MM} mm). --cols/--rows diisi JS
+     (jumlah sel yang muat); sisa ruang dibagi rata (1fr) jadi grid selalu menutupi halaman. */
+  .sheet { display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); grid-template-rows: repeat(var(--rows, 5), 1fr); width: ${SHEET_W_MM}mm; height: ${SHEET_H_MM}mm; overflow: hidden; }
+  .label { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: calc(2mm * var(--s)); overflow: hidden; text-align: center; }
+  .label img { flex-shrink: 0; width: calc(32mm * var(--s)); height: calc(32mm * var(--s)); }
+  /* huruf punya lantai (6pt / 5.5pt) biar tetap terbaca walau QR + sel mengecil; nama gak
+     lagi dipotong 2 baris -- kalau gak muat, skala minimum slider naik (dihitung di script) */
+  .name { margin-top: calc(1.5mm * var(--s)); font-weight: 600; font-size: max(calc(9pt * var(--s)), 6pt); line-height: 1.2; overflow-wrap: anywhere; }
+  .meta { margin-top: calc(0.5mm * var(--s)); font-size: max(calc(8pt * var(--s)), 5.5pt); line-height: 1.2; color: #334155; overflow-wrap: anywhere; }
+  .bar { display: none; }
+  /* di layar saja: toolbar scale + pratinjau kertas + garis bantu potong (gak ikut tercetak) */
   @media screen {
-    body { background: #e2e8f0; padding: 16px; }
-    .sheet { background: #fff; margin: 0 auto; padding: 10mm; width: 210mm; height: 297mm; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+    body { background: #e2e8f0; padding: 0 16px 16px; }
+    .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 1; margin: 0 -16px 16px; padding: 10px 16px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.2); font-size: 14px; }
+    .bar input[type=range] { width: 220px; }
+    .bar button { padding: 6px 16px; border: 0; border-radius: 6px; background: #0f172a; color: #fff; font-size: 14px; cursor: pointer; }
+    .bar .info { color: #64748b; }
+    .sheet { background: #fff; margin: 0 auto; padding: 10mm; box-sizing: content-box; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
     .label { outline: 1px dashed #cbd5e1; }
   }
 </style>
 </head>
 <body>
-  <div class="sheet">
-    ${cells}
+  <div class="bar">
+    <label for="scale">Skala label: <b id="scaleVal">100%</b></label>
+    <input id="scale" type="range" min="50" max="200" step="5" value="100" />
+    <span class="info" id="info"></span>
+    <button type="button" onclick="window.print()">Cetak</button>
   </div>
-  <script>window.onload = function () { window.print(); };</script>
+  <div class="sheet" id="sheet"></div>
+  <script>
+    var sheet = document.getElementById("sheet");
+    var CELL = ${JSON.stringify(cell)};
+    var slider = document.getElementById("scale");
+    // Skala minimum dinamis: ukur 1 label asli di ukuran sel nominal (47x55mm x skala, rata
+    // atas, tanpa clip) dan turunkan skala selama isi (QR + nama + satuan/harga) masih muat.
+    // Makin panjang nama/harga, makin tinggi skala minimumnya. Lantai mutlak 50% (QR >= 16mm).
+    var tmp = document.createElement("div");
+    tmp.innerHTML = CELL;
+    var probe = tmp.firstElementChild;
+    probe.style.cssText = "position:absolute;visibility:hidden;left:0;top:0;overflow:visible;justify-content:flex-start;outline:none;width:calc(${LABEL_CELL_W_MM}mm * var(--s));height:calc(${LABEL_CELL_H_MM}mm * var(--s))";
+    document.body.appendChild(probe);
+    function fits(pct) {
+      document.documentElement.style.setProperty("--s", String(pct / 100));
+      var limit = probe.getBoundingClientRect().bottom - parseFloat(getComputedStyle(probe).paddingBottom);
+      return probe.lastElementChild.getBoundingClientRect().bottom <= limit + 0.5;
+    }
+    var minPct = 200;
+    for (var p = 200; p >= 50; p -= 5) { if (!fits(p)) break; minPct = p; }
+    probe.remove();
+    slider.min = String(minPct);
+    slider.value = String(Math.max(100, minPct));
+    function apply() {
+      var pct = Number(document.getElementById("scale").value);
+      var s = pct / 100;
+      var cols = Math.max(1, Math.floor(${SHEET_W_MM} / (${LABEL_CELL_W_MM} * s) + 1e-9));
+      var rows = Math.max(1, Math.floor(${SHEET_H_MM} / (${LABEL_CELL_H_MM} * s) + 1e-9));
+      var root = document.documentElement.style;
+      root.setProperty("--s", String(s));
+      root.setProperty("--cols", String(cols));
+      root.setProperty("--rows", String(rows));
+      sheet.innerHTML = CELL.repeat(cols * rows);
+      document.getElementById("scaleVal").textContent = pct + "%";
+      document.getElementById("info").textContent = cols + " kolom x " + rows + " baris = " + (cols * rows) + " label · skala minimum " + minPct + "% (batas teks tetap lengkap)";
+    }
+    document.getElementById("scale").addEventListener("input", apply);
+    apply();
+  </script>
 </body>
 </html>`);
       printWindow.document.close();
