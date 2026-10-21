@@ -13,6 +13,9 @@ import { DetailRows } from "@/components/ui/detail-rows";
 import { formatCreatedBy } from "@/lib/created-by";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { useSupplierBalances } from "@/lib/supplier-balances/queries";
+
+const kindLabel = { uang_muka: "Uang Muka", kelebihan_retur: "Kelebihan Retur" } as const;
 
 const statusStyle: Record<string, string> = {
   lunas: "bg-emerald-50 text-emerald-700",
@@ -33,6 +36,7 @@ export function SupplierDetailView({ id }: { id: string }) {
   const [roles, setRoles] = useState<string[]>([]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const balances = useSupplierBalances(id);
 
   const load = useCallback(async () => {
     const [
@@ -161,13 +165,22 @@ export function SupplierDetailView({ id }: { id: string }) {
     },
     {
       title: "Ringkasan",
-      rows: [{ label: "Total Outstanding", value: totalOutstanding.toLocaleString("id-ID") }],
+      rows: [
+        { label: "Total Outstanding", value: totalOutstanding.toLocaleString("id-ID") },
+        {
+          label: "Saldo di Supplier",
+          value: balances.data
+            ? (balances.data.uangMukaTotal + balances.data.kelebihanReturTotal).toLocaleString("id-ID")
+            : "-",
+        },
+      ],
     },
   ];
 
   const tabs: TabDef[] = [
     { key: "bills", label: "Tagihan", badge: bills.length },
     { key: "payments", label: "Pembayaran", badge: payments.length },
+    { key: "saldo", label: "Saldo di Supplier", badge: balances.data?.rows.length ?? 0 },
   ];
 
   return (
@@ -279,6 +292,72 @@ export function SupplierDetailView({ id }: { id: string }) {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {activeTab === "saldo" && (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-slate-500">
+            Uang kita yang masih ada di supplier ini: <span className="font-medium">uang muka</span> yang dibayar
+            duluan, atau <span className="font-medium">kelebihan retur</span> dari tagihan yang sudah lunas. Uang muka
+            bisa dipotongkan ke tagihan (lewat tombol <span className="font-medium">Terapkan Uang Muka</span> di detail
+              tagihan); kelebihan retur saat ini hanya bisa diminta kembali tunai.
+          </p>
+          {balances.error && <FormError>{(balances.error as Error).message}</FormError>}
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                  <th className="px-4 py-2">Jenis</th>
+                  <th className="px-4 py-2">Tanggal</th>
+                  <th className="px-4 py-2">Rujukan Dokumen</th>
+                  <th className="px-4 py-2 text-right">Jumlah Awal</th>
+                  <th className="px-4 py-2 text-right">Sisa</th>
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {(balances.data?.rows ?? []).map((row) => (
+                  <tr key={`${row.kind}-${row.id}`} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="px-4 py-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs ${
+                          row.kind === "uang_muka" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"
+                        }`}
+                      >
+                        {kindLabel[row.kind]}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2">{row.date}</td>
+                    <td className="px-4 py-2">{row.source_ref}</td>
+                    <td className="px-4 py-2 text-right font-mono">{row.amount.toLocaleString("id-ID")}</td>
+                    <td className="px-4 py-2 text-right font-mono font-medium">
+                      {row.remaining.toLocaleString("id-ID")}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="toolbar" onClick={() => router.push(row.detailHref)}>
+                          Lihat Dokumen
+                        </Button>
+                        {canWrite && row.actionHref && row.actionLabel && (
+                          <Button variant="toolbar" onClick={() => router.push(row.actionHref!)}>
+                            {row.actionLabel}
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {balances.data && balances.data.rows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                      Tidak ada saldo di supplier ini.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

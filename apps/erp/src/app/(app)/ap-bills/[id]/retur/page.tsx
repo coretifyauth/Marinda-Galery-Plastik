@@ -16,6 +16,9 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { QtyByUnitField } from "@/components/ui/qty-by-unit-field";
+import { ItemUnitsHint } from "@/components/ui/item-units-hint";
+import { useItemUnitsForItems } from "@/lib/item-units/queries";
 
 type ReturnLineInput = {
   item_id: string;
@@ -53,6 +56,7 @@ export default function ApBillReturPage() {
   const [returAmount, setReturAmount] = useState("");
   const [returCreditAccountId, setReturCreditAccountId] = useState("");
   const [returLines, setReturLines] = useState<ReturnLineInput[]>([]);
+  const { data: itemUnits = [] } = useItemUnitsForItems(returLines.map((l) => l.item_id));
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
@@ -289,15 +293,15 @@ export default function ApBillReturPage() {
 
       <div>
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">Retur — Kurangi Utang</h1>
+          <h1 className="text-xl font-semibold text-black">Barang Kurang / Dikembalikan</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {bill.source_ref}
           </span>
         </div>
         <p className="text-sm text-slate-500">
           {goodsReceipt
-            ? "Bill ini lewat Barang Masuk — isi qty per item yang diretur, stok otomatis berkurang dan Utang Usaha dikurangi sebesar cost fisik barang (bukan angka yang kamu ketik). Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."
-            : "Bill ini gak lewat Barang Masuk — retur cuma ngurangin Utang Usaha lewat nominal yang kamu isi, gak ada stok yang disentuh. Kalau bill ini udah lunas, kelebihannya otomatis jadi Piutang Retur Supplier."}
+            ? "Isi qty per item yang kurang atau dikembalikan. Stok otomatis berkurang, dan nilainya dihitung dari cost fisik barang (bukan angka yang kamu ketik). Nilai itu mengurangi sisa utang tagihan ini; kalau tagihan sudah lunas atau nilainya melebihi sisa utang, kelebihannya jadi saldo kita di supplier."
+            : "Tagihan ini tanpa Barang Masuk, jadi stok tidak disentuh — isi nominalnya. Nilai itu mengurangi sisa utang tagihan ini; kalau tagihan sudah lunas atau nilainya melebihi sisa utang, kelebihannya jadi saldo kita di supplier."}
         </p>
       </div>
 
@@ -371,22 +375,26 @@ export default function ApBillReturPage() {
 
             {goodsReceipt && (
               <div className="mt-4 flex flex-col gap-2">
-                <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+                <div className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 text-sm font-medium text-slate-500">
                   <span>Item Diterima (sisa bisa diklaim)</span>
-                  <span>Qty Retur</span>
+                  <span>Qty Kurang / Dikembalikan per Satuan</span>
                 </div>
                 {returLines.map((line) => (
-                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                    <span className="flex items-center text-sm text-slate-700">
-                      {line.name} ({line.qty_available} {line.uom})
-                    </span>
-                    <Input
-                      type="number"
-                      min="0"
-                      max={line.qty_available}
-                      placeholder="0"
-                      value={line.qty_returned}
-                      onChange={(e) => updateReturLine(line.item_id, e.target.value)}
+                  <div
+                    key={line.item_id}
+                    className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
+                  >
+                    <div className="flex flex-col justify-center">
+                      <span className="text-sm text-slate-700">{line.name}</span>
+                      <ItemUnitsHint baseUom={line.uom} units={itemUnits.filter((u) => u.item_id === line.item_id)} />
+                    </div>
+                    <QtyByUnitField
+                      itemId={line.item_id}
+                      baseUom={line.uom}
+                      units={itemUnits.filter((u) => u.item_id === line.item_id)}
+                      maxBaseQty={line.qty_available}
+                      baseQty={line.qty_returned}
+                      onChange={(q) => updateReturLine(line.item_id, q)}
                     />
                   </div>
                 ))}
@@ -400,7 +408,7 @@ export default function ApBillReturPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:self-start">
+        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
           <JournalPreviewPanel
             groups={[
               [
@@ -413,7 +421,7 @@ export default function ApBillReturPage() {
               ],
               returExcess > 0 && [
                 {
-                  label: "Akun Piutang Retur Supplier (debit) — retur ini ngelebihin outstanding",
+                  label: "Akun Piutang Retur Supplier (debit) — kelebihan jadi saldo kita di supplier",
                   resolved: defaultAccounts["ap.return_credit_asset"],
                   side: "debit",
                 },
@@ -423,15 +431,29 @@ export default function ApBillReturPage() {
           />
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="text-sm text-slate-500">Nominal Retur</p>
+            <p className="text-sm text-slate-500">Nilai Barang Kurang / Dikembalikan</p>
             <p className="mt-1 font-mono text-2xl text-black">Rp{returEffectiveAmount.toLocaleString("id-ID")}</p>
+            {returEffectiveAmount > 0 && (
+              <dl className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-sm">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Mengurangi utang</dt>
+                  <dd className="font-mono text-black">
+                    Rp{(returEffectiveAmount - returExcess).toLocaleString("id-ID")}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-slate-500">Jadi saldo di supplier</dt>
+                  <dd className="font-mono text-black">Rp{returExcess.toLocaleString("id-ID")}</dd>
+                </div>
+              </dl>
+            )}
           </div>
 
           {returError && <FormError>{returError}</FormError>}
 
           <div className="flex flex-col gap-2">
             <Button type="submit" disabled={returSubmitting}>
-              {returSubmitting ? "Menyimpan..." : "Simpan Retur"}
+              {returSubmitting ? "Menyimpan..." : "Simpan"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => router.back()}>
               Batal

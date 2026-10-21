@@ -23,6 +23,9 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { QtyByUnitField } from "@/components/ui/qty-by-unit-field";
+import { ItemUnitsHint } from "@/components/ui/item-units-hint";
+import { useItemUnitsForItems } from "@/lib/item-units/queries";
 import {
   fetchActiveItemDiscountRules,
   resolveLineItemDiscounts,
@@ -39,6 +42,8 @@ type FulfillLineInput = {
   item_id: string;
   category_id: string | null;
   item_label: string;
+  uom: string;
+  qty_remaining: number;
   qty_issued: string;
   unit_price: number;
 };
@@ -58,6 +63,7 @@ export default function FulfillSalesOrderPage() {
   const [description, setDescription] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [fulfillLines, setFulfillLines] = useState<FulfillLineInput[]>([]);
+  const { data: itemUnits = [] } = useItemUnitsForItems(fulfillLines.map((l) => l.item_id));
   const [discountRules, setDiscountRules] = useState<ItemDiscountRule[]>([]);
   const [bundleRules, setBundleRules] = useState<BundlePromoRule[]>([]);
   const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
@@ -91,7 +97,9 @@ export default function FulfillSalesOrderPage() {
             order_line_id: l.id,
             item_id: l.item_id,
             category_id: l.items.category_id,
-            item_label: `${l.items.name} (sisa ${remaining} ${l.items.uom})`,
+            item_label: l.items.name,
+            uom: l.items.uom,
+            qty_remaining: remaining,
             qty_issued: String(remaining),
             unit_price: l.unit_price,
           };
@@ -308,17 +316,21 @@ export default function FulfillSalesOrderPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <p className="mb-3 text-sm font-medium text-black">Item yang Dikirim</p>
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_10rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 text-sm font-medium text-slate-500">
                 <span>Item (sisa SO)</span>
-                <span>Qty Kirim</span>
+                <span>Qty Kirim per Satuan</span>
               </div>
               {fulfillLines.length === 0 && (
                 <p className="text-sm text-slate-400">Sales order ini sudah terkirim penuh.</p>
               )}
               {linesWithBundle.map((line, i) => (
-                <div key={line.order_line_id} className="grid grid-cols-[1fr_10rem] gap-2">
+                <div
+                  key={line.order_line_id}
+                  className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
+                >
                   <div className="flex flex-col justify-center">
                     <span className="text-sm text-slate-700">{line.item_label}</span>
+                    <ItemUnitsHint baseUom={line.uom} units={itemUnits.filter((u) => u.item_id === line.item_id)} />
                     {line.combinedDiscount > 0 && (
                       <span className="text-xs text-emerald-600">
                         {line.bundlePromoRuleId ? "Beli N Gratis X" : "Diskon otomatis"}: -Rp
@@ -326,11 +338,14 @@ export default function FulfillSalesOrderPage() {
                       </span>
                     )}
                   </div>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={line.qty_issued}
-                    onChange={(e) => updateFulfillQty(i, e.target.value)}
+                  <QtyByUnitField
+                    itemId={line.item_id}
+                    baseUom={line.uom}
+                    units={itemUnits.filter((u) => u.item_id === line.item_id)}
+                    maxBaseQty={line.qty_remaining}
+                    baseQty={line.qty_issued}
+                    initialBaseQty={String(line.qty_remaining)}
+                    onChange={(q) => updateFulfillQty(i, q)}
                   />
                 </div>
               ))}
@@ -358,7 +373,7 @@ export default function FulfillSalesOrderPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:self-start">
+        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
           <JournalPreviewPanel
             groups={[
               [

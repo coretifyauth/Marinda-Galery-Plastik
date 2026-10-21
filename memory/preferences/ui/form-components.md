@@ -72,6 +72,15 @@ Penjelasan tambahan non-error (contoh: "min. 6 karakter").
 text-sm text-slate-500
 ```
 
+### Input qty per barang — wajib multi-satuan
+Field qty untuk 1 item tertentu **jangan** pakai `<Input type="number">` polos — user dipaksa konversi satuan manual (mis. 1 dus + 3 pcs). Pakai komponen di `src/components/ui/`:
+- Barisnya dipilih lewat `ItemPicker` → `MultiUomQtyInput` (qty saja), `UomPriceQtyInput` (jual, qty+harga per satuan), atau `UnitCostQtyInput` (beli, qty+harga beli per satuan).
+- Barisnya sudah ditentukan dokumen asal (retur, tukar barang, pengiriman SO) dengan batas sisa → `QtyByUnitField` (bungkus `MultiUomQtyInput`, nampilin batas "Maks 1 dus, 4 pcs" dan peringatan kalau melebihi); ambil satuan lewat `useItemUnitsForItems(itemIds)` (`src/lib/item-units/queries.ts`).
+Parent dan RPC tetap menerima qty **satuan dasar** — konversi cuma di komponen.
+
+### Panel ringkasan kanan di form 2 kolom
+Kolom kanan (preview jurnal, total, tombol simpan) harus tetap kelihatan waktu form di kiri panjang: `lg:sticky lg:top-4 lg:self-start`. Kalau isi panel bisa lebih tinggi dari layar, tambah `lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto` supaya tombol simpan di bawah panel tetap terjangkau. Sticky cuma aktif di layar ≥ `lg` (1024px); di bawah itu kolom menumpuk ke bawah.
+
 ## Spacing
 
 - Antar field dalam 1 form: `gap-4`.

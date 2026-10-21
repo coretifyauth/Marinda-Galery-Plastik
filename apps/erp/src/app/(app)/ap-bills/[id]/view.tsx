@@ -271,8 +271,8 @@ export function ApBillDetailView({ id }: { id: string }) {
   const tabs: TabDef[] = [
     { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
-    { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
-    { key: "retur", label: "Retur — Kurangi Utang", badge: creditNotes.length },
+    { key: "dp", label: "Uang Muka Diterapkan", badge: depositApplications.length },
+    { key: "retur", label: "Barang Kurang / Retur", badge: creditNotes.length },
     // Tukar Barang wajib qty fisik + goods receipt (create_replacement nolak
     // kalau gak ada) -- gak ada gunanya ditampilin buat bill financial-only, submit-nya bakal
     // ketolak RPC. Lihat docs/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
@@ -316,8 +316,8 @@ export function ApBillDetailView({ id }: { id: string }) {
       rows: [
         { label: "Jumlah Bill", value: bill.amount.toLocaleString("id-ID") },
         { label: "Terbayar (Kas/Bank)", value: allocated.toLocaleString("id-ID") },
-        { label: "DP Diterapkan", value: depositApplied.toLocaleString("id-ID") },
-        { label: "Retur", value: returned.toLocaleString("id-ID") },
+        { label: "Uang Muka Diterapkan", value: depositApplied.toLocaleString("id-ID") },
+        { label: "Barang Kurang / Retur", value: returned.toLocaleString("id-ID") },
         { label: "Outstanding", value: outstanding.toLocaleString("id-ID") },
       ],
     },
@@ -452,7 +452,7 @@ export function ApBillDetailView({ id }: { id: string }) {
           {canApplyDeposit && (
             <div className="flex justify-end">
               <Button variant="toolbar" onClick={() => router.push(`/ap-bills/${id}/terapkan-dp`)}>
-                Terapkan DP
+                Terapkan Uang Muka
               </Button>
             </div>
           )}
@@ -461,7 +461,7 @@ export function ApBillDetailView({ id }: { id: string }) {
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
                   <th className="px-4 py-2">Rujukan Dokumen</th>
-                  <th className="px-4 py-2">Dari Deposit</th>
+                  <th className="px-4 py-2">Dari Uang Muka</th>
                   <th className="px-4 py-2 text-right">Nominal</th>
                 </tr>
               </thead>
@@ -476,7 +476,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                 {depositApplications.length === 0 && (
                   <tr>
                     <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                      Belum ada DP yang diterapkan.
+                      Belum ada uang muka yang diterapkan.
                     </td>
                   </tr>
                 )}
@@ -488,10 +488,15 @@ export function ApBillDetailView({ id }: { id: string }) {
 
       {activeTab === "retur" && (
         <div className="flex flex-col gap-3">
+          <p className="text-sm text-slate-500">
+            {outstanding <= 0.005
+              ? "Tagihan ini sudah lunas. Kalau ada barang yang kurang atau dikembalikan, nilainya jadi saldo kita di supplier (uang kita yang masih ada di supplier), bukan mengurangi utang."
+              : "Barang yang kurang atau dikembalikan ke supplier mengurangi utang tagihan ini. Kalau nilainya lebih besar dari sisa utang, kelebihannya jadi saldo kita di supplier."}
+          </p>
           {canRetur && (
             <div className="flex justify-end">
               <Button variant="toolbar" onClick={() => router.push(`/ap-bills/${id}/retur`)}>
-                Retur — Kurangi Utang
+                Barang Kurang / Dikembalikan
               </Button>
             </div>
           )}
@@ -554,14 +559,18 @@ export function ApBillDetailView({ id }: { id: string }) {
           {creditNotes.some((cn) => cn.ap_return_credits.length > 0) && (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 px-4 py-2">
-                <span className="text-sm font-medium text-black">Piutang Retur Supplier</span>
+                <span className="text-sm font-medium text-black">Saldo di Supplier (dari kelebihan retur)</span>
+                <p className="text-xs text-slate-500">
+                  Uang kita yang masih ada di supplier karena nilai retur melebihi sisa utang. Bisa diminta kembali
+                  tunai.
+                </p>
               </div>
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                    <th className="px-4 py-2">Source Retur</th>
+                    <th className="px-4 py-2">Dari Retur</th>
                     <th className="px-4 py-2 text-right">Jumlah Awal</th>
-                    <th className="px-4 py-2 text-right">Sudah Direfund</th>
+                    <th className="px-4 py-2 text-right">Sudah Dikembalikan</th>
                     <th className="px-4 py-2 text-right">Sisa</th>
                     <th className="px-4 py-2" />
                   </tr>
@@ -585,7 +594,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                                 variant="toolbar"
                                 onClick={() => router.push(`/ap-bills/${id}/refund-piutang-retur/${rc.id}`)}
                               >
-                                Refund Tunai
+                                Minta Kembali Tunai
                               </Button>
                             )}
                           </td>

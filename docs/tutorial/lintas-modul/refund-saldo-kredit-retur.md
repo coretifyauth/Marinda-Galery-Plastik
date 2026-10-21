@@ -18,10 +18,10 @@ Saat sebuah retur (dari pelanggan maupun ke supplier) nilainya melebihi sisa out
 3. Isi **Nominal Refund** (boleh sebagian dari sisa), **Tanggal**, pilih metode **Akun Kas/Bank**.
 4. Klik **Refund**.
 
-### Sisi AP — piutang retur ke supplier
+### Sisi AP — saldo kelebihan retur di supplier
 
-1. Buka detail bill (`/ap-bills/[id]`), buka tabel **Piutang Retur Supplier**.
-2. Cari baris retur dengan **Sisa** > 0, klik **Refund Tunai**.
+1. Buka detail bill (`/ap-bills/[id]`), tab **Barang Kurang / Retur**, lihat tabel **Saldo di Supplier (dari kelebihan retur)**. Atau buka detail supplier, tab **Saldo di Supplier**, lalu klik **Minta Kembali Tunai** di baris jenis *Kelebihan Retur*.
+2. Cari baris dengan **Sisa** > 0, klik **Minta Kembali Tunai**.
 3. Isi **Nominal Refund**, **Tanggal**, pilih metode **Akun Kas/Bank**.
 4. Klik **Refund**.
 
@@ -29,7 +29,7 @@ Saat sebuah retur (dari pelanggan maupun ke supplier) nilainya melebihi sisa out
 
 - **AR**: jurnal debit Akun Saldo Kredit Retur Customer, kredit Kas/Bank — kas keluar, kita mengembalikan uang ke pelanggan.
 - **AP**: jurnal debit Kas/Bank, kredit Akun Piutang Retur Supplier — kas masuk, supplier mengembalikan uang ke kita.
-- Refund boleh dilakukan sebagian, bertahap — kolom **Sisa** di tabel akan berkurang sesuai nominal yang sudah direfund, dan tombol **Refund Tunai** tetap tersedia selama masih ada sisa.
+- Refund boleh dilakukan sebagian, bertahap — kolom **Sisa** di tabel akan berkurang sesuai nominal yang sudah direfund, dan tombol **Refund Tunai** (AR) atau **Minta Kembali Tunai** (AP) tetap tersedia selama masih ada sisa.
 
 ## Kesalahan Umum
 

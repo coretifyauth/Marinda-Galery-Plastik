@@ -2,7 +2,7 @@
 
 ## Kapan Melakukan Ini
 
-Saat barang yang diterima dari supplier bermasalah (rusak/salah kirim/kualitas tidak sesuai). Ada **2 opsi berbeda** tergantung bagaimana penyelesaiannya disepakati dengan supplier — pilih salah satu, bukan campur keduanya untuk item yang sama.
+Saat barang yang diterima dari supplier bermasalah (rusak/salah kirim/kualitas tidak sesuai), atau barangnya **kurang dari yang tertagih** (mis. tagihan 100 pcs, yang datang cuma 70 pcs). Ada **2 opsi berbeda** tergantung bagaimana penyelesaiannya disepakati dengan supplier — pilih salah satu, bukan campur keduanya untuk item yang sama.
 
 Kalau supplier **menolak kompensasi sama sekali** (tidak mau mengurangi tagihan, tidak mau kirim pengganti), barang rusak itu dicatat lewat **Stock Opname** (penyesuaian stok fisik), bukan lewat halaman ini — lihat panduan Stock Opname.
 
@@ -14,15 +14,16 @@ Kalau supplier **menolak kompensasi sama sekali** (tidak mau mengurangi tagihan,
 
 ## Langkah-Langkah
 
-### Opsi A — Retur, Kurangi Utang
+### Opsi A — Barang Kurang / Dikembalikan (Kurangi Utang)
 
-Dipakai kalau supplier setuju mengurangi tagihan sebesar barang yang dikembalikan.
+Dipakai kalau supplier setuju mengurangi tagihan sebesar barang yang kurang atau dikembalikan. Kalau tagihannya **sudah lunas**, tidak ada utang yang dikurangi — nilainya jadi **saldo kita di supplier** (uang kita yang masih ada di supplier).
 
-1. Buka detail bill (`/ap-bills/[id]`), klik tombol **Retur**.
+1. Buka detail bill (`/ap-bills/[id]`), buka tab **Barang Kurang / Retur**, klik tombol **Barang Kurang / Dikembalikan**.
 2. Baca catatan: kalau bill ini dari Goods Receipt, isi qty per item — stok otomatis berkurang dan Utang Usaha dikurangi sebesar **cost fisik barang** (bukan angka yang diketik manual). Kalau bill ini bukan dari GRN, isi **Nominal Retur** manual.
 3. Kalau bill punya lebih dari 1 kategori debit, pilih **Akun Persediaan/Beban** yang mana yang diretur.
-4. Isi **Tanggal Retur**, lalu untuk bill dari GRN isi **Qty Retur** per item.
-5. Klik **Simpan Retur**.
+4. Isi **Tanggal Retur**, lalu untuk bill dari GRN isi qty per item **per satuan** (mis. 1 dus dan 3 pcs di kolom masing-masing). Sistem menjumlahkannya ke satuan dasar sendiri, dan batas yang masih boleh diklaim ditampilkan dalam satuan campuran ("Maks 1 dus, 4 pcs") — tidak perlu konversi manual.
+5. Cek kartu **Nilai Barang Kurang / Dikembalikan** di sisi kanan — di situ terlihat berapa yang **mengurangi utang** dan berapa yang **jadi saldo di supplier**.
+6. Klik **Simpan**.
 
 ### Opsi B — Tukar Barang
 
@@ -35,7 +36,7 @@ Dipakai kalau supplier mengganti barang rusak dengan barang baik, **tanpa mengub
 
 ## Hasil Akhir
 
-- **Opsi A**: jurnal debit Utang Usaha, kredit Akun Persediaan/Beban terkait. Kalau nominal retur melebihi sisa outstanding bill (bill sudah lunas), kelebihannya otomatis jadi **Piutang Retur Supplier** (bisa direfund tunai lewat tombol **Refund Tunai Piutang Retur Supplier**).
+- **Opsi A**: jurnal debit Utang Usaha, kredit Akun Persediaan/Beban terkait. Kalau nominal retur melebihi sisa outstanding bill (bill sudah lunas), kelebihannya otomatis jadi **saldo di supplier** (akun Piutang Retur Supplier) dan muncul di tabel **Saldo di Supplier (dari kelebihan retur)** di tab yang sama. Saldo itu bisa diminta kembali tunai lewat tombol **Minta Kembali Tunai**, dan terlihat juga di tab **Saldo di Supplier** pada detail supplier. Saat ini saldo kelebihan retur hanya bisa diminta kembali tunai, belum bisa dipakai memotong tagihan lain.
 - **Opsi B**: jurnal murni reklasifikasi Akun Persediaan (debit barang masuk, kredit barang keluar) — tidak menyentuh Utang Usaha.
 - Kedua opsi berbagi kuota qty yang sama per item (satu item yang sudah diklaim penuh lewat salah satu opsi tidak bisa diklaim lagi lewat opsi lain).
 

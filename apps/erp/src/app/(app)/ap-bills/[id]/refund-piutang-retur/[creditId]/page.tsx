@@ -144,7 +144,7 @@ export default function ApBillRefundPiutangReturPage() {
 
       <div>
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">Refund Tunai Piutang Retur Supplier</h1>
+          <h1 className="text-xl font-semibold text-black">Minta Kembali Tunai — Saldo di Supplier</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {billSourceRef}
           </span>

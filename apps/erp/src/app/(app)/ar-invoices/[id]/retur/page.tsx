@@ -15,6 +15,9 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { QtyByUnitField } from "@/components/ui/qty-by-unit-field";
+import { ItemUnitsHint } from "@/components/ui/item-units-hint";
+import { useItemUnitsForItems } from "@/lib/item-units/queries";
 
 type ReturnLineInput = {
   item_id: string;
@@ -39,6 +42,7 @@ export default function CreateArCreditNotePage() {
   const [returDate, setReturDate] = useState("");
   const [returAmount, setReturAmount] = useState("");
   const [returLines, setReturLines] = useState<ReturnLineInput[]>([]);
+  const { data: itemUnits = [] } = useItemUnitsForItems(returLines.map((l) => l.item_id));
   const [returError, setReturError] = useState<string | null>(null);
   const [returSubmitting, setReturSubmitting] = useState(false);
 
@@ -292,21 +296,26 @@ export default function CreateArCreditNotePage() {
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
               <p className="mb-3 text-sm font-medium text-black">Item Diretur</p>
               <div className="flex flex-col gap-2">
-                <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+                <div className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 text-sm font-medium text-slate-500">
                   <span>Item Terjual (qty asli)</span>
-                  <span>Qty Retur</span>
+                  <span>Qty Retur per Satuan</span>
                 </div>
                 {returLines.map((line) => (
-                  <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                    <span className="flex items-center text-sm text-slate-700">
-                      {line.name} ({line.qty_available} {line.uom})
-                    </span>
-                    <Input
-                      type="number"
-                      min="0"
-                      placeholder="0"
-                      value={line.qty_returned}
-                      onChange={(e) => updateReturLine(line.item_id, e.target.value)}
+                  <div
+                    key={line.item_id}
+                    className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
+                  >
+                    <div className="flex flex-col justify-center">
+                      <span className="text-sm text-slate-700">{line.name}</span>
+                      <ItemUnitsHint baseUom={line.uom} units={itemUnits.filter((u) => u.item_id === line.item_id)} />
+                    </div>
+                    <QtyByUnitField
+                      itemId={line.item_id}
+                      baseUom={line.uom}
+                      units={itemUnits.filter((u) => u.item_id === line.item_id)}
+                      maxBaseQty={line.qty_available}
+                      baseQty={line.qty_returned}
+                      onChange={(q) => updateReturLine(line.item_id, q)}
                     />
                   </div>
                 ))}
@@ -315,7 +324,7 @@ export default function CreateArCreditNotePage() {
           )}
         </div>
 
-        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:self-start">
+        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
           <JournalPreviewPanel
             groups={[
               [

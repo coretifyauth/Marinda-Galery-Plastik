@@ -16,6 +16,9 @@ import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { QtyByUnitField } from "@/components/ui/qty-by-unit-field";
+import { ItemUnitsHint } from "@/components/ui/item-units-hint";
+import { useItemUnitsForItems } from "@/lib/item-units/queries";
 
 type ReplaceLineInput = {
   item_id: string;
@@ -49,6 +52,7 @@ export default function ApBillTukarBarangPage() {
   const [replaceLines, setReplaceLines] = useState<ReplaceLineInput[]>([]);
   const [replaceError, setReplaceError] = useState<string | null>(null);
   const [replaceSubmitting, setReplaceSubmitting] = useState(false);
+  const { data: itemUnits = [] } = useItemUnitsForItems(replaceLines.map((l) => l.item_id));
 
   const load = useCallback(async () => {
     const { data: b, error: billErr } = await supabase
@@ -255,22 +259,26 @@ export default function ApBillTukarBarangPage() {
             </div>
 
             <div className="mt-4 flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_8rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 text-sm font-medium text-slate-500">
                 <span>Item Diterima (sisa bisa diklaim)</span>
-                <span>Qty Tukar</span>
+                <span>Qty Tukar per Satuan</span>
               </div>
               {replaceLines.map((line) => (
-                <div key={line.item_id} className="grid grid-cols-[1fr_8rem] gap-2">
-                  <span className="flex items-center text-sm text-slate-700">
-                    {line.name} ({line.qty_available} {line.uom})
-                  </span>
-                  <Input
-                    type="number"
-                    min="0"
-                    max={line.qty_available}
-                    placeholder="0"
-                    value={line.qty}
-                    onChange={(e) => updateReplaceLine(line.item_id, e.target.value)}
+                <div
+                  key={line.item_id}
+                  className="grid grid-cols-[1fr_minmax(12rem,auto)] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
+                >
+                  <div className="flex flex-col justify-center">
+                    <span className="text-sm text-slate-700">{line.name}</span>
+                    <ItemUnitsHint baseUom={line.uom} units={itemUnits.filter((u) => u.item_id === line.item_id)} />
+                  </div>
+                  <QtyByUnitField
+                    itemId={line.item_id}
+                    baseUom={line.uom}
+                    units={itemUnits.filter((u) => u.item_id === line.item_id)}
+                    maxBaseQty={line.qty_available}
+                    baseQty={line.qty}
+                    onChange={(q) => updateReplaceLine(line.item_id, q)}
                   />
                 </div>
               ))}
@@ -283,7 +291,7 @@ export default function ApBillTukarBarangPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:self-start">
+        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
           <JournalPreviewPanel
             groups={[
               [

@@ -164,7 +164,7 @@ export default function ApBillTerapkanDpPage() {
 
       <div>
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-black">Terapkan DP ke Bill Ini</h1>
+          <h1 className="text-xl font-semibold text-black">Terapkan Uang Muka ke Tagihan Ini</h1>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {bill.source_ref}
           </span>
@@ -272,7 +272,7 @@ export default function ApBillTerapkanDpPage() {
 
           <div className="flex flex-col gap-2">
             <Button type="submit" disabled={applySubmitting}>
-              {applySubmitting ? "Menyimpan..." : "Terapkan DP"}
+              {applySubmitting ? "Menyimpan..." : "Terapkan Uang Muka"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => router.back()}>
               Batal
