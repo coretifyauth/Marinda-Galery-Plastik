@@ -10,6 +10,7 @@ import { CancelledBadge, cancelledRowClass } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { Pagination } from "@/components/ui/pagination";
 import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
+import { ReceiptLinesTable } from "@/components/goods-receipts/receipt-lines-table";
 
 type PurchaseOrderOption = { id: string; source_ref: string };
 
@@ -206,13 +207,7 @@ export default function GoodsReceiptsPage() {
                 </td>
                 <td className="whitespace-nowrap px-4 py-2">{grn.note_date}</td>
                 <td className="px-4 py-2">
-                  <ul className="space-y-0.5">
-                    {grn.goods_note_lines.map((l) => (
-                      <li key={l.id}>
-                        {l.items.name} — {l.qty} {l.items.uom} @ {l.unit_cost.toLocaleString("id-ID")}
-                      </li>
-                    ))}
-                  </ul>
+                  <ReceiptLinesTable lines={grn.goods_note_lines} variant="compact" />
                 </td>
                 <td className="px-4 py-2">{grn.ap_bills.source_ref}</td>
                 <td className="px-4 py-2 text-right font-mono">

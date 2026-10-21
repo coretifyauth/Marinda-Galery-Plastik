@@ -47,6 +47,7 @@ export type GoodsReceiptNote = {
     item_id: string;
     qty: number;
     unit_cost: number;
-    items: { name: string; uom: string };
+    discount_amount: number;
+    items: { name: string; uom: string; item_units: { unit_label: string; conversion_factor: number }[] };
   }[];
 };

@@ -15,7 +15,7 @@ export type GoodsReceiptFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, created_by, orders(source_ref, counterparties(name)), ap_bills:transactions!inner(source_ref, amount, status, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))";
+  "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, created_by, orders(source_ref, counterparties(name)), ap_bills:transactions!inner(source_ref, amount, status, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, discount_amount, items(name, uom, item_units(unit_label, conversion_factor)))";
 
 export async function fetchGoodsReceipts(
   filters: GoodsReceiptFilters

@@ -12,6 +12,7 @@ import { BackLink } from "@/components/ui/back-link";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { ReceiptLinesTable } from "@/components/goods-receipts/receipt-lines-table";
 
 type JournalEntryDetail = {
   id: string;
@@ -36,7 +37,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     const { data: grnData, error: grnErr } = await supabase
       .from("goods_notes")
       .select(
-        "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, status, journal_entry_id, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, items(name, uom))"
+        "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, status, journal_entry_id, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, discount_amount, items(name, uom, item_units(unit_label, conversion_factor)))"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -205,33 +206,11 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
 
       {activeTab === "lines" && (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                <th className="px-4 py-2">Item</th>
-                <th className="px-4 py-2 text-right">Qty Diterima</th>
-                <th className="px-4 py-2 text-right">Harga/Unit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {grn.goods_note_lines.map((l) => (
-                <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-4 py-2 font-medium text-black">
-                    {l.items.name} ({l.items.uom})
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono">{l.qty}</td>
-                  <td className="px-4 py-2 text-right font-mono">{l.unit_cost.toLocaleString("id-ID")}</td>
-                </tr>
-              ))}
-              {grn.goods_note_lines.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                    Belum ada baris item.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <ReceiptLinesTable
+            lines={grn.goods_note_lines}
+            variant="detail"
+            billAmount={grn.ap_bills.amount}
+          />
         </div>
       )}
 
