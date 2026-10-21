@@ -163,7 +163,7 @@ Rata-Rata Tertimbang adalah satu-satunya metode costing yang dipakai sistem — 
 - Tiap barang maksimal punya 1 "satuan dasar" (faktor konversi wajib 1) — sisanya boleh berapa pun satuan tambahan.
 - Qty yang beneran dikonsumsi/ditambah ke stok SELALU di satuan dasar, gak peduli kombinasi/pilihan satuan apa yang dipakai user pas input.
 - Harga tiap satuan independen — gak wajib proporsional ke harga satuan dasar. Nominal invoice/pesanan **otomatis diturunkan** dari harga satuan yang dipilih di sisi jual; nominal PO/Terima Barang tetap ketik manual (gak ada harga beli referensi tersimpan).
-- Faktor konversi antar satuan 1 barang harus kelipatan bulat rapi dari satuan di bawahnya (mis. pcs=1, pack=12, box=144 — bukan box=100) — dijaga sistem otomatis, bukan cuma aturan penulisan data. Ini supaya layar posisi stok/kartu barang bisa menampilkan angka gabungan yang ringkas ("1 box, 2 pack, 4 pcs") tanpa nyisain pecahan gak presisi.
+- Faktor konversi tiap satuan harus bilangan bulat (gak boleh pecahan), tapi antar satuan 1 barang **tidak wajib kelipatan satu sama lain** — mis. lembar=1, bungkus=100, pack=1000, sak=19.200 boleh walau sak bukan kelipatan pack (ikut kemasan nyata di gudang). Layar posisi stok/kartu barang tetap menampilkan angka gabungan ("1 sak, 8 bungkus") dengan mengambil satuan terbesar dulu lalu sisanya ke satuan lebih kecil; hasilnya selalu tepat, hanya kombinasi satuannya bisa kurang ringkas kalau faktornya gak nested.
 
 **Skenario**
 - Barang dijual pakai satuan jual bukan satuan dasar (misal 1 lusin) — user pilih "lusin" di layar Sales Order/Goods Issue, harga otomatis muncul dari harga satuan itu (bisa beda dari harga satuan dasar × faktor konversi, biasanya diskon grosir), qty & harga dikonversi ke satuan dasar sebelum dicatat.

@@ -118,7 +118,7 @@ Barang bisa dijual ke customer dalam satuan yang beda dari satuan dasarnya — m
 
 | Kolom | Isinya | Catatan |
 |---|---|---|
-| `conversion_factor` | Berapa satuan dasar = 1 satuan jual ini | Baris satuan dasar wajib bernilai 1; antar satuan dalam 1 barang harus kelipatan bulat rapi (mis. pcs=1, pack=12, box=144 — bukan box=100), dijaga sistem otomatis biar tampilan stok gabungan ("1 box, 2 pack, 4 pcs") selalu presisi |
+| `conversion_factor` | Berapa satuan dasar = 1 satuan jual ini | Baris satuan dasar wajib bernilai 1; faktor tiap satuan wajib bilangan bulat, tapi antar satuan TIDAK wajib nested (mis. 1, 100, 1000, 19200 boleh — sak 19200 bukan kelipatan pack 1000). Tampilan stok gabungan ("1 sak, 8 bungkus") dihitung greedy terbesar→terkecil dengan sisa jatuh ke satuan dasar, jadi tetap presisi walau kombinasinya kurang ringkas |
 | `price` | Harga jual per satuan ini | Nullable, independen — bukan hasil kali otomatis dari harga satuan dasar (harga per lusin boleh didiskon grosir, gak wajib proporsional) |
 | `is_base` | Penanda satuan dasar | Maksimal 1 baris `is_base = true` per barang |
 | `is_default_sale` | Penanda satuan jual default (dipakai scan kode barang di POS) | Maksimal 1 baris `true` per barang; wajib punya `price`; kalau belum ada yang ditandai, aplikasi fallback ke satuan dasar. Lihat submodule Kode Scan Barang |
@@ -128,7 +128,7 @@ Barang bisa dijual ke customer dalam satuan yang beda dari satuan dasarnya — m
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Tambah/ubah/hapus satuan jual | — (CRUD langsung ke tabel, gak ada RPC) | Insert/update/delete baris `item_units` | RLS: `admin`; trigger `check_item_units_nested_conversion` menolak kombinasi faktor konversi yang gak nested rapi antar satuan barang yang sama, dengan row lock ke baris sibling biar aman dari race condition 2 transaksi bersamaan |
+| Tambah/ubah/hapus satuan jual | — (CRUD langsung ke tabel, gak ada RPC) | Insert/update/delete baris `item_units` | RLS: `admin`; check constraint `item_units_conversion_factor_whole` menolak faktor konversi pecahan (guard nested lama dicabut di migration `0055`) |
 | Konversi qty satuan jual → satuan dasar | — (murni logic UI, terjadi sebelum RPC dipanggil) | Qty yang sampai ke RPC transaksi (order, terima barang, jual barang, produksi, stock opname) selalu sudah dalam satuan dasar | Tidak ada perubahan di RPC transaksi manapun — konversi 100% terjadi di layer UI |
 
 **Aturan Bisnis → RPC**
@@ -137,7 +137,7 @@ Barang bisa dijual ke customer dalam satuan yang beda dari satuan dasarnya — m
 |---|---|
 | Tiap barang maksimal 1 satuan dasar (faktor konversi wajib 1) | Check constraint `(is_base and conversion_factor = 1) or not is_base` + partial unique index `item_units_one_base_per_item` |
 | Qty yang benar-benar dikonsumsi/ditambah ke stok selalu di satuan dasar | Semua RPC transaksi tetap menerima parameter qty di satuan dasar — konversi terjadi di UI sebelum RPC dipanggil, bukan server-side |
-| Faktor konversi antar satuan 1 barang harus kelipatan bulat rapi dari satuan di bawahnya | Trigger `check_item_units_nested_conversion` (`before insert or update of conversion_factor`), termasuk backfill check sekali jalan waktu fitur ini pertama ditambahkan yang menolak migration kalau data existing sudah gak nested |
+| Faktor konversi satuan harus bilangan bulat (gak wajib nested antar satuan) | Check constraint `item_units_conversion_factor_whole` (`conversion_factor = trunc(conversion_factor)`), migration [`0055_relax_item_unit_nested_guard.sql`](../../supabase/migrations/0055_relax_item_unit_nested_guard.sql) |
 | Harga tiap satuan independen, gak wajib proporsional ke harga satuan dasar | Kolom `price` diisi manual per baris, gak ada formula turunan otomatis |
 
 **Interaksi Antar Tabel**
