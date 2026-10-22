@@ -4,20 +4,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { createGoodsReceiptSchema } from "@/lib/goods-receipts/schema";
-import { generateDocumentNumber } from "@/lib/document-numbers";
-import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
-import {
-  resolveChargeLines,
-  resolveChargeLineLegs,
-  type ChargeLineInput,
-  type ChargeCategoryWithAccount,
-} from "@/lib/charge-lines/schema";
+import { receiptTotals } from "@/lib/goods-receipts/calc";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
@@ -26,11 +18,16 @@ import { LoadingScreen } from "@/components/ui/loading-screen";
 import { ItemPicker } from "@/components/pickers/item-picker";
 import { useItemCache } from "@/lib/pickers/use-item-cache";
 import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
+import {
+  ItemDiscountInput,
+  ReceiptDiscountSection,
+  ReceiptTotalsCard,
+} from "@/components/goods-receipts/receipt-form-parts";
 
-type LineInput = { item_id: string; qty_received: string; unit_cost: string };
+type LineInput = { item_id: string; qty_received: string; unit_cost: string; item_discount: string };
 
 function emptyLine(): LineInput {
-  return { item_id: "", qty_received: "", unit_cost: "" };
+  return { item_id: "", qty_received: "", unit_cost: "", item_discount: "" };
 }
 
 export default function NewGoodsReceiptPage() {
@@ -41,14 +38,9 @@ export default function NewGoodsReceiptPage() {
   const [supplierId, setSupplierId] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
   const [deliveryNoteRef, setDeliveryNoteRef] = useState("");
-  const [billDescription, setBillDescription] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
-  const [discountAmount, setDiscountAmount] = useState("");
-  const [extraLines, setExtraLines] = useState<ChargeLineInput[]>([]);
-  const [expenseCategories, setExpenseCategories] = useState<ChargeCategoryWithAccount[]>([]);
-  const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
-  const [applyTax, setApplyTax] = useState(false);
+  const [extraDiscount, setExtraDiscount] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -59,16 +51,7 @@ export default function NewGoodsReceiptPage() {
         router.replace("/login");
         return;
       }
-      await Promise.all([
-        fetchDefaultAccounts().then(setDefaultAccounts),
-        supabase
-          .from("charge_categories")
-          .select("id, name, account_id, archived_at, accounts(code, name)")
-          .eq("module", "ap")
-          .order("name")
-          .then(({ data }) => setExpenseCategories((data ?? []) as unknown as ChargeCategoryWithAccount[])),
-        fetchTaxSettings().then(setTaxSettings),
-      ]);
+      await fetchDefaultAccounts().then(setDefaultAccounts);
       if (active) setCheckingSession(false);
     });
     return () => {
@@ -95,33 +78,37 @@ export default function NewGoodsReceiptPage() {
     setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
   }
 
-  const subtotal = lines.reduce(
-    (sum, l) => sum + (parseFloat(l.qty_received) || 0) * (parseFloat(l.unit_cost) || 0),
-    0
+  const activeLines = lines.filter((l) => l.item_id && parseFloat(l.qty_received) > 0 && l.unit_cost !== "");
+  const totals = receiptTotals(
+    activeLines.map((l) => ({
+      qty: parseFloat(l.qty_received) || 0,
+      unitCost: parseFloat(l.unit_cost) || 0,
+      itemDiscount: parseFloat(l.item_discount) || 0,
+    })),
+    parseFloat(extraDiscount) || 0
   );
-  const totalDebit = subtotal - (parseFloat(discountAmount) || 0);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
-    const activeLines = lines.filter((l) => parseFloat(l.qty_received) > 0);
+    if (totals.problems.length > 0) {
+      setFormError(totals.problems[0]);
+      return;
+    }
 
     const parsed = createGoodsReceiptSchema.safeParse({
       supplier_id: supplierId,
       receipt_date: receiptDate,
       delivery_note_ref: deliveryNoteRef || undefined,
-      bill_description: billDescription || undefined,
-      debit_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
-      payable_account_id: defaultAccounts["ap.payable"]?.id ?? "",
+      inventory_account_id: defaultAccounts["inventory.raw_material"]?.id ?? "",
       lines: activeLines.map((l) => ({
         item_id: l.item_id,
         qty_received: l.qty_received,
         unit_cost: l.unit_cost,
+        discount_amount: l.item_discount || 0,
       })),
-      extra_debit_lines: resolveChargeLines(extraLines, expenseCategories),
-      apply_tax: applyTax,
-      discount_amount: discountAmount || 0,
+      discount_amount: extraDiscount || 0,
     });
     if (!parsed.success) {
       setFormError(parsed.error.issues[0]?.message ?? "Input gak valid");
@@ -129,25 +116,12 @@ export default function NewGoodsReceiptPage() {
     }
 
     setSubmitting(true);
-    let billSourceRef: string;
-    try {
-      billSourceRef = await generateDocumentNumber("ap_bills");
-    } catch (err) {
-      setSubmitting(false);
-      setFormError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
     const { error } = await supabase.rpc("create_goods_receipt", {
       p_order_id: null,
       p_receipt_date: parsed.data.receipt_date,
       p_delivery_note_ref: parsed.data.delivery_note_ref || null,
       p_lines: parsed.data.lines,
-      p_bill_description: parsed.data.bill_description || null,
-      p_bill_source_ref: billSourceRef,
-      p_debit_account_id: parsed.data.debit_account_id,
-      p_payable_account_id: parsed.data.payable_account_id,
-      p_extra_debit_lines: parsed.data.extra_debit_lines,
-      p_apply_tax: parsed.data.apply_tax,
+      p_inventory_account_id: parsed.data.inventory_account_id,
       p_supplier_id: parsed.data.supplier_id,
       p_discount_amount: parsed.data.discount_amount,
     });
@@ -168,10 +142,12 @@ export default function NewGoodsReceiptPage() {
       <BackLink href="/goods-receipts" label="Kembali ke Barang Masuk" />
 
       <div>
-        <h1 className="text-xl font-semibold text-black">Terima Barang Langsung</h1>
+        <h1 className="text-xl font-semibold text-black">Catat Barang Masuk</h1>
         <p className="text-sm text-slate-500">
-          Barang Masuk + Tagihan tanpa Purchase Order — buat pembelian dadakan/tanpa pesanan sebelumnya.
-          Kalau barang ini dipesan lewat PO, terima dari halaman detail PO-nya.
+          Catat barang yang diterima dari supplier, tanpa menunggu nota. Tagihannya dibuat terpisah dari menu
+          Tagihan begitu nota datang — pilih barang masuk ini di sana. Harga di sini boleh perkiraan (atau 0 kalau
+          belum tahu) dan bisa direvisi selama belum ditagih. Kalau barang ini dipesan lewat PO, terima dari halaman
+          detail PO-nya.
         </p>
       </div>
 
@@ -201,17 +177,12 @@ export default function NewGoodsReceiptPage() {
                   onChange={(e) => setDeliveryNoteRef(e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="bill_description">Deskripsi Tagihan</Label>
-                <Input
-                  id="bill_description"
-                  placeholder="mis. Terima tepung dari Toko Tepung Makmur"
-                  value={billDescription}
-                  onChange={(e) => setBillDescription(e.target.value)}
-                />
-              </div>
               <LockedAccountField htmlFor="debit_account" resolved={defaultAccounts["inventory.raw_material"]} />
-              <LockedAccountField htmlFor="payable_account" resolved={defaultAccounts["ap.payable"]} />
+              <LockedAccountField
+                htmlFor="grni_account"
+                label="Akun Barang Diterima Belum Ditagih (kredit)"
+                resolved={defaultAccounts["inventory.goods_received_not_invoiced"]}
+              />
             </div>
           </div>
 
@@ -220,26 +191,36 @@ export default function NewGoodsReceiptPage() {
             <div className="flex flex-col gap-2">
               <div className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
                 <span>Item</span>
-                <span>Qty, Satuan & Harga Beli</span>
+                <span>Qty, Satuan & Harga Perkiraan</span>
                 <span />
               </div>
               {lines.map((line, i) => {
                 const selectedItem = items.find((it) => it.id === line.item_id);
                 const unitsForItem = itemUnits.filter((u) => u.item_id === line.item_id);
                 return (
-                  <div key={i} className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2">
+                  <div
+                    key={i}
+                    className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
+                  >
                     <ItemPicker
                       value={line.item_id}
-                      onChange={(id) => updateLine(i, { item_id: id, qty_received: "", unit_cost: "" })}
+                      onChange={(id) => updateLine(i, { item_id: id, qty_received: "", unit_cost: "", item_discount: "" })}
                       onResolve={remember}
                     />
                     {line.item_id ? (
-                      <UnitCostQtyInput
-                        key={line.item_id}
-                        units={unitsForItem}
-                        baseUom={selectedItem?.uom ?? ""}
-                        onChange={(change) => updateLineQtyCost(i, change)}
-                      />
+                      <div className="flex flex-col gap-2">
+                        <UnitCostQtyInput
+                          key={line.item_id}
+                          units={unitsForItem}
+                          baseUom={selectedItem?.uom ?? ""}
+                          allowZeroCost
+                          onChange={(change) => updateLineQtyCost(i, change)}
+                        />
+                        <ItemDiscountInput
+                          value={line.item_discount}
+                          onChange={(v) => updateLine(i, { item_discount: v })}
+                        />
+                      </div>
                     ) : (
                       <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
                     )}
@@ -261,82 +242,39 @@ export default function NewGoodsReceiptPage() {
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="discount_amount">Diskon Pembelian (opsional — nominal Rupiah)</Label>
-              <Input
-                id="discount_amount"
-                type="number"
-                min="0"
-                step="any"
-                placeholder="mis. 50000"
-                value={discountAmount}
-                onChange={(e) => setDiscountAmount(e.target.value)}
-              />
-              <p className="text-xs text-slate-500">
-                Potongan yang disepakati sama supplier saat penerimaan ini (trade discount) — langsung
-                mengurangi nilai Utang Usaha, gak ada jurnal terpisah.
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <ChargeLinesEditor
-              label="Kategori Debit Tambahan (opsional — mis. ongkir supplier)"
-              lines={extraLines}
-              chargeTypes={expenseCategories}
-              onChange={setExtraLines}
-            />
-
-            {taxSettings?.is_active && (
-              <label className="mt-4 flex w-fit items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={applyTax} onChange={(e) => setApplyTax(e.target.checked)} />
-                Kena PPN Masukan ({taxSettings.ppn_rate}%, dihitung otomatis dari subtotal)
-              </label>
-            )}
-          </div>
+          <ReceiptDiscountSection totals={totals} extraDiscount={extraDiscount} onExtraChange={setExtraDiscount} />
         </div>
 
-        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:self-start">
+        <div className="flex flex-col gap-4 lg:sticky lg:top-4 lg:col-span-1 lg:max-h-[calc(100vh-2rem)] lg:self-start lg:overflow-y-auto">
           <JournalPreviewPanel
             groups={[
-              [
+              totals.total > 0 && [
                 {
                   label: "Akun Persediaan (debit)",
                   resolved: defaultAccounts["inventory.raw_material"],
                   side: "debit",
                 },
-                ...resolveChargeLineLegs(extraLines, expenseCategories, "debit"),
-                { label: "Akun Utang Usaha (kredit)", resolved: defaultAccounts["ap.payable"], side: "credit" },
-                applyTax && {
-                  label: "Akun PPN Masukan (debit)",
-                  resolved: resolvedPpnMasukan(taxSettings),
-                  side: "debit",
+                {
+                  label: "Akun Barang Diterima Belum Ditagih (kredit)",
+                  resolved: defaultAccounts["inventory.goods_received_not_invoiced"],
+                  side: "credit",
                 },
               ],
             ]}
           />
+          {totals.total <= 0 && (
+            <p className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-500">
+              Nilai barang masuk 0, jadi belum ada jurnal. Stok fisik tetap bertambah.
+            </p>
+          )}
 
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex items-center justify-between text-sm text-slate-500">
-              <span>Subtotal</span>
-              <span className="font-mono">Rp{subtotal.toLocaleString("id-ID")}</span>
-            </div>
-            {Number(discountAmount) > 0 && (
-              <div className="flex items-center justify-between text-sm text-emerald-600">
-                <span>Diskon</span>
-                <span className="font-mono">-Rp{Number(discountAmount).toLocaleString("id-ID")}</span>
-              </div>
-            )}
-            <p className="mt-2 text-sm text-slate-500">Nilai Tagihan</p>
-            <p className="mt-1 font-mono text-2xl text-black">Rp{totalDebit.toLocaleString("id-ID")}</p>
-          </div>
+          <ReceiptTotalsCard totals={totals} />
 
           {formError && <FormError>{formError}</FormError>}
 
           <div className="flex flex-col gap-2">
             <Button type="submit" disabled={submitting}>
-              {submitting ? "Menyimpan..." : "Simpan Penerimaan"}
+              {submitting ? "Menyimpan..." : "Simpan Barang Masuk"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => router.back()}>
               Batal

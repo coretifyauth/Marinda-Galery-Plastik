@@ -132,9 +132,14 @@ export default function ApBillsPage() {
               Muat Ulang
             </Button>
             {canWrite && (
-              <Button variant="toolbar-primary" onClick={() => router.push("/ap-bills/new")}>
-                + Tambah
-              </Button>
+              <>
+                <Button variant="toolbar" onClick={() => router.push("/ap-bills/from-goods-receipts")}>
+                  + Dari Barang Masuk
+                </Button>
+                <Button variant="toolbar-primary" onClick={() => router.push("/ap-bills/new")}>
+                  + Tagihan Langsung
+                </Button>
+              </>
             )}
           </div>
         </div>

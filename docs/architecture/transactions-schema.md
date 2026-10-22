@@ -128,7 +128,7 @@ Gak ada tabel baru — bagian ini menjelaskan bagaimana kolom turunan `transacti
 
 | Tabel A | Relasi | Tabel B |
 |---|---|---|
-| `recompute_transaction_status` | dipicu oleh insert di | `payments`, `returns`, `deposit_applications`, `goods_notes`, `goods_note_lines` (`replacements` TIDAK memicu ini — ganti/tukar barang gak pernah menyentuh status/outstanding transaksi asalnya sama sekali, lihat `replacements-schema.md`) |
+| `recompute_transaction_status` | dipicu oleh insert di (**rencana:** untuk INBOUND, pemicu dan klasifikasi asal pindah ke `goods_note_billings` — lihat `goods-notes-schema.md` section "Barang Masuk Belum Ditagih (rencana)") | `payments`, `returns`, `deposit_applications`, `goods_notes`, `goods_note_lines` (`replacements` TIDAK memicu ini — ganti/tukar barang gak pernah menyentuh status/outstanding transaksi asalnya sama sekali, lihat `replacements-schema.md`) |
 | `ar_invoice_remaining`/`ap_bill_remaining` | membaca | `transactions`, `payments`, `returns`, `deposit_applications`, `return_credits` |
 
 ## Tampilan Terpisah untuk Piutang & Utang

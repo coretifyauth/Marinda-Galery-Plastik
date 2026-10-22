@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import { fetchGoodsReceiptForBill } from "@/lib/goods-receipts/queries";
 import { billStatus, type ApBill } from "@/lib/ap-bills/schema";
 import { createApCreditNoteSchema, type GoodsReceiptForBill } from "@/lib/ap-credit-notes/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
@@ -106,12 +107,7 @@ export default function ApBillReturPage() {
         .select("id, replacement_lines(item_id, qty_replaced)")
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND"),
-      supabase
-        .from("goods_notes")
-        .select("id, goods_note_lines(item_id, qty, unit_cost, items(name, uom))")
-        .eq("transaction_id", id)
-        .eq("type", "INBOUND")
-        .maybeSingle(),
+      fetchGoodsReceiptForBill(id).then((grn) => ({ data: grn })),
     ]);
 
     setDefaultAccounts(defaultAccountsMap);

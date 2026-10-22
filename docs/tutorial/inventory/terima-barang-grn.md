@@ -1,39 +1,52 @@
-# Terima Barang dari Supplier (Goods Receipt)
+# Catat Barang Masuk dari Supplier (Belum Ditagih)
 
 ## Kapan Melakukan Ini
 
-Saat barang pesanan dari Purchase Order benar-benar sampai (fisik diterima di gudang) — baik diterima penuh sekaligus atau bertahap (partial). Langkah ini sekaligus **otomatis membuat AP Bill**, jadi tidak perlu buat bill terpisah untuk penerimaan yang berasal dari PO.
+Saat barang dari supplier sampai di gudang — **tanpa menunggu nota**. Barang masuk dicatat dulu (stok langsung bertambah dan barang bisa dijual), tagihannya dibuat belakangan setelah nota datang lewat [buat-bill-dari-barang-masuk.md](../accounts-payable/buat-bill-dari-barang-masuk.md). Barang masuk **tidak** lagi otomatis membuat tagihan.
+
+Ada dua cara mencatatnya: **langsung** (tanpa Purchase Order) atau **dari PO**.
 
 ## Prasyarat
 
 - Login dengan role **admin** atau **accountant**.
-- PO-nya sudah ada dan belum diterima penuh (status bukan `FULLY_RECEIVED`/`CANCELLED`) — kalau belum ada PO-nya, buat dulu lewat [buat-purchase-order.md](buat-purchase-order.md).
-- Surat jalan fisik dari supplier ada di tangan (untuk diisi ke field No. Surat Jalan).
+- Supplier sudah ada (kalau belum, lihat [tambah-supplier-baru.md](../accounts-payable/tambah-supplier-baru.md)).
+- Untuk cara dari PO: PO-nya sudah ada dan belum diterima penuh — lihat [buat-purchase-order.md](buat-purchase-order.md).
+- Surat jalan fisik dari supplier ada di tangan (untuk field No. Surat Jalan).
+- Akun **Barang Diterima Belum Ditagih** sudah terpasang di Pengaturan > Default Akun (dibuat otomatis oleh sistem).
 
 ## Langkah-Langkah
 
-1. Buka menu **Goods Receipts** (`/goods-receipts`).
-2. Klik tombol **+ New**. Modal **Terima Barang + Bikin Bill** terbuka.
-3. Pilih **Purchase Order** dari dropdown (hanya PO yang masih ada sisa qty yang muncul). Begitu dipilih, baris item dari PO itu otomatis terisi.
-4. Isi field:
-   - **Tanggal Terima** — tanggal barang fisik diterima.
-   - **No. Surat Jalan** — nomor dari surat jalan fisik supplier.
-   - **Deskripsi Bill** — keterangan untuk AP Bill yang akan otomatis terbentuk.
-5. Untuk tiap baris item yang muncul, field **Qty, Satuan & Harga Riil** sudah terisi default sesuai sisa PO — **ubah kalau qty atau harga yang benar-benar diterima beda dari yang dipesan** (mis. barang datang kurang, atau harga riil di surat jalan beda dari estimasi PO). Kalau ada item yang belum datang sama sekali di pengiriman ini, kosongkan qty-nya (biarkan 0) supaya sisanya tetap tercatat "belum diterima" untuk GRN berikutnya.
-6. (Opsional) **Kategori Debit Tambahan** — tambahkan kalau ada biaya lain yang menyertai penerimaan ini (mis. ongkir).
-7. (Opsional, kalau PPN aktif) Centang **Kena PPN Masukan**.
-8. Klik **Simpan Penerimaan**.
+### A. Langsung, tanpa PO
+
+1. Buka menu **Barang Masuk** (`/goods-receipts`), klik **+ Tambah**.
+2. Pilih **Supplier**, isi **Tanggal Terima** dan **No. Surat Jalan**.
+3. Untuk tiap barang: pilih item, lalu isi **qty per satuan** (mis. 3 dus), **harga perkiraan**, dan — kalau ada — **Diskon item** (Rupiah) di baris itu.
+   - Kalau harga **belum diketahui**, isi **0**. Barangnya tetap masuk stok, tapi belum bisa dijual dan belum bisa ditagih sampai diberi harga lewat revisi.
+4. (Opsional) **Diskon tambahan dokumen** — di atas diskon item. Total diskon dokumen = jumlah diskon item (otomatis, tidak bisa lebih kecil) + diskon tambahan.
+5. Cek kartu **Nilai Barang Masuk** di kanan, lalu klik **Simpan Barang Masuk**.
+
+### B. Dari Purchase Order
+
+1. Buka detail PO, klik **Terima Barang** (`/purchase-orders/[id]/receive`).
+2. Qty dan harga terisi dari sisa PO — ubah kalau yang benar-benar datang beda. Item yang belum datang: kosongkan qty-nya supaya sisanya tetap "belum diterima".
+3. Isi **Tanggal Terima**, **No. Surat Jalan**, diskon (kalau ada), lalu **Simpan Barang Masuk**.
 
 ## Hasil Akhir
 
-- Stok item yang diterima langsung bertambah (Weighted Average cost dihitung ulang otomatis kalau harga riil beda dari harga sebelumnya).
-- **AP Bill baru otomatis terbentuk** — bisa dicek langsung di kolom **Bill** pada baris Goods Receipt ini, atau lewat menu AP Bills (ditandai tipe **Dari GRN**).
-- Jurnal otomatis terbentuk: debit Akun Persediaan (+ biaya tambahan/PPN kalau diisi), kredit Akun Utang Usaha.
-- Status PO terkait berubah jadi **PARTIALLY_RECEIVED** (kalau masih ada sisa qty belum diterima) atau **FULLY_RECEIVED** (kalau semua qty sudah diterima).
-- Bill yang otomatis terbentuk ini bisa langsung dibayar dengan langkah yang sama seperti [bayar-bill-ap.md](../accounts-payable/bayar-bill-ap.md).
+- Stok bertambah, tapi **harga rata-rata item belum berubah** — harga rata-rata baru dihitung saat tagihan dibuat. Selama itu barang dijual dengan harga rata-rata terakhir.
+- Jurnal: **Debit Persediaan, Kredit Barang Diterima Belum Ditagih** (bukan Utang Usaha — notanya belum ada). Barang berharga 0 tidak punya jurnal.
+- Di daftar Barang Masuk, barisnya **merah dengan penanda "Belum tertagih"** dan umurnya (jumlah hari). Barang berharga 0 diberi penanda **Harga 0**.
+- Status PO terkait berubah jadi **PARTIALLY_RECEIVED** atau **FULLY_RECEIVED**.
+
+## Mengubah atau Membatalkan (selama belum ditagih)
+
+- **Revisi harga / diskon / nomor surat jalan:** buka detail barang masuk, klik **Revisi Harga / Diskon**. Jurnal lama dibalik (bertanggal hari revisi) lalu dibuat jurnal baru. Item dan qty **tidak bisa** diubah. Setelah ditagih, barang masuk terkunci. Riwayat revisi ada di tab **Riwayat Revisi**.
+- **Salah item atau qty:** klik **Batalkan Barang Masuk**, lalu catat ulang. Pembatalan ditolak kalau sebagian qty-nya sudah terjual lebih dulu.
+- **Nota datang dengan harga beda:** revisi harga barang masuknya ke harga nota **sebelum** membuat tagihan.
 
 ## Kesalahan Umum
 
-- **Membuat AP Bill manual terpisah untuk penerimaan yang sudah lewat GRN** — jangan, itu duplikat. Bill dari GRN sudah otomatis terbentuk di langkah ini.
-- **Tidak mengubah qty/harga default padahal barang yang datang beda dari PO** — field ini default mengikuti sisa PO, tapi harus disesuaikan manual kalau kenyataan fisiknya beda (barang kurang, harga beda). Kalau dibiarkan default padahal salah, stok dan Utang Usaha yang tercatat jadi tidak sesuai kenyataan.
-- **Lupa PO yang sudah FULLY_RECEIVED tidak akan muncul lagi di dropdown** — kalau ternyata masih ada susulan barang dari PO yang sama, PO itu perlu tetap ada sisa qty; kalau statusnya sudah penuh, susulan barang harus dicatat lewat PO baru.
+- **Mengira barang masuk otomatis membuat tagihan** — tidak lagi. Buat tagihannya dari menu Tagihan setelah nota datang.
+- **Mengisi harga 0 lalu heran barangnya tidak bisa dijual di kasir** — itu disengaja: biaya pokoknya belum diketahui. Revisi harganya, lalu tagih.
+- **Membiarkan barang masuk berstatus "Belum tertagih" berminggu-minggu** — saldo akun Barang Diterima Belum Ditagih ikut menggantung. Cocokkan dengan daftar barang masuk yang merah.
+- **Mencoba merevisi barang masuk yang sudah ditagih** — ditolak. Pembetulannya lewat retur atau, kalau tagihannya belum dibayar, batalkan tagihan.

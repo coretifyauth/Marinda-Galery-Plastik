@@ -3,7 +3,13 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsReceipts } from "@/lib/goods-receipts/queries";
+import {
+  DEFAULT_PAGE_SIZE,
+  PAGE_SIZE_OPTIONS,
+  useGoodsReceipts,
+  type GoodsReceiptStatusFilter,
+} from "@/lib/goods-receipts/queries";
+import { hasZeroValueLine, receiptNumber } from "@/lib/goods-receipts/types";
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, cancelledRowClass } from "@/components/ui/cancelled";
@@ -27,7 +33,7 @@ export default function GoodsReceiptsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [purchaseOrderFilter, setPurchaseOrderFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"aktif" | "" | "dibatalkan">("aktif");
+  const [statusFilter, setStatusFilter] = useState<GoodsReceiptStatusFilter>("aktif");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
@@ -122,16 +128,18 @@ export default function GoodsReceiptsPage() {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="px-4 py-2">Nomor</th>
               <th className="px-4 py-2">Supplier</th>
               <th className="px-4 py-2">PO</th>
               <th className="px-4 py-2">Tanggal</th>
               <th className="px-4 py-2">Barang Diterima</th>
-              <th className="px-4 py-2">Tagihan</th>
-              <th className="px-4 py-2 text-right">Jumlah</th>
+              <th className="px-4 py-2 text-right">Nilai</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Tagihan</th>
               <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
+              <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5">
                 <select
@@ -168,65 +176,81 @@ export default function GoodsReceiptsPage() {
               </th>
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
-              <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5">
                 <select
                   aria-label="Filter status"
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as "aktif" | "" | "dibatalkan")}
+                  onChange={(e) => setStatusFilter(e.target.value as GoodsReceiptStatusFilter)}
                   className={compactFilterInputClass}
                 >
                   <option value="aktif">Aktif (tanpa dibatalkan)</option>
+                  <option value="belum_tertagih">Belum tertagih</option>
+                  <option value="tertagih">Tertagih</option>
                   <option value="">Semua status</option>
                   <option value="dibatalkan">Dibatalkan</option>
                 </select>
               </th>
               <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
             {receipts.map((grn) => {
-              const cancelled = grn.ap_bills.status === "dibatalkan";
+              const cancelled = grn.billing_status === "dibatalkan";
+              const unbilled = grn.billing_status === "belum_tertagih";
               return (
-              <tr
-                key={grn.id}
-                className={`cursor-pointer border-b border-slate-100 align-top ${
-                  cancelled ? cancelledRowClass : "hover:bg-slate-50"
-                }`}
-                onClick={() => router.push(`/goods-receipts/${grn.id}`)}
-              >
-                <td className="px-4 py-2 font-medium text-black">
-                  {grn.orders?.counterparties.name ?? grn.ap_bills.counterparties.name}
-                </td>
-                <td className="px-4 py-2">
-                  {grn.orders ? (
-                    grn.orders.source_ref
-                  ) : (
-                    <span className="text-slate-400">— (langsung)</span>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-4 py-2">{grn.note_date}</td>
-                <td className="px-4 py-2">
-                  <ReceiptLinesTable lines={grn.goods_note_lines} variant="compact" />
-                </td>
-                <td className="px-4 py-2">{grn.ap_bills.source_ref}</td>
-                <td className="px-4 py-2 text-right font-mono">
-                  {grn.ap_bills.amount.toLocaleString("id-ID")}
-                </td>
-                <td className="px-4 py-2">
-                  {cancelled ? (
-                    <CancelledBadge />
-                  ) : (
-                    <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Normal</span>
-                  )}
-                </td>
-                <td className="px-4 py-2 text-slate-500">{(grn.created_by && userEmails[grn.created_by]) ?? "-"}</td>
-              </tr>
+                <tr
+                  key={grn.id}
+                  className={`cursor-pointer border-b border-slate-100 align-top ${
+                    cancelled ? cancelledRowClass : unbilled ? "bg-red-50/70 hover:bg-red-50" : "hover:bg-slate-50"
+                  }`}
+                  onClick={() => router.push(`/goods-receipts/${grn.id}`)}
+                >
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-slate-600">{receiptNumber(grn)}</td>
+                  <td className="px-4 py-2 font-medium text-black">{grn.supplier_name ?? "-"}</td>
+                  <td className="px-4 py-2">
+                    {grn.order_ref ?? <span className="text-slate-400">— (langsung)</span>}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2">
+                    {grn.note_date}
+                    {grn.delivery_note_ref && (
+                      <div className="text-xs text-slate-400">SJ: {grn.delivery_note_ref}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-2">
+                    <ReceiptLinesTable lines={grn.goods_note_lines} variant="compact" />
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{grn.total_value.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2">
+                    <div className="flex flex-col items-start gap-1">
+                      {cancelled ? (
+                        <CancelledBadge />
+                      ) : unbilled ? (
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                          Belum tertagih
+                          {grn.unbilled_age_days != null && ` · ${grn.unbilled_age_days} hari`}
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Tertagih</span>
+                      )}
+                      {!cancelled && hasZeroValueLine(grn) && (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">Harga 0</span>
+                      )}
+                      {grn.revision_no > 1 && (
+                        <span className="text-xs text-slate-400">revisi {grn.revision_no}</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-xs text-slate-600">
+                    {grn.billing_status === "tertagih" ? (grn.bill_ref ?? "-") : <span className="text-slate-300">—</span>}
+                  </td>
+                  <td className="px-4 py-2 text-slate-500">{(grn.created_by && userEmails[grn.created_by]) ?? "-"}</td>
+                </tr>
               );
             })}
             {receipts.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={9} className="px-4 py-6 text-center text-slate-400">
                   {receiptsQuery.isLoading ? <InlineSpinner /> : "Belum ada barang masuk."}
                 </td>
               </tr>

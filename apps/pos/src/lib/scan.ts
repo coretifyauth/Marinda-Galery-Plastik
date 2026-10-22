@@ -64,7 +64,13 @@ export function resolveScan(code: string, rows: ItemRow[]): ScanResult {
 }
 
 export function buildStockMap(rows: ItemRow[]): StockMap {
-  return new Map(rows.map((r) => [r.id, { onHand: r.inventory_balances?.qty_on_hand ?? 0, uom: r.uom }]));
+  // avg_cost 0 (harga pokok belum diketahui) -> belum bisa dijual, server menolaknya; dianggap stok 0 di sini.
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { onHand: r.inventory_balances?.avg_cost === 0 ? 0 : (r.inventory_balances?.qty_on_hand ?? 0), uom: r.uom },
+    ])
+  );
 }
 
 /** Total qty satuan dasar yang dipakai semua baris keranjang buat 1 barang (lintas satuan). */

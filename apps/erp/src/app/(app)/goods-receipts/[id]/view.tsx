@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import type { GoodsReceiptNote } from "@/lib/goods-receipts/schema";
+import { fetchLinesForNotes } from "@/lib/goods-receipts/queries";
+import { hasZeroValueLine, receiptNumber, type GoodsReceiptNote } from "@/lib/goods-receipts/types";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
@@ -22,11 +23,20 @@ type JournalEntryDetail = {
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
 };
 
+type RevisionRow = {
+  id: string;
+  revision_no: number;
+  entry_date: string;
+  delivery_note_ref: string | null;
+  created_at: string;
+};
+
 export function GoodsReceiptDetailView({ id }: { id: string }) {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
   const [grn, setGrn] = useState<GoodsReceiptNote | null>(null);
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
+  const [revisions, setRevisions] = useState<RevisionRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("lines");
   const [roles, setRoles] = useState<string[]>([]);
@@ -34,30 +44,68 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async () => {
-    const { data: grnData, error: grnErr } = await supabase
-      .from("goods_notes")
-      .select(
-        "id, order_id, transaction_id, delivery_note_ref, note_date, created_at, orders(source_ref, counterparties(name)), ap_bills:transactions(source_ref, amount, status, journal_entry_id, counterparties(name)), goods_note_lines(id, item_id, qty, unit_cost, discount_amount, items(name, uom, item_units(unit_label, conversion_factor)))"
-      )
+    const { data: noteData, error: noteErr } = await supabase
+      .from("goods_notes_with_billing_status")
+      .select("*")
       .eq("id", id)
-      .eq("type", "INBOUND")
       .single();
-    if (grnErr || !grnData) {
-      setLoadError(grnErr?.message ?? "Goods receipt gak ditemukan.");
+    if (noteErr || !noteData) {
+      setLoadError(noteErr?.message ?? "Barang masuk gak ditemukan.");
       return;
     }
-    const loaded = grnData as unknown as GoodsReceiptNote & { ap_bills: { journal_entry_id: string } };
-    setGrn(loaded);
+    const note = noteData as unknown as Omit<GoodsReceiptNote, "goods_note_lines">;
 
-    const { data: entries, error: entriesErr } = await supabase
-      .from("journal_entries")
-      .select(
-        "id, entry_date, description, source_ref, journal_lines(id, debit, credit, accounts(code, name))"
-      )
-      .eq("id", loaded.ap_bills.journal_entry_id)
-      .order("entry_date");
-    setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
-    setLoadError(entriesErr?.message ?? null);
+    const [lines, baseRes, revRes, cancelRes] = await Promise.all([
+      fetchLinesForNotes([id]),
+      supabase.from("goods_notes").select("journal_entry_id, transaction_id").eq("id", id).single(),
+      supabase
+        .from("goods_note_revisions")
+        .select("id, revision_no, entry_date, delivery_note_ref, reversal_journal_entry_id, journal_entry_id, created_at")
+        .eq("goods_note_id", id)
+        .order("revision_no"),
+      supabase.from("goods_note_cancellations").select("journal_entry_id").eq("goods_note_id", id).maybeSingle(),
+    ]);
+
+    setGrn({ ...note, goods_note_lines: lines.get(id) ?? [] });
+
+    const revs = (revRes.data ?? []) as unknown as (RevisionRow & {
+      reversal_journal_entry_id: string | null;
+      journal_entry_id: string | null;
+    })[];
+    setRevisions(revs);
+
+    // Jurnal terkait: jurnal barang masuk, jurnal+pembalik tiap revisi, pembalik pembatalan.
+    // Barang masuk lama (bundled): jurnalnya ada di tagihan bawaannya.
+    const journalIds = new Set<string>();
+    const base = baseRes.data as { journal_entry_id: string | null; transaction_id: string | null } | null;
+    if (base?.journal_entry_id) journalIds.add(base.journal_entry_id);
+    for (const r of revs) {
+      if (r.reversal_journal_entry_id) journalIds.add(r.reversal_journal_entry_id);
+      if (r.journal_entry_id) journalIds.add(r.journal_entry_id);
+    }
+    const cancelJournal = (cancelRes.data as { journal_entry_id: string | null } | null)?.journal_entry_id;
+    if (cancelJournal) journalIds.add(cancelJournal);
+    if (note.inbound_flow === "bundled" && base?.transaction_id) {
+      const { data: bill } = await supabase
+        .from("transactions")
+        .select("journal_entry_id")
+        .eq("id", base.transaction_id)
+        .single();
+      if (bill?.journal_entry_id) journalIds.add(bill.journal_entry_id as string);
+    }
+
+    if (journalIds.size > 0) {
+      const { data: entries, error: entriesErr } = await supabase
+        .from("journal_entries")
+        .select("id, entry_date, description, source_ref, journal_lines(id, debit, credit, accounts(code, name))")
+        .in("id", [...journalIds])
+        .order("entry_date");
+      setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
+      setLoadError(entriesErr?.message ?? null);
+    } else {
+      setJournalEntries([]);
+      setLoadError(null);
+    }
   }, [id]);
 
   useEffect(() => {
@@ -81,32 +129,37 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  // Barang masuk dan tagihannya dibuat 1 RPC, jadi dibatalkan juga lewat 1 RPC (cancel_ap_bill):
-  // jurnal dibalik + stok dikurangi lagi + qty PO dibebaskan.
+  // Barang masuk alur baru: dibatalkan sendiri (cancel_goods_receipt) selama belum ditagih.
+  // Barang masuk lama (bundled): dibatalkan lewat tagihan bawaannya (cancel_ap_bill), seperti sebelumnya.
   async function handleCancel() {
     if (!grn) return;
-    if (
-      !window.confirm(
-        `Batalkan barang masuk ${grn.ap_bills.source_ref}? Stok barang akan dikurangi lagi dan tagihan (Rp${grn.ap_bills.amount.toLocaleString("id-ID")}) ikut dibatalkan.`
-      )
-    )
-      return;
+    const deferred = grn.inbound_flow === "deferred";
+    const message = deferred
+      ? `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang dikurangi lagi dan jurnalnya dibalik.`
+      : `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang akan dikurangi lagi dan tagihan (Rp${(grn.bill_amount ?? 0).toLocaleString("id-ID")}) ikut dibatalkan.`;
+    if (!window.confirm(message)) return;
 
     setCancelError(null);
     setCancelling(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("journal_entries");
-    } catch (err) {
-      setCancelling(false);
-      setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
+    const today = new Date().toISOString().slice(0, 10);
+    let error: { message: string } | null;
+    if (deferred) {
+      ({ error } = await supabase.rpc("cancel_goods_receipt", { p_goods_note_id: grn.id, p_entry_date: today }));
+    } else {
+      let sourceRef: string;
+      try {
+        sourceRef = await generateDocumentNumber("journal_entries");
+      } catch (err) {
+        setCancelling(false);
+        setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
+        return;
+      }
+      ({ error } = await supabase.rpc("cancel_ap_bill", {
+        p_bill_id: grn.bill_id,
+        p_entry_date: today,
+        p_source_ref: sourceRef,
+      }));
     }
-    const { error } = await supabase.rpc("cancel_ap_bill", {
-      p_bill_id: grn.transaction_id,
-      p_entry_date: new Date().toISOString().slice(0, 10),
-      p_source_ref: sourceRef,
-    });
     setCancelling(false);
     if (error) {
       setCancelError(error.message);
@@ -120,11 +173,13 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   }
 
   if (!grn) {
-    return <FormError>{loadError ?? "Goods receipt gak ditemukan."}</FormError>;
+    return <FormError>{loadError ?? "Barang masuk gak ditemukan."}</FormError>;
   }
 
-  const isCancelled = grn.ap_bills.status === "dibatalkan";
-  const canCancel = !isCancelled && (roles.includes("admin") || roles.includes("accountant"));
+  const isCancelled = grn.billing_status === "dibatalkan";
+  const isUnbilled = grn.billing_status === "belum_tertagih";
+  const canWrite = roles.includes("admin") || roles.includes("accountant");
+  const canCancel = canWrite && !isCancelled && (grn.inbound_flow === "bundled" || isUnbilled);
 
   const detailGroups = [
     {
@@ -134,33 +189,34 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         { label: "No. Surat Jalan", value: grn.delivery_note_ref ?? "-" },
         {
           label: "Purchase Order",
-          value: grn.orders ? (
+          value: grn.order_ref ? (
             <button
               type="button"
               className="text-blue-600 hover:underline"
               onClick={() => router.push(`/purchase-orders/${grn.order_id}`)}
             >
-              {grn.orders.source_ref}
+              {grn.order_ref}
             </button>
           ) : (
             <span className="text-slate-400">— (langsung tanpa PO)</span>
           ),
         },
+        { label: "Supplier", value: grn.supplier_name ?? "-" },
+        { label: "Nilai Barang Masuk", value: `Rp${grn.total_value.toLocaleString("id-ID")}` },
         {
-          label: "Supplier",
-          value: grn.orders?.counterparties.name ?? grn.ap_bills.counterparties.name,
-        },
-        {
-          label: "Bill",
-          value: (
-            <button
-              type="button"
-              className="text-blue-600 hover:underline"
-              onClick={() => router.push(`/ap-bills/${grn.transaction_id}`)}
-            >
-              {grn.ap_bills.source_ref} — {grn.ap_bills.amount.toLocaleString("id-ID")}
-            </button>
-          ),
+          label: "Tagihan",
+          value:
+            grn.bill_id && grn.billing_status !== "belum_tertagih" ? (
+              <button
+                type="button"
+                className="text-blue-600 hover:underline"
+                onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}
+              >
+                {grn.bill_ref} — {(grn.bill_amount ?? 0).toLocaleString("id-ID")}
+              </button>
+            ) : (
+              <span className="text-slate-400">Belum ditagih</span>
+            ),
         },
       ],
     },
@@ -169,6 +225,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   const tabs: TabDef[] = [
     { key: "lines", label: "Item Diterima", badge: grn.goods_note_lines.length },
     { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
+    ...(revisions.length > 0 ? [{ key: "revisi", label: "Riwayat Revisi", badge: revisions.length }] : []),
   ];
 
   return (
@@ -177,24 +234,50 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-black">Detail Barang Masuk</h1>
-          <span
-            className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600"
-            title="GRN gak punya nomor dokumen sendiri -- ini nomor Tagihan yang dibuat bareng GRN ini"
-          >
-            {grn.ap_bills.source_ref}
+          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
+            {receiptNumber(grn)}
           </span>
           {isCancelled && <CancelledBadge />}
+          {isUnbilled && (
+            <span className="rounded-full bg-red-100 px-2.5 py-1 text-sm font-medium text-red-700">
+              Belum tertagih{grn.unbilled_age_days != null && ` · ${grn.unbilled_age_days} hari`}
+            </span>
+          )}
+          {grn.billing_status === "tertagih" && (
+            <span className="rounded-full bg-green-50 px-2.5 py-1 text-sm text-green-700">Tertagih</span>
+          )}
+          {!isCancelled && hasZeroValueLine(grn) && (
+            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-sm text-amber-700">Ada baris berharga 0</span>
+          )}
         </div>
-        {canCancel && (
-          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
-            {cancelling ? "Membatalkan..." : "Batalkan Barang Masuk"}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {canWrite && isUnbilled && grn.inbound_flow === "deferred" && (
+            <>
+              <Button variant="toolbar" onClick={() => router.push(`/goods-receipts/${id}/revisi`)}>
+                Revisi Harga / Diskon
+              </Button>
+              <Button
+                variant="toolbar-primary"
+                onClick={() =>
+                  router.push(`/ap-bills/from-goods-receipts?supplier=${grn.counterparty_id ?? ""}&note=${id}`)
+                }
+              >
+                Buat Tagihan
+              </Button>
+            </>
+          )}
+          {canCancel && (
+            <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? "Membatalkan..." : "Batalkan Barang Masuk"}
+            </Button>
+          )}
+        </div>
       </div>
 
       {isCancelled && (
         <CancelledBanner>
-          barang masuk ini tidak valid. Stok sudah dikurangi lagi dan tagihannya dibatalkan.
+          barang masuk ini tidak valid. Stok sudah dikurangi lagi
+          {grn.inbound_flow === "bundled" ? " dan tagihannya dibatalkan." : " dan jurnalnya dibalik."}
         </CancelledBanner>
       )}
       {loadError && <FormError>{loadError}</FormError>}
@@ -209,7 +292,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
           <ReceiptLinesTable
             lines={grn.goods_note_lines}
             variant="detail"
-            billAmount={grn.ap_bills.amount}
+            billAmount={grn.inbound_flow === "bundled" ? (grn.bill_amount ?? undefined) : undefined}
           />
         </div>
       )}
@@ -248,10 +331,38 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
               {journalEntries.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                    Belum ada jurnal.
+                    Belum ada jurnal{hasZeroValueLine(grn) ? " (nilai barang masuk 0, jurnal dibuat setelah diberi harga)" : ""}.
                   </td>
                 </tr>
               )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeTab === "revisi" && (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-4 py-2">Revisi</th>
+                <th className="px-4 py-2">Tanggal</th>
+                <th className="px-4 py-2">No. Surat Jalan</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-slate-100">
+                <td className="px-4 py-2">1 (asli)</td>
+                <td className="whitespace-nowrap px-4 py-2">{grn.note_date}</td>
+                <td className="px-4 py-2 text-slate-400">—</td>
+              </tr>
+              {revisions.map((r) => (
+                <tr key={r.id} className="border-b border-slate-100">
+                  <td className="px-4 py-2">{r.revision_no}</td>
+                  <td className="whitespace-nowrap px-4 py-2">{r.entry_date}</td>
+                  <td className="px-4 py-2">{r.delivery_note_ref ?? <span className="text-slate-400">—</span>}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

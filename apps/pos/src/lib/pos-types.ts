@@ -51,7 +51,9 @@ export type ItemRow = {
         is_default_sale?: boolean;
       }[]
     | null;
-  inventory_balances: { qty_on_hand: number } | null;
+  /** avg_cost = 0 berarti harga pokok belum diketahui (barang masuk belum ditagih) -- server menolak penjualannya.
+   * Opsional: cache offline lama belum punya field ini (dianggap sudah diketahui). */
+  inventory_balances: { qty_on_hand: number; avg_cost?: number } | null;
 };
 
 // Riwayat singkat buat panel "Transaksi Terakhir" + cetak ulang/kirim WA -- goods_issue_lines

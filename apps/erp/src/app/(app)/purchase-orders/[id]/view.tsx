@@ -45,7 +45,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
     const { data: poData, error: poErr } = await supabase
       .from("orders")
       .select(
-        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty, goods_notes(transactions(status))))"
+        "id, counterparty_id, order_date, expected_date, source_ref, created_at, cancelled_at, counterparties(name), order_lines(id, item_id, qty_ordered, unit_price, items(name, uom), goods_note_lines(qty, goods_notes(transactions(status), goods_note_cancellations(goods_note_id))))"
       )
       .eq("id", id)
       .eq("direction", "PURCHASE")

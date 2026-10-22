@@ -2,7 +2,7 @@
 
 ## Kapan Melakukan Ini
 
-Saat mencatat tagihan dari supplier yang **tidak** berasal dari Goods Receipt (GRN) — misal beban jasa, sewa, atau tagihan lain di luar alur pembelian barang. Kalau bill-nya berasal dari penerimaan barang lewat Purchase Order, bill-nya terbentuk otomatis dari alur GRN, bukan dari form ini.
+Saat mencatat **Tagihan Langsung** dari supplier — tagihan yang **tidak** berasal dari barang masuk, misal beban jasa, sewa, atau tagihan lain di luar alur pembelian barang. Kalau tagihannya untuk barang yang sudah dicatat masuk, pakai [buat-bill-dari-barang-masuk.md](buat-bill-dari-barang-masuk.md) (menu Tagihan > **+ Dari Barang Masuk**) — barang masuk tidak lagi otomatis membuat tagihan.
 
 ## Prasyarat
 
@@ -14,7 +14,7 @@ Saat mencatat tagihan dari supplier yang **tidak** berasal dari Goods Receipt (G
 ## Langkah-Langkah
 
 1. Buka menu **AP Bills** (`/ap-bills`).
-2. Klik tombol **+ New**. Modal **Tambah AP Bill** terbuka.
+2. Klik tombol **+ Tagihan Langsung**. Formulir **Tambah Tagihan** terbuka.
 3. Cek panel preview jurnal di atas form untuk lihat akun apa yang bakal kena debit/kredit.
 4. Isi field:
    - **Supplier** — pilih dari dropdown (menampilkan nama + termin, mis. "PT Plastindo Jaya (net-30)").
@@ -38,4 +38,4 @@ Saat mencatat tagihan dari supplier yang **tidak** berasal dari Goods Receipt (G
 
 - **Lupa isi Kategori Persediaan/Beban** — field ini wajib (beda dari AR invoice yang otomatis pakai akun pendapatan default); tanpa ini, bill tidak bisa disimpan.
 - **Menukar Nomor Nota Supplier dengan Source Ref internal** — dua-duanya field terpisah dan tidak saling menggantikan; Source Ref selalu format otomatis sistem, Nomor Nota Supplier adalah nomor asli dari kertas nota fisik.
-- **Menganggap form ini bisa dipakai untuk bill yang sudah lewat GRN** — itu duplikat, bill dari GRN sudah otomatis terbentuk di alur penerimaan barang.
+- **Memakai form ini untuk barang yang sudah dicatat masuk** — itu menghitung persediaan dua kali dan barang masuknya tetap menggantung "Belum tertagih". Pakai **+ Dari Barang Masuk**.

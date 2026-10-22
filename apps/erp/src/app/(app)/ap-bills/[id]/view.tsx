@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
+import { fetchGoodsReceiptForBill } from "@/lib/goods-receipts/queries";
 import { billStatus, type ApBill } from "@/lib/ap-bills/schema";
 import type { GoodsReceiptForBill } from "@/lib/ap-credit-notes/schema";
 import { depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
@@ -155,12 +156,7 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND")
         .order("replacement_date"),
-      supabase
-        .from("goods_notes")
-        .select("id, goods_note_lines(item_id, qty, unit_cost, items(name, uom))")
-        .eq("transaction_id", id)
-        .eq("type", "INBOUND")
-        .maybeSingle(),
+      fetchGoodsReceiptForBill(id).then((grn) => ({ data: grn })),
       supabase
         .from("deposit_applications")
         .select("id, amount, source_ref, journal_entry_id, ap_deposits:deposits(source_ref)")

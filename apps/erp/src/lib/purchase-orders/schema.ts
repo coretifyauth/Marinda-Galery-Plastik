@@ -15,13 +15,20 @@ export const createPurchaseOrderSchema = z.object({
 
 export type CreatePurchaseOrderInput = z.infer<typeof createPurchaseOrderSchema>;
 
-// goods_notes.transactions.status dipakai buat ngabaikan penerimaan yang sudah dibatalkan
-// (cancel_ap_bill) -- qty-nya kebebas lagi, sama kayak recompute_order_status di DB.
-export type GoodsNoteLineQty = { qty: number; goods_notes?: { transactions: { status: string } | null } | null };
+// Penerimaan yang sudah dibatalkan gak dihitung "sudah diterima" -- qty-nya kebebas lagi, sama kayak
+// goods_note_is_active/recompute_order_status di DB: barang masuk lama (bundled) dibatalkan lewat
+// tagihannya (goods_notes.transactions.status), barang masuk baru (deferred) lewat goods_note_cancellations.
+export type GoodsNoteLineQty = {
+  qty: number;
+  goods_notes?: {
+    transactions: { status: string } | null;
+    goods_note_cancellations?: { goods_note_id: string } | null;
+  } | null;
+};
 
 export function receivedQty(lines: GoodsNoteLineQty[]): number {
   return lines
-    .filter((r) => r.goods_notes?.transactions?.status !== "dibatalkan")
+    .filter((r) => r.goods_notes?.transactions?.status !== "dibatalkan" && !r.goods_notes?.goods_note_cancellations)
     .reduce((sum, r) => sum + r.qty, 0);
 }
 

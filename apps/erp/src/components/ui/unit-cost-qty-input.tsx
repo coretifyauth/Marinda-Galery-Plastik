@@ -28,6 +28,8 @@ type Props = {
   initialBaseQty?: string;
   initialBaseCost?: string;
   disabled?: boolean;
+  /** Harga 0 dianggap valid (barang masuk yang harganya belum diketahui). Default: harus > 0. */
+  allowZeroCost?: boolean;
   onChange: (change: UnitCostQtyChange | null) => void;
 };
 
@@ -46,6 +48,7 @@ export function UnitCostQtyInput({
   initialBaseQty,
   initialBaseCost,
   disabled,
+  allowZeroCost,
   onChange,
 }: Props) {
   const hasBaseRow = units.some((u) => u.is_base);
@@ -84,7 +87,7 @@ export function UnitCostQtyInput({
       Number.isNaN(qtyNum) ||
       Number.isNaN(costNum) ||
       qtyNum <= 0 ||
-      costNum <= 0
+      (allowZeroCost ? costNum < 0 : costNum <= 0)
     ) {
       onChange(null);
       return;

@@ -1,25 +1,26 @@
 import { z } from "zod";
-import { chargeLineSchema } from "@/lib/charge-lines/schema";
 
 export const grnLineSchema = z.object({
   order_line_id: z.string().uuid("Baris PO gak valid").optional(),
   item_id: z.string().uuid("Item gak valid"),
   qty_received: z.coerce.number().positive("Qty harus lebih dari 0"),
-  unit_cost: z.coerce.number().positive("Harga harus lebih dari 0"),
+  // Harga 0 boleh (belum tahu) -- barangnya belum bisa dijual/ditagih sampai diberi harga (revisi).
+  unit_cost: z.coerce.number().nonnegative("Harga gak boleh negatif"),
+  // Diskon item (Rupiah, per baris). Diskon tambahan level dokumen = discount_amount di bawah.
+  discount_amount: z.coerce.number().nonnegative("Diskon item gak boleh negatif").default(0),
 });
 
+// Barang masuk TANPA tagihan (alur Barang Masuk Belum Ditagih). Tagihan dibuat terpisah dari barang
+// masuk yang sudah ada -- lihat lib/ap-bills dan docs/domain/inventory.md.
 export const createGoodsReceiptSchema = z
   .object({
     order_id: z.string().uuid("Pilih purchase order").optional(),
     supplier_id: z.string().uuid("Pilih supplier").optional(),
     receipt_date: z.string().min(1, "Tanggal wajib diisi"),
     delivery_note_ref: z.string().optional(),
-    bill_description: z.string().optional(),
-    debit_account_id: z.string().uuid("Pilih akun Persediaan"),
-    payable_account_id: z.string().uuid("Pilih akun Utang Usaha"),
+    inventory_account_id: z.string().uuid("Pilih akun Persediaan"),
     lines: z.array(grnLineSchema).min(1, "Minimal 1 baris item"),
-    extra_debit_lines: z.array(chargeLineSchema).optional(),
-    apply_tax: z.boolean().default(false),
+    // Diskon tambahan level dokumen, di atas diskon item; diproratakan server-side ke baris.
     discount_amount: z.coerce.number().nonnegative().default(0),
   })
   // Purchase Order opsional (memory/scope-debt/order-generalization.md Fase 2) -- tapi
@@ -32,22 +33,4 @@ export const createGoodsReceiptSchema = z
 
 export type CreateGoodsReceiptInput = z.infer<typeof createGoodsReceiptSchema>;
 
-export type GoodsReceiptNote = {
-  id: string;
-  order_id: string | null;
-  transaction_id: string;
-  delivery_note_ref: string | null;
-  note_date: string;
-  created_at: string;
-  created_by: string | null;
-  orders: { source_ref: string; counterparties: { name: string } } | null;
-  ap_bills: { source_ref: string; amount: number; status: string; counterparties: { name: string } };
-  goods_note_lines: {
-    id: string;
-    item_id: string;
-    qty: number;
-    unit_cost: number;
-    discount_amount: number;
-    items: { name: string; uom: string; item_units: { unit_label: string; conversion_factor: number }[] };
-  }[];
-};
+export type { GoodsReceiptNote, GoodsReceiptLine, GoodsReceiptStatus } from "./types";

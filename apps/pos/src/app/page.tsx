@@ -61,6 +61,8 @@ type CatalogItem = {
   uom: string;
   units: PricedUnit[];
   qtyOnHand: number;
+  /** Stok ada tapi harga pokok belum diketahui (barang masuk belum ditagih) -- belum bisa dijual. */
+  costUnknown: boolean;
 };
 
 // unit_price & qty_sold di CartLine SELALU dalam satuan jual baris itu (bisa base unit ATAU
@@ -97,7 +99,7 @@ async function fetchItemRows(): Promise<ItemRow[]> {
     const { data, error } = await supabase
       .from("items")
       .select(
-        "id, name, uom, category_id, barcode, item_units(unit_label, conversion_factor, price, is_base, barcode, is_default_sale), inventory_balances(qty_on_hand)"
+        "id, name, uom, category_id, barcode, item_units(unit_label, conversion_factor, price, is_base, barcode, is_default_sale), inventory_balances(qty_on_hand, avg_cost)"
       )
       .is("archived_at", null)
       .order("name");
@@ -325,6 +327,7 @@ function mapItemRowsToCatalog(rows: ItemRow[]): CatalogItem[] {
         uom: row.uom,
         units: priced,
         qtyOnHand: row.inventory_balances?.qty_on_hand ?? 0,
+        costUnknown: (row.inventory_balances?.qty_on_hand ?? 0) > 0 && row.inventory_balances?.avg_cost === 0,
       };
     })
     .filter((item) => item.units.length > 0);
@@ -345,7 +348,7 @@ function CatalogCard({
   const unit = item.units.find((u) => u.unit_label === unitLabel) ?? item.units[0];
   const cartQty =
     cart.find((l) => l.item_id === item.id && l.unit_label === unit.unit_label)?.qty_sold ?? 0;
-  const available = item.qtyOnHand > 0;
+  const available = item.qtyOnHand > 0 && !item.costUnknown;
 
   return (
     <div
@@ -357,7 +360,7 @@ function CatalogCard({
     >
       {!available && (
         <span className="absolute right-2 top-2 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-600">
-          Habis
+          {item.costUnknown ? "Belum bisa dijual" : "Habis"}
         </span>
       )}
       <button
@@ -370,7 +373,11 @@ function CatalogCard({
           Rp{unit.price.toLocaleString("id-ID")}/{unit.unit_label}
         </div>
         <div className={`text-xs ${available ? "text-slate-400" : "text-red-400"}`}>
-          {available ? `Stok: ${formatStockBreakdown(item.qtyOnHand, item.uom, item.units)}` : "Stok habis"}
+          {available
+            ? `Stok: ${formatStockBreakdown(item.qtyOnHand, item.uom, item.units)}`
+            : item.costUnknown
+              ? "Harga pokok belum diketahui (barang masuk belum ditagih)"
+              : "Stok habis"}
         </div>
       </button>
       {item.units.length > 1 && (
