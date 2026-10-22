@@ -112,7 +112,7 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
     }
     if (totals.total > pool.remaining + 0.005) {
       setFormError(
-        `Nilai barang masuk Rp${totals.total.toLocaleString("id-ID")} melebihi sisa kolam tagihan ${pool.bill_ref} (Rp${pool.remaining.toLocaleString("id-ID")}). Sisanya harus ditagih lewat tagihan lain.`
+        `Nilai barang masuk Rp${totals.total.toLocaleString("id-ID")} melebihi barang yang belum diterima dari nota ${pool.bill_ref} (Rp${pool.remaining.toLocaleString("id-ID")}). Sisanya harus ditagih lewat tagihan lain.`
       );
       return;
     }
@@ -174,7 +174,7 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
         <h1 className="text-xl font-semibold text-black">Catat Barang Masuk</h1>
         <p className="text-sm text-slate-500">
           Barang masuk selalu dicatat dari satu tagihan barang yang sudah ada, dengan harga sesuai nota. Nilainya
-          mengurangi sisa kolam tagihan itu dan tidak boleh melebihinya. Kalau notanya belum ada, buat dulu Tagihan
+          mengurangi barang yang belum diterima dari nota itu dan tidak boleh melebihinya. Kalau notanya belum ada, buat dulu Tagihan
           Barang dari menu Tagihan (boleh dari nominal perkiraan). Kalau barang ini dipesan lewat PO, terima dari
           halaman detail PO-nya.
         </p>
@@ -190,7 +190,7 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
                 {billsQuery.error && <FormError>{(billsQuery.error as Error).message}</FormError>}
                 {billId && !billsQuery.isLoading && !pool && (
                   <p className="text-xs text-amber-700">
-                    Tagihan ini sudah tidak punya sisa kolam (atau dibatalkan), jadi tidak bisa dipakai untuk barang masuk baru.
+                    Semua barang di nota ini sudah diterima (atau tagihannya dibatalkan), jadi tidak bisa dipakai untuk barang masuk baru.
                   </p>
                 )}
               </div>

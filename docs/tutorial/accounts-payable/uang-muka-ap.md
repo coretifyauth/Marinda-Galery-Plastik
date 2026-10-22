@@ -49,6 +49,6 @@ Saat perusahaan membayar sebagian di muka ke supplier sebelum bill-nya ada (mis.
 - **Mengira "Terapkan Uang Muka" mengurangi kas lagi** — tidak, kasnya sudah keluar saat DP dibayar; menerapkan uang muka cuma memindahkan saldo dari Uang Muka Pembelian ke pengurang Utang Usaha.
 - **Tidak tahu supplier masih punya saldo** — buka detail supplier (`/suppliers/[id]`), tab **Saldo di Supplier**: di situ terlihat semua uang kita yang masih ada di supplier itu, baik uang muka maupun kelebihan retur dari tagihan yang sudah lunas.
 
-## Uang Muka dari Sisa Kolam Tagihan Barang
+## Uang Muka dari Sisa Barang Tagihan Barang
 
-Selain dibayar manual, uang muka juga bisa lahir dari **Lepas Sisa Kolam** di detail Tagihan Barang yang sebagian barangnya batal datang dan sebagian nilainya sudah dibayar — lihat [buat-tagihan-barang.md](buat-tagihan-barang.md). Uang muka itu muncul di **AP Deposits** dan diurus sama seperti di atas (terapkan, refund, atau hanguskan).
+Selain dibayar manual, uang muka juga bisa lahir dari **Tutup Sisa Barang** di detail Tagihan Barang yang sebagian barangnya batal datang dan sebagian nilainya sudah dibayar — lihat [buat-tagihan-barang.md](buat-tagihan-barang.md). Uang muka itu muncul di **AP Deposits** dan diurus sama seperti di atas (terapkan, refund, atau hanguskan).

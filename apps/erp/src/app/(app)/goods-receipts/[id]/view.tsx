@@ -112,7 +112,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     if (!grn) return;
     const message = grn.is_legacy
       ? `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang akan dikurangi lagi dan tagihan (Rp${(grn.bill_amount ?? 0).toLocaleString("id-ID")}) ikut dibatalkan.`
-      : `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang dikurangi lagi, jurnalnya dibalik, dan nilainya kembali ke sisa kolam tagihan ${grn.bill_ref ?? ""}.`;
+      : `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang dikurangi lagi, jurnalnya dibalik, dan nilainya kembali ke barang yang belum diterima dari tagihan ${grn.bill_ref ?? ""}.`;
     if (!window.confirm(message)) return;
 
     setCancelError(null);
@@ -235,7 +235,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
       {isCancelled && (
         <CancelledBanner>
           barang masuk ini tidak valid. Stok sudah dikurangi lagi
-          {grn.is_legacy ? " dan tagihannya dibatalkan." : " dan jurnalnya dibalik; nilainya kembali ke sisa kolam tagihan."}
+          {grn.is_legacy ? " dan tagihannya dibatalkan." : " dan jurnalnya dibalik; nilainya kembali ke barang yang belum diterima dari tagihan."}
         </CancelledBanner>
       )}
       {loadError && <FormError>{loadError}</FormError>}

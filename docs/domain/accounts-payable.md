@@ -38,6 +38,8 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 
 ### Tagihan Dulu, Barang Menyusul (Kolam Tagihan)
 
+> **Istilah:** "kolam" dan "sisa kolam" adalah istilah teknis di docs dan database. Di layar aplikasi dan tutorial namanya **Barang Belum Diterima** (kartu di detail tagihan), kolom **Belum diterima** (= sisa kolam), **Ditutup** (= dilepas), dan tombol **Tutup Sisa Barang** (= Lepas Sisa Kolam). Pesan error dari database masih memakai istilah teknis.
+
 **Masalahnya:** supplier sering mengirim nota duluan dan minta dibayar, sementara barangnya datang bertahap beberapa hari kemudian (dan tidak langsung menutup seluruh nota). Pembukuan harus bisa mencatat utang dan pembayarannya tanpa mengaku punya stok yang belum ada di gudang, dan tiap barang yang datang belakangan harus bisa ditelusuri ke nota yang membayarnya — gak boleh "tercecer" di sembarang tagihan.
 
 **Cara Kerja**

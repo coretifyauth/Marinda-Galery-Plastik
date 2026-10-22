@@ -38,4 +38,4 @@ Saat mencatat **Tagihan Langsung** dari supplier — tagihan yang **tidak** bera
 
 - **Lupa isi Kategori Persediaan/Beban** — field ini wajib (beda dari AR invoice yang otomatis pakai akun pendapatan default); tanpa ini, bill tidak bisa disimpan.
 - **Menukar Nomor Nota Supplier dengan Source Ref internal** — dua-duanya field terpisah dan tidak saling menggantikan; Source Ref selalu format otomatis sistem, Nomor Nota Supplier adalah nomor asli dari kertas nota fisik.
-- **Memakai form ini untuk barang fisik** — stok tidak bertambah dan barang masuk tidak bisa dicatat dari tagihan langsung (tidak punya kolam). Pakai **+ Tagihan Barang**.
+- **Memakai form ini untuk barang fisik** — stok tidak bertambah dan barang masuk tidak bisa dicatat dari tagihan langsung (tidak punya batas nilai barang). Pakai **+ Tagihan Barang**.

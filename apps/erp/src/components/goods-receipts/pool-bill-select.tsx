@@ -31,10 +31,10 @@ export function PoolBillSelect({
       onChange={(e) => onChange(e.target.value)}
       className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-black focus:border-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-600/30 disabled:bg-slate-50 disabled:text-slate-400"
     >
-      <option value="">{loading ? "Memuat tagihan..." : bills.length === 0 ? "Belum ada tagihan barang dengan sisa kolam" : "Pilih tagihan barang"}</option>
+      <option value="">{loading ? "Memuat tagihan..." : bills.length === 0 ? "Belum ada tagihan barang yang masih punya barang belum diterima" : "Pilih tagihan barang"}</option>
       {bills.map((b) => (
         <option key={b.bill_id} value={b.bill_id}>
-          {b.bill_ref} — {b.supplier_name ?? "-"} — sisa {rp(b.remaining)}
+          {b.bill_ref} — {b.supplier_name ?? "-"} — belum diterima {rp(b.remaining)}
           {b.open_age_days != null && b.open_age_days > 0 ? ` (${b.open_age_days} hari)` : ""}
         </option>
       ))}
@@ -56,12 +56,12 @@ export function PoolSummary({ pool, receiving }: { pool: ApBillPool; receiving?:
         <p className="font-mono text-black">{rp(pool.received_value)}</p>
       </div>
       <div>
-        <p className="text-xs text-slate-500">Sisa kolam</p>
+        <p className="text-xs text-slate-500">Belum diterima</p>
         <p className="font-mono font-medium text-black">{rp(pool.remaining)}</p>
       </div>
       {after != null && (
         <div>
-          <p className="text-xs text-slate-500">Sisa setelah barang masuk ini</p>
+          <p className="text-xs text-slate-500">Belum diterima setelah barang masuk ini</p>
           <p className={`font-mono font-medium ${after < 0 ? "text-red-600" : "text-black"}`}>{rp(after)}</p>
         </div>
       )}

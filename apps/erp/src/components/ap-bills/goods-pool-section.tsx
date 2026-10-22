@@ -85,9 +85,9 @@ export function GoodsPoolSection({
     e.preventDefault();
     setError(null);
     const value = parseFloat(amount);
-    if (!(value > 0)) return setError("Nominal pelepasan harus lebih dari 0");
+    if (!(value > 0)) return setError("Nominal penutupan harus lebih dari 0");
     if (!releaseDate) return setError("Tanggal wajib diisi");
-    if (!confirmed) return setError("Centang konfirmasi dulu -- pelepasan sisa kolam tidak bisa dibatalkan");
+    if (!confirmed) return setError("Centang konfirmasi dulu -- penutupan sisa barang tidak bisa dibatalkan");
     setSubmitting(true);
     const { error: rpcError } = await supabase.rpc("release_ap_bill_pool", {
       p_bill_id: billId,
@@ -115,7 +115,7 @@ export function GoodsPoolSection({
     <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-medium text-black">Kolam Barang</h2>
+          <h2 className="text-sm font-medium text-black">Barang Belum Diterima</h2>
           {pool.open_age_days != null && pool.open_age_days > 0 && (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">
               terbuka {pool.open_age_days} hari
@@ -128,7 +128,7 @@ export function GoodsPoolSection({
               + Catat Barang Masuk
             </Button>
             <Button variant="toolbar" onClick={() => openRelease(canRoundOff ? "pembulatan" : "uang_muka")}>
-              Lepas Sisa Kolam
+              Tutup Sisa Barang
             </Button>
           </div>
         )}
@@ -144,11 +144,11 @@ export function GoodsPoolSection({
           <p className="font-mono text-black">{rp(pool.received_value)}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Dilepas</p>
+          <p className="text-xs text-slate-500">Ditutup</p>
           <p className="font-mono text-black">{rp(pool.released_amount)}</p>
         </div>
         <div>
-          <p className="text-xs text-slate-500">Sisa kolam</p>
+          <p className="text-xs text-slate-500">Belum diterima</p>
           <p className="font-mono font-medium text-black">{rp(pool.remaining)}</p>
         </div>
       </div>
@@ -156,15 +156,15 @@ export function GoodsPoolSection({
         <div className="h-full bg-emerald-500" style={{ width: `${progress}%` }} />
       </div>
       <p className="text-xs text-slate-500">
-        Kolam dihabiskan oleh barang masuk yang dibuat dari tagihan ini. Status bayar tagihan tidak mempengaruhi kolam.
-        Sisa yang barangnya tidak akan datang bisa dilepas: receh jadi selisih pembulatan, bagian yang sudah dibayar
+        Nilai barang di nota berkurang setiap kali barang masuk dicatat dari tagihan ini. Status bayar tagihan tidak mempengaruhinya.
+        Sisa yang barangnya tidak akan datang bisa ditutup: receh jadi selisih pembulatan, bagian yang sudah dibayar
         jadi uang muka ke supplier. Sisa yang belum dibayar perlu nota kredit dari supplier (belum ada jalurnya di
         sistem).
       </p>
 
       {showRelease && (
         <form onSubmit={handleRelease} className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50/50 p-4">
-          <p className="text-sm font-medium text-black">Lepas Sisa Kolam</p>
+          <p className="text-sm font-medium text-black">Tutup Sisa Barang</p>
           <div className="flex flex-wrap gap-4 text-sm">
             <label className={`flex items-center gap-2 ${canRoundOff ? "" : "opacity-40"}`}>
               <input
@@ -207,12 +207,12 @@ export function GoodsPoolSection({
           </div>
           <label className="flex items-start gap-2 text-sm text-slate-700">
             <input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-            Saya mengerti pelepasan sisa kolam tidak bisa dibatalkan, dan tagihan ini tidak bisa dibatalkan lagi sesudahnya.
+            Saya mengerti penutupan sisa barang tidak bisa dibatalkan, dan tagihan ini tidak bisa dibatalkan lagi sesudahnya.
           </label>
           {error && <FormError>{error}</FormError>}
           <div className="flex gap-2">
             <Button type="submit" disabled={submitting}>
-              {submitting ? "Memproses..." : "Lepas Sisa Kolam"}
+              {submitting ? "Memproses..." : "Tutup Sisa Barang"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => setShowRelease(false)}>
               Batal
@@ -266,7 +266,7 @@ export function GoodsPoolSection({
 
       {releases.length > 0 && (
         <div className="overflow-x-auto">
-          <p className="mb-2 text-xs font-medium uppercase text-slate-500">Pelepasan Sisa Kolam</p>
+          <p className="mb-2 text-xs font-medium uppercase text-slate-500">Riwayat Penutupan Sisa</p>
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">

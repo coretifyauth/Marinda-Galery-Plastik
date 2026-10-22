@@ -144,8 +144,8 @@ export function NewApBillWithGoodsView() {
       <div>
         <h1 className="text-xl font-semibold text-black">Tagihan Barang</h1>
         <p className="text-sm text-slate-500">
-          Catat nota supplier untuk barang yang akan datang (sekaligus atau bertahap). Nilai barang di nota menjadi
-          kolam; setiap kiriman dicatat sebagai Barang Masuk dari tagihan ini dan mengurangi kolamnya. Tagihan boleh
+          Catat nota supplier untuk barang yang akan datang (sekaligus atau bertahap). Setiap kiriman barang dicatat
+          sebagai Barang Masuk dari tagihan ini, dan nilainya mengurangi barang yang belum diterima dari nota ini. Tagihan boleh
           dibayar kapan saja, tidak harus menunggu barangnya. Kalau notanya belum pasti, isi nominal perkiraan.
           Untuk biaya atau jasa tanpa barang fisik, pakai Tagihan Langsung.
         </p>
@@ -219,7 +219,7 @@ export function NewApBillWithGoodsView() {
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <ChargeLinesEditor
-              label="Kategori Debit Tambahan (opsional — mis. ongkir yang tertera di nota; di luar kolam barang)"
+              label="Kategori Debit Tambahan (opsional — mis. ongkir yang tertera di nota; di luar nilai barang)"
               lines={extraLines}
               chargeTypes={expenseCategories}
               onChange={setExtraLines}
@@ -256,7 +256,7 @@ export function NewApBillWithGoodsView() {
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between text-sm text-slate-500">
-              <span>Nilai barang (kolam)</span>
+              <span>Nilai barang di nota</span>
               <span className="font-mono">Rp{goods.toLocaleString("id-ID")}</span>
             </div>
             {extraTotal > 0 && (

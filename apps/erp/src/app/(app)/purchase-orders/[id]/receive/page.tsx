@@ -152,7 +152,7 @@ export default function ReceivePurchaseOrderPage() {
     }
     if (totals.total > pool.remaining + 0.005) {
       setFormError(
-        `Nilai barang masuk Rp${totals.total.toLocaleString("id-ID")} melebihi sisa kolam tagihan ${pool.bill_ref} (Rp${pool.remaining.toLocaleString("id-ID")}). Sisanya harus ditagih lewat tagihan lain.`
+        `Nilai barang masuk Rp${totals.total.toLocaleString("id-ID")} melebihi barang yang belum diterima dari nota ${pool.bill_ref} (Rp${pool.remaining.toLocaleString("id-ID")}). Sisanya harus ditagih lewat tagihan lain.`
       );
       return;
     }
@@ -223,7 +223,7 @@ export default function ReceivePurchaseOrderPage() {
         </div>
         <p className="text-sm text-slate-500">
           Supplier: {po.counterparties.name}. Barang masuk dicatat dari satu tagihan barang supplier ini, dengan harga
-          sesuai nota; nilainya mengurangi sisa kolam tagihan itu. Belum ada tagihannya? Buat dulu Tagihan Barang dari
+          sesuai nota; nilainya mengurangi barang yang belum diterima dari nota itu. Belum ada tagihannya? Buat dulu Tagihan Barang dari
           menu Tagihan.
         </p>
       </div>
