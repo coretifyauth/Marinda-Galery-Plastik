@@ -15,6 +15,8 @@ import { BackLink } from "@/components/ui/back-link";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { DetailRows } from "@/components/ui/detail-rows";
 import { LoadingScreen } from "@/components/ui/loading-screen";
+import { usePool } from "@/lib/ap-bills/pool";
+import { GoodsPoolSection } from "@/components/ap-bills/goods-pool-section";
 
 type JournalEntryDetail = {
   id: string;
@@ -97,6 +99,8 @@ export function ApBillDetailView({ id }: { id: string }) {
 
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  // Kolam barang (null kalau bukan tagihan barang) -- lihat docs/domain/accounts-payable.md "Tagihan Dulu, Barang Menyusul".
+  const poolQuery = usePool(id);
 
   const load = useCallback(async () => {
     const { data: b, error: billErr } = await supabase
@@ -262,7 +266,8 @@ export function ApBillDetailView({ id }: { id: string }) {
   );
   const canApplyDeposit = canWrite && !isCancelled && outstanding > 0 && availableDeposits.length > 0;
 
-  const isFinancialOnly = !goodsReceipt;
+  const pool = poolQuery.data ?? null;
+  const isFinancialOnly = !goodsReceipt && !pool;
 
   const tabs: TabDef[] = [
     { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
@@ -274,7 +279,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     // ketolak RPC. Lihat docs/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
     // Opsi C (Tulis-jadi-Beban / purchase_writeoffs) DICABUT -- barang rusak yang supplier
     // tolak kompensasi sekarang lewat stock_opname generic, bukan RPC khusus AP.
-    ...(!isFinancialOnly ? [{ key: "tukar", label: "Tukar Barang", badge: replacements.length }] : []),
+    ...(goodsReceipt ? [{ key: "tukar", label: "Tukar Barang", badge: replacements.length }] : []),
   ];
 
   const detailGroups = [
@@ -338,7 +343,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                 : "Ada goods receipt -- bill ini punya barang fisik tercatat"
             }
           >
-            {isFinancialOnly ? "Tanpa Barang Fisik" : "Ada Barang Fisik"}
+            {pool ? "Tagihan Barang" : isFinancialOnly ? "Tanpa Barang Fisik" : "Ada Barang Fisik"}
           </span>
         </div>
         {canCancel && (
@@ -355,6 +360,18 @@ export function ApBillDetailView({ id }: { id: string }) {
       {cancelError && <FormError>{cancelError}</FormError>}
 
       <DetailRows groups={detailGroups} />
+
+      {pool && (
+        <GoodsPoolSection
+          billId={bill.id}
+          billAmount={bill.amount}
+          pool={pool}
+          paid={allocated + depositApplied}
+          canWrite={canWrite}
+          isCancelled={isCancelled}
+          onChanged={load}
+        />
+      )}
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 

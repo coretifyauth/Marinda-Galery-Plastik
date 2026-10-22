@@ -104,12 +104,6 @@ export function ReceiptTotalsCard({ totals }: { totals: ReceiptTotals }) {
       )}
       <p className="mt-2 text-sm text-slate-500">Nilai Barang Masuk</p>
       <p className="mt-1 font-mono text-2xl text-black">{rp(totals.total)}</p>
-      {totals.zeroLineCount > 0 && (
-        <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-          {totals.zeroLineCount} baris berharga 0. Barangnya belum bisa dijual atau ditagih sampai diberi harga lewat
-          revisi.
-        </p>
-      )}
     </div>
   );
 }

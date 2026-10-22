@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import type { ApBillOrigin, ApBillStatus } from "@/lib/ap-bills/schema";
+import type { ApBillStatus, ApBillTypeFilter } from "@/lib/ap-bills/schema";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useApBills } from "@/lib/ap-bills/queries";
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
@@ -27,13 +27,17 @@ const statusStyle: Record<string, string> = {
   dibatalkan: "bg-slate-100 text-slate-400 line-through",
 };
 
+// "barang" = tagihan barang (punya kolam, barang masuk menyusul). Tipe lain = tagihan yang bukan tagihan barang:
+// tagihan lama yang dibuat bareng barang masuknya (order / goods_movement) atau tagihan langsung (financial_only).
 const originLabel: Record<string, string> = {
-  order: "Dari Purchase Order",
-  goods_movement: "Terima Barang Langsung",
-  financial_only: "Bill Langsung",
+  barang: "Tagihan Barang",
+  order: "Dari Purchase Order (lama)",
+  goods_movement: "Terima Barang Langsung (lama)",
+  financial_only: "Tagihan Langsung",
 };
 
 const originStyle: Record<string, string> = {
+  barang: "bg-emerald-50 text-emerald-700",
   order: "bg-blue-50 text-blue-700",
   goods_movement: "bg-slate-100 text-slate-600",
   financial_only: "bg-purple-50 text-purple-700",
@@ -50,7 +54,7 @@ export default function ApBillsPage() {
   const [supplierDocRefSearchInput, setSupplierDocRefSearchInput] = useState("");
   const [supplierFilter, setSupplierFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<ApBillStatus | "" | "aktif">("aktif");
-  const [originFilter, setOriginFilter] = useState<ApBillOrigin | "">("");
+  const [originFilter, setOriginFilter] = useState<ApBillTypeFilter>("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const debouncedRefSearch = useDebouncedValue(refSearchInput, 300);
@@ -133,8 +137,8 @@ export default function ApBillsPage() {
             </Button>
             {canWrite && (
               <>
-                <Button variant="toolbar" onClick={() => router.push("/ap-bills/from-goods-receipts")}>
-                  + Dari Barang Masuk
+                <Button variant="toolbar" onClick={() => router.push("/ap-bills/new/barang")}>
+                  + Tagihan Barang
                 </Button>
                 <Button variant="toolbar-primary" onClick={() => router.push("/ap-bills/new")}>
                   + Tagihan Langsung
@@ -209,10 +213,11 @@ export default function ApBillsPage() {
                 <select
                   aria-label="Filter tipe"
                   value={originFilter}
-                  onChange={(e) => setOriginFilter(e.target.value as ApBillOrigin | "")}
+                  onChange={(e) => setOriginFilter(e.target.value as ApBillTypeFilter)}
                   className={compactFilterSelectClass}
                 >
                   <option value="">Semua tipe</option>
+                  <option value="barang">{originLabel.barang}</option>
                   <option value="order">{originLabel.order}</option>
                   <option value="goods_movement">{originLabel.goods_movement}</option>
                   <option value="financial_only">{originLabel.financial_only}</option>
@@ -270,8 +275,8 @@ export default function ApBillsPage() {
                     )}
                   </td>
                   <td className="px-4 py-2">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${originStyle[bill.origin]}`}>
-                      {originLabel[bill.origin]}
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${originStyle[bill.has_goods_pool ? "barang" : bill.origin]}`}>
+                      {originLabel[bill.has_goods_pool ? "barang" : bill.origin]}
                     </span>
                   </td>
                   <td className="px-4 py-2 text-right font-mono">

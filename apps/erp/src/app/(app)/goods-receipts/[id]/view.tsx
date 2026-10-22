@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import { fetchLinesForNotes } from "@/lib/goods-receipts/queries";
-import { hasZeroValueLine, receiptNumber, type GoodsReceiptNote } from "@/lib/goods-receipts/types";
+import { receiptNumber, type GoodsReceiptNote } from "@/lib/goods-receipts/types";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
@@ -23,20 +24,12 @@ type JournalEntryDetail = {
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
 };
 
-type RevisionRow = {
-  id: string;
-  revision_no: number;
-  entry_date: string;
-  delivery_note_ref: string | null;
-  created_at: string;
-};
-
 export function GoodsReceiptDetailView({ id }: { id: string }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [grn, setGrn] = useState<GoodsReceiptNote | null>(null);
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
-  const [revisions, setRevisions] = useState<RevisionRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("lines");
   const [roles, setRoles] = useState<string[]>([]);
@@ -45,7 +38,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
 
   const load = useCallback(async () => {
     const { data: noteData, error: noteErr } = await supabase
-      .from("goods_notes_with_billing_status")
+      .from("goods_receipts_overview")
       .select("*")
       .eq("id", id)
       .single();
@@ -55,37 +48,21 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     }
     const note = noteData as unknown as Omit<GoodsReceiptNote, "goods_note_lines">;
 
-    const [lines, baseRes, revRes, cancelRes] = await Promise.all([
+    const [lines, baseRes, cancelRes] = await Promise.all([
       fetchLinesForNotes([id]),
       supabase.from("goods_notes").select("journal_entry_id, transaction_id").eq("id", id).single(),
-      supabase
-        .from("goods_note_revisions")
-        .select("id, revision_no, entry_date, delivery_note_ref, reversal_journal_entry_id, journal_entry_id, created_at")
-        .eq("goods_note_id", id)
-        .order("revision_no"),
       supabase.from("goods_note_cancellations").select("journal_entry_id").eq("goods_note_id", id).maybeSingle(),
     ]);
 
     setGrn({ ...note, goods_note_lines: lines.get(id) ?? [] });
 
-    const revs = (revRes.data ?? []) as unknown as (RevisionRow & {
-      reversal_journal_entry_id: string | null;
-      journal_entry_id: string | null;
-    })[];
-    setRevisions(revs);
-
-    // Jurnal terkait: jurnal barang masuk, jurnal+pembalik tiap revisi, pembalik pembatalan.
-    // Barang masuk lama (bundled): jurnalnya ada di tagihan bawaannya.
+    // Jurnal terkait: jurnal barang masuk + pembalik pembatalan. Barang masuk lama: jurnalnya ada di tagihan bawaannya.
     const journalIds = new Set<string>();
     const base = baseRes.data as { journal_entry_id: string | null; transaction_id: string | null } | null;
     if (base?.journal_entry_id) journalIds.add(base.journal_entry_id);
-    for (const r of revs) {
-      if (r.reversal_journal_entry_id) journalIds.add(r.reversal_journal_entry_id);
-      if (r.journal_entry_id) journalIds.add(r.journal_entry_id);
-    }
     const cancelJournal = (cancelRes.data as { journal_entry_id: string | null } | null)?.journal_entry_id;
     if (cancelJournal) journalIds.add(cancelJournal);
-    if (note.inbound_flow === "bundled" && base?.transaction_id) {
+    if (note.is_legacy && base?.transaction_id) {
       const { data: bill } = await supabase
         .from("transactions")
         .select("journal_entry_id")
@@ -129,21 +106,20 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  // Barang masuk alur baru: dibatalkan sendiri (cancel_goods_receipt) selama belum ditagih.
-  // Barang masuk lama (bundled): dibatalkan lewat tagihan bawaannya (cancel_ap_bill), seperti sebelumnya.
+  // Barang masuk baru: dibatalkan sendiri (cancel_goods_receipt) -- kolam tagihannya kembali.
+  // Barang masuk lama (dibuat bareng tagihannya): dibatalkan lewat tagihan bawaannya (cancel_ap_bill), seperti sebelumnya.
   async function handleCancel() {
     if (!grn) return;
-    const deferred = grn.inbound_flow === "deferred";
-    const message = deferred
-      ? `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang dikurangi lagi dan jurnalnya dibalik.`
-      : `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang akan dikurangi lagi dan tagihan (Rp${(grn.bill_amount ?? 0).toLocaleString("id-ID")}) ikut dibatalkan.`;
+    const message = grn.is_legacy
+      ? `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang akan dikurangi lagi dan tagihan (Rp${(grn.bill_amount ?? 0).toLocaleString("id-ID")}) ikut dibatalkan.`
+      : `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang dikurangi lagi, jurnalnya dibalik, dan nilainya kembali ke sisa kolam tagihan ${grn.bill_ref ?? ""}.`;
     if (!window.confirm(message)) return;
 
     setCancelError(null);
     setCancelling(true);
     const today = new Date().toISOString().slice(0, 10);
     let error: { message: string } | null;
-    if (deferred) {
+    if (!grn.is_legacy) {
       ({ error } = await supabase.rpc("cancel_goods_receipt", { p_goods_note_id: grn.id, p_entry_date: today }));
     } else {
       let sourceRef: string;
@@ -165,6 +141,12 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
       setCancelError(error.message);
       return;
     }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["goods_receipt_notes"] }),
+      queryClient.invalidateQueries({ queryKey: ["open_pool_bills"] }),
+      queryClient.invalidateQueries({ queryKey: ["ap_bill_pool"] }),
+      queryClient.invalidateQueries({ queryKey: ["ap_bills"] }),
+    ]);
     await load();
   }
 
@@ -176,10 +158,10 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     return <FormError>{loadError ?? "Barang masuk gak ditemukan."}</FormError>;
   }
 
-  const isCancelled = grn.billing_status === "dibatalkan";
-  const isUnbilled = grn.billing_status === "belum_tertagih";
+  const isCancelled = grn.status === "dibatalkan";
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  const canCancel = canWrite && !isCancelled && (grn.inbound_flow === "bundled" || isUnbilled);
+  // Riwayat alur lama yang sudah dibatalkan gak punya tagihan; selain itu bisa dibatalkan kalau masih aktif.
+  const canCancel = canWrite && !isCancelled && !!grn.bill_id;
 
   const detailGroups = [
     {
@@ -205,18 +187,17 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         { label: "Nilai Barang Masuk", value: `Rp${grn.total_value.toLocaleString("id-ID")}` },
         {
           label: "Tagihan",
-          value:
-            grn.bill_id && grn.billing_status !== "belum_tertagih" ? (
-              <button
-                type="button"
-                className="text-blue-600 hover:underline"
-                onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}
-              >
-                {grn.bill_ref} — {(grn.bill_amount ?? 0).toLocaleString("id-ID")}
-              </button>
-            ) : (
-              <span className="text-slate-400">Belum ditagih</span>
-            ),
+          value: grn.bill_id ? (
+            <button
+              type="button"
+              className="text-blue-600 hover:underline"
+              onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}
+            >
+              {grn.bill_ref} — Rp{(grn.bill_amount ?? 0).toLocaleString("id-ID")}
+            </button>
+          ) : (
+            <span className="text-slate-400">— (riwayat alur lama, tanpa tagihan)</span>
+          ),
         },
       ],
     },
@@ -225,7 +206,6 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   const tabs: TabDef[] = [
     { key: "lines", label: "Item Diterima", badge: grn.goods_note_lines.length },
     { key: "jurnal", label: "Jurnal", badge: journalEntries.length },
-    ...(revisions.length > 0 ? [{ key: "revisi", label: "Riwayat Revisi", badge: revisions.length }] : []),
   ];
 
   return (
@@ -237,35 +217,13 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-sm font-mono text-slate-600">
             {receiptNumber(grn)}
           </span>
-          {isCancelled && <CancelledBadge />}
-          {isUnbilled && (
-            <span className="rounded-full bg-red-100 px-2.5 py-1 text-sm font-medium text-red-700">
-              Belum tertagih{grn.unbilled_age_days != null && ` · ${grn.unbilled_age_days} hari`}
-            </span>
-          )}
-          {grn.billing_status === "tertagih" && (
-            <span className="rounded-full bg-green-50 px-2.5 py-1 text-sm text-green-700">Tertagih</span>
-          )}
-          {!isCancelled && hasZeroValueLine(grn) && (
-            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-sm text-amber-700">Ada baris berharga 0</span>
+          {isCancelled ? (
+            <CancelledBadge />
+          ) : (
+            <span className="rounded-full bg-green-50 px-2.5 py-1 text-sm text-green-700">Aktif</span>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {canWrite && isUnbilled && grn.inbound_flow === "deferred" && (
-            <>
-              <Button variant="toolbar" onClick={() => router.push(`/goods-receipts/${id}/revisi`)}>
-                Revisi Harga / Diskon
-              </Button>
-              <Button
-                variant="toolbar-primary"
-                onClick={() =>
-                  router.push(`/ap-bills/from-goods-receipts?supplier=${grn.counterparty_id ?? ""}&note=${id}`)
-                }
-              >
-                Buat Tagihan
-              </Button>
-            </>
-          )}
           {canCancel && (
             <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
               {cancelling ? "Membatalkan..." : "Batalkan Barang Masuk"}
@@ -277,7 +235,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
       {isCancelled && (
         <CancelledBanner>
           barang masuk ini tidak valid. Stok sudah dikurangi lagi
-          {grn.inbound_flow === "bundled" ? " dan tagihannya dibatalkan." : " dan jurnalnya dibalik."}
+          {grn.is_legacy ? " dan tagihannya dibatalkan." : " dan jurnalnya dibalik; nilainya kembali ke sisa kolam tagihan."}
         </CancelledBanner>
       )}
       {loadError && <FormError>{loadError}</FormError>}
@@ -292,7 +250,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
           <ReceiptLinesTable
             lines={grn.goods_note_lines}
             variant="detail"
-            billAmount={grn.inbound_flow === "bundled" ? (grn.bill_amount ?? undefined) : undefined}
+            billAmount={grn.is_legacy ? (grn.bill_amount ?? undefined) : undefined}
           />
         </div>
       )}
@@ -331,38 +289,10 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
               {journalEntries.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                    Belum ada jurnal{hasZeroValueLine(grn) ? " (nilai barang masuk 0, jurnal dibuat setelah diberi harga)" : ""}.
+                    Belum ada jurnal.
                   </td>
                 </tr>
               )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {activeTab === "revisi" && (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                <th className="px-4 py-2">Revisi</th>
-                <th className="px-4 py-2">Tanggal</th>
-                <th className="px-4 py-2">No. Surat Jalan</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-slate-100">
-                <td className="px-4 py-2">1 (asli)</td>
-                <td className="whitespace-nowrap px-4 py-2">{grn.note_date}</td>
-                <td className="px-4 py-2 text-slate-400">—</td>
-              </tr>
-              {revisions.map((r) => (
-                <tr key={r.id} className="border-b border-slate-100">
-                  <td className="px-4 py-2">{r.revision_no}</td>
-                  <td className="whitespace-nowrap px-4 py-2">{r.entry_date}</td>
-                  <td className="px-4 py-2">{r.delivery_note_ref ?? <span className="text-slate-400">—</span>}</td>
-                </tr>
-              ))}
             </tbody>
           </table>
         </div>

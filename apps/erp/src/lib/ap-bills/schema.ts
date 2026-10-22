@@ -33,16 +33,15 @@ export type ApBill = {
 
 export type ApBillOrigin = "order" | "goods_movement" | "financial_only";
 
-/** Bill lahir dari 3 jalur beda, mirror `ArInvoiceOrigin`: (1) `order` — dari Purchase Order,
- * `goods_receipt_notes.order_id` keisi; (2) `goods_movement` — terima barang langsung tanpa PO,
- * ada `goods_receipt_notes` tapi `order_id` kosong; (3) `financial_only` — bill dicatat manual
- * lewat /ap-bills, gak ada `goods_receipt_notes` sama sekali (biasanya beban non-persediaan).
- * 0 vs 1 baris `goods_receipt_notes` per bill, gak pernah lebih dari 1 -- tiap
- * `create_goods_receipt` call bikin bill barunya sendiri. Vocabulary ini sebelumnya cuma
- * `grn`/`langsung` (2-arah, gak pernah bedain GRN dari PO vs terima langsung) -- diunifikasi
- * sama sisi AR jadi 3-arah di migration `0066`. Dihitung server-side lewat
- * `recompute_transaction_status` (migration `0064`+`0066`), kolom `origin` di
- * `ap_bills_with_status` -- lihat `ApBillListRow`. */
+/** Filter tipe di daftar tagihan: `barang` = tagihan barang (punya kolam, `has_goods_pool`), selain itu = `origin`
+ * untuk tagihan yang bukan tagihan barang (tagihan lama dibuat bareng barang masuk, atau tagihan langsung). */
+export type ApBillTypeFilter = ApBillOrigin | "barang" | "";
+
+/** `origin` dihitung server-side oleh `recompute_transaction_status` dari barang masuk AKTIF tagihan itu, mirror
+ * `ArInvoiceOrigin`: (1) `order` — ada barang masuk dari Purchase Order; (2) `goods_movement` — ada barang masuk tanpa
+ * PO; (3) `financial_only` — belum/gak ada barang masuk (tagihan langsung, atau tagihan barang yang barangnya belum
+ * datang). Satu tagihan barang bisa punya BANYAK barang masuk. Untuk membedakan tagihan barang dari tagihan langsung
+ * pakai `has_goods_pool` (kolom di `ap_bills_with_status`, migration 0059). */
 export type ApBillListRow = {
   id: string;
   supplier_id: string;
@@ -57,6 +56,8 @@ export type ApBillListRow = {
   outstanding: number;
   status: ApBillStatus;
   origin: ApBillOrigin;
+  /** true = tagihan barang (punya kolam; barang masuk dibuat dari tagihan ini). */
+  has_goods_pool: boolean;
   created_by: string | null;
   counterparties: { name: string };
 };

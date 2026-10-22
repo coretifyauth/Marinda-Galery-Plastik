@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import type { ApBillListRow, ApBillOrigin, ApBillStatus } from "./schema";
+import type { ApBillListRow, ApBillStatus, ApBillTypeFilter } from "./schema";
 
 export const DEFAULT_PAGE_SIZE = 10;
 export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
@@ -12,7 +12,7 @@ export type ApBillFilters = {
   supplierDocumentRefSearch: string;
   supplierId: string;
   status: ApBillStatus | "" | "aktif"; // "aktif" = default, sembunyikan yang dibatalkan
-  origin: ApBillOrigin | "";
+  origin: ApBillTypeFilter;
   page: number;
   pageSize: number;
 };
@@ -22,7 +22,7 @@ export type ApBillFilters = {
 // ap_payments/ap_credit_notes/ap_deposit_applications/goods_receipt_notes cuma buat dihitung
 // ulang di client (itu tetap dipakai di halaman detail [id]/view.tsx).
 const SELECT_COLUMNS =
-  "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, outstanding, status, origin, created_by, counterparties(name)";
+  "id, supplier_id, bill_date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, outstanding, status, origin, has_goods_pool, created_by, counterparties(name)";
 
 export async function fetchApBills(
   filters: ApBillFilters
@@ -48,7 +48,9 @@ export async function fetchApBills(
   if (filters.supplierId) query = query.eq("supplier_id", filters.supplierId);
   if (filters.status === "aktif") query = query.neq("status", "dibatalkan");
   else if (filters.status) query = query.eq("status", filters.status);
-  if (filters.origin) query = query.eq("origin", filters.origin);
+  // "barang" = tagihan barang (punya kolam); tipe lain = origin untuk tagihan yang BUKAN tagihan barang.
+  if (filters.origin === "barang") query = query.eq("has_goods_pool", true);
+  else if (filters.origin) query = query.eq("origin", filters.origin).eq("has_goods_pool", false);
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);

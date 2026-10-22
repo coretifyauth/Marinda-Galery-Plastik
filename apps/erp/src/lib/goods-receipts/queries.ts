@@ -6,7 +6,7 @@ import type { GoodsReceiptLine, GoodsReceiptNote, GoodsReceiptStatus } from "./t
 export const DEFAULT_PAGE_SIZE = 10;
 export const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
-export type GoodsReceiptStatusFilter = "aktif" | "" | GoodsReceiptStatus; // "aktif" = default, sembunyikan yang dibatalkan
+export type GoodsReceiptStatusFilter = "" | GoodsReceiptStatus; // "" = semua status
 
 export type GoodsReceiptFilters = {
   dateFrom: string;
@@ -20,26 +20,27 @@ export type GoodsReceiptFilters = {
 type NoteRow = Omit<GoodsReceiptNote, "goods_note_lines">;
 
 type LineRow = {
-  goods_note_line_id: string;
+  id: string;
   goods_note_id: string;
   item_id: string;
   qty: number;
-  unit_cost: number;
-  discount_amount: number;
-  line_value: number;
+  unit_cost: number | null;
+  discount_amount: number | null;
 };
 
 type ItemRow = GoodsReceiptLine["items"] & { id: string };
 
-// View/embedding PostgREST gak bisa dipakai lintas view, jadi baris barang & nama item diambil 2 query
-// terpisah lalu digabung di sini (daftar paginated, jadi jumlah id kecil).
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+// Baris barang & nama item diambil 2 query terpisah lalu digabung di sini (daftar paginated, jadi jumlah id kecil).
+// Nilai baris dihitung seperti server: round(qty x unit_cost, 2) - discount_amount.
 export async function fetchLinesForNotes(noteIds: string[]): Promise<Map<string, GoodsReceiptLine[]>> {
   const result = new Map<string, GoodsReceiptLine[]>();
   if (noteIds.length === 0) return result;
 
   const { data: lineData, error: lineErr } = await supabase
-    .from("goods_note_line_current_cost")
-    .select("goods_note_line_id, goods_note_id, item_id, qty, unit_cost, discount_amount, line_value")
+    .from("goods_note_lines")
+    .select("id, goods_note_id, item_id, qty, unit_cost, discount_amount")
     .in("goods_note_id", noteIds);
   if (lineErr) throw new Error(lineErr.message);
   const lines = (lineData ?? []) as unknown as LineRow[];
@@ -57,14 +58,16 @@ export async function fetchLinesForNotes(noteIds: string[]): Promise<Map<string,
 
   for (const l of lines) {
     const item = items.get(l.item_id);
+    const unitCost = l.unit_cost ?? 0;
+    const discount = l.discount_amount ?? 0;
     const line: GoodsReceiptLine = {
-      id: l.goods_note_line_id,
+      id: l.id,
       goods_note_id: l.goods_note_id,
       item_id: l.item_id,
       qty: l.qty,
-      unit_cost: l.unit_cost,
-      discount_amount: l.discount_amount,
-      line_value: l.line_value,
+      unit_cost: unitCost,
+      discount_amount: discount,
+      line_value: round2(round2(l.qty * unitCost) - discount),
       items: item
         ? { name: item.name, uom: item.uom, item_units: item.item_units ?? [] }
         : { name: "(item tidak ditemukan)", uom: "", item_units: [] },
@@ -76,6 +79,11 @@ export async function fetchLinesForNotes(noteIds: string[]): Promise<Map<string,
   return result;
 }
 
+async function withLines(notes: NoteRow[]): Promise<GoodsReceiptNote[]> {
+  const lines = await fetchLinesForNotes(notes.map((n) => n.id));
+  return notes.map((n) => ({ ...n, goods_note_lines: lines.get(n.id) ?? [] }));
+}
+
 export async function fetchGoodsReceipts(
   filters: GoodsReceiptFilters
 ): Promise<{ rows: GoodsReceiptNote[]; total: number }> {
@@ -83,7 +91,7 @@ export async function fetchGoodsReceipts(
   const to = from + filters.pageSize - 1;
 
   let query = supabase
-    .from("goods_notes_with_billing_status")
+    .from("goods_receipts_overview")
     .select("*", { count: "exact" })
     .order("note_date", { ascending: false })
     .order("created_at", { ascending: false })
@@ -92,30 +100,36 @@ export async function fetchGoodsReceipts(
   if (filters.dateFrom) query = query.gte("note_date", filters.dateFrom);
   if (filters.dateTo) query = query.lte("note_date", filters.dateTo);
   if (filters.purchaseOrderId) query = query.eq("order_id", filters.purchaseOrderId);
-
-  if (filters.status === "aktif") query = query.neq("billing_status", "dibatalkan");
-  else if (filters.status) query = query.eq("billing_status", filters.status);
+  if (filters.status) query = query.eq("status", filters.status);
 
   const { data, error, count } = await query;
   if (error) throw new Error(error.message);
-  const notes = (data ?? []) as unknown as NoteRow[];
-  const lines = await fetchLinesForNotes(notes.map((n) => n.id));
-  return {
-    rows: notes.map((n) => ({ ...n, goods_note_lines: lines.get(n.id) ?? [] })),
-    total: count ?? 0,
-  };
+  return { rows: await withLines((data ?? []) as unknown as NoteRow[]), total: count ?? 0 };
 }
 
-// Seluruh barang masuk yang ditagih 1 tagihan (lewat goods_note_billings -- 1 tagihan bisa menutup banyak
-// barang masuk), digabung PER ITEM: qty dijumlah, harga = nilai berlaku / qty. Dipakai layar retur/tukar
-// barang/detail tagihan yang dulu mengira 1 tagihan = 1 barang masuk. Null kalau tagihan tanpa barang masuk.
-export async function fetchGoodsReceiptForBill(billId: string): Promise<GoodsReceiptForBill | null> {
-  const { data: links, error } = await supabase
-    .from("goods_note_billings")
-    .select("goods_note_id")
-    .eq("transaction_id", billId);
+// Semua barang masuk 1 tagihan (terbaru dulu) -- dipakai detail tagihan (kolam) untuk menampilkan kirimannya.
+export async function fetchGoodsReceiptsForBill(billId: string): Promise<GoodsReceiptNote[]> {
+  const { data, error } = await supabase
+    .from("goods_receipts_overview")
+    .select("*")
+    .eq("bill_id", billId)
+    .order("note_date", { ascending: false })
+    .order("created_at", { ascending: false });
   if (error) throw new Error(error.message);
-  const noteIds = [...new Set(((links ?? []) as { goods_note_id: string }[]).map((l) => l.goods_note_id))];
+  return withLines((data ?? []) as unknown as NoteRow[]);
+}
+
+// Seluruh barang masuk AKTIF 1 tagihan, digabung PER ITEM: qty dijumlah, harga = nilai bersih / qty. Dipakai layar
+// retur/tukar barang/detail tagihan (batas qty retur = total qty diterima semua barang masuk tagihan itu).
+// Null kalau tagihan tanpa barang masuk aktif.
+export async function fetchGoodsReceiptForBill(billId: string): Promise<GoodsReceiptForBill | null> {
+  const { data, error } = await supabase
+    .from("goods_receipts_overview")
+    .select("id")
+    .eq("bill_id", billId)
+    .eq("status", "aktif");
+  if (error) throw new Error(error.message);
+  const noteIds = ((data ?? []) as { id: string }[]).map((n) => n.id);
   if (noteIds.length === 0) return null;
 
   const lineMap = await fetchLinesForNotes(noteIds);
@@ -139,36 +153,20 @@ export async function fetchGoodsReceiptForBill(billId: string): Promise<GoodsRec
   };
 }
 
-// Barang masuk alur baru milik 1 supplier yang belum ditagih -- bahan pilihan form "tagihan dari barang masuk".
-export async function fetchUnbilledReceipts(supplierId: string): Promise<GoodsReceiptNote[]> {
-  const { data, error } = await supabase
-    .from("goods_notes_with_billing_status")
-    .select("*")
-    .eq("counterparty_id", supplierId)
-    .eq("inbound_flow", "deferred")
-    .eq("billing_status", "belum_tertagih")
-    .order("note_date", { ascending: true })
-    .order("created_at", { ascending: true });
-  if (error) throw new Error(error.message);
-  const notes = (data ?? []) as unknown as NoteRow[];
-  const lines = await fetchLinesForNotes(notes.map((n) => n.id));
-  return notes.map((n) => ({ ...n, goods_note_lines: lines.get(n.id) ?? [] }));
-}
-
-export function useUnbilledReceipts(supplierId: string) {
-  return useQuery({
-    queryKey: ["unbilled_goods_receipts", supplierId],
-    queryFn: () => fetchUnbilledReceipts(supplierId),
-    enabled: !!supplierId,
-    staleTime: 5_000,
-  });
-}
-
 export function useGoodsReceipts(filters: GoodsReceiptFilters) {
   return useQuery({
     queryKey: ["goods_receipt_notes", filters],
     queryFn: () => fetchGoodsReceipts(filters),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+  });
+}
+
+export function useGoodsReceiptsForBill(billId: string) {
+  return useQuery({
+    queryKey: ["goods_receipt_notes", "bill", billId],
+    queryFn: () => fetchGoodsReceiptsForBill(billId),
+    enabled: !!billId,
+    staleTime: 5_000,
   });
 }

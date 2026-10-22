@@ -4,8 +4,6 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import { useUnbilledReceipts } from "@/lib/goods-receipts/queries";
-import { hasZeroValueLine, receiptNumber } from "@/lib/goods-receipts/types";
 import { fetchTaxSettings, resolvedPpnMasukan, type TaxSettings } from "@/lib/tax-settings/schema";
 import {
   resolveChargeLines,
@@ -26,25 +24,23 @@ import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 import { SupplierBalanceNotice } from "@/components/supplier-balance-notice";
-import { ReceiptLinesTable } from "@/components/goods-receipts/receipt-lines-table";
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
-export function ApBillFromGoodsReceiptsView({
-  initialSupplierId,
-  initialNoteId,
-}: {
-  initialSupplierId: string;
-  initialNoteId: string;
-}) {
+/**
+ * Tagihan Barang: nota supplier dicatat dulu (boleh dibayar kapan saja), barangnya menyusul bertahap. Bagian barang
+ * jadi "kolam" yang dihabiskan barang masuk yang dibuat dari tagihan ini. Jurnal: Debit Pembelian Belum Diterima /
+ * Kredit Utang Usaha -- bukan Debit Persediaan, karena barangnya belum ada di gudang.
+ */
+export function NewApBillWithGoodsView() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [roles, setRoles] = useState<string[]>([]);
 
-  const [supplierId, setSupplierId] = useState(initialSupplierId);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(initialNoteId ? [initialNoteId] : []));
+  const [supplierId, setSupplierId] = useState("");
   const [billDate, setBillDate] = useState("");
+  const [goodsAmount, setGoodsAmount] = useState("");
   const [description, setDescription] = useState("");
   const [supplierDocumentRef, setSupplierDocumentRef] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
@@ -53,9 +49,6 @@ export function ApBillFromGoodsReceiptsView({
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const notesQuery = useUnbilledReceipts(supplierId);
-  const notes = notesQuery.data ?? [];
 
   const loadExpenseCategories = useCallback(async () => {
     const { data } = await supabase
@@ -91,15 +84,18 @@ export function ApBillFromGoodsReceiptsView({
     };
   }, [router, loadExpenseCategories]);
 
+  const goods = parseFloat(goodsAmount) || 0;
+
   const createMutation = useMutation({
     mutationFn: async () => {
       const sourceRef = await generateDocumentNumber("ap_bills");
-      const { data, error } = await supabase.rpc("create_ap_bill_from_goods_receipts", {
-        p_goods_note_ids: [...selected],
+      const { data, error } = await supabase.rpc("create_ap_bill_with_goods_pool", {
+        p_supplier_id: supplierId,
         p_bill_date: billDate,
         p_description: description || null,
         p_source_ref: sourceRef,
         p_payable_account_id: defaultAccounts["ap.payable"]?.id,
+        p_goods_amount: goods,
         p_extra_debit_lines: resolveChargeLines(extraLines, expenseCategories),
         p_apply_tax: applyTax,
         p_supplier_document_ref: supplierDocumentRef || null,
@@ -109,8 +105,7 @@ export function ApBillFromGoodsReceiptsView({
     },
     onSuccess: (newId) => {
       queryClient.invalidateQueries({ queryKey: ["ap_bills"] });
-      queryClient.invalidateQueries({ queryKey: ["goods_receipt_notes"] });
-      queryClient.invalidateQueries({ queryKey: ["unbilled_goods_receipts"] });
+      queryClient.invalidateQueries({ queryKey: ["open_pool_bills"] });
       router.push(`/ap-bills/${newId}`);
     },
     onError: (err) => {
@@ -118,27 +113,17 @@ export function ApBillFromGoodsReceiptsView({
     },
   });
 
-  function changeSupplier(id: string) {
-    setSupplierId(id);
-    setSelected(new Set());
-  }
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
   function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     if (!supplierId) return setFormError("Pilih supplier");
-    if (selected.size === 0) return setFormError("Pilih minimal 1 barang masuk yang mau ditagih");
     if (!billDate) return setFormError("Tanggal wajib diisi");
+    if (goods <= 0) return setFormError("Nilai barang di nota harus lebih dari 0");
+    if (Math.abs(goods * 100 - Math.round(goods * 100)) > 1e-6) return setFormError("Nilai barang maksimal 2 desimal");
     if (!defaultAccounts["ap.payable"]?.id) return setFormError("Default Akun Utang Usaha belum diset");
+    if (!defaultAccounts["inventory.purchase_not_received"]?.id) {
+      return setFormError("Default Akun Pembelian Belum Diterima belum diset -- cek Pengaturan > Default Akun");
+    }
     createMutation.mutate();
   }
 
@@ -147,10 +132,8 @@ export function ApBillFromGoodsReceiptsView({
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  const chosen = notes.filter((n) => selected.has(n.id));
-  const goodsTotal = round2(chosen.reduce((sum, n) => sum + n.total_value, 0));
   const extraTotal = round2(resolveChargeLines(extraLines, expenseCategories).reduce((sum, l) => sum + l.amount, 0));
-  const subtotal = round2(goodsTotal + extraTotal);
+  const subtotal = round2(goods + extraTotal);
   const taxAmount = applyTax && taxSettings ? round2((subtotal * taxSettings.ppn_rate) / 100) : 0;
   const totalAmount = round2(subtotal + taxAmount);
 
@@ -159,11 +142,12 @@ export function ApBillFromGoodsReceiptsView({
       <BackLink href="/ap-bills" label="Kembali ke Tagihan" />
 
       <div>
-        <h1 className="text-xl font-semibold text-black">Tagihan dari Barang Masuk</h1>
+        <h1 className="text-xl font-semibold text-black">Tagihan Barang</h1>
         <p className="text-sm text-slate-500">
-          Pilih supplier, lalu centang barang masuk yang sudah ada notanya. Nominal tagihan mengikuti nilai barang masuk
-          yang dipilih — kalau harga di nota beda, revisi harga barang masuknya dulu. Satu barang masuk ditagih utuh dan
-          hanya sekali. Untuk biaya/jasa tanpa barang masuk, pakai Tagihan Langsung.
+          Catat nota supplier untuk barang yang akan datang (sekaligus atau bertahap). Nilai barang di nota menjadi
+          kolam; setiap kiriman dicatat sebagai Barang Masuk dari tagihan ini dan mengurangi kolamnya. Tagihan boleh
+          dibayar kapan saja, tidak harus menunggu barangnya. Kalau notanya belum pasti, isi nominal perkiraan.
+          Untuk biaya atau jasa tanpa barang fisik, pakai Tagihan Langsung.
         </p>
       </div>
 
@@ -184,11 +168,23 @@ export function ApBillFromGoodsReceiptsView({
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="supplier">Supplier</Label>
-                <CounterpartyPicker id="supplier" role="supplier" value={supplierId} onChange={changeSupplier} />
+                <CounterpartyPicker id="supplier" role="supplier" value={supplierId} onChange={setSupplierId} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="bill_date">Tanggal Tagihan</Label>
                 <Input id="bill_date" type="date" value={billDate} onChange={(e) => setBillDate(e.target.value)} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="goods_amount">Nilai Barang di Nota (Rp)</Label>
+                <Input
+                  id="goods_amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="mis. 10000000"
+                  value={goodsAmount}
+                  onChange={(e) => setGoodsAmount(e.target.value)}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="supplier_document_ref">Nomor Nota Supplier (opsional)</Label>
@@ -199,7 +195,7 @@ export function ApBillFromGoodsReceiptsView({
                   onChange={(e) => setSupplierDocumentRef(e.target.value)}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <Label htmlFor="description">Deskripsi (opsional)</Label>
                 <Input
                   id="description"
@@ -209,90 +205,21 @@ export function ApBillFromGoodsReceiptsView({
                 />
               </div>
               <LockedAccountField
+                label="Akun Pembelian Belum Diterima (debit)"
+                htmlFor="pbd_account"
+                resolved={defaultAccounts["inventory.purchase_not_received"]}
+              />
+              <LockedAccountField
                 label="Akun Utang Usaha (kredit)"
                 htmlFor="payable_account"
                 resolved={defaultAccounts["ap.payable"]}
               />
-              <LockedAccountField
-                label="Akun Barang Diterima Belum Ditagih (debit)"
-                htmlFor="grni_account"
-                resolved={defaultAccounts["inventory.goods_received_not_invoiced"]}
-              />
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="mb-3 text-sm font-medium text-black">Barang Masuk yang Belum Ditagih</p>
-            {!supplierId && <p className="text-sm text-slate-400">Pilih supplier dulu.</p>}
-            {supplierId && notesQuery.isLoading && <p className="text-sm text-slate-400">Memuat...</p>}
-            {supplierId && notesQuery.error && <FormError>{(notesQuery.error as Error).message}</FormError>}
-            {supplierId && !notesQuery.isLoading && notes.length === 0 && (
-              <p className="text-sm text-slate-400">Supplier ini tidak punya barang masuk yang belum ditagih.</p>
-            )}
-            <div className="flex flex-col gap-3">
-              {notes.map((n) => {
-                const zero = hasZeroValueLine(n);
-                return (
-                  <label
-                    key={n.id}
-                    className={`flex gap-3 rounded-lg border px-4 py-3 ${
-                      zero
-                        ? "cursor-not-allowed border-amber-200 bg-amber-50/60"
-                        : selected.has(n.id)
-                          ? "cursor-pointer border-blue-300 bg-blue-50/50"
-                          : "cursor-pointer border-slate-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      disabled={zero}
-                      checked={selected.has(n.id)}
-                      onChange={() => toggle(n.id)}
-                    />
-                    <div className="flex min-w-0 flex-1 flex-col gap-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2 text-sm">
-                          <span className="font-mono text-xs text-slate-600">{receiptNumber(n)}</span>
-                          <span className="text-slate-500">{n.note_date}</span>
-                          {n.delivery_note_ref && <span className="text-xs text-slate-400">SJ: {n.delivery_note_ref}</span>}
-                          {n.unbilled_age_days != null && n.unbilled_age_days > 0 && (
-                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
-                              {n.unbilled_age_days} hari
-                            </span>
-                          )}
-                        </div>
-                        <span className="font-mono text-sm font-medium text-black">
-                          Rp{n.total_value.toLocaleString("id-ID")}
-                        </span>
-                      </div>
-                      <ReceiptLinesTable lines={n.goods_note_lines} variant="compact" />
-                      {zero && (
-                        <p className="text-xs text-amber-700">
-                          Ada baris berharga 0 — beri harga dulu lewat{" "}
-                          <button
-                            type="button"
-                            className="underline"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              router.push(`/goods-receipts/${n.id}/revisi`);
-                            }}
-                          >
-                            Revisi Harga
-                          </button>
-                          .
-                        </p>
-                      )}
-                    </div>
-                  </label>
-                );
-              })}
             </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <ChargeLinesEditor
-              label="Kategori Debit Tambahan (opsional — mis. ongkir yang tertera di nota)"
+              label="Kategori Debit Tambahan (opsional — mis. ongkir yang tertera di nota; di luar kolam barang)"
               lines={extraLines}
               chargeTypes={expenseCategories}
               onChange={setExtraLines}
@@ -312,8 +239,8 @@ export function ApBillFromGoodsReceiptsView({
             groups={[
               [
                 {
-                  label: "Akun Barang Diterima Belum Ditagih (debit)",
-                  resolved: defaultAccounts["inventory.goods_received_not_invoiced"],
+                  label: "Akun Pembelian Belum Diterima (debit)",
+                  resolved: defaultAccounts["inventory.purchase_not_received"],
                   side: "debit",
                 },
                 ...resolveChargeLineLegs(extraLines, expenseCategories, "debit"),
@@ -329,12 +256,8 @@ export function ApBillFromGoodsReceiptsView({
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between text-sm text-slate-500">
-              <span>Barang masuk dipilih</span>
-              <span className="font-mono">{chosen.length}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm text-slate-500">
-              <span>Nilai barang masuk</span>
-              <span className="font-mono">Rp{goodsTotal.toLocaleString("id-ID")}</span>
+              <span>Nilai barang (kolam)</span>
+              <span className="font-mono">Rp{goods.toLocaleString("id-ID")}</span>
             </div>
             {extraTotal > 0 && (
               <div className="flex items-center justify-between text-sm text-slate-500">
@@ -355,7 +278,7 @@ export function ApBillFromGoodsReceiptsView({
           {formError && <FormError>{formError}</FormError>}
 
           <div className="flex flex-col gap-2">
-            <Button type="submit" disabled={createMutation.isPending || selected.size === 0}>
+            <Button type="submit" disabled={createMutation.isPending}>
               {createMutation.isPending ? "Menyimpan..." : "Simpan Tagihan"}
             </Button>
             <Button type="button" variant="secondary" onClick={() => router.back()}>

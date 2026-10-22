@@ -1,14 +1,15 @@
-// Tipe barang masuk (goods_notes INBOUND) untuk daftar & detail. Sumber: view goods_notes_with_billing_status
-// (status tagihan turunan) + goods_note_line_current_cost (harga/diskon berlaku setelah revisi).
+// Tipe barang masuk (goods_notes INBOUND) untuk daftar & detail. Sumber: view goods_receipts_overview
+// (migration 0059; status turunan aktif/dibatalkan) + goods_note_lines (nilai baris dihitung sama dengan yang dijurnal).
+// Barang masuk SELALU dibuat dari tepat satu tagihan barang (lihat docs/domain/inventory.md "Barang Masuk dari Tagihan").
 
-export type GoodsReceiptStatus = "belum_tertagih" | "tertagih" | "dibatalkan";
+export type GoodsReceiptStatus = "aktif" | "dibatalkan";
 
 export type GoodsReceiptLine = {
   id: string;
   goods_note_id: string;
   item_id: string;
   qty: number;
-  /** Harga per satuan dasar yang BERLAKU (revisi terakhir, atau nilai asli kalau belum pernah direvisi). */
+  /** Harga per satuan dasar (sebelum diskon baris). */
   unit_cost: number;
   discount_amount: number;
   /** qty x unit_cost - discount_amount, dibulatkan 2 desimal (sama dengan yang dijurnal). */
@@ -26,25 +27,20 @@ export type GoodsReceiptNote = {
   delivery_note_ref: string | null;
   order_id: string | null;
   order_ref: string | null;
-  /** bundled = alur lama (dibuat bareng tagihan), deferred = alur baru (tagihan menyusul). */
-  inbound_flow: "bundled" | "deferred";
-  created_at: string;
-  created_by: string | null;
-  billing_status: GoodsReceiptStatus;
+  /** Tagihan induk. Kosong hanya untuk riwayat alur lama yang sudah dibatalkan. */
   bill_id: string | null;
   bill_ref: string | null;
   bill_amount: number | null;
+  /** Barang masuk lama (dibuat bareng tagihannya): jurnal Persediaan ada di jurnal tagihan, dibatalkan lewat tagihan. */
+  is_legacy: boolean;
+  status: GoodsReceiptStatus;
   total_value: number;
-  revision_no: number;
-  unbilled_age_days: number | null;
+  created_at: string;
+  created_by: string | null;
   goods_note_lines: GoodsReceiptLine[];
 };
 
 /** Nomor yang ditampilkan: nomor barang masuk, atau (alur lama) nomor tagihan bawaannya. */
 export function receiptNumber(grn: Pick<GoodsReceiptNote, "source_ref" | "bill_ref">): string {
   return grn.source_ref ?? grn.bill_ref ?? "-";
-}
-
-export function hasZeroValueLine(grn: Pick<GoodsReceiptNote, "goods_note_lines">): boolean {
-  return grn.goods_note_lines.some((l) => l.line_value <= 0);
 }

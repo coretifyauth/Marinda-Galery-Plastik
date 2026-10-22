@@ -2,10 +2,12 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import { lineRemaining, type PurchaseOrder } from "@/lib/purchase-orders/schema";
 import { createGoodsReceiptSchema } from "@/lib/goods-receipts/schema";
-import { receiptTotals } from "@/lib/goods-receipts/calc";
+import { normalizeReceiptLine, receiptTotals } from "@/lib/goods-receipts/calc";
+import { useOpenPoolBills } from "@/lib/ap-bills/pool";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -22,6 +24,7 @@ import {
   ReceiptDiscountSection,
   ReceiptTotalsCard,
 } from "@/components/goods-receipts/receipt-form-parts";
+import { PoolBillSelect, PoolSummary } from "@/components/goods-receipts/pool-bill-select";
 
 type LineInput = {
   order_line_id: string;
@@ -36,11 +39,13 @@ type LineInput = {
 export default function ReceivePurchaseOrderPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [itemUnits, setItemUnits] = useState<ItemUnit[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [billId, setBillId] = useState("");
   const [receiptDate, setReceiptDate] = useState("");
   const [deliveryNoteRef, setDeliveryNoteRef] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
@@ -48,6 +53,11 @@ export default function ReceivePurchaseOrderPage() {
   const [extraDiscount, setExtraDiscount] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Hanya tagihan barang milik supplier PO ini yang masih punya sisa kolam.
+  const billsQuery = useOpenPoolBills(po?.counterparty_id, !!po);
+  const bills = billsQuery.data ?? [];
+  const pool = bills.find((b) => b.bill_id === billId);
 
   const load = useCallback(async () => {
     const { data: poData, error: poErr } = await supabase
@@ -113,13 +123,17 @@ export default function ReceivePurchaseOrderPage() {
     });
   }
 
-  const activeLines = lines.filter((l) => parseFloat(l.qty_received) > 0 && l.unit_cost !== "");
+  // Baris dinormalkan ke presisi kolom tersimpan (harga dibulatkan ke atas, selisih jadi diskon baris) supaya nilai
+  // bersih = nilai nota -- lihat normalizeReceiptLine.
+  const activeLines = lines
+    .filter((l) => parseFloat(l.qty_received) > 0 && l.unit_cost !== "")
+    .map((l) => ({
+      order_line_id: l.order_line_id,
+      item_id: l.item_id,
+      ...normalizeReceiptLine(parseFloat(l.qty_received) || 0, parseFloat(l.unit_cost) || 0, parseFloat(l.item_discount) || 0),
+    }));
   const totals = receiptTotals(
-    activeLines.map((l) => ({
-      qty: parseFloat(l.qty_received) || 0,
-      unitCost: parseFloat(l.unit_cost) || 0,
-      itemDiscount: parseFloat(l.item_discount) || 0,
-    })),
+    activeLines.map((l) => ({ qty: l.qty, unitCost: l.unitCost, itemDiscount: l.discount })),
     parseFloat(extraDiscount) || 0
   );
 
@@ -128,12 +142,23 @@ export default function ReceivePurchaseOrderPage() {
     setFormError(null);
     if (!po) return;
 
+    if (!pool) {
+      setFormError("Pilih tagihan barang tempat barang ini dicatat");
+      return;
+    }
     if (totals.problems.length > 0) {
       setFormError(totals.problems[0]);
       return;
     }
+    if (totals.total > pool.remaining + 0.005) {
+      setFormError(
+        `Nilai barang masuk Rp${totals.total.toLocaleString("id-ID")} melebihi sisa kolam tagihan ${pool.bill_ref} (Rp${pool.remaining.toLocaleString("id-ID")}). Sisanya harus ditagih lewat tagihan lain.`
+      );
+      return;
+    }
 
     const parsed = createGoodsReceiptSchema.safeParse({
+      bill_id: pool.bill_id,
       order_id: po.id,
       receipt_date: receiptDate,
       delivery_note_ref: deliveryNoteRef || undefined,
@@ -141,9 +166,9 @@ export default function ReceivePurchaseOrderPage() {
       lines: activeLines.map((l) => ({
         order_line_id: l.order_line_id,
         item_id: l.item_id,
-        qty_received: l.qty_received,
-        unit_cost: l.unit_cost,
-        discount_amount: l.item_discount || 0,
+        qty_received: l.qty,
+        unit_cost: l.unitCost,
+        discount_amount: l.discount,
       })),
       discount_amount: extraDiscount || 0,
     });
@@ -154,12 +179,12 @@ export default function ReceivePurchaseOrderPage() {
 
     setSubmitting(true);
     const { error } = await supabase.rpc("create_goods_receipt", {
-      p_order_id: parsed.data.order_id ?? null,
+      p_bill_id: parsed.data.bill_id,
       p_receipt_date: parsed.data.receipt_date,
       p_delivery_note_ref: parsed.data.delivery_note_ref || null,
       p_lines: parsed.data.lines,
       p_inventory_account_id: parsed.data.inventory_account_id,
-      p_supplier_id: null,
+      p_order_id: parsed.data.order_id ?? null,
       p_discount_amount: parsed.data.discount_amount,
     });
     setSubmitting(false);
@@ -167,6 +192,12 @@ export default function ReceivePurchaseOrderPage() {
       setFormError(error.message);
       return;
     }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["goods_receipt_notes"] }),
+      queryClient.invalidateQueries({ queryKey: ["open_pool_bills"] }),
+      queryClient.invalidateQueries({ queryKey: ["ap_bill_pool", parsed.data.bill_id] }),
+      queryClient.invalidateQueries({ queryKey: ["ap_bills"] }),
+    ]);
 
     router.push(`/purchase-orders/${id}`);
   }
@@ -191,8 +222,9 @@ export default function ReceivePurchaseOrderPage() {
           </span>
         </div>
         <p className="text-sm text-slate-500">
-          Supplier: {po.counterparties.name}. Tagihannya dibuat terpisah dari menu Tagihan begitu nota datang.
-          Harga di sini boleh perkiraan dan bisa direvisi selama belum ditagih.
+          Supplier: {po.counterparties.name}. Barang masuk dicatat dari satu tagihan barang supplier ini, dengan harga
+          sesuai nota; nilainya mengurangi sisa kolam tagihan itu. Belum ada tagihannya? Buat dulu Tagihan Barang dari
+          menu Tagihan.
         </p>
       </div>
 
@@ -200,6 +232,16 @@ export default function ReceivePurchaseOrderPage() {
         <div className="flex flex-col gap-6 lg:col-span-2">
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5 sm:col-span-2">
+                <Label htmlFor="bill">Tagihan Barang</Label>
+                <PoolBillSelect id="bill" bills={bills} value={billId} onChange={setBillId} loading={billsQuery.isLoading} />
+                {billsQuery.error && <FormError>{(billsQuery.error as Error).message}</FormError>}
+              </div>
+              {pool && (
+                <div className="sm:col-span-2">
+                  <PoolSummary pool={pool} receiving={totals.total} />
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="receipt_date">Tanggal Terima</Label>
                 <Input
@@ -220,9 +262,9 @@ export default function ReceivePurchaseOrderPage() {
               </div>
               <LockedAccountField htmlFor="debit_account" resolved={defaultAccounts["inventory.raw_material"]} />
               <LockedAccountField
-                htmlFor="grni_account"
-                label="Akun Barang Diterima Belum Ditagih (kredit)"
-                resolved={defaultAccounts["inventory.goods_received_not_invoiced"]}
+                htmlFor="pbd_account"
+                label="Akun Pembelian Belum Diterima (kredit)"
+                resolved={defaultAccounts["inventory.purchase_not_received"]}
               />
             </div>
           </div>
@@ -232,7 +274,7 @@ export default function ReceivePurchaseOrderPage() {
             <div className="flex flex-col gap-2">
               <div className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2 text-sm font-medium text-slate-500">
                 <span>Item</span>
-                <span>Qty, Satuan & Harga Perkiraan</span>
+                <span>Qty, Satuan & Harga (sesuai nota)</span>
               </div>
               {lines.length === 0 && <p className="text-sm text-slate-400">PO ini sudah diterima penuh.</p>}
               {lines.map((line, i) => (
@@ -247,7 +289,6 @@ export default function ReceivePurchaseOrderPage() {
                       baseUom={line.uom}
                       initialBaseQty={line.qty_received}
                       initialBaseCost={line.unit_cost}
-                      allowZeroCost
                       onChange={(change) => updateLineQtyCost(i, change)}
                     />
                     <ItemDiscountInput value={line.item_discount} onChange={(v) => updateLine(i, { item_discount: v })} />
@@ -270,8 +311,8 @@ export default function ReceivePurchaseOrderPage() {
                   side: "debit",
                 },
                 {
-                  label: "Akun Barang Diterima Belum Ditagih (kredit)",
-                  resolved: defaultAccounts["inventory.goods_received_not_invoiced"],
+                  label: "Akun Pembelian Belum Diterima (kredit)",
+                  resolved: defaultAccounts["inventory.purchase_not_received"],
                   side: "credit",
                 },
               ],

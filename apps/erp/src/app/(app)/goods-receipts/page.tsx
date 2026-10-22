@@ -9,7 +9,7 @@ import {
   useGoodsReceipts,
   type GoodsReceiptStatusFilter,
 } from "@/lib/goods-receipts/queries";
-import { hasZeroValueLine, receiptNumber } from "@/lib/goods-receipts/types";
+import { receiptNumber } from "@/lib/goods-receipts/types";
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, cancelledRowClass } from "@/components/ui/cancelled";
@@ -184,8 +184,6 @@ export default function GoodsReceiptsPage() {
                   className={compactFilterInputClass}
                 >
                   <option value="aktif">Aktif (tanpa dibatalkan)</option>
-                  <option value="belum_tertagih">Belum tertagih</option>
-                  <option value="tertagih">Tertagih</option>
                   <option value="">Semua status</option>
                   <option value="dibatalkan">Dibatalkan</option>
                 </select>
@@ -196,13 +194,12 @@ export default function GoodsReceiptsPage() {
           </thead>
           <tbody>
             {receipts.map((grn) => {
-              const cancelled = grn.billing_status === "dibatalkan";
-              const unbilled = grn.billing_status === "belum_tertagih";
+              const cancelled = grn.status === "dibatalkan";
               return (
                 <tr
                   key={grn.id}
                   className={`cursor-pointer border-b border-slate-100 align-top ${
-                    cancelled ? cancelledRowClass : unbilled ? "bg-red-50/70 hover:bg-red-50" : "hover:bg-slate-50"
+                    cancelled ? cancelledRowClass : "hover:bg-slate-50"
                   }`}
                   onClick={() => router.push(`/goods-receipts/${grn.id}`)}
                 >
@@ -222,27 +219,27 @@ export default function GoodsReceiptsPage() {
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{grn.total_value.toLocaleString("id-ID")}</td>
                   <td className="px-4 py-2">
-                    <div className="flex flex-col items-start gap-1">
-                      {cancelled ? (
-                        <CancelledBadge />
-                      ) : unbilled ? (
-                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                          Belum tertagih
-                          {grn.unbilled_age_days != null && ` · ${grn.unbilled_age_days} hari`}
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Tertagih</span>
-                      )}
-                      {!cancelled && hasZeroValueLine(grn) && (
-                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">Harga 0</span>
-                      )}
-                      {grn.revision_no > 1 && (
-                        <span className="text-xs text-slate-400">revisi {grn.revision_no}</span>
-                      )}
-                    </div>
+                    {cancelled ? (
+                      <CancelledBadge />
+                    ) : (
+                      <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Aktif</span>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-xs text-slate-600">
-                    {grn.billing_status === "tertagih" ? (grn.bill_ref ?? "-") : <span className="text-slate-300">—</span>}
+                    {grn.bill_id ? (
+                      <button
+                        type="button"
+                        className="text-blue-600 hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          router.push(`/ap-bills/${grn.bill_id}`);
+                        }}
+                      >
+                        {grn.bill_ref ?? "-"}
+                      </button>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-slate-500">{(grn.created_by && userEmails[grn.created_by]) ?? "-"}</td>
                 </tr>
