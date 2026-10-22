@@ -27,7 +27,7 @@ Saat memesan bahan baku dari supplier, sebelum barangnya benar-benar diterima. P
 ## Hasil Akhir
 
 - PO baru muncul di tabel Purchase Orders dengan status **OPEN**, Source Ref otomatis.
-- **Belum ada efek ke stok atau jurnal apa pun** — PO murni catatan pesanan. Efek ke stok/jurnal baru terjadi saat barangnya diterima lewat [terima-barang-grn.md](terima-barang-grn.md).
+- **Belum ada efek ke stok atau jurnal apa pun** — PO murni catatan pesanan. Nota supplier dicatat sebagai Tagihan Barang ([buat-tagihan-barang.md](../accounts-payable/buat-tagihan-barang.md)); efek ke stok baru terjadi saat barangnya diterima lewat [terima-barang-grn.md](terima-barang-grn.md).
 - Status PO akan berubah otomatis jadi **PARTIALLY_RECEIVED** atau **FULLY_RECEIVED** begitu ada Goods Receipt yang mengacu ke PO ini.
 
 ## Kesalahan Umum

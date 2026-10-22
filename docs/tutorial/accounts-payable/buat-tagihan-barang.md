@@ -1,43 +1,63 @@
-# Buat Tagihan dari Barang Masuk
+# Buat Tagihan Barang (Nota Duluan, Barang Menyusul)
 
 ## Kapan Melakukan Ini
 
-Saat **nota supplier datang** untuk barang yang sudah dicatat masuk lebih dulu (lihat [terima-barang-grn.md](../inventory/terima-barang-grn.md)). Satu tagihan bisa menutup **beberapa barang masuk dari supplier yang sama** (mis. supplier mengantar 3 kali dalam sebulan, menagih sekali).
+Saat **nota supplier untuk barang** sudah ada, sementara barangnya datang **sekaligus atau bertahap** sesudahnya. Nota dicatat dulu sebagai **Tagihan Barang**; tiap kiriman dicatat kemudian sebagai Barang Masuk dari tagihan itu ([terima-barang-grn.md](../inventory/terima-barang-grn.md)). Tagihan boleh dibayar kapan saja — sebelum, sesudah, atau di antara kiriman — tidak harus menunggu barangnya.
 
-Untuk biaya atau jasa yang tidak ada barang masuknya, pakai [buat-bill-ap.md](buat-bill-ap.md) (Tagihan Langsung).
+Untuk biaya atau jasa tanpa barang fisik (sewa, listrik, jasa), pakai [buat-bill-ap.md](buat-bill-ap.md) (Tagihan Langsung).
 
 ## Prasyarat
 
 - Login dengan role **admin** atau **accountant**.
-- Barang masuknya sudah dicatat dan berstatus **Belum tertagih**.
-- Harga barang masuk sudah sesuai nota. Kalau beda, buka detail barang masuk lalu **Revisi Harga / Diskon** dulu — nominal tagihan **mengikuti nilai barang masuk**, tidak diketik ulang.
-- Tidak ada baris berharga 0 di barang masuk yang mau ditagih.
+- Supplier sudah ada — lihat [tambah-supplier-baru.md](tambah-supplier-baru.md).
+- Akun **Pembelian Belum Diterima** sudah terpasang di Pengaturan > Default Akun (dibuat otomatis oleh sistem).
+- Nilai barang di nota diketahui. Kalau belum pasti, isi nominal perkiraan — tapi ingat: kalau notanya ternyata beda setelah barang terjual, belum ada jalur koreksinya selain batal-ulang.
 
 ## Langkah-Langkah
 
-1. Buka menu **Tagihan** (`/ap-bills`), klik **+ Dari Barang Masuk**. (Atau dari detail barang masuk, klik **Buat Tagihan** — barang masuk itu langsung tercentang.)
+1. Buka menu **Tagihan** (`/ap-bills`), klik **+ Tagihan Barang**.
 2. Pilih **Supplier**. Kalau supplier itu punya saldo uang muka, muncul kotak biru pengingat — uang muka diterapkan setelah tagihan dibuat.
-3. Centang **barang masuk** yang tercantum di nota. Tiap pilihan menampilkan nilainya dan umur belum ditagih. Barang masuk berharga 0 tidak bisa dicentang.
-4. Isi **Tanggal Tagihan**, **Nomor Nota Supplier** (nomor asli di kertas nota), dan deskripsi (opsional).
-5. (Opsional) **Kategori Debit Tambahan** — biaya yang tertera di nota di luar barang (mis. ongkir). (Opsional, kalau PPN aktif) centang **Kena PPN Masukan**.
-6. Cek kartu di kanan: nilai barang masuk + biaya tambahan + PPN = **Nilai Tagihan**.
-7. Klik **Simpan Tagihan**.
+3. Isi **Tanggal Tagihan** dan **Nilai Barang di Nota (Rp)** (maksimal 2 desimal). Angka ini menjadi **kolam**: batas total nilai barang masuk yang boleh dicatat dari tagihan ini.
+4. (Opsional) **Nomor Nota Supplier** (nomor asli di kertas nota) dan **Deskripsi**.
+5. (Opsional) **Kategori Debit Tambahan** — biaya di nota di luar barang, mis. ongkir. (Opsional, kalau PPN aktif) centang **Kena PPN Masukan**. Biaya tambahan dan PPN **di luar kolam**.
+6. Cek panel jurnal dan kartu di kanan: nilai barang + biaya tambahan + PPN = **Nilai Tagihan**.
+7. Klik **Simpan Tagihan**. Anda dibawa ke detail tagihan.
+
+## Mencatat Barang yang Datang
+
+Di detail tagihan, kartu **Kolam Barang** menampilkan **Nilai barang di nota**, **Sudah diterima**, **Dilepas**, dan **Sisa kolam**.
+
+1. Klik **+ Catat Barang Masuk** (muncul selama sisa kolam masih ada dan tagihan tidak dibatalkan). Tagihan ini otomatis terpilih.
+2. Ikuti [terima-barang-grn.md](../inventory/terima-barang-grn.md).
+3. Setelah tersimpan, sisa kolam berkurang sebesar nilai barang masuk. Tabel **Barang Masuk dari Tagihan Ini** mencantumkan tiap kiriman.
+
+## Melepas Sisa Kolam (barang tidak akan datang)
+
+Kalau sebagian barang batal dikirim, sisa kolam yang tidak akan terisi bisa dilepas lewat tombol **Lepas Sisa Kolam**:
+
+- **Pembulatan** — hanya kalau sisa kolam kurang dari satuan pembulatan (default Rp1). Seluruh sisa dilepas ke **Beban Selisih Pembulatan**. Contoh: nota Rp10.000.000, barang masuk total Rp9.999.999,60, sisa Rp0,40.
+- **Jadikan Uang Muka** — hanya **bagian yang sudah dibayar** dan belum terpakai (batasnya ditampilkan di pilihan). Sisanya menjadi **uang muka ke supplier** (lihat [uang-muka-ap.md](uang-muka-ap.md)): bisa diterapkan ke tagihan lain, direfund, atau dihanguskan.
+
+Isi **Nominal** dan **Tanggal**, **centang konfirmasi**, lalu klik **Lepas Sisa Kolam**. Pelepasan **tidak bisa dibatalkan**, dan tagihan yang sudah punya pelepasan tidak bisa dibatalkan lagi.
+
+Sisa kolam yang **belum dibayar** belum punya jalur penutupan di sistem (secara bisnis itu koreksi utang lewat nota kredit dari supplier). Selama belum ada, biarkan sisa kolamnya terbuka dan catat di luar sistem.
 
 ## Hasil Akhir
 
-- Jurnal: **Debit Barang Diterima Belum Ditagih** (sebesar nilai barang masuk yang dipilih, plus biaya tambahan/PPN), **Kredit Utang Usaha**. Saldo Barang Diterima Belum Ditagih untuk barang-barang itu kembali nol.
-- Barang masuknya berstatus **Tertagih**, barisnya tidak merah lagi, dan tidak bisa direvisi lagi.
-- **Harga rata-rata** tiap item baru dihitung sekarang, dari harga barang masuk. Kalau sebagian barang sudah terjual sebelum nota datang, selisih biayanya dicatat sebagai **koreksi HPP** (jurnal terpisah di hari tagihan). HPP penjualan lama tidak diubah.
-- Tagihan bisa dibayar seperti biasa ([bayar-bill-ap.md](bayar-bill-ap.md)) atau dipotong uang muka ([uang-muka-ap.md](uang-muka-ap.md)).
+- Jurnal tagihan: **Debit Pembelian Belum Diterima** (sebesar nilai barang), **Debit** biaya tambahan/PPN Masukan (kalau ada), **Kredit Utang Usaha**. Bukan Debit Persediaan — barangnya belum ada di gudang.
+- Jurnal tiap barang masuk: **Debit Persediaan, Kredit Pembelian Belum Diterima**. Saldo Pembelian Belum Diterima selalu sama dengan jumlah sisa kolam semua tagihan barang aktif.
+- Di daftar Tagihan, kolom **Tipe** bertuliskan **Tagihan Barang**; filter Tipe punya pilihan yang sama.
+- Tagihan bisa dibayar seperti biasa ([bayar-bill-ap.md](bayar-bill-ap.md)) atau dipotong uang muka. Status bayar tidak mempengaruhi kolam.
 
 ## Aturan yang Perlu Diingat
 
-- Satu tagihan hanya boleh menggabungkan barang masuk dari **satu supplier**.
-- Satu barang masuk ditagih **utuh** dan hanya oleh **satu** tagihan aktif — tidak bisa sebagian, tidak bisa dua kali. Kalau supplier menagih satu kiriman dalam dua nota, barang masuknya harus dicatat terpisah sejak diterima.
-- Membatalkan tagihan ini mengembalikan barang masuknya jadi **Belum tertagih** (stok tidak dibalik). Pembatalan ditolak kalau stok item-itemnya sudah bergerak sejak ditagih, dan harus berurutan terbalik kalau item yang sama ditagih lagi oleh tagihan yang lebih baru.
+- Satu barang masuk dibuat dari **tepat satu** tagihan dan tidak bisa dipindah atau dibagi ke dua nota. Satu tagihan boleh punya banyak barang masuk.
+- Total nilai barang masuk dari satu tagihan **tidak boleh melebihi kolamnya**. Kalau kiriman nilainya lebih besar dari sisa kolam (mis. harga naik), kiriman itu ditolak: kirimannya dicatat dari tagihan lain, atau dipecah menjadi dua barang masuk dari dua nota.
+- Tidak ada barang masuk tanpa tagihan. Kalau barang sudah tiba tapi notanya belum ada, buat dulu Tagihan Barang dari nominal perkiraan.
 
 ## Kesalahan Umum
 
-- **Mengubah nominal tagihan supaya cocok dengan nota** — tidak ada kolom nominal untuk diubah; yang benar merevisi harga barang masuknya, supaya nilai stok dan biaya ikut benar.
-- **Tidak menemukan barang masuk di daftar** — cek supplier yang dipilih, dan statusnya harus **Belum tertagih** (bukan Tertagih/Dibatalkan). Barang masuk lama yang dibuat bareng tagihan (sebelum fitur ini) memang tidak muncul karena sudah punya tagihan.
-- **Barang masuk tidak bisa dicentang** — ada baris berharga 0; beri harga lewat Revisi Harga / Diskon.
+- **Mengisi Nilai Barang dengan total nota termasuk ongkir/PPN** — nilai barang hanya bagian barangnya. Ongkir dan PPN diisi di bagian Debit Tambahan / centang PPN.
+- **Menunggu tagihan dibayar dulu baru mencatat barang masuk (atau sebaliknya)** — tidak saling bergantung.
+- **Mengira sisa kolam hilang sendiri** — yang batal datang harus ditutup lewat **Lepas Sisa Kolam**, atau dibiarkan terbuka sampai ada jalur nota kredit.
+- **Salah klik Lepas Sisa Kolam** — tidak bisa dibatalkan; baca konfirmasinya sebelum klik.

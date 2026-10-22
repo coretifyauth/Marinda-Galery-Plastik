@@ -36,20 +36,45 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - Batalin bill yang udah ada pembayaran/retur tanpa pengaman — pembukuan tetap balance tapi transaksi yang udah kesentuh jadi gak jelas nasibnya.
 - Salah pilih akun debit pas bikin bill — bahan baku harusnya masuk Persediaan (asset), jasa/sewa/listrik harusnya langsung Beban (expense). Sistem nerima akun debit sebagai input manual, jadi kesalahan pilih akun itu tanggung jawab yang input, bukan dicegah otomatis.
 
-### Dua Mode Membuat Tagihan (Langsung vs dari Barang Masuk)
+### Tagihan Dulu, Barang Menyusul (Kolam Tagihan)
 
-Tagihan utang sekarang bisa dibuat dengan dua cara. **Tagihan langsung** — seperti sebelumnya, untuk biaya/jasa atau pembelian yang gak lewat barang masuk (gak ada kaitan ke barang fisik). **Tagihan dari barang masuk** — user memilih supplier, lalu memilih satu atau beberapa barang masuk milik supplier itu yang **belum tertagih**; nominal tiap pilihan ditampilkan, dan nominal tagihan = jumlah nilai barang masuk yang dipilih (ditambah PPN dan biaya tambahan nota seperti tagihan biasa). Jurnalnya: Debit **Barang Diterima Belum Ditagih**, Kredit **Utang Usaha** — bukan Debit Persediaan, karena Persediaan sudah dicatat saat barangnya diterima.
+**Masalahnya:** supplier sering mengirim nota duluan dan minta dibayar, sementara barangnya datang bertahap beberapa hari kemudian (dan tidak langsung menutup seluruh nota). Pembukuan harus bisa mencatat utang dan pembayarannya tanpa mengaku punya stok yang belum ada di gudang, dan tiap barang yang datang belakangan harus bisa ditelusuri ke nota yang membayarnya — gak boleh "tercecer" di sembarang tagihan.
+
+**Cara Kerja**
+- Tagihan dibuat dengan dua mode. **Tagihan langsung** — biaya/jasa tanpa barang fisik, seperti sebelumnya. **Tagihan barang** — ada barang fisik yang akan diterima. Gak ada jalur ketiga: **barang masuk selalu dibuat dari satu tagihan barang**; barang masuk tanpa nota gak ada lagi.
+- Bagian barang dari tagihan barang disebut **kolam**: nilai barang sesuai nota yang belum diterima fisiknya. Jurnal saat tagihan dibuat: Debit **Pembelian Belum Diterima** (aset — klaim kita ke supplier: sudah ditagih, barang belum datang), Kredit **Utang Usaha**. Bukan Debit Persediaan, karena barangnya belum ada di gudang. Ongkos kirim, PPN Masukan, dan kategori campur tetap dijurnal seperti tagihan biasa saat tagihan dibuat; semuanya di luar kolam.
+- **Status bayar gak ada hubungannya dengan kolam.** Tagihan boleh dibayar sebelum barang datang, sesudahnya, atau dicicil — kolam dan barang masuk jalan sendiri-sendiri. Bayar tetap lewat alur pembayaran biasa.
+- Tiap kiriman dicatat sebagai **barang masuk yang dibuat dari tagihan itu** (harga per item diketik sesuai nota): Debit Persediaan, Kredit Pembelian Belum Diterima. Kolam berkurang sebesar nilai barang masuk. Satu tagihan boleh punya banyak barang masuk (kiriman bertahap); satu barang masuk punya **tepat satu** tagihan — gak bisa dibagi ke dua nota dan gak bisa dipindah. Kalau supplier menagih satu kiriman dengan dua nota, kirimannya dicatat sebagai dua barang masuk, masing-masing dari satu nota.
+- Alokasi barang masuk ke tagihan gak punya jurnal sendiri. Yang berjurnal hanya tagihan dan barang masuk; saldo Pembelian Belum Diterima otomatis sama dengan jumlah sisa kolam semua tagihan.
+- **Sisa kolam** (barang yang gak akan datang atau selisih receh) ditutup begini:
+  - Sisa di bawah satuan pembulatan (Rp1) — dilepas ke akun Selisih Pembulatan yang sama dengan pelunasan: Debit Beban Selisih Pembulatan, Kredit Pembelian Belum Diterima.
+  - Sisa yang lebih besar, **bagian yang sudah dibayar** — dilepas ke Uang Muka: Debit Uang Muka Pembelian, Kredit Pembelian Belum Diterima. Batasnya (uang yang sudah dibayar, termasuk uang muka yang sudah diterapkan ke tagihan itu) dikurangi nilai barang masuk yang sudah terpakai. Setelah jadi Uang Muka, nasibnya mengikuti mekanisme uang muka yang ada: diterapkan ke tagihan lain, direfund, atau dihanguskan.
+  - Sisa yang **belum dibayar** — secara bisnis ini koreksi utang (nota kredit dari supplier). Belum ada jalurnya; dicatat sebagai scope-debt (`memory/scope-debt/ap-kolam-sisa-belum-dibayar.md`).
+- **Pembatalan barang masuk** membalik jurnalnya (Debit Pembelian Belum Diterima, Kredit Persediaan), mengurangi stok, dan mengembalikan kolam. Ditolak kalau stok item itu gak cukup lagi dikurangi, atau barang masuk itu sudah diretur. **Pembatalan tagihan barang** hanya boleh kalau belum ada pembayaran maupun retur dan semua barang masuknya sudah dibatalkan.
+- **Retur ke supplier** atas barang masuk selalu mengenai tagihan induknya (satu), jadi gak ada pertanyaan "tagihan mana yang dikurangi".
+- **Nota telat = barang belum bisa dicatat.** Stok sistem baru bertambah saat barang masuk dibuat, dan barang masuk butuh tagihan. Kalau nominal belum pasti, tagihan boleh dibuat dari nominal perkiraan; nota yang beda dikoreksi dengan membatalkan (barang masuk lalu tagihan) dan membuat ulang selama syarat pembatalan di atas masih terpenuhi.
 
 **Aturan Bisnis**
-- Satu tagihan dari barang masuk hanya boleh menggabungkan barang masuk dari **supplier yang sama**.
-- Tiap barang masuk ditagih **utuh** dan paling banyak oleh **satu** tagihan aktif; gak bisa ditagih sebagian atau dua kali.
-- Selisih antara harga perkiraan saat barang diterima dan harga di nota diselesaikan dengan **merevisi harga barang masuk sebelum menagih**, bukan di tagihan.
-- Membatalkan tagihan dari barang masuk mengembalikan barang masuknya jadi **belum tertagih** (stok tidak dibalik). Pembatalan ditolak kalau stok item-itemnya sudah bergerak sejak ditagih — pakai retur.
-- Retur ke supplier atas tagihan dari beberapa barang masuk dihitung terhadap **total** qty yang diterima dari semua barang masuk di tagihan itu, per item.
+- Setiap barang masuk wajib punya tepat satu tagihan barang aktif, dan supplier barang masuk harus sama dengan supplier tagihan.
+- Jumlah nilai bersih barang masuk (setelah diskon) dari satu tagihan gak boleh melebihi kolam tagihan itu — lebih dari itu ditolak.
+- Harga tiap baris barang masuk wajib diisi; gak ada harga perkiraan atau harga 0.
+- Hanya bagian yang sudah dibayar yang boleh dilepas ke Uang Muka. Sisa yang belum dibayar gak boleh "dihilangkan" lewat jalur ini.
+- Tagihan barang yang dibatalkan gak boleh meninggalkan barang masuk aktif.
+- Selisih nilai setelah stok sudah bergerak (nota ternyata lebih mahal dari perkiraan, barangnya sudah terjual) belum punya jalur koreksi (`memory/scope-debt/ap-kolam-selisih-harga-setelah-stok-bergerak.md`).
+- PPN Masukan dijurnal penuh saat tagihan dibuat dan tidak disesuaikan kalau barangnya batal datang dan kolam dilepas (`memory/scope-debt/ap-kolam-ppn-masukan-barang-batal-datang.md`).
+
+**Skenario**
+- Nota Rp10 juta dibayar langsung. Barang datang Rp3 juta, Rp4 juta, lalu Rp3 juta → kolam 10 → 7 → 3 → 0; saldo Pembelian Belum Diterima ikut turun ke nol.
+- Nota Rp10 juta, belum dibayar sama sekali, barang datang Rp4 juta → kolam Rp6 juta, utang tetap Rp10 juta sampai dibayar.
+- Nota Rp10 juta, dibayar Rp7 juta, barang terpakai Rp4 juta, sisa Rp6 juta gak jadi dikirim → paling banyak Rp3 juta (dibayar Rp7 juta dikurangi terpakai Rp4 juta) dilepas ke Uang Muka; Rp3 juta sisanya menunggu nota kredit.
+- Nota Rp10.000.000, tiga barang masuk berjumlah Rp9.999.999,60 → sisa Rp0,40 dilepas ke Beban Selisih Pembulatan.
+- Barang masuk Rp6,5 juta padahal sisa kolam Rp6 juta (harga naik) → ditolak dari tagihan itu; kirimannya dicatat dari tagihan lain, atau dipecah menjadi dua barang masuk dari dua nota.
 
 **Common Mistakes**
-- Menagih barang masuk berharga 0 — harga harus diisi (lewat revisi) dulu.
-- Mencatat nota yang harganya beda dengan mengubah nominal tagihan — yang benar merevisi harga barang masuk, supaya Persediaan dan biaya stok ikut benar.
+- Mendebit Persediaan saat tagihan barang dibuat — buku mengaku punya stok yang belum ada, stok opname gak cocok, dan harga rata-rata item terhitung dari barang yang belum datang.
+- Menganggap tagihan harus dibayar dulu supaya barang masuknya boleh dicatat (atau sebaliknya) — status bayar dan kolam independen.
+- Menganggap sisa kolam hilang sendiri — yang gak jadi datang harus ditutup secara sadar (pembulatan, uang muka, atau nota kredit).
+- Mengubah nominal tagihan supaya cocok dengan barang yang datang — yang berubah itu barang masuknya (dan nota yang beda dikoreksi dengan batal-ulang).
 
 ### Diskon Pembelian (Trade Discount)
 
@@ -58,7 +83,7 @@ Sama seperti sisi penjualan, diskon yang didukung di sini adalah **trade discoun
 **Cara Kerja**
 - Beda dari sisi penjualan, diskon pembelian gak butuh master data aturan — admin bebas mengisi nilai diskon nominal Rupiah langsung saat bikin AP Bill atau saat mencatat Penerimaan Barang (Goods Receipt), mirip cara kerja kategori beban tambahan (misal Ongkos Kirim Supplier), cuma arahnya mengurangi total, bukan menambah.
 - Nilai diskon ini murni mengurangi jumlah yang jadi Utang Usaha — gak nyentuh akun pembukuan mana pun secara terpisah, karena bukan kejadian akuntansi sendiri, cuma bagian dari negosiasi harga di titik pembelian itu.
-- **Tagihan langsung** (tanpa barang masuk): berlaku di level dokumen (1 nilai per bill), bukan per baris barang — beda dari sisi penjualan yang per-barang lewat aturan diskon. **Barang masuk:** diskon diisi di barang masuk itu sendiri, per item (alat bantu di layar yang jumlahnya otomatis masuk ke diskon dokumen) dan per dokumen — lihat submodule "Barang Masuk Belum Ditagih" di `docs/domain/inventory.md`. Tagihan yang dibuat dari barang masuk tidak punya diskon sendiri (nilainya sudah net dari barang masuk).
+- **Tagihan langsung** (tanpa barang masuk): berlaku di level dokumen (1 nilai per bill), bukan per baris barang — beda dari sisi penjualan yang per-barang lewat aturan diskon. **Tagihan barang:** nilai barang di tagihan dicatat net sesuai nota, tanpa diskon tersendiri. Rincian diskon diisi di barang masuk yang dibuat dari tagihan itu, per item (alat bantu di layar yang jumlahnya otomatis masuk ke diskon dokumen) dan per dokumen — lihat submodule "Barang Masuk dari Tagihan" di `docs/domain/inventory.md`.
 
 **Aturan Bisnis**
 - Diskon pembelian diinput manual sebagai nominal Rupiah (bukan persen), bebas diisi admin tanpa harus dari master data — beda sengaja dari sisi penjualan yang wajib dari aturan.
@@ -146,7 +171,7 @@ Form retur memvalidasi kategori akun: akun Persediaan gak bisa "diretur" lewat j
 - 1 nota supplier kadang isinya campuran — misal Rp750.000 tepung (Persediaan) + Rp50.000 ongkos kirim (Beban), dalam 1 nota fisik yang sama.
 - Admin bisa menyiapkan daftar kategori beban/persediaan tambahan (misal "Ongkos Kirim Supplier"), dan staf AP bisa menambahkan baris kategori itu saat mencatat bill — nominalnya tetap diinput manual per nota, gak ada nilai default.
 - PPN Masukan (kalau relevan) dihitung otomatis oleh sistem dari tarif yang diset admin, ditambahkan ke Utang Usaha — bukan diketik manual, biar konsisten dengan jumlah yang benar-benar terutang ke supplier.
-- Fitur ini juga berlaku untuk alur pembelian terencana (Purchase Order → Goods Receipt → Bill) — nota dari penerimaan barang lewat PO bisa punya kategori campur (mis. Persediaan + Beban Ongkir) dan PPN Masukan juga, sama seperti bill yang dicatat manual.
+- Fitur ini juga berlaku untuk alur pembelian terencana (Purchase Order, tagihan barang, lalu barang masuk dari tagihan itu) — nota supplier untuk barang pesanan PO bisa punya kategori campur (mis. ongkos kirim sebagai Beban) dan PPN Masukan juga, sama seperti bill yang dicatat manual. Biaya tambahan dan PPN dijurnal saat tagihan dibuat dan berada di luar kolam barang.
 
 **Aturan Bisnis**
 - Kategori campur tidak mengubah cara Utang Usaha dihitung — tetap 1 angka total (subtotal kategori + PPN kalau ada).

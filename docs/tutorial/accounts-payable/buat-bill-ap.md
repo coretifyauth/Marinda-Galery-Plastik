@@ -2,7 +2,7 @@
 
 ## Kapan Melakukan Ini
 
-Saat mencatat **Tagihan Langsung** dari supplier — tagihan yang **tidak** berasal dari barang masuk, misal beban jasa, sewa, atau tagihan lain di luar alur pembelian barang. Kalau tagihannya untuk barang yang sudah dicatat masuk, pakai [buat-bill-dari-barang-masuk.md](buat-bill-dari-barang-masuk.md) (menu Tagihan > **+ Dari Barang Masuk**) — barang masuk tidak lagi otomatis membuat tagihan.
+Saat mencatat **Tagihan Langsung** dari supplier — tagihan yang **tidak** berasal dari barang masuk, misal beban jasa, sewa, atau tagihan lain di luar alur pembelian barang. Kalau tagihannya untuk **barang fisik** (nota duluan, barang menyusul), pakai [buat-tagihan-barang.md](buat-tagihan-barang.md) (menu Tagihan > **+ Tagihan Barang**) — barang masuk selalu dicatat dari Tagihan Barang, bukan dari tagihan langsung.
 
 ## Prasyarat
 
@@ -38,4 +38,4 @@ Saat mencatat **Tagihan Langsung** dari supplier — tagihan yang **tidak** bera
 
 - **Lupa isi Kategori Persediaan/Beban** — field ini wajib (beda dari AR invoice yang otomatis pakai akun pendapatan default); tanpa ini, bill tidak bisa disimpan.
 - **Menukar Nomor Nota Supplier dengan Source Ref internal** — dua-duanya field terpisah dan tidak saling menggantikan; Source Ref selalu format otomatis sistem, Nomor Nota Supplier adalah nomor asli dari kertas nota fisik.
-- **Memakai form ini untuk barang yang sudah dicatat masuk** — itu menghitung persediaan dua kali dan barang masuknya tetap menggantung "Belum tertagih". Pakai **+ Dari Barang Masuk**.
+- **Memakai form ini untuk barang fisik** — stok tidak bertambah dan barang masuk tidak bisa dicatat dari tagihan langsung (tidak punya kolam). Pakai **+ Tagihan Barang**.

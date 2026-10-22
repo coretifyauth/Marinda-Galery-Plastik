@@ -64,7 +64,7 @@ User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lew
 - `chart-of-accounts/` — `tambah-akun-baru.md`.
 - `general-ledger/` — `buat-jurnal-manual.md`, `lihat-buku-besar-akun.md`.
 - `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `tukar-barang-garansi.md`, `uang-muka-ar.md`, `batalkan-invoice-ar.md`.
-- `accounts-payable/` — `tambah-supplier-baru.md`, `buat-bill-ap.md`, `buat-bill-dari-barang-masuk.md`, `bayar-bill-ap.md`, `retur-barang-ap.md`, `uang-muka-ap.md`, `batalkan-bill-ap.md`.
+- `accounts-payable/` — `tambah-supplier-baru.md`, `buat-bill-ap.md`, `buat-tagihan-barang.md`, `bayar-bill-ap.md`, `retur-barang-ap.md`, `uang-muka-ap.md`, `batalkan-bill-ap.md`.
 - `inventory/` — `tambah-item-master.md`, `atur-satuan-harga-barcode.md`, `kelola-kategori-brand-barang.md`, `buat-purchase-order.md`, `terima-barang-grn.md`, `jual-barang-goods-issue.md`, `buat-resep-bom.md`, `buat-production-order.md`, `buat-sales-order.md`, `kirim-penuhi-sales-order.md`, `stock-opname.md`, `lihat-stock-position.md`.
 - `financial-reports/` — `lihat-laporan-keuangan.md`, `tutup-buku-periode.md`.
 - `pos/` — `checkout-pos.md`, `batalkan-transaksi-pos.md`.

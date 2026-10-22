@@ -57,28 +57,13 @@ Dua hal yang sering ketukar tapi beda fungsi: **saldo stok berjalan** (`inventor
 | `inventory_balances` | ditambah dari | `goods-receipt-schema.md`, `production-orders-schema.md` (barang jadi hasil produksi) |
 | `inventory_balances.qty_on_hand` | disesuaikan langsung oleh | `stock-opname-schema.md` |
 
-## Saldo Barang Belum Ditagih (rencana)
+## Kolom Stok Belum Ditagih (dibuang di `0058`)
 
-> **Belum diimplementasi** — perubahan ini baru berlaku setelah migration Barang Masuk Belum Ditagih diapply. Rumus penuh, invarian, dan alurnya ada di `goods-notes-schema.md` section "Barang Masuk Belum Ditagih (rencana)"; konsep bisnis di `docs/domain/inventory.md`.
+Migration `0056` menambahkan `qty_unbilled` dan `spill_value` ke `inventory_balances` untuk alur "barang masuk dulu, tagihan menyusul". Alur itu dihapus (barang masuk sekarang selalu dibuat dari satu tagihan — `goods-notes-schema.md` section "Barang Masuk dari Tagihan"), jadi:
 
-`inventory_balances` dapat dua kolom baru supaya barang yang sudah diterima tapi belum ditagih bisa dijual tanpa mengotori `avg_cost`:
-
-| Kolom | Isinya | Catatan |
-|---|---|---|
-| `qty_unbilled` (`U`) | Bagian dari `qty_on_hand` yang berasal dari barang masuk **belum ditagih** | Default 0. `0 ≤ qty_unbilled ≤ qty_on_hand`. Stok yang sudah ditagih `P = qty_on_hand − qty_unbilled` |
-| `spill_value` (`SV`) | Nilai HPP yang sudah diakui untuk unit-unit yang terjual **dari** barang masuk belum ditagih (karena stok sudah-ditagih sudah habis) | Default 0. Dipakai saat tagihan dibuat untuk menghitung koreksi HPP atas unit yang sudah terjual lebih dulu (HPP lama tidak diubah) |
-
-Perubahan aturan pada kolom yang sudah ada:
-
-| Kolom/fungsi | Aturan baru |
-|---|---|
-| `avg_cost` | Hanya mencerminkan stok yang **sudah ditagih** (`P`). Penerimaan barang tidak mengubahnya; yang mengubahnya adalah pembuatan tagihan, hasil produksi (campur memakai `P`), dan pembatalan tagihan (dipulihkan dari foto kondisi sebelum ditagih) |
-| `consume_weighted_average` | (1) Menolak kalau `avg_cost = 0`. (2) Konsumsi `s` unit: `x = min(s, P)` dari stok sudah-ditagih, `y = s − x` dari barang masuk belum ditagih; kalau `y > 0`: `qty_unbilled -= y`, `spill_value += y × avg_cost`. (3) `avg_cost` tidak berubah. (4) Biaya yang dikembalikan tetap `s × avg_cost` seperti sekarang |
-| `record_stock_opname` | Kekurangan memakai pembagian pool yang sama seperti konsumsi; kelebihan menambah `qty_on_hand` (stok sudah-ditagih). `avg_cost` tetap tidak disentuh |
-| Stok yang kembali (pembatalan/void penjualan, retur dari customer) | Fungsi bantu `inventory_restore_stock`: unit yang dulu terjual duluan diisi kembali ke `qty_unbilled` lebih dulu (`spill_value` dikurangi sebesar rata-rata nilai spill), sisanya menambah stok sudah-ditagih. Retur dari customer mencampur `avg_cost` hanya dengan bagian stok sudah-ditagih |
-| Barang pengganti dari supplier, hasil produksi | `inventory_add_billed`: menambah stok sudah-ditagih, `avg_cost` dicampur dengan `P` (bukan `qty_on_hand`) |
-
-Data lama: semua baris yang ada dianggap sudah ditagih seluruhnya — `qty_unbilled = 0`, `spill_value = 0`.
+- Di live, kedua kolom ada tetapi **seluruhnya 0** (dicek 2026-10-22), dan setelah `0057` tidak pernah ditulis lagi. Perilaku konsumsi stok kembali sama seperti sebelum `0056`.
+- `0058` membuang kedua kolom (setelah memastikan semuanya 0), menyederhanakan `consume_weighted_average`, `record_stock_opname`, `create_production_order`, `create_replacement`, serta fungsi turunan (`inventory_add_billed`, `inventory_restore_stock`) kembali ke rata-rata tertimbang biasa, dan membuang `grni_spill_allocation`.
+- `avg_cost` mencerminkan seluruh `qty_on_hand`. Barang masuk selalu punya harga (> 0), jadi item tanpa `avg_cost` hanya mungkin untuk item yang memang belum pernah masuk.
 
 ## Kartu Stok / Riwayat Mutasi (`inventory_movements`)
 
