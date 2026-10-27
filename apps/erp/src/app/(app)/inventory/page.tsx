@@ -6,8 +6,22 @@ import { supabase } from "@/lib/supabase/client";
 import { itemTypes } from "@/lib/items/schema";
 import type { ItemCategory } from "@/lib/item-categories/schema";
 import type { ItemBrand } from "@/lib/item-brands/schema";
-import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useStockPosition } from "@/lib/inventory/queries";
+import {
+  DEFAULT_PAGE_SIZE,
+  PAGE_SIZE_OPTIONS,
+  fetchAllStockPosition,
+  useStockPosition,
+} from "@/lib/inventory/queries";
 import { formatStockBreakdown } from "@/lib/stock-display";
+import { fetchCompanySettings } from "@/lib/company-settings/schema";
+import { buildLetterheadHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
+import {
+  stockCardFooter,
+  stockCardHeader,
+  stockCardPrices,
+  stockCardStyles,
+  stockCardSummary,
+} from "@/lib/print/stock-card-print";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
@@ -36,6 +50,8 @@ export default function InventoryPage() {
   const [stockFilter, setStockFilter] = useState<"" | "ada">("ada");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState<string | null>(null);
   const debouncedNameSearch = useDebouncedValue(nameSearchInput, 300);
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render").
@@ -88,6 +104,84 @@ export default function InventoryPage() {
     0
   );
 
+  // Cetak = posisi stok SEKARANG semua barang yang lolos filter di layar (semua halaman, bukan
+  // cuma halaman yang tampil). Harga yang dicetak cuma harga jual per satuan (`item_units.price`);
+  // HPP (`avg_cost`) dan nilai persediaan sengaja gak ikut.
+  async function handlePrint() {
+    setPrinting(true);
+    setPrintError(null);
+    try {
+      const [items, company] = await Promise.all([
+        fetchAllStockPosition({
+          nameSearch: debouncedNameSearch,
+          itemType: itemTypeFilter,
+          categoryId: categoryFilter,
+          brandId: brandFilter,
+          stock: stockFilter,
+        }),
+        fetchCompanySettings(),
+      ]);
+
+      const itemRows = items
+        .map((item, index) => {
+          const qty = item.inventory_balances?.qty_on_hand ?? 0;
+          const prices = [...item.item_units]
+            .filter((u) => u.price != null)
+            .sort((a, b) => a.conversion_factor - b.conversion_factor)
+            .map((u) => ({ label: u.unit_label, price: u.price as number }));
+          return `<tr>
+            <td class="sc-no">${index + 1}</td>
+            <td class="sc-name">${escapeHtml(item.name)}</td>
+            <td class="num sc-qty${qty > 0 ? "" : " sc-zero"}">${escapeHtml(formatStockBreakdown(qty, item.uom, item.item_units))}</td>
+            <td>${stockCardPrices(prices)}</td>
+          </tr>`;
+        })
+        .join("");
+      const inStockCount = items.filter((i) => (i.inventory_balances?.qty_on_hand ?? 0) > 0).length;
+
+      const filterNotes = [
+        debouncedNameSearch.trim() && `nama "${debouncedNameSearch.trim()}"`,
+        itemTypeFilter && (itemTypeLabel[itemTypeFilter] ?? itemTypeFilter),
+        categoryFilter && `kategori ${categories.find((c) => c.id === categoryFilter)?.name ?? ""}`,
+        brandFilter && `brand ${brands.find((b) => b.id === brandFilter)?.name ?? ""}`,
+        stockFilter === "ada" ? "hanya yang ada stok" : "termasuk stok kosong",
+      ].filter(Boolean) as string[];
+
+      const printedAt = new Date().toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" });
+
+      const body = `
+        ${stockCardStyles()}
+        ${buildLetterheadHtml(company)}
+        ${stockCardHeader({
+          title: "Kartu Stok",
+          subtitle: "Semua Barang",
+          meta: [
+            { label: "Dicetak", value: printedAt },
+            { label: "Filter", value: filterNotes.join(", ") },
+          ],
+        })}
+        ${stockCardSummary([
+          { label: "Jumlah Barang", value: String(items.length), accent: true },
+          { label: "Ada Stok", value: String(inStockCount) },
+          { label: "Stok Kosong", value: String(items.length - inStockCount) },
+        ])}
+        <table class="sc-table">
+          <thead><tr><th class="sc-no">No</th><th>Barang</th><th class="num">Stok Saat Ini</th><th>Harga Jual per Satuan</th></tr></thead>
+          <tbody>${itemRows || `<tr><td colspan="4" class="sc-empty">Tidak ada barang.</td></tr>`}</tbody>
+        </table>
+        ${stockCardFooter(printedAt)}
+      `;
+
+      if (!openPrintWindow("Kartu Stok Semua Barang", body)) {
+        setPrintError("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
+      }
+    } catch (err) {
+      setPrintError(err instanceof Error ? err.message : "Gagal menyiapkan cetakan");
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <div>
@@ -99,6 +193,7 @@ export default function InventoryPage() {
       </div>
 
       {stockQuery.error && <FormError>{(stockQuery.error as Error).message}</FormError>}
+      {printError && <FormError>{printError}</FormError>}
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
@@ -106,9 +201,14 @@ export default function InventoryPage() {
             <span className="text-sm font-medium text-black">Stock Position</span>
             <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">{total}</span>
           </div>
-          <Button variant="toolbar" onClick={() => stockQuery.refetch()}>
-            Muat Ulang
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="toolbar" onClick={handlePrint} disabled={printing}>
+              {printing ? "Menyiapkan..." : "Cetak Kartu Stok"}
+            </Button>
+            <Button variant="toolbar" onClick={() => stockQuery.refetch()}>
+              Muat Ulang
+            </Button>
+          </div>
         </div>
         <div className="grid gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3 sm:grid-cols-2 lg:grid-cols-5">
           <label className={filterLabelClass}>

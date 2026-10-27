@@ -19,6 +19,34 @@ export type MovementPage = {
 
 const SELECT_COLUMNS = "id, movement_date, qty, source_label, source_ref";
 
+// Batas default baris per request PostgREST (max-rows) -- jangan dinaikkan tanpa cek setting Supabase.
+const PRINT_BATCH_SIZE = 1000;
+
+/**
+ * SELURUH riwayat 1 barang sampai `asOfDate`, URUT KRONOLOGIS (tertua dulu) -- buat cetak Kartu Stok,
+ * jadi saldo awal pasti 0 dan saldo berjalan dihitung langsung dari baris pertama. Dipecah per
+ * `PRINT_BATCH_SIZE` karena PostgREST membatasi baris per request. Order sama dengan
+ * `fetchItemMovementPage` (`movement_date`+`id`), cuma arahnya ascending.
+ */
+export async function fetchAllItemMovements(itemId: string, asOfDate: string): Promise<ItemMovement[]> {
+  const all: ItemMovement[] = [];
+  for (let from = 0; ; from += PRINT_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from("inventory_movements_with_source")
+      .select(SELECT_COLUMNS)
+      .eq("item_id", itemId)
+      .lte("movement_date", asOfDate)
+      .order("movement_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PRINT_BATCH_SIZE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as unknown as ItemMovement[];
+    all.push(...rows);
+    if (rows.length < PRINT_BATCH_SIZE) break;
+  }
+  return all;
+}
+
 /**
  * 1 halaman Kartu Stok, TERBARU DULU (`movement_date`+`id` descending) — beda dari General Ledger
  * (`fetchAccountLedgerPage`, ascending) karena kebutuhan UI-nya kartu stok cuma peduli aktivitas

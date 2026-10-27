@@ -56,6 +56,22 @@ export async function fetchStockPosition(
   return { rows: (data ?? []) as unknown as StockPositionRow[], total: count ?? 0 };
 }
 
+// Batas default baris per request PostgREST (max-rows) -- jangan dinaikkan tanpa cek setting Supabase.
+const PRINT_BATCH_SIZE = 1000;
+
+/** Semua baris yang lolos filter (tanpa paginasi) buat cetak -- reuse `fetchStockPosition` per batch. */
+export async function fetchAllStockPosition(
+  filters: Omit<StockPositionFilters, "page" | "pageSize">
+): Promise<StockPositionRow[]> {
+  const all: StockPositionRow[] = [];
+  for (let page = 0; ; page++) {
+    const { rows } = await fetchStockPosition({ ...filters, page, pageSize: PRINT_BATCH_SIZE });
+    all.push(...rows);
+    if (rows.length < PRINT_BATCH_SIZE) break;
+  }
+  return all;
+}
+
 export function useStockPosition(filters: StockPositionFilters) {
   return useQuery({
     queryKey: ["stock_position", filters],

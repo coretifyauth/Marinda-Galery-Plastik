@@ -12,9 +12,13 @@ import type { ItemCategory } from "@/lib/item-categories/schema";
 import type { ItemBrand } from "@/lib/item-brands/schema";
 import { formatStockBreakdown } from "@/lib/stock-display";
 import { formatCreatedBy } from "@/lib/created-by";
+import { fetchCompanySettings } from "@/lib/company-settings/schema";
+import { buildLetterheadHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
+import { stockCardFooter, stockCardHeader, stockCardStyles, stockCardSummary } from "@/lib/print/stock-card-print";
 import {
   DEFAULT_MOVEMENT_PAGE_SIZE,
   MOVEMENT_PAGE_SIZE_OPTIONS,
+  fetchAllItemMovements,
   fetchItemMovementPage,
   type ItemMovement,
   type MovementPage,
@@ -79,6 +83,7 @@ export function ItemDetailView({ id }: { id: string }) {
   const [movementPage, setMovementPage] = useState<MovementPage>(EMPTY_MOVEMENT_PAGE);
   const [movementLoading, setMovementLoading] = useState(false);
   const [movementError, setMovementError] = useState<string | null>(null);
+  const [printingKartuStok, setPrintingKartuStok] = useState(false);
 
   const load = useCallback(async () => {
     const [{ data: it, error: itErr }, { data: acc }, { data: bal }, { data: us }, { data: cats }, { data: brs }] =
@@ -372,6 +377,94 @@ export function ItemDetailView({ id }: { id: string }) {
     await load();
   }
 
+  // Cetak Kartu Stok = posisi stok SEKARANG: seluruh riwayat sampai hari ini (field "Sampai Tanggal"
+  // di layar sengaja diabaikan -- gak ada cetak mundur), saldo awal 0. Harga yang tampil cuma harga
+  // jual per satuan (`item_units.price`); HPP (`avg_cost`) sengaja gak ikut dicetak.
+  async function handlePrintKartuStok() {
+    if (!item) return;
+    setPrintingKartuStok(true);
+    try {
+      const [rows, company] = await Promise.all([fetchAllItemMovements(item.id, today()), fetchCompanySettings()]);
+
+      let running = 0;
+      let totalIn = 0;
+      let totalOut = 0;
+      const movementRows = rows
+        .map((m) => {
+          running += m.qty;
+          if (m.qty > 0) totalIn += m.qty;
+          else totalOut += -m.qty;
+          return `<tr>
+            <td>${escapeHtml(m.movement_date)}</td>
+            <td>${escapeHtml(m.source_label)}</td>
+            <td>${m.source_ref ? `<span class="sc-ref">${escapeHtml(m.source_ref)}</span>` : "-"}</td>
+            <td class="num sc-in">${m.qty > 0 ? `+${escapeHtml(formatStockBreakdown(m.qty, item.uom, units))}` : ""}</td>
+            <td class="num sc-out">${m.qty < 0 ? `−${escapeHtml(formatStockBreakdown(-m.qty, item.uom, units))}` : ""}</td>
+            <td class="num sc-qty">${escapeHtml(formatStockBreakdown(running, item.uom, units))}</td>
+          </tr>`;
+        })
+        .join("");
+
+      const unitRows = [...units]
+        .sort((a, b) => a.conversion_factor - b.conversion_factor)
+        .map(
+          (u) => `<tr>
+            <td class="sc-name">${escapeHtml(u.unit_label)}</td>
+            <td class="num">${u.conversion_factor} ${escapeHtml(item.uom)}</td>
+            <td class="num sc-qty">${u.price == null ? "-" : `Rp${u.price.toLocaleString("id-ID")}`}</td>
+          </tr>`
+        )
+        .join("");
+
+      const printedAt = new Date().toLocaleString("id-ID", { dateStyle: "long", timeStyle: "short" });
+
+      const body = `
+        ${stockCardStyles()}
+        ${buildLetterheadHtml(company)}
+        ${stockCardHeader({
+          title: "Kartu Stok",
+          subtitle: item.name,
+          meta: [
+            { label: "Dicetak", value: printedAt },
+            { label: "Satuan Dasar", value: item.uom },
+          ],
+        })}
+        ${stockCardSummary([
+          { label: "Stok Saat Ini", value: formatStockBreakdown(totalQty, item.uom, units), accent: true },
+          { label: "Total Masuk", value: formatStockBreakdown(totalIn, item.uom, units) },
+          { label: "Total Keluar", value: formatStockBreakdown(totalOut, item.uom, units) },
+        ])}
+        <div class="sc-section">Harga Jual per Satuan</div>
+        <table class="sc-table">
+          <thead><tr><th>Satuan</th><th class="num">Isi</th><th class="num">Harga Jual</th></tr></thead>
+          <tbody>${unitRows || `<tr><td colspan="3" class="sc-empty">Belum ada satuan jual.</td></tr>`}</tbody>
+        </table>
+        <div class="sc-section">Riwayat Mutasi</div>
+        <table class="sc-table">
+          <thead><tr><th>Tanggal</th><th>Sumber</th><th>Referensi</th><th class="num">Masuk</th><th class="num">Keluar</th><th class="num">Saldo</th></tr></thead>
+          <tbody>${movementRows || `<tr><td colspan="6" class="sc-empty">Belum ada mutasi buat item ini.</td></tr>`}</tbody>
+          ${
+            rows.length > 0
+              ? `<tfoot><tr><td colspan="3">Total</td>
+                  <td class="num sc-in">${escapeHtml(formatStockBreakdown(totalIn, item.uom, units))}</td>
+                  <td class="num sc-out">${escapeHtml(formatStockBreakdown(totalOut, item.uom, units))}</td>
+                  <td class="num">${escapeHtml(formatStockBreakdown(running, item.uom, units))}</td></tr></tfoot>`
+              : ""
+          }
+        </table>
+        ${stockCardFooter(printedAt)}
+      `;
+
+      if (!openPrintWindow(`Kartu Stok ${item.name}`, body)) {
+        setMovementError("Popup diblokir browser — izinkan popup buat halaman ini, lalu coba lagi.");
+      }
+    } catch (err) {
+      setMovementError(err instanceof Error ? err.message : "Gagal menyiapkan cetakan Kartu Stok");
+    } finally {
+      setPrintingKartuStok(false);
+    }
+  }
+
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/items" label="Kembali ke Item" />
@@ -625,6 +718,9 @@ export function ItemDetailView({ id }: { id: string }) {
                 }}
               />
             </div>
+            <Button variant="toolbar" onClick={handlePrintKartuStok} disabled={printingKartuStok}>
+              {printingKartuStok ? "Menyiapkan..." : "Cetak Kartu Stok"}
+            </Button>
           </div>
 
           {movementError && <FormError>{movementError}</FormError>}
