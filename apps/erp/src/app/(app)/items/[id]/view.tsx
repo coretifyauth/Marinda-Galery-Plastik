@@ -411,6 +411,7 @@ export function ItemDetailView({ id }: { id: string }) {
           (u) => `<tr>
             <td class="sc-name">${escapeHtml(u.unit_label)}</td>
             <td class="num">${u.conversion_factor} ${escapeHtml(item.uom)}</td>
+            <td class="num">${escapeHtml(`${Number((totalQty / u.conversion_factor).toFixed(3)).toLocaleString("id-ID")} ${u.unit_label}`)}</td>
             <td class="num sc-qty">${u.price == null ? "-" : `Rp${u.price.toLocaleString("id-ID")}`}</td>
           </tr>`
         )
@@ -430,14 +431,14 @@ export function ItemDetailView({ id }: { id: string }) {
           ],
         })}
         ${stockCardSummary([
-          { label: "Stok Saat Ini", value: formatStockBreakdown(totalQty, item.uom, units), accent: true },
+          { label: "Stok Saat Ini", value: `${formatStockBreakdown(totalQty, item.uom, units)} (total ${totalQty} ${item.uom})`, accent: true },
           { label: "Total Masuk", value: formatStockBreakdown(totalIn, item.uom, units) },
           { label: "Total Keluar", value: formatStockBreakdown(totalOut, item.uom, units) },
         ])}
         <div class="sc-section">Harga Jual per Satuan</div>
         <table class="sc-table">
-          <thead><tr><th>Satuan</th><th class="num">Isi</th><th class="num">Harga Jual</th></tr></thead>
-          <tbody>${unitRows || `<tr><td colspan="3" class="sc-empty">Belum ada satuan jual.</td></tr>`}</tbody>
+          <thead><tr><th>Satuan</th><th class="num">Isi</th><th class="num">Stok Tersedia</th><th class="num">Harga Jual</th></tr></thead>
+          <tbody>${unitRows || `<tr><td colspan="4" class="sc-empty">Belum ada satuan jual.</td></tr>`}</tbody>
         </table>
         <div class="sc-section">Riwayat Mutasi</div>
         <table class="sc-table">
