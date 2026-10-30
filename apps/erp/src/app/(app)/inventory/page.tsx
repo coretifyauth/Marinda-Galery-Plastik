@@ -12,7 +12,7 @@ import {
   fetchAllStockPosition,
   useStockPosition,
 } from "@/lib/inventory/queries";
-import { formatStockBreakdown } from "@/lib/stock-display";
+import { formatStockBreakdown, formatStockPerUnit } from "@/lib/stock-display";
 import { fetchCompanySettings } from "@/lib/company-settings/schema";
 import { buildLetterheadHtml, escapeHtml, openPrintWindow } from "@/lib/print/print-window";
 import {
@@ -291,6 +291,7 @@ export default function InventoryPage() {
             {rows.map((item) => {
               const qty = item.inventory_balances?.qty_on_hand ?? 0;
               const avgCost = item.inventory_balances?.avg_cost ?? 0;
+              const perUnit = formatStockPerUnit(qty, avgCost, item.uom, item.item_units);
               return (
                 <tr
                   key={item.id}
@@ -298,11 +299,24 @@ export default function InventoryPage() {
                   onClick={() => router.push(`/items/${item.id}`)}
                 >
                   <td className="px-4 py-2 font-medium text-black">{item.name}</td>
-                  <td className="px-4 py-2">
-                    {avgCost.toLocaleString("id-ID")}/{item.uom}
+                  <td className="whitespace-nowrap px-4 py-2">
+                    {perUnit.map((u) => (
+                      <div key={u.unitLabel}>
+                        {u.avgCost}/{u.unitLabel}
+                      </div>
+                    ))}
                   </td>
-                  <td className="px-4 py-2 text-right font-mono">
-                    {formatStockBreakdown(qty, item.uom, item.item_units)}
+                  <td className="whitespace-nowrap px-4 py-2 text-right font-mono">
+                    {perUnit.map((u) => (
+                      <div key={u.unitLabel}>
+                        {u.qty} {u.unitLabel}
+                      </div>
+                    ))}
+                    {perUnit.length > 1 && qty > 0 && (
+                      <div className="mt-0.5 text-xs text-slate-400">
+                        {formatStockBreakdown(qty, item.uom, item.item_units)}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{(qty * avgCost).toLocaleString("id-ID")}</td>
                 </tr>

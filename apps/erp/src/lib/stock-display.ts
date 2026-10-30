@@ -35,3 +35,31 @@ export function formatStockBreakdown(qtyBase: number, baseUom: string, units: St
 
   return parts.join(", ");
 }
+
+/**
+ * Qty & avg cost yang sama dinyatakan di tiap satuan item, terkecil->terbesar (satuan dasar duluan,
+ * termasuk item tanpa baris item_units). Cuma konversi tampilan: stok & costing tetap di satuan dasar.
+ *
+ * Qty dibulatkan ke bawah (3 desimal, presisi qty_on_hand) biar 0,9996 sak gak terbaca "1 sak" padahal
+ * belum genap; hitungannya integer biar lolos dari artefak float (1,001 jadi 1,000999...).
+ */
+export function formatStockPerUnit(
+  qtyBase: number,
+  avgCost: number,
+  baseUom: string,
+  units: StockBreakdownUnit[]
+): { unitLabel: string; qty: string; avgCost: string }[] {
+  const qtyMilli = Math.round(qtyBase * 1000);
+  const largerUnits = units
+    .filter((u) => u.unit_label !== baseUom)
+    .sort((a, b) => a.conversion_factor - b.conversion_factor);
+
+  return [{ unit_label: baseUom, conversion_factor: 1 }, ...largerUnits].map((u) => {
+    const qty = Math.floor(qtyMilli / u.conversion_factor) / 1000;
+    return {
+      unitLabel: u.unit_label,
+      qty: qty === 0 && qtyMilli > 0 ? "< 0,001" : qty.toLocaleString("id-ID", { maximumFractionDigits: 3 }),
+      avgCost: (avgCost * u.conversion_factor).toLocaleString("id-ID", { maximumFractionDigits: 2 }),
+    };
+  });
+}
