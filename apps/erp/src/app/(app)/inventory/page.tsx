@@ -129,10 +129,18 @@ export default function InventoryPage() {
             .filter((u) => u.price != null)
             .sort((a, b) => a.conversion_factor - b.conversion_factor)
             .map((u) => ({ label: u.unit_label, price: u.price as number }));
+          const stockPerUnit = [
+            { label: item.uom, price: qty },
+            ...[...item.item_units]
+              .filter((u) => u.conversion_factor > 1)
+              .sort((a, b) => a.conversion_factor - b.conversion_factor)
+              .map((u) => ({ label: u.unit_label, price: Number((qty / u.conversion_factor).toFixed(3)) })),
+          ];
           return `<tr>
             <td class="sc-no">${index + 1}</td>
             <td class="sc-name">${escapeHtml(item.name)}</td>
             <td class="num sc-qty${qty > 0 ? "" : " sc-zero"}">${escapeHtml(formatStockBreakdown(qty, item.uom, item.item_units))}</td>
+            <td>${stockCardPrices(stockPerUnit, (n) => n.toLocaleString("id-ID"))}</td>
             <td>${stockCardPrices(prices)}</td>
           </tr>`;
         })
@@ -166,8 +174,8 @@ export default function InventoryPage() {
           { label: "Stok Kosong", value: String(items.length - inStockCount) },
         ])}
         <table class="sc-table">
-          <thead><tr><th class="sc-no">No</th><th>Barang</th><th class="num">Stok Saat Ini</th><th>Harga Jual per Satuan</th></tr></thead>
-          <tbody>${itemRows || `<tr><td colspan="4" class="sc-empty">Tidak ada barang.</td></tr>`}</tbody>
+          <thead><tr><th class="sc-no">No</th><th>Barang</th><th class="num">Stok Saat Ini</th><th>Stok per Satuan</th><th>Harga Jual per Satuan</th></tr></thead>
+          <tbody>${itemRows || `<tr><td colspan="5" class="sc-empty">Tidak ada barang.</td></tr>`}</tbody>
         </table>
         ${stockCardFooter(printedAt)}
       `;

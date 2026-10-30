@@ -80,13 +80,16 @@ export function stockCardSummary(cards: { label: string; value: string; accent?:
   return `<div class="sc-summary">${html}</div>`;
 }
 
-/** Satu baris per satuan: label di kiri, harga rata kanan. Kosong -> "-". */
-export function stockCardPrices(prices: { label: string; price: number }[]): string {
+/** Satu baris per satuan: label di kiri, nilai rata kanan (default format Rupiah; `format` buat qty). Kosong -> "-". */
+export function stockCardPrices(
+  prices: { label: string; price: number }[],
+  format: (n: number) => string = (n) => `Rp${n.toLocaleString("id-ID")}`
+): string {
   if (prices.length === 0) return "-";
   const rows = prices
     .map(
       (p) =>
-        `<div class="sc-price-row"><span>${escapeHtml(p.label)}</span><span>Rp${p.price.toLocaleString("id-ID")}</span></div>`
+        `<div class="sc-price-row"><span>${escapeHtml(p.label)}</span><span>${escapeHtml(format(p.price))}</span></div>`
     )
     .join("");
   return `<div class="sc-prices">${rows}</div>`;
