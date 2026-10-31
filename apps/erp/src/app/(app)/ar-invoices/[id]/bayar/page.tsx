@@ -40,7 +40,7 @@ export default function RecordArPaymentPage() {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount, payment_cancellations(payment_id)), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -103,6 +103,8 @@ export default function RecordArPaymentPage() {
       return;
     }
 
+    if (!window.confirm(`Catat pembayaran Rp${parsed.data.amount.toLocaleString("id-ID")} dari ${invoice.counterparties.name} (invoice ${invoice.source_ref}), tanggal ${parsed.data.payment_date}?`)) return;
+
     setPaySubmitting(true);
     let sourceRef: string;
     try {
@@ -155,6 +157,7 @@ export default function RecordArPaymentPage() {
           {invoice.source_ref}
         </span>
       </div>
+      <p className="-mt-4 text-sm font-medium text-black">{invoice.counterparties.name}</p>
       <p className="-mt-4 text-sm text-slate-500">
         Payment selalu nutup invoice ini spesifik, boleh cicil (kurang dari sisa outstanding),
         tapi gak boleh lebih (overpay ditolak). Isi uang yang benar-benar diterima — kalau sisa tagihan ada

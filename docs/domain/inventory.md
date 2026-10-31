@@ -103,12 +103,36 @@ Rata-Rata Tertimbang adalah satu-satunya metode costing yang dipakai sistem — 
 - Item baru, tagihan Rp1.000.000 untuk 100 pcs. Hari ke-2 datang 60 pcs @Rp10.000 → Persediaan naik Rp600.000, kolam sisa Rp400.000, avg cost langsung Rp10.000, 60 pcs bisa dijual hari itu juga.
 - Hari ke-6 datang 40 pcs sisanya → kolam nol, avg cost tetap Rp10.000.
 - Salah ketik qty di barang masuk pertama, ketahuan besoknya, stok belum bergerak → batalkan barang masuk (kolam kembali Rp1.000.000), catat ulang yang benar.
-- Supplier hanya mengirim 80 pcs, sisanya batal → sisa kolam Rp200.000 ditutup lewat Uang Muka (kalau sudah dibayar), nota kredit (kalau belum), atau Selisih Pembulatan (kalau receh).
+- Supplier hanya mengirim 80 pcs, sisanya batal → sisa kolam Rp200.000 ditutup lewat Uang Muka (kalau sudah dibayar), Koreksi Tagihan (kalau belum), atau Selisih Pembulatan (kalau receh).
 
 **Common Mistakes**
-- Mengira barang masuk bisa dicatat dulu sebelum notanya ada — gak bisa; kalau nominal belum pasti, buat tagihan dari nominal perkiraan lalu koreksi dengan batal-ulang.
+- Mengira barang masuk bisa dicatat dulu sebelum notanya ada — gak bisa; kalau nominal belum pasti, buat tagihan dari nominal perkiraan lalu koreksi lewat Koreksi Tagihan.
 - Menagih satu kiriman ke dua nota dengan satu barang masuk — harus dua barang masuk, masing-masing dari satu nota.
 - Menganggap diskon item di layar tersimpan sebagai master data — itu alat bantu hitung; yang tersimpan diskon per baris pada barang masuk.
+
+### Koreksi Barang Masuk
+
+Membatalkan barang masuk butuh seluruh qty-nya masih di stok. Kalau sebagian sudah terjual, pembatalan ditolak, padahal yang salah mungkin cuma selisih kecil. Koreksi Barang Masuk menyelesaikan kasus ini: pengguna mengisi barang, qty, dan harga yang benar, lalu dokumen lama dibatalkan dan dokumen baru dibuat dalam satu langkah.
+
+**Cara Kerja**
+- Jurnal lama dibalik dan jurnal baru dibuat seperti barang masuk biasa, jadi barang yang belum diterima dari tagihan ikut menyesuaikan.
+- **Selisih qty** dianggap masih di stok, karena barang yang gak pernah ada gak mungkin sudah terjual. Stok dan Persediaan berubah sebesar selisih itu.
+- **Selisih harga** dibagi dua. Bagian yang masih di stok mengubah Persediaan dan harga rata-rata. Bagian yang sudah terjual masuk HPP periode berjalan: harga naik jadi Debit HPP, Kredit Persediaan; harga turun sebaliknya. Periode lama gak diubah.
+- Porsi yang sudah terjual dihitung dari mutasi keluar sejak barang masuk itu dicatat. Dalam Rata-Rata Tertimbang, tiap kali barang keluar, nilai di dalam stok ikut keluar secara proporsional.
+
+**Aturan Bisnis**
+- Hanya untuk barang masuk dari Tagihan Barang yang masih aktif. Barang masuk lama belum punya jalur ini.
+- Wajib ada alasan, dan nilai barunya gak boleh melebihi nilai barang tagihan yang tersedia. Kalau nota memang lebih besar, naikkan dulu lewat Koreksi Tagihan.
+- Qty baru gak boleh lebih kecil dari yang sudah diretur atau ditukar di tagihan itu, dan stok tercatat harus cukup untuk dikurangi sebesar selisihnya.
+
+**Skenario**
+- Tercatat 100 pcs @Rp10.000, yang benar 80, 30 sudah terjual → stok 70 jadi 50, harga rata-rata tetap Rp10.000, HPP gak berubah, Rp200.000 kembali ke barang yang belum diterima.
+- Stok 10 @Rp1.000, masuk 10 dengan harga salah ketik Rp10.000 (rata-rata jadi Rp5.500), 5 terjual → setelah koreksi stok 15 @Rp1.000, dan HPP turun Rp22.500 di periode berjalan.
+- Salah pilih barang → koreksi ke barang yang benar: stok barang yang salah turun, stok barang yang benar naik.
+
+**Common Mistakes**
+- Mengira angka HPP pasti tepat kalau harga stok lain jauh berbeda dan sudah ada penjualan: pembagiannya perkiraan, karena Rata-Rata Tertimbang gak melacak batch. Total jurnal tetap seimbang dan nilai stok tetap cocok dengan buku besar.
+- Mengoreksi harga tanpa cek nota: harga jauh dari rata-rata stok memang diberi peringatan, tapi tetap bisa disimpan karena harga supplier bisa berubah.
 
 ### Produksi (Bill of Materials & Production Order)
 

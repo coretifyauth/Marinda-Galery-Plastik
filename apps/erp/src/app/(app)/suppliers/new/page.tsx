@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function NewSupplierPage() {
@@ -21,6 +23,16 @@ export default function NewSupplierPage() {
   const [contact, setContact] = useState("");
   const [paymentTermDays, setPaymentTermDays] = useState("14");
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "suppliers/new",
+    { name, contact, paymentTermDays },
+    (d) => {
+      setName(d.name);
+      setContact(d.contact);
+      setPaymentTermDays(d.paymentTermDays);
+    },
+    !checkingSession
+  );
 
   useEffect(() => {
     let active = true;
@@ -57,6 +69,7 @@ export default function NewSupplierPage() {
       return data as string;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(`/suppliers/${newId}`);
     },
     onError: (err) => {
@@ -88,6 +101,7 @@ export default function NewSupplierPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/suppliers" label="Kembali ke Supplier" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Supplier</h1>

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { chargeLineSchema } from "@/lib/charge-lines/schema";
+import { isActivePayment, type WithCancellation } from "@/lib/payments/active";
 
 export const createArInvoiceSchema = z.object({
   customer_id: z.string().uuid("Pilih customer"),
@@ -23,7 +24,7 @@ export type ArInvoice = {
   journal_entry_id: string;
   created_at: string;
   counterparties: { name: string };
-  ar_payments: { amount: number }[];
+  ar_payments: ({ amount: number } & WithCancellation)[];
   ar_returns?: {
     amount: number;
     ar_return_credits?: { amount: number }[];
@@ -101,7 +102,7 @@ export function invoiceStatus(
   depositApplied: number;
   outstanding: number;
 } {
-  const allocated = invoice.ar_payments.reduce((sum, p) => sum + p.amount, 0);
+  const allocated = invoice.ar_payments.filter(isActivePayment).reduce((sum, p) => sum + p.amount, 0);
   const returned = (invoice.ar_returns ?? []).reduce((sum, c) => sum + c.amount, 0);
   const returnCreditsSettled = (invoice.ar_returns ?? []).reduce(
     (sum, c) => sum + (c.ar_return_credits ?? []).reduce((s, rc) => s + rc.amount, 0),

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { chargeLineSchema } from "@/lib/charge-lines/schema";
+import { isActivePayment, type WithCancellation } from "@/lib/payments/active";
 
 export const createApBillSchema = z.object({
   supplier_id: z.string().uuid("Pilih supplier"),
@@ -26,9 +27,11 @@ export type ApBill = {
   journal_entry_id: string;
   created_at: string;
   counterparties: { name: string };
-  ap_payments: { amount: number }[];
+  ap_payments: ({ amount: number } & WithCancellation)[];
   ap_returns?: { amount: number; ap_return_credits?: { amount: number }[] }[];
   ap_deposit_applications?: { amount: number }[];
+  /** Koreksi Tagihan (migration 0060): + naik, - turun. */
+  ap_bill_adjustments?: { amount: number }[];
 };
 
 export type ApBillOrigin = "order" | "goods_movement" | "financial_only";
@@ -81,29 +84,32 @@ export type ApBillStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
  * tetap di-`reduce`.
  * `isCancelled` dihitung caller dari query terpisah (journal_entries.reverses_entry_id yang
  * nunjuk ke bill.journal_entry_id), karena bukan relasi langsung dari ap_bills.
+ * Pembayaran yang dibatalkan gak dihitung, dan Koreksi Tagihan ikut menaikkan/menurunkan sisa (migration 0060).
  */
 export function billStatus(
-  bill: Pick<ApBill, "amount" | "ap_payments" | "ap_returns" | "ap_deposit_applications">,
+  bill: Pick<ApBill, "amount" | "ap_payments" | "ap_returns" | "ap_deposit_applications" | "ap_bill_adjustments">,
   isCancelled = false
 ): {
   status: ApBillStatus;
   allocated: number;
   returned: number;
   depositApplied: number;
+  adjusted: number;
   outstanding: number;
 } {
-  const allocated = bill.ap_payments.reduce((sum, a) => sum + a.amount, 0);
+  const allocated = bill.ap_payments.filter(isActivePayment).reduce((sum, a) => sum + a.amount, 0);
+  const adjusted = (bill.ap_bill_adjustments ?? []).reduce((sum, a) => sum + a.amount, 0);
   const returned = (bill.ap_returns ?? []).reduce((sum, c) => sum + c.amount, 0);
   const depositApplied = (bill.ap_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
   const returnCreditExcess = (bill.ap_returns ?? []).reduce(
     (sum, c) => sum + (c.ap_return_credits ?? []).reduce((s, r) => s + r.amount, 0),
     0
   );
-  const outstanding = bill.amount - allocated - returned - depositApplied + returnCreditExcess;
+  const outstanding = bill.amount + adjusted - allocated - returned - depositApplied + returnCreditExcess;
   if (isCancelled) {
-    return { status: "dibatalkan", allocated, returned, depositApplied, outstanding: 0 };
+    return { status: "dibatalkan", allocated, returned, depositApplied, adjusted, outstanding: 0 };
   }
   const status: ApBillStatus =
     outstanding <= 0.005 ? "lunas" : allocated > 0 || depositApplied > 0 ? "sebagian" : "belum";
-  return { status, allocated, returned, depositApplied, outstanding };
+  return { status, allocated, returned, depositApplied, adjusted, outstanding };
 }

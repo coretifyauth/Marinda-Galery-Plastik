@@ -17,9 +17,15 @@ export type UomQtyChange = {
   amount: number;
 };
 
+/** Apa adanya yang diketik user -- disimpan draf form supaya satuan yang dipilih ikut pulih. */
+export type UomPriceEntered = { unitId: string; qty: string };
+
 type Props = {
   /** Baris item_units yang SUDAH difilter cuma yang punya price (units.length wajib > 0, dicek parent). */
   units: ItemUnit[];
+  /** Isian dari draf; diabaikan kalau satuannya sudah gak ada. */
+  initialEntered?: UomPriceEntered;
+  onEnteredChange?: (entered: UomPriceEntered) => void;
   disabled?: boolean;
   onChange: (change: UomQtyChange | null) => void;
 };
@@ -30,16 +36,18 @@ type Props = {
  * satuan sekaligus). Dipakai di form sisi jual (Sales Order, Goods Issue) supaya harga gak
  * lagi diketik manual. Ref: docs/domain/inventory.md submodule "Satuan Jual & Harga".
  */
-export function UomPriceQtyInput({ units, disabled, onChange }: Props) {
+export function UomPriceQtyInput({ units, initialEntered, onEnteredChange, disabled, onChange }: Props) {
   const ordered = [...units].sort((a, b) => Number(b.is_base) - Number(a.is_base));
-  const [unitId, setUnitId] = useState(ordered[0]?.id ?? "");
-  const [qty, setQty] = useState("");
+  const restored = initialEntered && ordered.some((u) => u.id === initialEntered.unitId) ? initialEntered : null;
+  const [unitId, setUnitId] = useState(restored?.unitId ?? ordered[0]?.id ?? "");
+  const [qty, setQty] = useState(restored?.qty ?? "");
 
   const selectedUnit = ordered.find((u) => u.id === unitId) ?? ordered[0];
 
   function emit(nextUnitId: string, nextQty: string) {
     setUnitId(nextUnitId);
     setQty(nextQty);
+    onEnteredChange?.({ unitId: nextUnitId, qty: nextQty });
     const unit = ordered.find((u) => u.id === nextUnitId);
     const qtyNum = Number(nextQty);
     const price = unit?.price ?? 0;

@@ -133,10 +133,34 @@ Keputusan desain terpenting: **`payments.amount` gak berubah arti** — tetap "n
 
 Data lama: `payment_method` baris yang sudah ada di-backfill sekali dari akun kas di jurnalnya (satu-satunya tempat akun dipakai menurunkan metode — data historis memang gak pernah menyimpan metodenya; akun yang dipetakan ke kedua role dibiarkan NULL).
 
+## Batalkan Pembayaran
+
+Migration: `supabase/migrations/0060_koreksi_salah_input.sql`. Konsep bisnis: `docs/domain/accounts-payable.md` submodule "Koreksi Salah Input".
+
+**Keputusan**
+
+`payments` tetap immutable, jadi pembatalan disimpan di tabel pendamping (pola sama `goods_note_cancellations`). "Pembayaran aktif" = pembayaran tanpa baris pembatalan, dan semua hitungan sisa tagihan membaca lewat `transaction_active_payments`. Pembatalan bukan cuma dibaca dari jurnal pembalik, supaya pembayaran kios yang dibalik `void_pos_transaction` gak ikut berubah perilakunya.
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `payment_cancellations` | 0..1 baris per pembayaran: alasan, apakah uangnya benar-benar berpindah (`money_moved`), siapa dan kapan | `payments.id` (primary key), `journal_entries.id` (jurnal pembalik) |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Batalkan pembayaran | `cancel_payment` (AP & AR) | Membalik seluruh jurnal pembayaran termasuk baris selisih pembulatan, menambah baris pembatalan, menghitung ulang status transaksi | Alasan dan `money_moved` wajib; tanggal gak boleh sebelum tanggal pembayaran dan periodenya harus terbuka; ditolak kalau transaksi punya saldo kelebihan retur, atau uangnya sudah dilepas jadi uang muka dari sisa barang |
+| Sisa tagihan | `ar_invoice_remaining`, `ap_bill_remaining`, `ap_bill_pool_paid`, `recompute_transaction_status` | Hanya pembayaran aktif yang dihitung | — |
+| Penjualan kios | `void_pos_transaction`, view `pos_sales_with_status` | Pembayaran yang dibatalkan membuat penjualan itu bukan penjualan kios lagi (jadi invoice biasa yang belum dibayar); void kios menolaknya supaya jurnal gak dibalik dua kali | Lock `cancel_transaction` yang sama dengan `cancel_payment` |
+
+Sisi aplikasi: `billStatus`/`invoiceStatus` memfilter lewat `lib/payments/active.ts`, mirror fungsi database.
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat daftar pembayaran (piutang & utang) | Semua user yang sudah login |
 | Mencatat pembayaran baru | Role `admin` atau `accountant` |
-| Mengubah atau menghapus pembayaran yang sudah tercatat | **Tidak ada seorang pun** — pembayaran bersifat permanen begitu tersimpan |
+| Mengubah atau menghapus pembayaran yang sudah tercatat | **Tidak ada seorang pun** — baris pembayaran permanen. Pembatalan lewat `cancel_payment` (role `admin`) menambah baris `payment_cancellations`, gak mengubah baris aslinya |

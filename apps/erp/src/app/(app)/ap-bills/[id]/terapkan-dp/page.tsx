@@ -39,7 +39,7 @@ export default function ApBillTerapkanDpPage() {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")

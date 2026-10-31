@@ -8,7 +8,7 @@ Tagihan barang dengan PPN Masukan dibuat dari nota supplier: PPN dihitung dan di
 
 ## Kenapa ditunda
 
-Secara perpajakan PPN Masukan diakui dari faktur pajak yang diterima, bukan dari barang yang datang, jadi perlakuan sekarang konsisten dengan faktur supplier. Penyesuaian yang benar (nota retur/faktur pajak pengganti dari supplier) adalah keputusan perpajakan dan butuh dokumen koreksi sendiri; bergantung pada scope-debt `ap-kolam-sisa-belum-dibayar.md` (nota kredit), karena koreksi PPN datang bersama nota kredit. Belum ada kasus nyata.
+Secara perpajakan PPN Masukan diakui dari faktur pajak yang diterima, bukan dari barang yang datang, jadi perlakuan sekarang konsisten dengan faktur supplier. Penyesuaian yang benar (nota retur/faktur pajak pengganti dari supplier) adalah keputusan perpajakan dan butuh dokumen koreksi sendiri; Koreksi Tagihan (`adjust_ap_bill`, migration `0060`) sudah mencatat nota kredit tapi hanya menyesuaikan nilai barang, belum PPN-nya. Belum ada kasus nyata.
 
 ## Referensi
 

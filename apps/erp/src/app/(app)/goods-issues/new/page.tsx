@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { createGoodsIssueSchema } from "@/lib/goods-issues/schema";
-import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
+import { UomPriceQtyInput, type UomPriceEntered, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
 import {
   fetchActiveItemDiscountRules,
   resolveLineItemDiscounts,
@@ -28,6 +28,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
@@ -42,6 +44,7 @@ type LineInput = {
   qty: string;
   amount: number;
   baseQty: number;
+  entered?: UomPriceEntered;
 };
 
 function emptyLine(): LineInput {
@@ -65,6 +68,19 @@ export default function NewGoodsIssuePage() {
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "goods-issues/new",
+    { customerId, invoiceDate, description, lines, extraLines, applyTax },
+    (d) => {
+      setCustomerId(d.customerId);
+      setInvoiceDate(d.invoiceDate);
+      setDescription(d.description);
+      setLines(d.lines);
+      setExtraLines(d.extraLines);
+      setApplyTax(d.applyTax);
+    },
+    !checkingSession
+  );
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -210,6 +226,7 @@ export default function NewGoodsIssuePage() {
       setFormError(error.message);
       return;
     }
+    draft.clear();
     router.push("/goods-issues");
   }
 
@@ -220,6 +237,7 @@ export default function NewGoodsIssuePage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/goods-issues" label="Kembali ke Barang Keluar" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Jual Barang Jadi Langsung</h1>
@@ -288,6 +306,8 @@ export default function NewGoodsIssuePage() {
                         <UomPriceQtyInput
                           key={line.item_id}
                           units={unitsForItem}
+                          initialEntered={line.entered}
+                          onEnteredChange={(entered) => setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, entered } : l)))}
                           onChange={(change) => updateLineQty(i, line.item_id, change)}
                         />
                         {line.combinedDiscount > 0 && (

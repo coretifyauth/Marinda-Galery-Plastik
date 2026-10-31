@@ -38,7 +38,7 @@ export default function ApplyArDepositToInvoicePage() {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount, payment_cancellations(payment_id)), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")

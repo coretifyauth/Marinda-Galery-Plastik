@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function NewItemUnitPage() {
@@ -24,6 +26,16 @@ export default function NewItemUnitPage() {
   const [conversionFactor, setConversionFactor] = useState("1");
   const [unitPrice, setUnitPrice] = useState("");
   const [unitError, setUnitError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    `items/${id}/units/new`,
+    { unitLabel, conversionFactor, unitPrice },
+    (d) => {
+      setUnitLabel(d.unitLabel);
+      setConversionFactor(d.conversionFactor);
+      setUnitPrice(d.unitPrice);
+    },
+    !checkingSession
+  );
   const [unitSubmitting, setUnitSubmitting] = useState(false);
 
   const load = useCallback(async () => {
@@ -107,6 +119,7 @@ export default function NewItemUnitPage() {
       setUnitError(error.message);
       return;
     }
+    draft.clear();
     router.push(`/items/${id}`);
   }
 
@@ -121,6 +134,7 @@ export default function NewItemUnitPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href={`/items/${id}`} label="Kembali ke Detail Item" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Satuan Jual</h1>

@@ -18,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
@@ -40,6 +42,19 @@ export default function NewArInvoicePage() {
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "ar-invoices/new",
+    { customerId, invoiceDate, description, amount, extraLines, applyTax },
+    (d) => {
+      setCustomerId(d.customerId);
+      setInvoiceDate(d.invoiceDate);
+      setDescription(d.description);
+      setAmount(d.amount);
+      setExtraLines(d.extraLines);
+      setApplyTax(d.applyTax);
+    },
+    !checkingSession
+  );
 
   useEffect(() => {
     let active = true;
@@ -88,6 +103,7 @@ export default function NewArInvoicePage() {
       return data as string;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(`/ar-invoices/${newId}`);
     },
     onError: (err) => {
@@ -129,6 +145,7 @@ export default function NewArInvoicePage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ar-invoices" label="Kembali ke Invoice" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Invoice</h1>

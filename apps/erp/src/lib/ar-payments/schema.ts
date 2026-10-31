@@ -1,3 +1,4 @@
+import type { WithCancellation } from "@/lib/payments/active";
 import { z } from "zod";
 
 export const recordArPaymentSchema = z.object({
@@ -24,4 +25,4 @@ export type ArPayment = {
   created_at: string;
   counterparties: { name: string };
   ar_invoices: { source_ref: string };
-};
+} & WithCancellation;

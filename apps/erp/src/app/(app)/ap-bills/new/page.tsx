@@ -14,12 +14,15 @@ import {
   type ChargeCategoryWithAccount,
 } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
+import { confirmDuplicateSupplierNote } from "@/lib/ap-bills/guards";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
@@ -47,6 +50,22 @@ export default function NewApBillPage() {
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "ap-bills/new",
+    { supplierId, billDate, description, supplierDocumentRef, amount, discountAmount, debitCategoryId, extraLines, applyTax },
+    (d) => {
+      setSupplierId(d.supplierId);
+      setBillDate(d.billDate);
+      setDescription(d.description);
+      setSupplierDocumentRef(d.supplierDocumentRef);
+      setAmount(d.amount);
+      setDiscountAmount(d.discountAmount);
+      setDebitCategoryId(d.debitCategoryId);
+      setExtraLines(d.extraLines);
+      setApplyTax(d.applyTax);
+    },
+    !checkingSession
+  );
 
   const activeExpenseCategories = expenseCategories.filter((c) => !c.archived_at);
 
@@ -108,6 +127,7 @@ export default function NewApBillPage() {
     },
     onSuccess: (newId) => {
       queryClient.invalidateQueries({ queryKey: ["ap_bills"] });
+      draft.clear();
       router.push(`/ap-bills/${newId}`);
     },
     onError: (err) => {
@@ -115,7 +135,7 @@ export default function NewApBillPage() {
     },
   });
 
-  function handleCreate(e: FormEvent) {
+  async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
 
@@ -141,6 +161,8 @@ export default function NewApBillPage() {
       return;
     }
 
+    if (!(await confirmDuplicateSupplierNote(parsed.data.supplier_id, parsed.data.supplier_document_ref ?? ""))) return;
+
     createMutation.mutate(parsed.data);
   }
 
@@ -158,6 +180,7 @@ export default function NewApBillPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ap-bills" label="Kembali ke Tagihan" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Tagihan</h1>

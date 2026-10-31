@@ -6,16 +6,19 @@ import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import { createGoodsReceiptSchema } from "@/lib/goods-receipts/schema";
 import { normalizeReceiptLine, receiptTotals } from "@/lib/goods-receipts/calc";
+import { confirmPriceDeviations } from "@/lib/goods-receipts/price-check";
 import { useOpenPoolBills } from "@/lib/ap-bills/pool";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
-import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
+import { UnitCostQtyInput, type UnitCostEntered, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { ItemPicker } from "@/components/pickers/item-picker";
 import { useItemCache } from "@/lib/pickers/use-item-cache";
@@ -26,7 +29,7 @@ import {
 } from "@/components/goods-receipts/receipt-form-parts";
 import { PoolBillSelect, PoolSummary } from "@/components/goods-receipts/pool-bill-select";
 
-type LineInput = { item_id: string; qty_received: string; unit_cost: string; item_discount: string };
+type LineInput = { item_id: string; qty_received: string; unit_cost: string; item_discount: string; entered?: UnitCostEntered };
 
 function emptyLine(): LineInput {
   return { item_id: "", qty_received: "", unit_cost: "", item_discount: "" };
@@ -45,6 +48,18 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [extraDiscount, setExtraDiscount] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    `goods-receipts/new:${initialBillId}`,
+    { billId, receiptDate, deliveryNoteRef, lines, extraDiscount },
+    (d) => {
+      setBillId(d.billId);
+      setReceiptDate(d.receiptDate);
+      setDeliveryNoteRef(d.deliveryNoteRef);
+      setLines(d.lines);
+      setExtraDiscount(d.extraDiscount);
+    },
+    !checkingSession
+  );
   const [submitting, setSubmitting] = useState(false);
 
   const billsQuery = useOpenPoolBills();
@@ -135,6 +150,15 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
       return;
     }
 
+    const priceOk = await confirmPriceDeviations(
+      activeLines.map((l) => ({
+        itemId: l.item_id,
+        itemName: items.find((it) => it.id === l.item_id)?.name ?? "Barang",
+        netUnitCost: (l.qty * l.unitCost - l.discount) / l.qty,
+      }))
+    );
+    if (!priceOk) return;
+
     setSubmitting(true);
     const { error } = await supabase.rpc("create_goods_receipt", {
       p_bill_id: parsed.data.bill_id,
@@ -156,6 +180,7 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
       queryClient.invalidateQueries({ queryKey: ["ap_bill_pool", parsed.data.bill_id] }),
       queryClient.invalidateQueries({ queryKey: ["ap_bills"] }),
     ]);
+    draft.clear();
     router.push(initialBillId ? `/ap-bills/${parsed.data.bill_id}` : "/goods-receipts");
   }
 
@@ -169,6 +194,7 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
         href={initialBillId ? `/ap-bills/${initialBillId}` : "/goods-receipts"}
         label={initialBillId ? "Kembali ke Detail Tagihan" : "Kembali ke Barang Masuk"}
       />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Catat Barang Masuk</h1>
@@ -247,12 +273,14 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
                       onChange={(id) => updateLine(i, { item_id: id, qty_received: "", unit_cost: "", item_discount: "" })}
                       onResolve={remember}
                     />
-                    {line.item_id ? (
+                    {line.item_id && selectedItem ? (
                       <div className="flex flex-col gap-2">
                         <UnitCostQtyInput
                           key={line.item_id}
                           units={unitsForItem}
-                          baseUom={selectedItem?.uom ?? ""}
+                          baseUom={selectedItem.uom}
+                          initialEntered={line.entered}
+                          onEnteredChange={(entered) => updateLine(i, { entered })}
                           onChange={(change) => updateLineQtyCost(i, change)}
                         />
                         <ItemDiscountInput

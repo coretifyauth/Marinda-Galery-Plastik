@@ -2,12 +2,12 @@
 
 ## Kapan Melakukan Ini
 
-Saat invoice yang dibuat ternyata salah total (mis. salah input, salah customer) dan belum ada pembayaran apa pun terhadapnya — bukan untuk kasus retur sebagian barang (itu pakai [retur-barang-ar.md](retur-barang-ar.md)).
+Saat invoice yang dibuat ternyata salah total (mis. salah input, salah customer) — bukan untuk kasus retur sebagian barang (itu pakai retur). Kalau sudah ada pembayaran, batalkan dulu pembayarannya.
 
 ## Prasyarat
 
 - Login dengan role **admin** atau **accountant**.
-- Invoice ini **belum punya pembayaran sama sekali** — begitu ada pembayaran, tombol batalkan tidak akan tersedia (piutangnya sudah "kesentuh" transaksi lain, nasibnya jadi keputusan bisnis terpisah).
+- Invoice ini **tidak punya pembayaran aktif**. Kalau ada, buka tab **Pembayaran**, klik **Batalkan** di tiap barisnya, isi alasan, dan jawab apakah uangnya benar-benar diterima. Tombol batalkan invoice muncul setelah itu.
 - Invoice dari barang keluar (Goods Issue) **boleh** dibatalkan, asal belum ada retur atau penggantian barang. Bisa dibatalkan dari detail invoice atau dari detail **Barang Keluar** (tombol **Batalkan Barang Keluar**) — hasilnya sama.
 
 ## Langkah-Langkah
@@ -25,5 +25,5 @@ Saat invoice yang dibuat ternyata salah total (mis. salah input, salah customer)
 
 ## Kesalahan Umum
 
-- **Mencari tombol Batalkan padahal invoice sudah ada pembayaran** — tombolnya memang sengaja tidak muncul; untuk kasus ini, penyelesaiannya lewat retur ([retur-barang-ar.md](retur-barang-ar.md)), bukan pembatalan total.
+- **Mencari tombol Batalkan padahal invoice masih punya pembayaran aktif** — batalkan pembayarannya dulu di tab **Pembayaran**. Kalau uangnya benar diterima, catat ulang pembayaran itu ke invoice yang benar supaya saldo kas/bank cocok.
 - **Menganggap ini bisa dibatalkan lagi (undo pembatalan)** — begitu dibatalkan, tidak ada tombol untuk mengembalikannya; kalau ternyata pembatalan itu salah, harus dicatat ulang sebagai invoice baru.

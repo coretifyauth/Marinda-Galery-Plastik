@@ -9,6 +9,9 @@ import { depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
 import { type WarrantyReplacement } from "@/lib/ar-warranty-replacements/schema";
 import { returnCreditRemaining, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
 import type { ChargeCategoryWithAccount } from "@/lib/charge-lines/schema";
+import { PAYMENT_ROW_COLUMNS, type PaymentRow } from "@/lib/payments/active";
+import { CancelPaymentModal } from "@/components/payments/cancel-payment-modal";
+import { PaymentsTable } from "@/components/payments/payments-table";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
@@ -27,13 +30,6 @@ type JournalEntryDetail = {
   source_ref: string;
   reverses_entry_id: string | null;
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
-};
-
-type PaymentDetail = {
-  id: string;
-  payment_date: string;
-  source_ref: string;
-  amount: number;
 };
 
 type InvoiceCreditLine = {
@@ -79,7 +75,8 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [invoice, setInvoice] = useState<ArInvoice | null>(null);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
-  const [payments, setPayments] = useState<PaymentDetail[]>([]);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [cancellingPayment, setCancellingPayment] = useState<PaymentRow | null>(null);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
   const [depositApplications, setDepositApplications] = useState<DepositApplicationDetail[]>([]);
   const [customerDeposits, setCustomerDeposits] = useState<ArDeposit[]>([]);
@@ -101,7 +98,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     const { data: inv, error: invErr } = await supabase
       .from("transactions")
       .select(
-        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
+        "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount, payment_cancellations(payment_id)), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
       )
       .eq("id", id)
       .eq("type", "OUTBOUND")
@@ -139,7 +136,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .order("entry_date"),
       supabase
         .from("payments")
-        .select("id, payment_date, source_ref, amount")
+        .select(PAYMENT_ROW_COLUMNS)
         .eq("transaction_id", id)
         .order("payment_date"),
       supabase
@@ -199,7 +196,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     );
     setReversedEntryIds(reversedSet);
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
-    setPayments((pay ?? []) as unknown as PaymentDetail[]);
+    setPayments((pay ?? []) as unknown as PaymentRow[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setCreditLines((creditLineRows ?? []) as unknown as InvoiceCreditLine[]);
     setChargeTypes((chargeTypeRows ?? []) as unknown as ChargeCategoryWithAccount[]);
@@ -556,33 +553,16 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               </Button>
             </div>
           )}
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                  <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Rujukan Dokumen</th>
-                  <th className="px-4 py-2 text-right">Jumlah</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p) => (
-                  <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
-                    <td className="px-4 py-2">{p.source_ref}</td>
-                    <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                  </tr>
-                ))}
-                {payments.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                      Belum ada pembayaran.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          {allocated > 0 && !isCancelled && (
+            <p className="text-sm text-slate-500">
+              Invoice yang masih punya pembayaran aktif tidak bisa dibatalkan. Batalkan pembayarannya dulu kalau catatannya salah.
+            </p>
+          )}
+          <PaymentsTable
+            payments={payments}
+            canCancel={canWrite && !isCancelled}
+            onCancel={setCancellingPayment}
+          />
         </div>
       )}
 
@@ -786,6 +766,13 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
           </table>
         </div>
       )}
+
+      <CancelPaymentModal
+        payment={cancellingPayment}
+        moneyMovedLabel="uangnya sudah diterima dari pelanggan"
+        onClose={() => setCancellingPayment(null)}
+        onDone={load}
+      />
     </div>
   );
 }

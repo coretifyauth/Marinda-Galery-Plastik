@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { UomPriceQtyInput, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
+import { UomPriceQtyInput, type UomPriceEntered, type UomQtyChange } from "@/components/ui/uom-price-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import {
   fetchActiveItemDiscountRules,
@@ -31,6 +33,7 @@ type LineInput = {
   item_id: string;
   qty_ordered: string;
   unit_price: string;
+  entered?: UomPriceEntered;
 };
 
 function emptyLine(): LineInput {
@@ -50,6 +53,17 @@ export default function NewSalesOrderPage() {
   const [expectedDate, setExpectedDate] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "sales-orders/new",
+    { customerId, soDate, expectedDate, lines },
+    (d) => {
+      setCustomerId(d.customerId);
+      setSoDate(d.soDate);
+      setExpectedDate(d.expectedDate);
+      setLines(d.lines);
+    },
+    !checkingSession
+  );
 
   useEffect(() => {
     let active = true;
@@ -90,6 +104,7 @@ export default function NewSalesOrderPage() {
       return data as string;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(`/sales-orders/${newId}`);
     },
     onError: (err) => {
@@ -198,6 +213,7 @@ export default function NewSalesOrderPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/sales-orders" label="Kembali ke Sales Order" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Buat Sales Order</h1>
@@ -261,6 +277,8 @@ export default function NewSalesOrderPage() {
                         <UomPriceQtyInput
                           key={line.item_id}
                           units={unitsForItem}
+                          initialEntered={line.entered}
+                          onEnteredChange={(entered) => setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, entered } : l)))}
                           onChange={(change) => updateLineQty(i, line.item_id, change)}
                         />
                         {line.combinedDiscount > 0 && (

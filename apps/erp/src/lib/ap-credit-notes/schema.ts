@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ResolvedAccount } from "@/lib/default-accounts/schema";
 
 export const purchaseReturnLineSchema = z.object({
   item_id: z.string().uuid("Pilih item"),
@@ -43,3 +44,26 @@ export type GoodsReceiptForBill = {
     items: { name: string; uom: string };
   }[];
 };
+
+/**
+ * Pilihan akun kredit retur, mirror guard create_ap_return (migration 0060).
+ * Retur barang fisik: stok turun, jadi akun Persediaan yang harus dikredit. Tagihan barang didebit ke Pembelian Belum Diterima
+ * (bukan Persediaan), jadi akun Persediaan default ditambahkan. Retur nominal: akun Persediaan wajib lewat qty fisik, dan
+ * Pembelian Belum Diterima gak pernah boleh (sisa barang gak ikut turun; jalurnya Koreksi Tagihan).
+ */
+export function apReturnCreditOptions(input: {
+  hasGoodsReceipt: boolean;
+  billDebitAccounts: ResolvedAccount[];
+  inventoryAccountIds: Set<string>;
+  defaultAccounts: Record<string, ResolvedAccount>;
+}): ResolvedAccount[] {
+  const { hasGoodsReceipt, billDebitAccounts, inventoryAccountIds, defaultAccounts } = input;
+  const pendingId = defaultAccounts["inventory.purchase_not_received"]?.id;
+  const allowed = billDebitAccounts.filter((a) => a.id !== pendingId);
+  if (!hasGoodsReceipt) return allowed.filter((a) => !inventoryAccountIds.has(a.id));
+
+  const inventory = allowed.filter((a) => inventoryAccountIds.has(a.id));
+  const defaultInventory = defaultAccounts["inventory.raw_material"];
+  if (defaultInventory && !inventory.some((a) => a.id === defaultInventory.id)) inventory.push(defaultInventory);
+  return inventory;
+}

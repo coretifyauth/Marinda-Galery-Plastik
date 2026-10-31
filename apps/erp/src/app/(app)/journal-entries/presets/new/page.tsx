@@ -11,6 +11,8 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 type LineInput = { account_id: string; side: "debit" | "credit"; label: string };
@@ -26,6 +28,15 @@ export default function NewJournalPresetPage() {
   const [label, setLabel] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine(), { ...emptyLine(), side: "credit" }]);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "journal-entries/presets/new",
+    { label, lines },
+    (d) => {
+      setLabel(d.label);
+      setLines(d.lines);
+    },
+    !checkingSession
+  );
   const [submitting, setSubmitting] = useState(false);
 
   const leafAccounts = getLeafAccounts(accounts);
@@ -109,6 +120,7 @@ export default function NewJournalPresetPage() {
       return;
     }
 
+    draft.clear();
     router.push(`/journal-entries/presets/${header.id}`);
   }
 
@@ -119,6 +131,7 @@ export default function NewJournalPresetPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/journal-entries/presets" label="Kembali ke Preset Jurnal" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Preset Jurnal</h1>

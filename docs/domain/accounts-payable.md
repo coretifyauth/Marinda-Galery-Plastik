@@ -16,17 +16,17 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 
 **Aturan Bisnis**
 - Bill dan pembayaran wajib selalu punya jurnal akuntansi yang sepadan — gak ada jalur pencatatan utang yang lewatin pembukuan.
-- Bill/pembayaran gak boleh diedit/dihapus setelah dibuat — koreksi cuma lewat pembatalan (reversing entry).
+- Bill/pembayaran gak boleh diedit/dihapus setelah dibuat — koreksi cuma lewat pembatalan (reversing entry) atau dokumen koreksi, lihat submodule "Koreksi Salah Input".
 - Pembayaran boleh kurang dari sisa tagihan (cicil), gak boleh lebih (overpay ditolak keras).
 - Jatuh tempo dihitung sekali pas bill dibuat dari termin supplier saat itu, gak retroaktif ikut berubah kalau termin supplier berubah belakangan.
-- Bill cuma bisa dibatalkan kalau belum ada pembayaran atau retur yang nyentuh dia — begitu udah kesentuh transaksi lain, pembatalan ditolak.
+- Bill cuma bisa dibatalkan kalau gak ada pembayaran aktif maupun retur. Pembayaran yang salah dibatalkan dulu, atau sekaligus lewat Batalkan Tagihan; retur masih menghalangi karena retur sendiri belum bisa dibatalkan.
 
 **Skenario**
 - Bill lunas tepat waktu — 1 pembayaran nutup 1 bill penuh sekaligus.
 - Bayar sebagian (cicil) — 2+ pembayaran ke bill yang sama, masing-masing kurang dari sisa tagihan.
 - Pembayaran ditolak — coba bayar lebih dari sisa tagihan (overpay), atau coba nutup lebih dari 1 bill dalam 1 transaksi.
 - Telat bayar — beda arah dari AR. Di AR, yang nanggung resiko telat itu kita (piutang macet, harus nagih). Di AP, kalau perusahaan yang telat bayar, resikonya supplier bisa setop kirim bahan baku berikutnya. Cara ngeceknya sama kayak aging AR (bill mana yang udah lewat jatuh tempo), cuma maknanya "bill mana yang HARUS kita bayar duluan", bukan "piutang mana yang harus ditagih".
-- Bill dibatalkan (salah input, belum ada pembayaran) — pembalikan jurnal pakai akun yang sama persis, bill asli tetap ada di histori.
+- Bill dibatalkan (salah input) — pembalikan jurnal pakai akun yang sama persis, bill asli tetap ada di histori.
 
 **Common Mistakes**
 - Jatuh tempo dihitung ulang dari termin supplier saat ini (bukan snapshot) — bill lama ikut geser kalau termin berubah.
@@ -51,10 +51,10 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - **Sisa kolam** (barang yang gak akan datang atau selisih receh) ditutup begini:
   - Sisa di bawah satuan pembulatan (Rp1) — dilepas ke akun Selisih Pembulatan yang sama dengan pelunasan: Debit Beban Selisih Pembulatan, Kredit Pembelian Belum Diterima.
   - Sisa yang lebih besar, **bagian yang sudah dibayar** — dilepas ke Uang Muka: Debit Uang Muka Pembelian, Kredit Pembelian Belum Diterima. Batasnya (uang yang sudah dibayar, termasuk uang muka yang sudah diterapkan ke tagihan itu) dikurangi nilai barang masuk yang sudah terpakai. Setelah jadi Uang Muka, nasibnya mengikuti mekanisme uang muka yang ada: diterapkan ke tagihan lain, direfund, atau dihanguskan.
-  - Sisa yang **belum dibayar** — secara bisnis ini koreksi utang (nota kredit dari supplier). Belum ada jalurnya; dicatat sebagai scope-debt (`memory/scope-debt/ap-kolam-sisa-belum-dibayar.md`).
-- **Pembatalan barang masuk** membalik jurnalnya (Debit Pembelian Belum Diterima, Kredit Persediaan), mengurangi stok, dan mengembalikan kolam. Ditolak kalau stok item itu gak cukup lagi dikurangi, atau barang masuk itu sudah diretur. **Pembatalan tagihan barang** hanya boleh kalau belum ada pembayaran maupun retur dan semua barang masuknya sudah dibatalkan.
+  - Sisa yang **belum dibayar** — secara bisnis ini koreksi utang (nota kredit dari supplier), ditutup lewat Koreksi Tagihan yang menurunkan utang dan kolam sekaligus.
+- **Pembatalan barang masuk** membalik jurnalnya (Debit Pembelian Belum Diterima, Kredit Persediaan), mengurangi stok, dan mengembalikan kolam. Ditolak kalau stok item itu gak cukup lagi dikurangi, atau barang masuk itu sudah diretur; kasus itu pakai Koreksi Barang Masuk. **Pembatalan tagihan barang** hanya boleh kalau gak ada pembayaran aktif maupun retur dan semua barang masuknya sudah dibatalkan.
 - **Retur ke supplier** atas barang masuk selalu mengenai tagihan induknya (satu), jadi gak ada pertanyaan "tagihan mana yang dikurangi".
-- **Nota telat = barang belum bisa dicatat.** Stok sistem baru bertambah saat barang masuk dibuat, dan barang masuk butuh tagihan. Kalau nominal belum pasti, tagihan boleh dibuat dari nominal perkiraan; nota yang beda dikoreksi dengan membatalkan (barang masuk lalu tagihan) dan membuat ulang selama syarat pembatalan di atas masih terpenuhi.
+- **Nota telat = barang belum bisa dicatat.** Stok sistem baru bertambah saat barang masuk dibuat, dan barang masuk butuh tagihan. Kalau nominal belum pasti, tagihan boleh dibuat dari nominal perkiraan; nota yang beda dikoreksi lewat Koreksi Tagihan.
 
 **Aturan Bisnis**
 - Setiap barang masuk wajib punya tepat satu tagihan barang aktif, dan supplier barang masuk harus sama dengan supplier tagihan.
@@ -62,7 +62,7 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - Harga tiap baris barang masuk wajib diisi; gak ada harga perkiraan atau harga 0.
 - Hanya bagian yang sudah dibayar yang boleh dilepas ke Uang Muka. Sisa yang belum dibayar gak boleh "dihilangkan" lewat jalur ini.
 - Tagihan barang yang dibatalkan gak boleh meninggalkan barang masuk aktif.
-- Selisih nilai setelah stok sudah bergerak (nota ternyata lebih mahal dari perkiraan, barangnya sudah terjual) belum punya jalur koreksi (`memory/scope-debt/ap-kolam-selisih-harga-setelah-stok-bergerak.md`).
+- Selisih nilai setelah stok sudah bergerak (nota ternyata lebih mahal dari perkiraan, barangnya sudah terjual) dikoreksi lewat Koreksi Tagihan untuk menaikkan nilainya, lalu Koreksi Barang Masuk untuk harganya.
 - PPN Masukan dijurnal penuh saat tagihan dibuat dan tidak disesuaikan kalau barangnya batal datang dan kolam dilepas (`memory/scope-debt/ap-kolam-ppn-masukan-barang-batal-datang.md`).
 
 **Skenario**
@@ -77,6 +77,34 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - Menganggap tagihan harus dibayar dulu supaya barang masuknya boleh dicatat (atau sebaliknya) — status bayar dan kolam independen.
 - Menganggap sisa kolam hilang sendiri — yang gak jadi datang harus ditutup secara sadar (pembulatan, uang muka, atau nota kredit).
 - Mengubah nominal tagihan supaya cocok dengan barang yang datang — yang berubah itu barang masuknya (dan nota yang beda dikoreksi dengan batal-ulang).
+
+### Koreksi Salah Input
+
+Salah input itu kejadian biasa, dan pembukuan gak boleh diedit. Jadi tiap jenis salah input punya jalur koreksinya sendiri yang meninggalkan jejak: dokumen lama tetap ada, jurnalnya dibalik, dan alasannya tersimpan. Retur dan stock opname bukan alat koreksi: keduanya mencatat kejadian fisik yang benar-benar terjadi, jadi memakainya untuk salah ketik berarti mencatat retur atau selisih stok yang gak pernah ada. Padanan di AR: pembayaran invoice juga bisa dibatalkan dengan aturan yang sama.
+
+**Cara Kerja**
+- **Batalkan Pembayaran** — jurnal pembayaran dibalik (Debit Kas/Bank, Kredit Utang Usaha, termasuk selisih pembulatannya) dan nilainya kembali jadi sisa tagihan. Ini artinya "catatannya salah", bukan "uangnya kembali". Kalau uangnya benar-benar berpindah, pembayaran yang benar wajib dicatat ulang supaya saldo kas/bank cocok dengan rekening koran. Pengguna wajib menjawab apakah uangnya berpindah, dan jawabannya tersimpan.
+- **Batalkan Tagihan** — satu tombol yang membatalkan kebalikan dari urutan pencatatan: barang masuk, pembayaran, penerapan uang muka, koreksi tagihan, lalu tagihannya. Semua berhasil atau semua batal, jadi gak ada keadaan setengah batal. Sebelum jalan, sistem menampilkan apa saja yang akan ikut dibatalkan, atau apa yang menghalangi dan jalan keluarnya.
+- **Koreksi Tagihan** (hanya Tagihan Barang) — nilai nota salah, atau supplier mengeluarkan nota kredit/debit. Tagihan turun: Debit Utang Usaha, Kredit Pembelian Belum Diterima. Tagihan naik: Debit Pembelian Belum Diterima, Kredit Utang Usaha. Utang dan barang yang belum diterima selalu berubah bersama.
+- **Koreksi Barang Masuk** — lihat `docs/domain/inventory.md` submodule "Koreksi Barang Masuk".
+
+**Aturan Bisnis**
+- Pembayaran gak bisa dibatalkan kalau kelebihan retur di tagihan itu sudah jadi saldo di supplier, atau uangnya sudah dilepas jadi uang muka dari sisa barang: kedua angka itu dihitung dengan asumsi tagihan sudah dibayar.
+- Penurunan tagihan gak boleh melebihi barang yang belum diterima maupun sisa utang. Bagian yang sudah dibayar keluar lewat Tutup Sisa Barang (jadi uang muka).
+- Batalkan Tagihan ditolak kalau sudah ada retur, tukar barang, atau penutupan sisa barang, karena ketiganya belum bisa dibatalkan. Nilai yang salah dikoreksi lewat Koreksi Tagihan.
+- Barang masuk lama (dibuat bareng tagihannya) hanya bisa dibatalkan lewat tagihannya selama stoknya masih utuh; belum ada jalur koreksinya.
+- Semua jurnal pembalik bertanggal hari pembatalan, jadi laporan periode yang sudah ditutup gak berubah.
+
+**Skenario**
+- Pembayaran dicatat ke tagihan yang salah, supplier sama — batalkan (uangnya benar berpindah), lalu catat ulang ke tagihan yang benar dengan tanggal transfer asli.
+- Tagihan salah supplier dan sudah dibayar, barang sudah masuk, stok utuh — Batalkan Tagihan, lalu buat ulang tagihan, pembayaran, dan barang masuk.
+- Nota tertulis lebih kecil dari yang dicatat, sebagian barang sudah terjual — Koreksi Barang Masuk untuk menurunkan qty, lalu Koreksi Tagihan untuk menurunkan nilai sisanya.
+- Transfer lebih besar dari nota yang benar — bayar sebesar nota, sisanya dicatat sebagai uang muka.
+
+**Common Mistakes**
+- Mengira Batalkan Pembayaran mengembalikan uang: kalau transfernya benar terjadi dan gak dicatat ulang, saldo bank di sistem jadi lebih besar dari rekening koran.
+- Memakai retur untuk salah ketik: utang turun atau muncul saldo di supplier yang fiktif, dan tagihannya gak bisa dibatalkan lagi.
+- Memakai stock opname untuk salah ketik: kesalahan input jadi beban kerugian, dan barang yang belum diterima tetap salah.
 
 ### Diskon Pembelian (Trade Discount)
 

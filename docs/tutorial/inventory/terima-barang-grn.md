@@ -44,14 +44,14 @@ Ada tiga jalan masuk ke form yang sama: dari menu **Barang Masuk**, dari tombol 
 
 ## Membatalkan
 
-- Tidak ada revisi harga. **Salah item, qty, atau harga:** buka detail barang masuk, klik **Batalkan Barang Masuk**, lalu catat ulang dari tagihan yang sama. Jurnal dibalik, stok dan harga rata-rata dikurangi lagi, dan **nilainya kembali ke Belum diterima**.
-- Pembatalan **ditolak** kalau sebagian qty-nya sudah terjual/terpakai (stok tinggal kurang dari yang diterima), atau kalau item itu sudah diretur/ditukar di tagihannya. Untuk kasus itu pakai [retur-barang-ap.md](../accounts-payable/retur-barang-ap.md).
-- Barang masuk **lama** (dicatat sebelum fitur ini, nomornya mengikuti nomor tagihan) dibatalkan lewat tagihannya — tombolnya tetap **Batalkan Barang Masuk**, hasilnya stok dikurangi dan tagihan ikut dibatalkan ([batalkan-bill-ap.md](../accounts-payable/batalkan-bill-ap.md)).
+- **Salah item, qty, atau harga:** buka detail barang masuk, klik **Koreksi Barang Masuk**, isi nilai yang benar dan alasannya. Bisa dipakai walau sebagian barang sudah terjual ([koreksi-salah-input.md](../accounts-payable/koreksi-salah-input.md)).
+- **Barangnya memang tidak ada:** klik **Batalkan Barang Masuk**. Jurnal dibalik, stok dan harga rata-rata dikurangi lagi, dan nilainya kembali ke **Belum diterima**. Pembatalan ditolak kalau sebagian qty-nya sudah terjual atau sudah diretur; pakai Koreksi Barang Masuk.
+- Barang masuk **lama** (dicatat sebelum fitur ini, nomornya mengikuti nomor tagihan) dibatalkan dari tagihannya lewat tombol **Batalkan dari Tagihan**, selama stoknya masih utuh ([batalkan-bill-ap.md](../accounts-payable/batalkan-bill-ap.md)).
 
 ## Kesalahan Umum
 
 - **Mencari cara mencatat barang masuk tanpa nota** — sudah tidak ada. Buat Tagihan Barang dulu (boleh dari nominal perkiraan).
-- **Pesan "melebihi barang yang belum diterima dari nota" (atau "melebihi sisa kolam tagihan ..." dari server)** — nilai kiriman lebih besar dari barang yang belum diterima dari nota itu (mis. harga naik). Catat kiriman dari tagihan lain, atau pecah menjadi dua barang masuk dari dua nota.
+- **Pesan "melebihi barang yang belum diterima dari nota" (atau "melebihi sisa kolam tagihan ..." dari server)** — nilai kiriman lebih besar dari barang yang belum diterima dari nota itu (mis. harga naik). Kalau nilai notanya memang lebih besar, naikkan lewat **Koreksi Tagihan**. Kalau bukan, catat dari tagihan lain atau pecah jadi dua barang masuk.
 - **Mengisi harga 0** — ditolak; barang masuk wajib berharga sesuai nota.
 - **Tagihan tidak muncul di daftar** — semua barangnya sudah diterima, tagihannya dibatalkan, atau supplier-nya berbeda (untuk cara dari PO, hanya tagihan supplier PO itu yang tampil).
 - **Pesan "Qty maksimal 3 desimal"** — qty lebih dari 3 desimal tidak diterima.

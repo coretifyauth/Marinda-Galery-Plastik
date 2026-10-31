@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabase/client";
 import { lineRemaining, type PurchaseOrder } from "@/lib/purchase-orders/schema";
 import { createGoodsReceiptSchema } from "@/lib/goods-receipts/schema";
 import { normalizeReceiptLine, receiptTotals } from "@/lib/goods-receipts/calc";
+import { confirmPriceDeviations } from "@/lib/goods-receipts/price-check";
 import { useOpenPoolBills } from "@/lib/ap-bills/pool";
 import type { ItemUnit } from "@/lib/item-units/schema";
 import { Label } from "@/components/ui/label";
@@ -14,10 +15,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
-import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
+import { UnitCostQtyInput, type UnitCostEntered, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import {
   ItemDiscountInput,
@@ -34,6 +37,7 @@ type LineInput = {
   qty_received: string;
   unit_cost: string;
   item_discount: string;
+  entered?: UnitCostEntered;
 };
 
 export default function ReceivePurchaseOrderPage() {
@@ -52,6 +56,18 @@ export default function ReceivePurchaseOrderPage() {
   const [lines, setLines] = useState<LineInput[]>([]);
   const [extraDiscount, setExtraDiscount] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    `purchase-orders/${id}/receive`,
+    { billId, receiptDate, deliveryNoteRef, lines, extraDiscount },
+    (d) => {
+      setBillId(d.billId);
+      setReceiptDate(d.receiptDate);
+      setDeliveryNoteRef(d.deliveryNoteRef);
+      setLines(d.lines);
+      setExtraDiscount(d.extraDiscount);
+    },
+    !checkingSession
+  );
   const [submitting, setSubmitting] = useState(false);
 
   // Hanya tagihan barang milik supplier PO ini yang masih punya sisa kolam.
@@ -177,6 +193,15 @@ export default function ReceivePurchaseOrderPage() {
       return;
     }
 
+    const priceOk = await confirmPriceDeviations(
+      activeLines.map((l) => ({
+        itemId: l.item_id,
+        itemName: lines.find((line) => line.order_line_id === l.order_line_id)?.item_label ?? "Barang",
+        netUnitCost: (l.qty * l.unitCost - l.discount) / l.qty,
+      }))
+    );
+    if (!priceOk) return;
+
     setSubmitting(true);
     const { error } = await supabase.rpc("create_goods_receipt", {
       p_bill_id: parsed.data.bill_id,
@@ -199,6 +224,7 @@ export default function ReceivePurchaseOrderPage() {
       queryClient.invalidateQueries({ queryKey: ["ap_bills"] }),
     ]);
 
+    draft.clear();
     router.push(`/purchase-orders/${id}`);
   }
 
@@ -213,6 +239,7 @@ export default function ReceivePurchaseOrderPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href={`/purchase-orders/${id}`} label="Kembali ke Detail Purchase Order" />
+      <DraftNotice draft={draft} />
 
       <div>
         <div className="flex items-center gap-3">
@@ -285,10 +312,13 @@ export default function ReceivePurchaseOrderPage() {
                   <span className="flex items-center text-sm text-slate-700">{line.item_label}</span>
                   <div className="flex flex-col gap-2">
                     <UnitCostQtyInput
+                      key={draft.restoreKey}
                       units={itemUnits.filter((u) => u.item_id === line.item_id)}
                       baseUom={line.uom}
                       initialBaseQty={line.qty_received}
                       initialBaseCost={line.unit_cost}
+                      initialEntered={line.entered}
+                      onEnteredChange={(entered) => updateLine(i, { entered })}
                       onChange={(change) => updateLineQtyCost(i, change)}
                     />
                     <ItemDiscountInput value={line.item_discount} onChange={(v) => updateLine(i, { item_discount: v })} />

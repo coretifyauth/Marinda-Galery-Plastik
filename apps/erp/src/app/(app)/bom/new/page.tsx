@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { ItemPicker } from "@/components/pickers/item-picker";
 
@@ -28,6 +30,16 @@ export default function NewBomPage() {
   const [outputQty, setOutputQty] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "bom/new",
+    { finishedItemId, outputQty, lines },
+    (d) => {
+      setFinishedItemId(d.finishedItemId);
+      setOutputQty(d.outputQty);
+      setLines(d.lines);
+    },
+    !checkingSession
+  );
 
   useEffect(() => {
     let active = true;
@@ -71,6 +83,7 @@ export default function NewBomPage() {
       return header.id as string;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(`/bom/${newId}`);
     },
     onError: (err) => {
@@ -116,6 +129,7 @@ export default function NewBomPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/bom" label="Kembali ke BOM" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Buat Resep (BOM)</h1>

@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase/client";
 import type { Supplier } from "@/lib/suppliers/schema";
 import { billStatus, type ApBill } from "@/lib/ap-bills/schema";
 import type { ApPayment } from "@/lib/ap-payments/schema";
+import { isActivePayment } from "@/lib/payments/active";
+import { CancelledBadge } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { Button } from "@/components/ui/button";
@@ -53,7 +55,7 @@ export function SupplierDetailView({ id }: { id: string }) {
       supabase
         .from("transactions")
         .select(
-          "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+          "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
         )
         .eq("type", "INBOUND")
         .eq("counterparty_id", id)
@@ -61,7 +63,7 @@ export function SupplierDetailView({ id }: { id: string }) {
       supabase
         .from("payments")
         .select(
-          "id, supplier_id:counterparty_id, bill_id:transaction_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ap_bills:transactions(source_ref)"
+          "id, supplier_id:counterparty_id, bill_id:transaction_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ap_bills:transactions(source_ref), payment_cancellations(payment_id)"
         )
         .eq("type", "INBOUND")
         .eq("counterparty_id", id)
@@ -280,7 +282,10 @@ export function SupplierDetailView({ id }: { id: string }) {
                   <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
                   <td className="px-4 py-2">{p.source_ref}</td>
                   <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                  <td className="px-4 py-2">{p.ap_bills.source_ref}</td>
+                  <td className="px-4 py-2">
+                    {p.ap_bills.source_ref}
+                    {!isActivePayment(p) && <span className="ml-2"><CancelledBadge /></span>}
+                  </td>
                 </tr>
               ))}
               {payments.length === 0 && (

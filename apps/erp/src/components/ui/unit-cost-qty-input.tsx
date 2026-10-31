@@ -19,6 +19,9 @@ export type UnitCostQtyChange = {
   baseCost: number;
 };
 
+/** Apa adanya yang diketik user -- disimpan draf form supaya satuan yang dipilih ikut pulih (bukan cuma satuan dasar). */
+export type UnitCostEntered = { unitId: string; qty: string; cost: string };
+
 type Props = {
   /** Baris item_units milik 1 item (boleh 0 baris). */
   units: ItemUnit[];
@@ -27,6 +30,9 @@ type Props = {
   /** Prefill qty & harga di satuan dasar, mis. sisa PO yang otomatis muncul di form Goods Receipt. */
   initialBaseQty?: string;
   initialBaseCost?: string;
+  /** Isian dari draf; diutamakan dari initialBase* kalau satuannya masih ada. */
+  initialEntered?: UnitCostEntered;
+  onEnteredChange?: (entered: UnitCostEntered) => void;
   disabled?: boolean;
   /** Harga 0 dianggap valid (barang masuk yang harganya belum diketahui). Default: harus > 0. */
   allowZeroCost?: boolean;
@@ -47,6 +53,8 @@ export function UnitCostQtyInput({
   baseUom,
   initialBaseQty,
   initialBaseCost,
+  initialEntered,
+  onEnteredChange,
   disabled,
   allowZeroCost,
   onChange,
@@ -67,9 +75,10 @@ export function UnitCostQtyInput({
         ...units,
       ];
 
-  const [unitId, setUnitId] = useState(ordered[0]?.id ?? "");
-  const [qty, setQty] = useState(initialBaseQty ?? "");
-  const [cost, setCost] = useState(initialBaseCost ?? "");
+  const restored = initialEntered && ordered.some((u) => u.id === initialEntered.unitId) ? initialEntered : null;
+  const [unitId, setUnitId] = useState(restored?.unitId ?? ordered[0]?.id ?? "");
+  const [qty, setQty] = useState(restored?.qty ?? initialBaseQty ?? "");
+  const [cost, setCost] = useState(restored?.cost ?? initialBaseCost ?? "");
 
   const selectedUnit = ordered.find((u) => u.id === unitId) ?? ordered[0];
 
@@ -77,6 +86,7 @@ export function UnitCostQtyInput({
     setUnitId(nextUnitId);
     setQty(nextQty);
     setCost(nextCost);
+    onEnteredChange?.({ unitId: nextUnitId, qty: nextQty, cost: nextCost });
     const unit = ordered.find((u) => u.id === nextUnitId);
     const qtyNum = Number(nextQty);
     const costNum = Number(nextCost);

@@ -33,6 +33,10 @@ Belum ada satu baris migration/kode pun yang ditulis untuk ini — kalau dilanju
 
 Reversal GRN diimplementasikan lewat perluasan `cancel_ap_bill` (migration `0052_cancel_goods_receipt.sql`), bukan RPC baru. Blocker avg_cost diputuskan user: "hitung ulang" — diwujudkan pakai nilai persediaan (`qty*avg_cost` dikurangi nilai bersih baris GRN, dibagi qty sisa), bukan replay seluruh riwayat mutasi, supaya valuasi Kartu Stok tetap cocok dengan GL. Goods Issue/Invoice AR juga selesai di migration yang sama (`cancel_ar_invoice`, scope-debt `cancel-ar-invoice-goods-movement-guard` ditutup). Sisa scope: payment standalone.
 
+## Update (2026-10-31) — pembayaran standalone selesai
+
+`cancel_payment` dan `cancel_ap_bill_cascade` (migration `0060`) menutup sisa scope pembayaran. Yang belum ada: pembatalan untuk retur, tukar barang, dan penutupan sisa barang. Fungsi `reverse_transaction` generik tetap gak dibangun: `cancel_ap_bill_cascade` hanya sisi AP.
+
 ## Referensi
 
 - `docs/architecture/transactions-schema.md` — RPC `cancel_ar_invoice`/`cancel_ap_bill` existing beserta guard-nya.

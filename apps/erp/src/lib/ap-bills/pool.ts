@@ -17,6 +17,8 @@ export type ApBillPool = {
   remaining: number;
   /** Umur (hari) kolam yang masih terbuka; null kalau kolam sudah habis atau tagihan dibatalkan. */
   open_age_days: number | null;
+  /** Jumlah Koreksi Tagihan (sudah termasuk di pool_amount). */
+  adjustment_amount: number;
 };
 
 export type ApBillPoolRelease = {
@@ -29,7 +31,7 @@ export type ApBillPoolRelease = {
 };
 
 const POOL_COLUMNS =
-  "bill_id, counterparty_id, supplier_name, bill_ref, bill_date, bill_status, pool_amount, received_value, released_amount, remaining, open_age_days";
+  "bill_id, counterparty_id, supplier_name, bill_ref, bill_date, bill_status, pool_amount, received_value, released_amount, remaining, open_age_days, adjustment_amount";
 
 export async function fetchPool(billId: string): Promise<ApBillPool | null> {
   const { data, error } = await supabase
@@ -83,6 +85,32 @@ export function usePoolReleases(billId: string) {
   });
 }
 
+export type ApBillAdjustment = {
+  id: string;
+  amount: number;
+  adjustment_date: string;
+  source_ref: string;
+  supplier_document_ref: string | null;
+  reason: string;
+};
+
+export function useBillAdjustments(billId: string) {
+  return useQuery({
+    queryKey: ["ap_bill_adjustments", billId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("ap_bill_adjustments")
+        .select("id, amount, adjustment_date, source_ref, supplier_document_ref, reason")
+        .eq("transaction_id", billId)
+        .order("created_at");
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as ApBillAdjustment[];
+    },
+    enabled: !!billId,
+    staleTime: 5_000,
+  });
+}
+
 export function useOpenPoolBills(supplierId?: string, enabled = true) {
   return useQuery({
     queryKey: ["open_pool_bills", supplierId ?? ""],
@@ -101,12 +129,12 @@ const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
  */
 export function poolDepositLimit(input: {
   billAmount: number;
-  pool: Pick<ApBillPool, "pool_amount" | "received_value" | "remaining">;
+  pool: Pick<ApBillPool, "pool_amount" | "received_value" | "remaining" | "adjustment_amount">;
   paid: number;
   releasedAsDeposit: number;
 }): number {
   const { billAmount, pool, paid, releasedAsDeposit } = input;
-  const extras = billAmount - pool.pool_amount;
+  const extras = billAmount - (pool.pool_amount - pool.adjustment_amount);
   const limit = Math.max(0, paid - extras - pool.received_value - releasedAsDeposit);
   return round2(Math.min(limit, pool.remaining));
 }

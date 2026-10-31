@@ -10,6 +10,8 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function NewAccountPage() {
@@ -23,6 +25,16 @@ export default function NewAccountPage() {
   const [category, setCategory] = useState<(typeof accountCategories)[number]>("asset");
   const [parentId, setParentId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "accounts/new",
+    { name, category, parentId },
+    (d) => {
+      setName(d.name);
+      setCategory(d.category);
+      setParentId(d.parentId);
+    },
+    !checkingSession
+  );
   const [submitting, setSubmitting] = useState(false);
 
   const loadAccounts = useCallback(async () => {
@@ -82,6 +94,7 @@ export default function NewAccountPage() {
       setFormError(error.message);
       return;
     }
+    draft.clear();
     router.push("/accounts");
   }
 
@@ -94,6 +107,7 @@ export default function NewAccountPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/accounts" label="Kembali ke Chart of Accounts" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Akun</h1>

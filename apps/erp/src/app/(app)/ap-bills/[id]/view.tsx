@@ -7,7 +7,7 @@ import { fetchGoodsReceiptForBill } from "@/lib/goods-receipts/queries";
 import { billStatus, type ApBill } from "@/lib/ap-bills/schema";
 import type { GoodsReceiptForBill } from "@/lib/ap-credit-notes/schema";
 import { depositStatus, type ApDeposit } from "@/lib/ap-deposits/schema";
-import { generateDocumentNumber } from "@/lib/document-numbers";
+import { PAYMENT_ROW_COLUMNS, type PaymentRow } from "@/lib/payments/active";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
@@ -17,6 +17,9 @@ import { DetailRows } from "@/components/ui/detail-rows";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { usePool } from "@/lib/ap-bills/pool";
 import { GoodsPoolSection } from "@/components/ap-bills/goods-pool-section";
+import { CancelBillModal } from "@/components/ap-bills/cancel-bill-modal";
+import { CancelPaymentModal } from "@/components/payments/cancel-payment-modal";
+import { PaymentsTable } from "@/components/payments/payments-table";
 
 type JournalEntryDetail = {
   id: string;
@@ -25,13 +28,6 @@ type JournalEntryDetail = {
   source_ref: string;
   reverses_entry_id: string | null;
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
-};
-
-type PaymentDetail = {
-  id: string;
-  payment_date: string;
-  source_ref: string;
-  amount: number;
 };
 
 type CreditNoteDetail = {
@@ -87,7 +83,7 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [bill, setBill] = useState<ApBill | null>(null);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
-  const [payments, setPayments] = useState<PaymentDetail[]>([]);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
   const [replacements, setReplacements] = useState<ReplacementDetail[]>([]);
   const [goodsReceipt, setGoodsReceipt] = useState<GoodsReceiptForBill | null>(null);
@@ -97,8 +93,9 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("jurnal");
 
-  const [cancelError, setCancelError] = useState<string | null>(null);
-  const [cancelling, setCancelling] = useState(false);
+  const [showCancelBill, setShowCancelBill] = useState(false);
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
+  const [cancellingPayment, setCancellingPayment] = useState<PaymentRow | null>(null);
   // Kolam barang (null kalau bukan tagihan barang) -- lihat docs/domain/accounts-payable.md "Tagihan Dulu, Barang Menyusul".
   const poolQuery = usePool(id);
 
@@ -106,7 +103,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -127,6 +124,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       { data: grn },
       { data: depApps, error: depAppErr },
       { data: supDeposits, error: supDepositsErr },
+      { data: cancellation },
     ] = await Promise.all([
       supabase
         .from("journal_entries")
@@ -141,7 +139,7 @@ export function ApBillDetailView({ id }: { id: string }) {
         .order("entry_date"),
       supabase
         .from("payments")
-        .select("id, payment_date, source_ref, amount")
+        .select(PAYMENT_ROW_COLUMNS)
         .eq("transaction_id", id)
         .order("payment_date"),
       supabase
@@ -173,13 +171,15 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("counterparty_id", loadedBill.supplier_id)
         .eq("type", "INBOUND")
         .order("deposit_date"),
+      supabase.from("ap_bill_cancellations").select("reason").eq("transaction_id", id).maybeSingle(),
     ]);
+    setCancelReason((cancellation as { reason: string } | null)?.reason ?? null);
 
     setReversedEntryIds(
       new Set(((reversedRows ?? []) as { reverses_entry_id: string }[]).map((r) => r.reverses_entry_id))
     );
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
-    setPayments((pays ?? []) as unknown as PaymentDetail[]);
+    setPayments((pays ?? []) as unknown as PaymentRow[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setReplacements((reps ?? []) as unknown as ReplacementDetail[]);
     setGoodsReceipt((grn ?? null) as unknown as GoodsReceiptForBill | null);
@@ -217,32 +217,8 @@ export function ApBillDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  async function handleCancel() {
-    if (!bill) return;
-    const stockNote = goodsReceipt ? " Barang masuknya ikut dibatalkan dan stok dikurangi lagi." : "";
-    if (!window.confirm(`Batalkan bill ${bill.source_ref} (Rp${bill.amount.toLocaleString("id-ID")})?${stockNote}`)) return;
-
-    setCancelError(null);
-    setCancelling(true);
-    let sourceRef: string;
-    try {
-      sourceRef = await generateDocumentNumber("journal_entries");
-    } catch (err) {
-      setCancelling(false);
-      setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-      return;
-    }
-    const { error } = await supabase.rpc("cancel_ap_bill", {
-      p_bill_id: bill.id,
-      p_entry_date: new Date().toISOString().slice(0, 10),
-      p_source_ref: sourceRef,
-    });
-    setCancelling(false);
-    if (error) {
-      setCancelError(error.message);
-      return;
-    }
-    await load();
+  async function refreshAfterCancel() {
+    await Promise.all([load(), poolQuery.refetch()]);
   }
 
   if (checkingSession) {
@@ -254,13 +230,13 @@ export function ApBillDetailView({ id }: { id: string }) {
   }
 
   const isCancelled = reversedEntryIds.has(bill.journal_entry_id);
-  const { status, outstanding, allocated, returned, depositApplied } = billStatus(bill, isCancelled);
+  const { status, outstanding, allocated, returned, depositApplied, adjusted } = billStatus(bill, isCancelled);
   const overdue = status !== "lunas" && status !== "dibatalkan" && bill.due_date < new Date().toISOString().slice(0, 10);
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canPay = canWrite && !isCancelled && outstanding > 0.005;
   const canRetur = canWrite && !isCancelled;
   const canReplace = canWrite && !isCancelled && goodsReceipt !== null;
-  const canCancel = canWrite && !isCancelled && allocated === 0;
+  const canCancel = canWrite && !isCancelled;
   const availableDeposits = supplierDeposits.filter(
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
   );
@@ -316,6 +292,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       title: "Ringkasan",
       rows: [
         { label: "Jumlah Bill", value: bill.amount.toLocaleString("id-ID") },
+        ...(adjusted !== 0 ? [{ label: "Koreksi Tagihan", value: adjusted.toLocaleString("id-ID") }] : []),
         { label: "Terbayar (Kas/Bank)", value: allocated.toLocaleString("id-ID") },
         { label: "Uang Muka Diterapkan", value: depositApplied.toLocaleString("id-ID") },
         { label: "Barang Kurang / Retur", value: returned.toLocaleString("id-ID") },
@@ -347,17 +324,18 @@ export function ApBillDetailView({ id }: { id: string }) {
           </span>
         </div>
         {canCancel && (
-          <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
-            {cancelling ? "Membatalkan..." : "Batalkan Bill"}
+          <Button variant="toolbar" onClick={() => setShowCancelBill(true)}>
+            Batalkan Tagihan
           </Button>
         )}
       </div>
 
       {status === "dibatalkan" && (
-        <CancelledBanner>tagihan ini tidak valid dan tidak dihitung lagi sebagai utang.</CancelledBanner>
+        <CancelledBanner>
+          tagihan ini tidak valid dan tidak dihitung lagi sebagai utang.{cancelReason && ` Alasan: ${cancelReason}`}
+        </CancelledBanner>
       )}
       {loadError && <FormError>{loadError}</FormError>}
-      {cancelError && <FormError>{cancelError}</FormError>}
 
       <DetailRows groups={detailGroups} />
 
@@ -367,6 +345,7 @@ export function ApBillDetailView({ id }: { id: string }) {
           billAmount={bill.amount}
           pool={pool}
           paid={allocated + depositApplied}
+          outstanding={outstanding}
           canWrite={canWrite}
           isCancelled={isCancelled}
           onChanged={load}
@@ -430,33 +409,11 @@ export function ApBillDetailView({ id }: { id: string }) {
               </Button>
             </div>
           )}
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                  <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Rujukan Dokumen</th>
-                  <th className="px-4 py-2 text-right">Jumlah</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p) => (
-                  <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
-                    <td className="px-4 py-2">{p.source_ref}</td>
-                    <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                  </tr>
-                ))}
-                {payments.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-6 text-center text-slate-400">
-                      Belum ada pembayaran.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <PaymentsTable
+            payments={payments}
+            canCancel={canWrite && !isCancelled}
+            onCancel={setCancellingPayment}
+          />
         </div>
       )}
 
@@ -673,6 +630,14 @@ export function ApBillDetailView({ id }: { id: string }) {
         </div>
       )}
 
+
+      <CancelBillModal billId={bill.id} open={showCancelBill} onClose={() => setShowCancelBill(false)} onDone={refreshAfterCancel} />
+      <CancelPaymentModal
+        payment={cancellingPayment}
+        moneyMovedLabel="uangnya sudah keluar ke supplier"
+        onClose={() => setCancellingPayment(null)}
+        onDone={refreshAfterCancel}
+      />
     </div>
   );
 }

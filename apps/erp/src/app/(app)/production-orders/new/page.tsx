@@ -14,6 +14,8 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
@@ -32,6 +34,16 @@ export default function NewProductionOrderPage() {
   const [productionDate, setProductionDate] = useState("");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "production-orders/new",
+    { bomHeaderId, qtyProduced, productionDate },
+    (d) => {
+      setBomHeaderId(d.bomHeaderId);
+      setQtyProduced(d.qtyProduced);
+      setProductionDate(d.productionDate);
+    },
+    !checkingSession
+  );
 
   const activeBoms = boms.filter((b) => b.is_active);
   const selectedBom = boms.find((b) => b.id === bomHeaderId);
@@ -93,6 +105,7 @@ export default function NewProductionOrderPage() {
       return data as string | null;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(newId ? `/production-orders/${newId}` : "/production-orders");
     },
     onError: (err) => {
@@ -128,6 +141,7 @@ export default function NewProductionOrderPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/production-orders" label="Kembali ke Production Order" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Jalankan Produksi</h1>
@@ -172,6 +186,7 @@ export default function NewProductionOrderPage() {
                     key={selectedBom.id}
                     units={itemUnits.filter((u) => u.item_id === selectedBom.finished_item_id)}
                     baseUom={selectedBom.items.uom}
+                    initialBaseQty={qtyProduced}
                     onChange={(change) => setQtyProduced(change.baseQty)}
                   />
                 ) : (

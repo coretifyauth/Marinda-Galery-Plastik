@@ -12,12 +12,15 @@ import {
   type ChargeCategoryWithAccount,
 } from "@/lib/charge-lines/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
+import { confirmDuplicateSupplierNote } from "@/lib/ap-bills/guards";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { ChargeLinesEditor } from "@/components/ui/charge-lines-editor";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
@@ -49,6 +52,20 @@ export function NewApBillWithGoodsView() {
   const [taxSettings, setTaxSettings] = useState<TaxSettings | null>(null);
   const [applyTax, setApplyTax] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "ap-bills/new/barang",
+    { supplierId, billDate, goodsAmount, description, supplierDocumentRef, extraLines, applyTax },
+    (d) => {
+      setSupplierId(d.supplierId);
+      setBillDate(d.billDate);
+      setGoodsAmount(d.goodsAmount);
+      setDescription(d.description);
+      setSupplierDocumentRef(d.supplierDocumentRef);
+      setExtraLines(d.extraLines);
+      setApplyTax(d.applyTax);
+    },
+    !checkingSession
+  );
 
   const loadExpenseCategories = useCallback(async () => {
     const { data } = await supabase
@@ -106,6 +123,7 @@ export function NewApBillWithGoodsView() {
     onSuccess: (newId) => {
       queryClient.invalidateQueries({ queryKey: ["ap_bills"] });
       queryClient.invalidateQueries({ queryKey: ["open_pool_bills"] });
+      draft.clear();
       router.push(`/ap-bills/${newId}`);
     },
     onError: (err) => {
@@ -113,7 +131,7 @@ export function NewApBillWithGoodsView() {
     },
   });
 
-  function handleCreate(e: FormEvent) {
+  async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
     if (!supplierId) return setFormError("Pilih supplier");
@@ -124,6 +142,7 @@ export function NewApBillWithGoodsView() {
     if (!defaultAccounts["inventory.purchase_not_received"]?.id) {
       return setFormError("Default Akun Pembelian Belum Diterima belum diset -- cek Pengaturan > Default Akun");
     }
+    if (!(await confirmDuplicateSupplierNote(supplierId, supplierDocumentRef))) return;
     createMutation.mutate();
   }
 
@@ -140,6 +159,7 @@ export function NewApBillWithGoodsView() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ap-bills" label="Kembali ke Tagihan" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tagihan Barang</h1>

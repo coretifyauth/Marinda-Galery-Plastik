@@ -46,7 +46,7 @@ Transaksi **gak bisa diubah atau dihapus** setelah tersimpan (sama seperti Jurna
 | Buat utang baru (tagihan dari supplier) | `create_transaction('INBOUND', ...)` | Sama seperti di atas, arah jurnal kebalik (Debit Beban/Persediaan, Kredit Utang Usaha) | Sama seperti di atas, pihak tujuan wajib berperan pemasok |
 | Hitung PPN otomatis | Bagian dari `create_transaction` (kalau diminta) | Tarif PPN diambil dari pengaturan pajak di sistem, ditambahkan ke Piutang/Utang Usaha — gak pernah dipercaya dari input form | — |
 | Batalkan piutang yang salah input | `cancel_ar_invoice` | Bikin jurnal pembalik (akun sama, debit/kredit ketuker) + otomatis membalik jurnal uang muka yang masih aktif ke invoice itu. Kalau invoice berasal dari barang keluar (Goods Issue), sekaligus membatalkan barang keluarnya: jurnal HPP dibalik, `qty_on_hand` dikembalikan (`avg_cost` tidak disentuh), mutasi kompensasi ke Kartu Stok, qty Sales Order dibebaskan (`migration 0052`) | Ditolak kalau invoice udah punya pembayaran apa pun, ATAU retur apa pun, ATAU (khusus invoice dari Goods Issue) penggantian barang atau sudah pernah dibatalkan |
-| Batalkan utang yang salah input | `cancel_ap_bill` | Bikin jurnal pembalik (akun sama, debit/kredit ketuker). Kalau tagihan berasal dari penerimaan barang (GRN), sekaligus membatalkan barang masuknya: stok dikurangi lagi, `avg_cost` dihitung ulang dari nilai persediaan (`migration 0052`), qty Purchase Order dibebaskan — lihat `goods-notes-schema.md` | Ditolak kalau tagihan udah punya pembayaran, ATAU retur apa pun, ATAU (khusus tagihan dari GRN) DP/tukar barang, ATAU stok barangnya tinggal kurang dari qty yang diterima (sebagian sudah terpakai) |
+| Batalkan utang yang salah input | `cancel_ap_bill` | Bikin jurnal pembalik (akun sama, debit/kredit ketuker), plus membalik penerapan uang muka dan koreksi tagihan yang masih aktif. Tagihan lama yang dibuat bareng barang masuknya sekaligus membatalkan barang masuk itu: stok dikurangi lagi, `avg_cost` dihitung ulang dari nilai persediaan, qty Purchase Order dibebaskan — lihat `goods-notes-schema.md` | Ditolak kalau sudah pernah dibatalkan, masih punya pembayaran aktif, retur apa pun, tukar barang, barang masuk aktif (Tagihan Barang), atau penutupan sisa barang |
 
 **Aturan Bisnis → RPC**
 
@@ -143,3 +143,30 @@ Walau datanya sekarang 1 tabel fisik (`transactions`), sistem tetap menyediakan 
 | Membuat transaksi baru (piutang atau utang) | Role `admin` atau `accountant` |
 | Mengubah atau menghapus transaksi yang sudah tersimpan | **Tidak ada seorang pun** — koreksi cuma lewat pembatalan (jurnal pembalik), bukan edit langsung |
 | Mengelola katalog kategori tambahan (pendapatan/beban) | Role `admin` |
+
+## Koreksi Salah Input (sisi tagihan)
+
+Migration: `supabase/migrations/0060_koreksi_salah_input.sql`. Konsep bisnis: `docs/domain/accounts-payable.md` submodule "Koreksi Salah Input".
+
+**Keputusan**
+
+`transactions.amount` tetap immutable. Koreksi nilai disimpan di tabel pendamping dan dijumlahkan saat menghitung sisa, jadi nilai asli nota tetap terlihat. Hanya Tagihan Barang, karena koreksinya harus punya pasangan di sisa barang supaya saldo Pembelian Belum Diterima tetap sama dengan jumlah sisa semua tagihan.
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `ap_bill_adjustments` | N baris per tagihan: nominal bertanda (+ naik, − turun), tanggal, nomor dokumen (`APA-`), nomor nota kredit/debit supplier, alasan | `transactions.id`, `journal_entries.id` |
+| `ap_bill_cancellations` | 0..1 baris per tagihan: alasan Batalkan Tagihan, siapa dan kapan | `transactions.id` (primary key) |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Koreksi tagihan | `adjust_ap_bill` | Naik: Debit Pembelian Belum Diterima, Kredit Utang Usaha. Turun: sebaliknya. Akun utang diambil dari jurnal tagihan aslinya, bukan Default Akun saat ini | Hanya tagihan barang yang belum dibatalkan; alasan wajib; penurunan dibatasi sisa barang dan sisa utang; periode harus terbuka |
+| Pratinjau pembatalan | `ap_bill_cancellation_preview` | Daftar yang ikut dibatalkan + penghalang dalam bahasa pengguna, dibaca modal Batalkan Tagihan | Hanya pratinjau; RPC di bawah memeriksa ulang |
+| Batalkan tagihan satu tombol | `cancel_ap_bill_cascade` | Berurutan dalam satu transaksi: `cancel_goods_receipt` tiap barang masuk aktif, `cancel_payment` tiap pembayaran aktif, `cancel_ap_bill`, lalu simpan alasan | Semua guard fungsi di dalamnya. Lock semua barang masuk diambil berurutan id sebelum lock kolam, supaya gak deadlock dengan koreksi barang masuk |
+
+**Rumus**: sisa utang = nilai tagihan + koreksi − pembayaran aktif − retur − uang muka aktif + saldo kelebihan retur. Sisa barang = kolam awal + koreksi − barang masuk aktif − pelepasan.
+
+`create_ap_return` sekarang menolak akun kredit Pembelian Belum Diterima, dan retur barang fisik wajib mengkredit akun Persediaan. Sebelumnya form retur Tagihan Barang mengkredit Pembelian Belum Diterima, yang membuat stok gak cocok dengan neraca.

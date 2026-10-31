@@ -11,13 +11,15 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
-import { UnitCostQtyInput, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
+import { UnitCostQtyInput, type UnitCostEntered, type UnitCostQtyChange } from "@/components/ui/unit-cost-qty-input";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { ItemPicker } from "@/components/pickers/item-picker";
 import { useItemCache } from "@/lib/pickers/use-item-cache";
 import { CounterpartyPicker } from "@/components/pickers/counterparty-picker";
 
-type LineInput = { item_id: string; qty_ordered: string; unit_cost_expected: string };
+type LineInput = { item_id: string; qty_ordered: string; unit_cost_expected: string; entered?: UnitCostEntered };
 
 function emptyLine(): LineInput {
   return { item_id: "", qty_ordered: "", unit_cost_expected: "" };
@@ -34,6 +36,17 @@ export default function NewPurchaseOrderPage() {
   const [expectedDate, setExpectedDate] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "purchase-orders/new",
+    { supplierId, poDate, expectedDate, lines },
+    (d) => {
+      setSupplierId(d.supplierId);
+      setPoDate(d.poDate);
+      setExpectedDate(d.expectedDate);
+      setLines(d.lines);
+    },
+    !checkingSession
+  );
 
   useEffect(() => {
     let active = true;
@@ -71,6 +84,7 @@ export default function NewPurchaseOrderPage() {
       return data as string;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(`/purchase-orders/${newId}`);
     },
     onError: (err) => {
@@ -133,6 +147,7 @@ export default function NewPurchaseOrderPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/purchase-orders" label="Kembali ke Purchase Order" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Buat Purchase Order</h1>
@@ -191,11 +206,13 @@ export default function NewPurchaseOrderPage() {
                       onChange={(id) => updateLine(i, { item_id: id, qty_ordered: "", unit_cost_expected: "" })}
                       onResolve={remember}
                     />
-                    {line.item_id ? (
+                    {line.item_id && selectedItem ? (
                       <UnitCostQtyInput
                         key={line.item_id}
                         units={unitsForItem}
-                        baseUom={selectedItem?.uom ?? ""}
+                        baseUom={selectedItem.uom}
+                        initialEntered={line.entered}
+                        onEnteredChange={(entered) => updateLine(i, { entered })}
                         onChange={(change) => updateLineQtyCost(i, change)}
                       />
                     ) : (

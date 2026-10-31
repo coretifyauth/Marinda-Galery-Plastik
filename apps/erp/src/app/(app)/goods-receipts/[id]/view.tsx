@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import { fetchLinesForNotes } from "@/lib/goods-receipts/queries";
 import { receiptNumber, type GoodsReceiptNote } from "@/lib/goods-receipts/types";
-import { generateDocumentNumber } from "@/lib/document-numbers";
+import { todayLocal } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, CancelledBanner } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
@@ -24,6 +24,16 @@ type JournalEntryDetail = {
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
 };
 
+type RevisionLink = {
+  old_goods_note_id: string;
+  new_goods_note_id: string;
+  reason: string;
+  cogs_adjustment: number;
+  cogs_journal_entry_id: string | null;
+  old_note: { source_ref: string | null };
+  new_note: { source_ref: string | null };
+};
+
 export function GoodsReceiptDetailView({ id }: { id: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -35,6 +45,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
   const [roles, setRoles] = useState<string[]>([]);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [revision, setRevision] = useState<RevisionLink | null>(null);
 
   const load = useCallback(async () => {
     const { data: noteData, error: noteErr } = await supabase
@@ -48,13 +59,22 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     }
     const note = noteData as unknown as Omit<GoodsReceiptNote, "goods_note_lines">;
 
-    const [lines, baseRes, cancelRes] = await Promise.all([
+    const [lines, baseRes, cancelRes, revisionRes] = await Promise.all([
       fetchLinesForNotes([id]),
       supabase.from("goods_notes").select("journal_entry_id, transaction_id").eq("id", id).single(),
       supabase.from("goods_note_cancellations").select("journal_entry_id").eq("goods_note_id", id).maybeSingle(),
+      supabase
+        .from("goods_receipt_revisions")
+        .select(
+          "old_goods_note_id, new_goods_note_id, reason, cogs_adjustment, cogs_journal_entry_id, old_note:goods_notes!old_goods_note_id(source_ref), new_note:goods_notes!new_goods_note_id(source_ref)"
+        )
+        .or(`old_goods_note_id.eq.${id},new_goods_note_id.eq.${id}`)
+        .maybeSingle(),
     ]);
 
     setGrn({ ...note, goods_note_lines: lines.get(id) ?? [] });
+    const revisionRow = (revisionRes.data ?? null) as unknown as RevisionLink | null;
+    setRevision(revisionRow);
 
     // Jurnal terkait: jurnal barang masuk + pembalik pembatalan. Barang masuk lama: jurnalnya ada di tagihan bawaannya.
     const journalIds = new Set<string>();
@@ -62,6 +82,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     if (base?.journal_entry_id) journalIds.add(base.journal_entry_id);
     const cancelJournal = (cancelRes.data as { journal_entry_id: string | null } | null)?.journal_entry_id;
     if (cancelJournal) journalIds.add(cancelJournal);
+    if (revisionRow?.new_goods_note_id === id && revisionRow.cogs_journal_entry_id) journalIds.add(revisionRow.cogs_journal_entry_id);
     if (note.is_legacy && base?.transaction_id) {
       const { data: bill } = await supabase
         .from("transactions")
@@ -106,36 +127,15 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     };
   }, [router, load]);
 
-  // Barang masuk baru: dibatalkan sendiri (cancel_goods_receipt) -- kolam tagihannya kembali.
-  // Barang masuk lama (dibuat bareng tagihannya): dibatalkan lewat tagihan bawaannya (cancel_ap_bill), seperti sebelumnya.
+  // Barang masuk baru: dibatalkan sendiri (cancel_goods_receipt) -- kolam tagihannya kembali. Barang masuk lama (dibuat bareng
+  // tagihannya) dibatalkan dari tagihannya, yang juga mengurus pembayaran.
   async function handleCancel() {
     if (!grn) return;
-    const message = grn.is_legacy
-      ? `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang akan dikurangi lagi dan tagihan (Rp${(grn.bill_amount ?? 0).toLocaleString("id-ID")}) ikut dibatalkan.`
-      : `Batalkan barang masuk ${receiptNumber(grn)}? Stok barang dikurangi lagi, jurnalnya dibalik, dan nilainya kembali ke barang yang belum diterima dari tagihan ${grn.bill_ref ?? ""}.`;
-    if (!window.confirm(message)) return;
+    if (!window.confirm(`Batalkan barang masuk ${receiptNumber(grn)}? Stok barang dikurangi lagi, jurnalnya dibalik, dan nilainya kembali ke barang yang belum diterima dari tagihan ${grn.bill_ref ?? ""}.`)) return;
 
     setCancelError(null);
     setCancelling(true);
-    const today = new Date().toISOString().slice(0, 10);
-    let error: { message: string } | null;
-    if (!grn.is_legacy) {
-      ({ error } = await supabase.rpc("cancel_goods_receipt", { p_goods_note_id: grn.id, p_entry_date: today }));
-    } else {
-      let sourceRef: string;
-      try {
-        sourceRef = await generateDocumentNumber("journal_entries");
-      } catch (err) {
-        setCancelling(false);
-        setCancelError(err instanceof Error ? err.message : "Gagal generate nomor dokumen");
-        return;
-      }
-      ({ error } = await supabase.rpc("cancel_ap_bill", {
-        p_bill_id: grn.bill_id,
-        p_entry_date: today,
-        p_source_ref: sourceRef,
-      }));
-    }
+    const { error } = await supabase.rpc("cancel_goods_receipt", { p_goods_note_id: grn.id, p_entry_date: todayLocal() });
     setCancelling(false);
     if (error) {
       setCancelError(error.message);
@@ -160,8 +160,8 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
 
   const isCancelled = grn.status === "dibatalkan";
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  // Riwayat alur lama yang sudah dibatalkan gak punya tagihan; selain itu bisa dibatalkan kalau masih aktif.
-  const canCancel = canWrite && !isCancelled && !!grn.bill_id;
+  // Riwayat alur lama yang sudah dibatalkan gak punya tagihan; selain itu bisa dikoreksi/dibatalkan kalau masih aktif.
+  const canAct = canWrite && !isCancelled && !!grn.bill_id;
 
   const detailGroups = [
     {
@@ -224,10 +224,20 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {canCancel && (
-            <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
-              {cancelling ? "Membatalkan..." : "Batalkan Barang Masuk"}
+          {canAct && grn.is_legacy && (
+            <Button variant="toolbar" onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}>
+              Batalkan dari Tagihan
             </Button>
+          )}
+          {canAct && !grn.is_legacy && (
+            <>
+              <Button variant="toolbar" onClick={() => router.push(`/goods-receipts/${grn.id}/koreksi`)}>
+                Koreksi Barang Masuk
+              </Button>
+              <Button variant="toolbar" onClick={handleCancel} disabled={cancelling}>
+                {cancelling ? "Membatalkan..." : "Batalkan Barang Masuk"}
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -237,6 +247,31 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
           barang masuk ini tidak valid. Stok sudah dikurangi lagi
           {grn.is_legacy ? " dan tagihannya dibatalkan." : " dan jurnalnya dibalik; nilainya kembali ke barang yang belum diterima dari tagihan."}
         </CancelledBanner>
+      )}
+      {revision && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          {revision.old_goods_note_id === grn.id ? (
+            <>
+              Dokumen ini dikoreksi menjadi{" "}
+              <button type="button" className="font-medium underline" onClick={() => router.push(`/goods-receipts/${revision.new_goods_note_id}`)}>
+                {revision.new_note.source_ref}
+              </button>
+              .
+            </>
+          ) : (
+            <>
+              Dokumen ini hasil koreksi dari{" "}
+              <button type="button" className="font-medium underline" onClick={() => router.push(`/goods-receipts/${revision.old_goods_note_id}`)}>
+                {revision.old_note.source_ref}
+              </button>
+              .
+              {revision.cogs_adjustment !== 0 && (
+                <> Selisih atas barang yang sudah terjual: HPP {revision.cogs_adjustment > 0 ? "naik" : "turun"} Rp{Math.abs(revision.cogs_adjustment).toLocaleString("id-ID")}.</>
+              )}
+            </>
+          )}{" "}
+          Alasan: {revision.reason}
+        </div>
       )}
       {loadError && <FormError>{loadError}</FormError>}
       {cancelError && <FormError>{cancelError}</FormError>}

@@ -26,7 +26,7 @@ Saat kita membayar tagihan ke supplier yang masih outstanding — boleh dibayar 
 - Baris pembayaran baru muncul di tab **Pembayaran** bill ini, dengan Source Ref otomatis.
 - Jurnal otomatis terbentuk: debit Akun Utang Usaha, kredit Akun Kas/Bank (sesuai metode dipilih) — arahnya kebalik dari pembayaran AR karena di sini kita yang bayar, bukan menerima.
 - Status bill berubah: **sebagian** kalau masih ada sisa outstanding, **lunas** kalau sudah dibayar penuh.
-- Bill yang sudah punya minimal 1 pembayaran **tidak bisa lagi dibatalkan**.
+- Pembayaran yang salah bisa dibatalkan dari tab **Pembayaran** ([koreksi-salah-input.md](koreksi-salah-input.md)).
 
 ## Kesalahan Umum
 

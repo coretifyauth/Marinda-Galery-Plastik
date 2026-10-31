@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
@@ -37,6 +39,15 @@ export default function NewStockOpnamePage() {
   const [opnameDate, setOpnameDate] = useState("");
   const [lines, setLines] = useState<LineInput[]>([emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "stock-opnames/new",
+    { opnameDate, lines },
+    (d) => {
+      setOpnameDate(d.opnameDate);
+      setLines(d.lines);
+    },
+    !checkingSession
+  );
 
   // Saldo sistem diambil per item yang dipilih (bukan seluruh inventory_balances di awal).
   const loadBalance = useCallback(async (itemId: string) => {
@@ -103,6 +114,7 @@ export default function NewStockOpnamePage() {
       return data as string | null;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(newId ? `/stock-opnames/${newId}` : "/stock-opnames");
     },
     onError: (err) => {
@@ -164,6 +176,7 @@ export default function NewStockOpnamePage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/stock-opnames" label="Kembali ke Stock Opname" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Catat Sesi Opname</h1>
@@ -230,11 +243,12 @@ export default function NewStockOpnamePage() {
                     <span className="flex items-center font-mono text-sm text-slate-500">
                       {line.item_id ? systemQtyFor(line.item_id) : "-"}
                     </span>
-                    {line.item_id ? (
+                    {line.item_id && selectedItem ? (
                       <MultiUomQtyInput
                         key={line.item_id}
                         units={unitsForItem}
-                        baseUom={selectedItem?.uom ?? ""}
+                        baseUom={selectedItem.uom}
+                        initialBaseQty={line.qty_actual}
                         onChange={(change) => updateLine(i, { qty_actual: change.baseQty })}
                       />
                     ) : (

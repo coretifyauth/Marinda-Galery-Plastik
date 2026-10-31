@@ -1,3 +1,4 @@
+import type { WithCancellation } from "@/lib/payments/active";
 import { z } from "zod";
 
 export const recordApPaymentSchema = z.object({
@@ -24,4 +25,4 @@ export type ApPayment = {
   created_at: string;
   counterparties: { name: string };
   ap_bills: { source_ref: string };
-};
+} & WithCancellation;

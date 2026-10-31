@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
@@ -30,6 +32,17 @@ export default function NewApDepositPage() {
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [cashMethod, setCashMethod] = useState<CashMethod>("TUNAI");
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "ap-deposits/new",
+    { supplierId, depositDate, amount, cashMethod },
+    (d) => {
+      setSupplierId(d.supplierId);
+      setDepositDate(d.depositDate);
+      setAmount(d.amount);
+      setCashMethod(d.cashMethod);
+    },
+    !checkingSession
+  );
 
   const loadDefaultAccounts = useCallback(async () => {
     setDefaultAccounts(await fetchDefaultAccounts());
@@ -73,6 +86,7 @@ export default function NewApDepositPage() {
     },
     onSuccess: (newId) => {
       queryClient.invalidateQueries({ queryKey: ["ap_deposits"] });
+      draft.clear();
       router.push(`/ap-deposits/${newId}`);
     },
     onError: (err) => {
@@ -108,6 +122,7 @@ export default function NewApDepositPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ap-deposits" label="Kembali ke Uang Muka AP" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Bayar Uang Muka ke Supplier</h1>

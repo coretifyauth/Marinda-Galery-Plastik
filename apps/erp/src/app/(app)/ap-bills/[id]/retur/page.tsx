@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import { fetchGoodsReceiptForBill } from "@/lib/goods-receipts/queries";
 import { billStatus, type ApBill } from "@/lib/ap-bills/schema";
-import { createApCreditNoteSchema, type GoodsReceiptForBill } from "@/lib/ap-credit-notes/schema";
+import { apReturnCreditOptions, createApCreditNoteSchema, type GoodsReceiptForBill } from "@/lib/ap-credit-notes/schema";
 import { generateDocumentNumber } from "@/lib/document-numbers";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -65,7 +65,7 @@ export default function ApBillReturPage() {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -134,9 +134,12 @@ export default function ApBillReturPage() {
 
     // Isi form awal -- setara openReturForm() di view.tsx lama, tapi sekarang dijalankan
     // begitu data bill kelar dimuat karena halaman ini SATU-SATUNYA tujuan (bukan modal).
-    const debitAccountOptions = loadedGoodsReceipt
-      ? Array.from(uniqueDebitAccounts.values())
-      : Array.from(uniqueDebitAccounts.values()).filter((a) => !inventoryIds.has(a.id));
+    const debitAccountOptions = apReturnCreditOptions({
+      hasGoodsReceipt: !!loadedGoodsReceipt,
+      billDebitAccounts: Array.from(uniqueDebitAccounts.values()),
+      inventoryAccountIds: inventoryIds,
+      defaultAccounts: defaultAccountsMap,
+    });
     setReturCreditAccountId(debitAccountOptions[0]?.id ?? "");
     const claimed = new Map<string, number>();
     for (const cn of (cns ?? []) as unknown as CreditNoteDetail[]) {
@@ -186,14 +189,13 @@ export default function ApBillReturPage() {
     };
   }, [router, load]);
 
-  /**
-   * Jalur financial-only (gak ada goods receipt) gak boleh nawarin akun Persediaan sebagai
-   * akun kredit retur -- retur Persediaan wajib lewat qty fisik (mirror guard di
-   * create_ap_credit_note, migration 0019). Jalur fisik (ada goods receipt) sebaliknya MEMANG
-   * butuh akun Persediaan, jadi gak difilter.
-   */
   function returCreditAccountOptions(): ResolvedAccount[] {
-    return goodsReceipt ? billDebitAccounts : billDebitAccounts.filter((a) => !inventoryAccountIds.has(a.id));
+    return apReturnCreditOptions({
+      hasGoodsReceipt: !!goodsReceipt,
+      billDebitAccounts,
+      inventoryAccountIds,
+      defaultAccounts,
+    });
   }
 
   function updateReturLine(itemId: string, qty: string) {
@@ -351,8 +353,8 @@ export default function ApBillReturPage() {
                 {returCreditAccountOptions().length === 0 && (
                   <p className="text-xs text-amber-600">
                     {goodsReceipt
-                      ? "Gak ketemu baris debit di bill ini — hubungi admin."
-                      : "Bill ini cuma didebit ke akun Persediaan, tanpa Barang Masuk — retur Persediaan wajib lewat Barang Masuk (bukti fisik). Hubungi admin kalau perlu retur bill ini."}
+                      ? "Akun Persediaan belum diset di Default Akun — hubungi admin."
+                      : "Tagihan ini belum punya barang masuk, jadi tidak ada barang untuk diretur. Kalau nilai notanya salah, pakai Koreksi Tagihan."}
                   </p>
                 )}
                 {returCreditAccountOptions().length > 1 && (

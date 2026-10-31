@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import { poolDepositLimit, usePoolReleases, type ApBillPool } from "@/lib/ap-bills/pool";
+import { poolDepositLimit, useBillAdjustments, usePoolReleases, type ApBillPool } from "@/lib/ap-bills/pool";
 import { useGoodsReceiptsForBill } from "@/lib/goods-receipts/queries";
 import { receiptNumber } from "@/lib/goods-receipts/types";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FormError } from "@/components/ui/form-message";
 import { CancelledBadge } from "@/components/ui/cancelled";
+import { AdjustBillModal } from "@/components/ap-bills/adjust-bill-modal";
 
 const rp = (n: number) => `Rp${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
 
@@ -27,6 +28,7 @@ export function GoodsPoolSection({
   billAmount,
   pool,
   paid,
+  outstanding,
   canWrite,
   isCancelled,
   onChanged,
@@ -36,6 +38,8 @@ export function GoodsPoolSection({
   pool: ApBillPool;
   /** Uang yang sudah dibayar ke tagihan ini: pembayaran kas/bank + uang muka yang diterapkan. */
   paid: number;
+  /** Sisa utang tagihan -- batas penurunan Koreksi Tagihan. */
+  outstanding: number;
   canWrite: boolean;
   isCancelled: boolean;
   onChanged: () => void | Promise<void>;
@@ -46,6 +50,8 @@ export function GoodsPoolSection({
   const releasesQuery = usePoolReleases(billId);
   const receipts = receiptsQuery.data ?? [];
   const releases = releasesQuery.data ?? [];
+  const adjustments = useBillAdjustments(billId).data ?? [];
+  const [showAdjust, setShowAdjust] = useState(false);
 
   const [showRelease, setShowRelease] = useState(false);
   const [kind, setKind] = useState<ReleaseKind>("uang_muka");
@@ -122,13 +128,20 @@ export function GoodsPoolSection({
             </span>
           )}
         </div>
-        {canWrite && open && (
+        {canWrite && !isCancelled && (
           <div className="flex items-center gap-2">
-            <Button variant="toolbar-primary" onClick={() => router.push(`/goods-receipts/new?bill=${billId}`)}>
-              + Catat Barang Masuk
-            </Button>
-            <Button variant="toolbar" onClick={() => openRelease(canRoundOff ? "pembulatan" : "uang_muka")}>
-              Tutup Sisa Barang
+            {open && (
+              <>
+                <Button variant="toolbar-primary" onClick={() => router.push(`/goods-receipts/new?bill=${billId}`)}>
+                  + Catat Barang Masuk
+                </Button>
+                <Button variant="toolbar" onClick={() => openRelease(canRoundOff ? "pembulatan" : "uang_muka")}>
+                  Tutup Sisa Barang
+                </Button>
+              </>
+            )}
+            <Button variant="toolbar" onClick={() => setShowAdjust(true)}>
+              Koreksi Tagihan
             </Button>
           </div>
         )}
@@ -158,8 +171,7 @@ export function GoodsPoolSection({
       <p className="text-xs text-slate-500">
         Nilai barang di nota berkurang setiap kali barang masuk dicatat dari tagihan ini. Status bayar tagihan tidak mempengaruhinya.
         Sisa yang barangnya tidak akan datang bisa ditutup: receh jadi selisih pembulatan, bagian yang sudah dibayar
-        jadi uang muka ke supplier. Sisa yang belum dibayar perlu nota kredit dari supplier (belum ada jalurnya di
-        sistem).
+        jadi uang muka ke supplier. Sisa yang belum dibayar diturunkan lewat Koreksi Tagihan.
       </p>
 
       {showRelease && (
@@ -264,6 +276,38 @@ export function GoodsPoolSection({
         </table>
       </div>
 
+      {adjustments.length > 0 && (
+        <div className="overflow-x-auto">
+          <p className="mb-2 text-xs font-medium uppercase text-slate-500">Riwayat Koreksi Tagihan</p>
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <th className="px-3 py-2">Tanggal</th>
+                <th className="px-3 py-2">Rujukan</th>
+                <th className="px-3 py-2">Alasan</th>
+                <th className="px-3 py-2 text-right">Nominal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {adjustments.map((a) => (
+                <tr key={a.id} className="border-b border-slate-100">
+                  <td className="whitespace-nowrap px-3 py-2">{a.adjustment_date}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-600">
+                    {a.source_ref}
+                    {a.supplier_document_ref && <span className="ml-1 font-sans text-slate-400">({a.supplier_document_ref})</span>}
+                  </td>
+                  <td className="px-3 py-2 text-slate-600">{a.reason}</td>
+                  <td className="px-3 py-2 text-right font-mono">
+                    {a.amount > 0 ? "+" : ""}
+                    {rp(a.amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {releases.length > 0 && (
         <div className="overflow-x-auto">
           <p className="mb-2 text-xs font-medium uppercase text-slate-500">Riwayat Penutupan Sisa</p>
@@ -300,6 +344,15 @@ export function GoodsPoolSection({
           </table>
         </div>
       )}
+
+      <AdjustBillModal
+        billId={billId}
+        open={showAdjust}
+        remainingGoods={pool.remaining}
+        outstanding={outstanding}
+        onClose={() => setShowAdjust(false)}
+        onDone={onChanged}
+      />
     </div>
   );
 }

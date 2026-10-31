@@ -13,6 +13,8 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { fetchDefaultAccounts, type ResolvedAccount } from "@/lib/default-accounts/schema";
@@ -38,6 +40,18 @@ export default function NewItemPage() {
   const [categoryId, setCategoryId] = useState("");
   const [brandId, setBrandId] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "items/new",
+    { name, itemType, uom, categoryId, brandId },
+    (d) => {
+      setName(d.name);
+      setItemType(d.itemType);
+      setUom(d.uom);
+      setCategoryId(d.categoryId);
+      setBrandId(d.brandId);
+    },
+    !checkingSession
+  );
 
   const inventoryRoleKey = itemType === "RAW_MATERIAL" ? "inventory.raw_material" : "inventory.finished_good";
 
@@ -78,6 +92,7 @@ export default function NewItemPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["items"] });
+      draft.clear();
       router.push("/items");
     },
     onError: (err) => {
@@ -114,6 +129,7 @@ export default function NewItemPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/items" label="Kembali ke Item" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Item</h1>

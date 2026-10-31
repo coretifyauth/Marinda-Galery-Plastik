@@ -6,6 +6,8 @@ import { supabase } from "@/lib/supabase/client";
 import { type Customer } from "@/lib/customers/schema";
 import { invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
 import type { ArPayment } from "@/lib/ar-payments/schema";
+import { isActivePayment } from "@/lib/payments/active";
+import { CancelledBadge } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
 import { Button } from "@/components/ui/button";
@@ -51,7 +53,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       supabase
         .from("transactions")
         .select(
-          "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
+          "id, customer_id:counterparty_id, invoice_date:date, due_date, description, source_ref, amount, journal_entry_id, created_at, counterparties(name), ar_payments:payments(amount, payment_cancellations(payment_id)), ar_returns:returns(amount, ar_return_credits:return_credits(amount)), ar_deposit_applications:deposit_applications(amount)"
         )
         .eq("type", "OUTBOUND")
         .eq("counterparty_id", id)
@@ -59,7 +61,7 @@ export function CustomerDetailView({ id }: { id: string }) {
       supabase
         .from("payments")
         .select(
-          "id, customer_id:counterparty_id, invoice_id:transaction_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ar_invoices:transactions(source_ref)"
+          "id, customer_id:counterparty_id, invoice_id:transaction_id, payment_date, amount, source_ref, journal_entry_id, created_at, counterparties(name), ar_invoices:transactions(source_ref), payment_cancellations(payment_id)"
         )
         .eq("type", "OUTBOUND")
         .eq("counterparty_id", id)
@@ -277,7 +279,10 @@ export function CustomerDetailView({ id }: { id: string }) {
                   <td className="whitespace-nowrap px-4 py-2">{p.payment_date}</td>
                   <td className="px-4 py-2">{p.source_ref}</td>
                   <td className="px-4 py-2 text-right font-mono">{p.amount.toLocaleString("id-ID")}</td>
-                  <td className="px-4 py-2">{p.ar_invoices.source_ref}</td>
+                  <td className="px-4 py-2">
+                    {p.ar_invoices.source_ref}
+                    {!isActivePayment(p) && <span className="ml-2"><CancelledBadge /></span>}
+                  </td>
                 </tr>
               ))}
               {payments.length === 0 && (

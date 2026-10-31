@@ -40,7 +40,7 @@ export default function ApBillBayarPage() {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -109,6 +109,9 @@ export default function ApBillBayarPage() {
       return;
     }
 
+    const payee = bill.supplier_document_ref ? `${bill.counterparties.name}, nota ${bill.supplier_document_ref}` : bill.counterparties.name;
+    if (!window.confirm(`Catat pembayaran Rp${parsed.data.amount.toLocaleString("id-ID")} ke ${payee} (tagihan ${bill.source_ref}), tanggal ${parsed.data.payment_date}?`)) return;
+
     setPaySubmitting(true);
     let sourceRef: string;
     try {
@@ -161,6 +164,10 @@ export default function ApBillBayarPage() {
             {bill.source_ref}
           </span>
         </div>
+        <p className="mt-1 text-sm font-medium text-black">
+          {bill.counterparties.name}
+          {bill.supplier_document_ref && <span className="font-normal text-slate-500"> · Nota {bill.supplier_document_ref}</span>}
+        </p>
         <p className="text-sm text-slate-500">
           Payment selalu nutup bill ini spesifik, boleh cicil (kurang dari sisa outstanding), tapi gak boleh lebih
           (overpay ditolak). Isi uang yang benar-benar ditransfer/dibayar — kalau sisa tagihan ada pecahannya

@@ -13,6 +13,8 @@ import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 
 export default function NewJournalEntryPage() {
@@ -26,6 +28,17 @@ export default function NewJournalEntryPage() {
   const [description, setDescription] = useState("");
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "journal-entries/new",
+    { presetId, entryDate, description, amounts },
+    (d) => {
+      setPresetId(d.presetId);
+      setEntryDate(d.entryDate);
+      setDescription(d.description);
+      setAmounts(d.amounts);
+    },
+    !checkingSession
+  );
 
   const selectedPreset = presets.find((p) => p.id === presetId) ?? null;
 
@@ -54,10 +67,6 @@ export default function NewJournalEntryPage() {
     };
   }, [router, loadPresets]);
 
-  useEffect(() => {
-    setAmounts({});
-  }, [presetId]);
-
   const createMutation = useMutation({
     mutationFn: async () => {
       if (!selectedPreset) throw new Error("Pilih preset dulu");
@@ -77,6 +86,7 @@ export default function NewJournalEntryPage() {
       return data as string;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(`/journal-entries/${newId}`);
     },
     onError: (err) => {
@@ -126,6 +136,7 @@ export default function NewJournalEntryPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/journal-entries" label="Kembali ke Jurnal Umum" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Tambah Jurnal (Preset)</h1>
@@ -157,7 +168,10 @@ export default function NewJournalEntryPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <Label htmlFor="preset">Preset</Label>
-                <Select id="preset" value={presetId} onChange={(e) => setPresetId(e.target.value)}>
+                <Select id="preset" value={presetId} onChange={(e) => {
+                      setPresetId(e.target.value);
+                      setAmounts({});
+                    }}>
                   <option value="">Pilih preset...</option>
                   {presets.map((p) => (
                     <option key={p.id} value={p.id}>

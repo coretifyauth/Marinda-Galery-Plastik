@@ -208,16 +208,47 @@ Skema `archive` tidak diekspos ke API (hanya `public`), jadi data tetap ada tanp
 
 ### Keterbatasan yang diketahui
 
-- **Sisa kolam yang belum dibayar** tidak punya jalur penutupan (koreksi utang/nota kredit) — scope-debt.
-- **Selisih harga setelah stok bergerak** (nota ternyata lebih mahal, barang sudah terjual) tidak punya jalur koreksi; nota yang beda dikoreksi dengan batal-ulang selama masih memenuhi syarat pembatalan.
+- **Sisa kolam yang belum dibayar** ditutup lewat Koreksi Tagihan (`adjust_ap_bill`, lihat `transactions-schema.md`).
+- **Selisih harga setelah stok bergerak** dikoreksi lewat Koreksi Barang Masuk; pembagian ke HPP berupa perkiraan kalau harga stok lain jauh berbeda (lihat section di bawah).
 - **Satu barang masuk `deferred` yang dibatalkan** tetap berupa riwayat tanpa tagihan; saldonya nol karena jurnalnya sudah dibalik.
 - **PPN Masukan** sudah diakui saat tagihan dibuat walau barangnya belum datang — dicatat saja.
-- **Pelepasan sisa kolam tidak bisa dibatalkan** (pembulatan maupun uang muka), dan tagihan yang sudah punya pelepasan tidak bisa dibatalkan. UI wajib meminta konfirmasi sebelum melepas.
+- **Pelepasan sisa kolam tidak bisa dibatalkan** (pembulatan maupun uang muka), dan tagihan yang sudah punya pelepasan tidak bisa dibatalkan; nilainya dikoreksi lewat Koreksi Tagihan. UI wajib meminta konfirmasi sebelum melepas.
 - **Akun Pembelian Belum Diterima (1370) bisa diposting manual** (jurnal biasa atau baris biaya tambahan yang menunjuk akun itu), yang memecah invarian "saldo = jumlah sisa kolam". Hanya admin yang bisa; UI tagihan tidak menawarkan akun ini di kategori biaya tambahan.
 - **Input barang masuk:** qty maksimal 3 desimal dan harga maksimal 2 desimal (sesuai kolom tersimpan); presisi lebih ditolak, bukan dibulatkan.
 - **Barang masuk boleh bertanggal sebelum tagihannya**, sehingga akun 1370 bisa bersaldo kredit sementara pada periode itu.
 - **View lama `goods_notes_with_billing_status` (0056) tidak benar untuk barang masuk alur baru** (tampil "belum tertagih" tanpa tagihan). UI baru tidak boleh membacanya; view dibuang di 0058.
 - **Deploy harus serempak dengan aplikasi:** `create_goods_receipt` lama (7 argumen, 0056) di-drop, jadi UI lama error begitu 0057 diapply.
+
+## Koreksi Barang Masuk
+
+Migration: `supabase/migrations/0060_koreksi_salah_input.sql`. Konsep bisnis: `docs/domain/inventory.md` submodule "Koreksi Barang Masuk".
+
+**Keputusan**
+
+Koreksi = batalkan dokumen lama + buat dokumen baru lewat `create_goods_receipt`, dalam satu transaksi. Dokumen hasil koreksi adalah barang masuk biasa, jadi retur, tukar barang, sisa barang, Purchase Order, dan pembatalan bekerja tanpa cabang khusus. Tabel `goods_note_revisions` lama (0056, dibuang 0058) menyimpan harga efektif di samping dokumen, yang memaksa semua pembaca mengetahuinya; desain itu sengaja gak dipakai lagi.
+
+**Peta Data (ERD)**
+
+| Tabel | Fungsi | Terhubung ke |
+|---|---|---|
+| `goods_receipt_revisions` | 0..1 baris per dokumen lama: alasan, jumlah koreksi HPP (+ naik, − turun) | `goods_notes.id` (lama, primary key), `goods_notes.id` (baru, unique), `journal_entries.id` (jurnal HPP, kosong kalau gak ada koreksi HPP) |
+
+**Alur Teknis (RPC)**
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Koreksi barang masuk | `revise_goods_receipt` | (1) foto stok tiap item yang terlibat; (2) mutasi kompensasi + jurnal pembalik dokumen lama, tanpa guard stok penuh; (3) `create_goods_receipt` dengan nilai benar; (4) saldo stok final ditimpa dari foto + rumus; (5) jurnal koreksi HPP kalau perlu | Bukan barang masuk lama; belum dibatalkan; alasan dan minimal 1 baris wajib; periode terbuka; sisa barang cukup (dari `create_goods_receipt`); stok cukup dikurangi selisihnya; qty baru gak di bawah yang sudah diretur/ditukar |
+| Porsi nilai yang masih di stok | `goods_receipt_stock_share` | Mundur dari stok sekarang lewat `inventory_movements` sesudah dokumen dibuat: tiap mutasi keluar o dari stok Q menyisakan (Q−o)/Q nilai di dalam stok | Dijepit 0–1 |
+
+**Rumus per item** (q0,v0 = lama; q1,v1 = baru; Q,V = stok sebelum koreksi; s = porsi di stok)
+
+- Selisih harga = min(q0,q1) × (v1/q1 − v0/q0). Sisa selisih nilai = selisih qty, seluruhnya di stok.
+- Perubahan stok = (selisih nilai − selisih harga) + s × selisih harga. Kalau q0 atau q1 nol, seluruh selisih nilai ke stok.
+- Qty baru = Q + q1 − q0. Nilai baru = V + perubahan stok. Qty baru 0 → nilai 0. Nilai baru ≤ 0 padahal qty masih ada → sisa stok dinilai pada harga yang benar.
+- Koreksi HPP = selisih nilai − (nilai baru − V), selalu menutup sisanya, jadi jurnal seimbang dan perubahan Persediaan di buku besar sama dengan perubahan nilai stok.
+
+Keterbatasan: `s` menganggap semua mutasi keluar sebagai konsumsi, dan `avg_cost` tersimpan 2 desimal, jadi nilai stok bisa selisih receh dari buku besar (pola yang sama dengan `cancel_goods_receipt`).
+
 
 ## Siapa Boleh Apa
 
@@ -225,4 +256,4 @@ Skema `archive` tidak diekspos ke API (hanya `public`), jadi data tetap ada tanp
 |---|---|
 | Melihat daftar penerimaan/pengiriman barang | Semua user yang sudah login |
 | Mencatat penerimaan/pengiriman barang baru | Role `admin` atau `accountant` |
-| Mengubah atau menghapus yang sudah tercatat | **Tidak ada seorang pun** — immutable total, koreksi lewat proses retur, bukan edit langsung |
+| Mengubah atau menghapus yang sudah tercatat | **Tidak ada seorang pun** — immutable total, koreksi lewat Koreksi Barang Masuk atau pembatalan (role `admin`), bukan edit langsung |

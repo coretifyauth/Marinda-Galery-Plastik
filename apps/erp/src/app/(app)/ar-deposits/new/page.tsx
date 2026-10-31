@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/ui/form-message";
 import { BackLink } from "@/components/ui/back-link";
+import { DraftNotice } from "@/components/ui/draft-notice";
+import { useFormDraft } from "@/lib/form-draft/use-form-draft";
 import { LockedAccountField } from "@/components/ui/locked-account-field";
 import { JournalPreviewPanel } from "@/components/ui/journal-preview-panel";
 import { CashMethodField, resolveCashAccount, type CashMethod } from "@/components/ui/cash-method-field";
@@ -29,6 +31,17 @@ export default function NewArDepositPage() {
   const [cashMethod, setCashMethod] = useState<CashMethod>("TUNAI");
   const [defaultAccounts, setDefaultAccounts] = useState<Record<string, ResolvedAccount>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  const draft = useFormDraft(
+    "ar-deposits/new",
+    { customerId, depositDate, amount, cashMethod },
+    (d) => {
+      setCustomerId(d.customerId);
+      setDepositDate(d.depositDate);
+      setAmount(d.amount);
+      setCashMethod(d.cashMethod);
+    },
+    !checkingSession
+  );
 
   useEffect(() => {
     let active = true;
@@ -67,6 +80,7 @@ export default function NewArDepositPage() {
       return data as string;
     },
     onSuccess: (newId) => {
+      draft.clear();
       router.push(`/ar-deposits/${newId}`);
     },
     onError: (err) => {
@@ -102,6 +116,7 @@ export default function NewArDepositPage() {
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
       <BackLink href="/ar-deposits" label="Kembali ke Uang Muka AR" />
+      <DraftNotice draft={draft} />
 
       <div>
         <h1 className="text-xl font-semibold text-black">Terima Uang Muka</h1>

@@ -66,3 +66,20 @@ export function normalizeReceiptLine(qty: number, unitCost: number, itemDiscount
   const adjustment = Math.max(0, round2(gross - exact));
   return { qty: round3(qty), unitCost: unit, discount: round2(itemDiscount + adjustment) };
 }
+
+/** Batas beda harga dari harga rata-rata stok sebelum minta konfirmasi. */
+export const PRICE_DEVIATION_LIMIT = 0.3;
+
+export type PriceCheckLine = { itemId: string; itemName: string; netUnitCost: number };
+export type PriceDeviation = PriceCheckLine & { avgCost: number; ratio: number };
+
+export function findPriceDeviations(lines: PriceCheckLine[], avgCosts: Map<string, number>): PriceDeviation[] {
+  const result: PriceDeviation[] = [];
+  for (const line of lines) {
+    const avgCost = avgCosts.get(line.itemId) ?? 0;
+    if (avgCost <= 0) continue; // barang baru: belum ada pembanding
+    const ratio = Math.abs(line.netUnitCost - avgCost) / avgCost;
+    if (ratio > PRICE_DEVIATION_LIMIT) result.push({ ...line, avgCost, ratio });
+  }
+  return result;
+}
