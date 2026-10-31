@@ -28,6 +28,7 @@ Setiap transaksi jual-beli langsung di toko (retail, tunai atau non-tunai) — d
 5. Klik tombol **Checkout** di bagian bawah keranjang (disabled kalau keranjang masih kosong). Modal **Selesaikan Transaksi** terbuka.
 6. Di modal:
    - **Pelanggan** (opsional) — pilih dari dropdown kalau ini pelanggan terdaftar, atau biarkan **"Walk-in (tanpa nama)"** untuk pembeli umum.
+   - **Tanggal Transaksi** — default hari ini. Ubah hanya kalau transaksinya terjadi di hari sebelumnya (misal nota kemarin baru diinput); tanggal setelah hari ini tidak bisa dipilih. Setelah checkout, tanggal kembali ke hari ini.
    - **Metode Bayar** — pilih **Tunai** atau **Bank** (bisa juga toggle cepat pakai tombol `F2`).
    - Kalau **Tunai**, isi **Uang Diterima** — sistem otomatis menghitung dan menampilkan **Kembalian** (atau peringatan **"Kurang Rp..."** kalau uang diterima belum cukup; tombol Checkout tetap disabled sampai uang diterima ≥ total).
 7. Klik **Checkout** di dalam modal untuk konfirmasi final.

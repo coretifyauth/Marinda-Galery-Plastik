@@ -13,6 +13,7 @@ import { getPrinterPort, isTauri, setPrinterPort } from "@/lib/printer-settings"
 import type { CartLine, ChargeType, Customer, ItemRow, SaleHistoryItem, TaxSettings } from "@/lib/pos-types";
 import { getKeyValue, localDb, setKeyValue, type OutboxReceiptSnapshot, type OutboxSalePayload } from "@/lib/local-db";
 import { nextOfflineSourceRef } from "@/lib/device-id";
+import { todayLocal } from "@/lib/dates";
 import { isLikelyNetworkError, probeSupabase, useOnlineStatus } from "@/lib/online-status";
 import { syncOutbox } from "@/lib/offline-sync";
 import { useLiveQuery } from "dexie-react-hooks";
@@ -75,6 +76,7 @@ type ExtraLine = { category_id: string; amount: string };
 type CheckoutResult = {
   mode: "online" | "offline";
   sourceRef: string;
+  saleDate: string;
   total: number;
   cartLines: CartLine[];
   cashReceivedNum: number | null;
@@ -547,11 +549,14 @@ export default function CheckoutPage() {
   // dibulatkan ke atas ke satuan tunai); direset ke null tiap Uang Diterima diubah.
   const [changeGivenInput, setChangeGivenInput] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string>("");
+  // null = ikut tanggal hari ini (dibaca pas bayar, bukan pas layar dibuka -- kios yang nyala
+  // lewat tengah malam tetap benar). Diisi kasir cuma buat transaksi backdate.
+  const [saleDateOverride, setSaleDateOverride] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [historyDate, setHistoryDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [historyDate, setHistoryDate] = useState(todayLocal);
   const [receiptModal, setReceiptModal] = useState<{ data: ReceiptData; mode: "success" | "review" } | null>(null);
 
   useEffect(() => {
@@ -823,8 +828,11 @@ export default function CheckoutPage() {
       const changeNum = isCash ? changeGivenNum : null;
       const roundingAmount = isCash ? (cashSettlement?.ok ? cashSettlement.gain : 0) : bankSettlement.gain;
 
+      const saleDate = saleDateOverride ?? todayLocal();
+      if (saleDate > todayLocal()) throw new Error("Tanggal transaksi gak boleh lebih dari hari ini");
+
       const payload: OutboxSalePayload = {
-        p_sale_date: new Date().toISOString().slice(0, 10),
+        p_sale_date: saleDate,
         p_customer_id: customerId || null,
         p_cash_account_id: null,
         p_revenue_account_id: accountIds[ACCOUNT_CODES.PENDAPATAN_TOKO],
@@ -884,7 +892,7 @@ export default function CheckoutPage() {
           const sourceRef = await generateDocumentNumber("pos_sales");
           const { error } = await supabase.rpc("create_pos_sale", { ...payload, p_source_ref: sourceRef });
           if (error) throw new Error(error.message);
-          return { mode: "online", sourceRef, total, cartLines: cart, cashReceivedNum, changeNum, receiptSnapshot };
+          return { mode: "online", sourceRef, saleDate, total, cartLines: cart, cashReceivedNum, changeNum, receiptSnapshot };
         } catch (err) {
           if (!isLikelyNetworkError(err)) throw err; // error bisnis asli -- bubble ke onError
           // else: probe sukses tapi koneksi putus tepat pas request -- lanjut ke jalur offline
@@ -909,7 +917,7 @@ export default function CheckoutPage() {
         receiptSnapshot,
       });
 
-      return { mode: "offline", sourceRef: tempSourceRef, total, cartLines: cart, cashReceivedNum, changeNum, receiptSnapshot };
+      return { mode: "offline", sourceRef: tempSourceRef, saleDate, total, cartLines: cart, cashReceivedNum, changeNum, receiptSnapshot };
     },
     onMutate: () => {
       setCheckoutError(null);
@@ -941,7 +949,8 @@ export default function CheckoutPage() {
       void localDb.items.bulkPut(patchedItems); // biar fallback cache offline ikut konsisten
 
       const now = new Date().toISOString();
-      const today = now.slice(0, 10);
+      // Riwayat difilter per transactions.date -- jadi ikut tanggal transaksi, bukan tanggal input.
+      const today = result.saleDate;
       setHistoryDate(today);
 
       // Suntik langsung ke cache riwayat (bukan nunggu invalidate) buat KEDUA mode --
@@ -968,6 +977,7 @@ export default function CheckoutPage() {
 
       commitCart([]);
       setCustomerId("");
+      setSaleDateOverride(null);
       setExtraLines([]);
       setManualDiscount("");
       setCashReceived("");
@@ -1658,6 +1668,17 @@ export default function CheckoutPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">Tanggal Transaksi</label>
+                <input
+                  type="date"
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  value={saleDateOverride ?? todayLocal()}
+                  max={todayLocal()}
+                  // dikosongkan/di-clear atau sama dengan hari ini -> balik ikut hari ini
+                  onChange={(e) => setSaleDateOverride(e.target.value && e.target.value !== todayLocal() ? e.target.value : null)}
+                />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-slate-500">Metode Bayar (F2)</label>
