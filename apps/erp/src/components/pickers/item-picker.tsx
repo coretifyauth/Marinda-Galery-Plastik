@@ -79,7 +79,9 @@ export function ItemPicker({
       emptyLabel={emptyLabel}
       selectedLabel={labels[value]}
       searchOptions={searchOptions}
-      onChange={(e) => onChange(e.target.value)}
+      // Pilih ulang item yang sama bukan perubahan: caller me-reset baris tiap onChange, sedangkan input qty/harga
+      // di dalam baris itu gak ikut ke-remount (key-nya tetap) -> layar masih berisi tapi datanya sudah kosong.
+      onChange={(e) => e.target.value !== value && onChange(e.target.value)}
       onPick={(opt) => {
         const it = opt.data as ItemWithUnits;
         setLabels((p) => ({ ...p, [it.id]: opt.label }));

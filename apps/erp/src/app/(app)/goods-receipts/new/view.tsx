@@ -289,6 +289,11 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
                           value={line.item_discount}
                           onChange={(v) => updateLine(i, { item_discount: v })}
                         />
+                        {!(parseFloat(line.qty_received) > 0 && line.unit_cost !== "") && (
+                          <p className="text-xs font-medium text-red-600">
+                            Belum terhitung di total — isi ulang qty &amp; harga baris ini.
+                          </p>
+                        )}
                       </div>
                     ) : (
                       <span className="flex items-center text-xs text-slate-400">Pilih item dulu</span>
