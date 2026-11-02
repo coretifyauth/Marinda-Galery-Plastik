@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
+import { isActiveReturn, type WithReturnCancellation } from "@/lib/returns/active";
 
 export type SupplierBalanceKind = "uang_muka" | "kelebihan_retur";
 
@@ -34,7 +35,7 @@ type DepositRow = {
 type ReturnCreditRow = {
   id: string;
   amount: number;
-  returns: { source_ref: string; credit_note_date: string; transaction_id: string; return_cancellations: { return_id: string }[] } | null;
+  returns: ({ source_ref: string; credit_note_date: string; transaction_id: string; } & WithReturnCancellation) | null;
   return_credit_refunds: { amount: number }[];
 };
 
@@ -75,7 +76,7 @@ export async function fetchSupplierBalances(supplierId: string): Promise<Supplie
   const creditRows: SupplierBalanceRow[] = [];
   for (const rc of (rcRes.data ?? []) as unknown as ReturnCreditRow[]) {
     const remaining = rc.amount - rc.return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
-    if (remaining <= EPSILON || !rc.returns || rc.returns.return_cancellations.length > 0) continue;
+    if (remaining <= EPSILON || !rc.returns || !isActiveReturn(rc.returns)) continue;
     creditRows.push({
       kind: "kelebihan_retur",
       id: rc.id,

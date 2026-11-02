@@ -19,6 +19,7 @@ import { usePool } from "@/lib/ap-bills/pool";
 import { GoodsPoolSection } from "@/components/ap-bills/goods-pool-section";
 import { CancelBillModal } from "@/components/ap-bills/cancel-bill-modal";
 import { CancelPaymentModal } from "@/components/payments/cancel-payment-modal";
+import { isActiveReturn, returnCancellation, type ReturnCancellation } from "@/lib/returns/active";
 import { CancelReturnModal } from "@/components/ap-bills/cancel-return-modal";
 import { PaymentsTable } from "@/components/payments/payments-table";
 
@@ -38,7 +39,7 @@ type CreditNoteDetail = {
   amount: number;
   created_at: string;
   /** Terisi = retur sudah dibatalkan (migration 0061). */
-  return_cancellations: { reason: string; cancelled_at: string }[];
+  return_cancellations?: ReturnCancellation | ReturnCancellation[] | null;
   return_lines: {
     item_id: string;
     qty_returned: number;
@@ -488,10 +489,10 @@ export function ApBillDetailView({ id }: { id: string }) {
               <tbody>
                 {creditNotes.map((cn) => {
                   const isFull = cn.return_lines.length > 0;
-                  const cancellation = cn.return_cancellations[0];
+                  const cancellation = returnCancellation(cn);
                   // Server menolak membatalkan retur kalau masih ada retur aktif yang lebih baru -- tombol hanya di yang terbaru.
                   const newestActiveId = [...creditNotes]
-                    .filter((c) => c.return_cancellations.length === 0)
+                    .filter(isActiveReturn)
                     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0]?.id;
                   return (
                     <tr
@@ -559,7 +560,7 @@ export function ApBillDetailView({ id }: { id: string }) {
             </table>
           </div>
 
-          {creditNotes.some((cn) => cn.return_cancellations.length === 0 && cn.ap_return_credits.length > 0) && (
+          {creditNotes.some((cn) => isActiveReturn(cn) && cn.ap_return_credits.length > 0) && (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 px-4 py-2">
                 <span className="text-sm font-medium text-black">Saldo di Supplier (dari kelebihan retur)</span>
@@ -580,7 +581,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                 </thead>
                 <tbody>
                   {creditNotes
-                    .filter((cn) => cn.return_cancellations.length === 0)
+                    .filter(isActiveReturn)
                     .flatMap((cn) =>
                     cn.ap_return_credits.map((rc) => {
                       const used = rc.ap_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);

@@ -45,7 +45,7 @@ describe("billStatus -- retur dibatalkan", () => {
       bill({
         ap_payments: [{ amount: 1000, payment_cancellations: null }],
         ap_returns: [
-          { amount: 1000, return_cancellations: [{ return_id: "r1" }], ap_return_credits: [{ amount: 1000 }] },
+          { amount: 1000, return_cancellations: { return_id: "r1" }, ap_return_credits: [{ amount: 1000 }] },
         ],
       })
     );
@@ -58,8 +58,8 @@ describe("billStatus -- retur dibatalkan", () => {
     const { returned, outstanding } = billStatus(
       bill({
         ap_returns: [
-          { amount: 300, return_cancellations: [{ return_id: "r1" }] },
-          { amount: 200, return_cancellations: [] },
+          { amount: 300, return_cancellations: { return_id: "r1" } },
+          { amount: 200, return_cancellations: null },
         ],
       })
     );
