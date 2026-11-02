@@ -4,7 +4,8 @@
 -- dan POS menulis kode 1420 langsung): 1420 bersaldo minus, 1400 kelebihan dengan jumlah yang sama. Konsep:
 -- docs/domain/inventory.md submodule "Satu Akun Persediaan untuk Toko Jual-Beli".
 --
--- Yang dilakukan (semuanya hanya jika akun 1400 dan 1420 ada; database tanpa COA itu melewatinya dengan NOTICE):
+-- Yang dilakukan (nomor 0 selalu; sisanya hanya jika akun 1400 dan 1420 ada, database tanpa COA itu melewatinya dengan NOTICE):
+--   0. Memperbaiki trigger kunci akun yang salah menolak penggantian nama akun yang sudah punya jurnal (lihat di bawah).
 --   1. Akun 1400 diganti nama "Persediaan Bahan Baku" -> "Persediaan Barang Dagang" (hanya jika namanya masih yang lama).
 --   2. Default Akun inventory.finished_good dipindah dari 1420 ke 1400 (hanya jika masih menunjuk 1420).
 --   3. Barang yang akun persediaannya masih 1420 dipindah ke 1400, supaya stock opname dkk tidak memposting ke 1420 lagi.
@@ -20,6 +21,22 @@
 
 -- Supabase CLI menjalankan tiap statement TERPISAH (bukan satu transaksi per file) -- transaksi harus eksplisit supaya gagal di tengah = batal semua.
 begin;
+
+-- 0. Perbaikan trigger kunci akun. accounts_published_lock (0003) membandingkan normal_balance, padahal kolom itu generated
+-- (dihitung dari category + is_contra) dan di trigger BEFORE UPDATE nilai barunya belum terhitung -- di PostgreSQL 17 hasilnya
+-- selalu "berbeda", sehingga akun yang sudah punya jurnal TIDAK BISA diganti namanya (padahal name seharusnya bebas).
+-- category dan is_contra tetap dibandingkan, jadi normal_balance otomatis ikut terlindungi. Pesan error dibiarkan sama.
+create or replace function accounts_published_lock() returns trigger as $$
+begin
+  if (old.code, old.category, old.parent_id, old.is_contra)
+     is distinct from (new.code, new.category, new.parent_id, new.is_contra) then
+    if exists (select 1 from journal_lines where account_id = old.id) then
+      raise exception 'Akun % sudah dipakai di jurnal — code/category/normal_balance/parent_id/is_contra terkunci', old.code;
+    end if;
+  end if;
+  return new;
+end;
+$$ language plpgsql;
 
 do $$
 declare
