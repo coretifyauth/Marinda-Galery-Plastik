@@ -44,7 +44,7 @@ Saat ada yang salah dicatat, walau tagihannya sudah dibayar atau barangnya sudah
 2. Baca apa yang akan berubah, isi **Alasan**, lalu klik **Batalkan Retur**.
 3. Kalau tagihannya juga salah, lanjut **Batalkan Tagihan**: barang masuk dan pembayaran ikut dibatalkan lewat tombol itu.
 
-Ditolak kalau saldo di supplier dari retur itu sudah dicairkan tunai (uangnya sudah kembali ke kas).
+Kalau saldo di supplier dari retur itu sudah dicairkan tunai, retur ditolak dibatalkan. Batalkan dulu pencairannya: di tabel **Saldo di Supplier**, bagian **Riwayat Pencairan Tunai**, klik **Batalkan Pencairan** di barisnya, isi **Alasan**, jawab **apakah uangnya benar-benar berpindah**. Kalau pencairan itu sebenarnya pengembalian pembayaran tagihan yang sama, batalkan juga pembayarannya (dua-duanya saling menutup di kas), lalu lanjut Batalkan Retur dan Batalkan Tagihan.
 
 ## Hasil Akhir
 
@@ -57,7 +57,7 @@ Ditolak kalau saldo di supplier dari retur itu sudah dicairkan tunai (uangnya su
 
 - **Mengira Batalkan Pembayaran mengembalikan uang** — itu hanya membalik catatan. Kalau transfernya benar terjadi, wajib dicatat ulang supaya saldo bank cocok dengan rekening koran.
 - **Pesan "kelebihan retur sudah jadi saldo"** — pembayaran itu tidak bisa dibatalkan karena saldo di supplier dihitung dari situ. Batalkan retur yang menghasilkan saldo itu dulu (kalau salah input), atau minta kembali tunai saldonya.
-- **Batalkan Retur ditolak karena saldo sudah dicairkan tunai** — uangnya sudah masuk kas, jadi retur tidak bisa dibalik begitu saja. Catat ulang pengembaliannya secara manual atau konsultasikan ke admin.
+- **Batalkan Retur ditolak karena saldo sudah dicairkan tunai** — batalkan pencairannya dulu (lihat bagian D).
 - **Batalkan Retur ditolak karena ada retur lebih baru** — batalkan retur yang terbaru dulu.
 - **Pesan "uangnya sudah dilepas jadi uang muka"** — uang itu sudah keluar lewat Tutup Sisa Barang, jadi pembayarannya tidak bisa dibatalkan.
 - **Penurunan tagihan ditolak karena melebihi sisa utang** — tagihannya sudah dibayar. Bagian yang sudah dibayar keluar lewat **Tutup Sisa Barang** jadi uang muka, atau batalkan pembayarannya dulu kalau catatannya yang salah.

@@ -19,7 +19,16 @@ import { usePool } from "@/lib/ap-bills/pool";
 import { GoodsPoolSection } from "@/components/ap-bills/goods-pool-section";
 import { CancelBillModal } from "@/components/ap-bills/cancel-bill-modal";
 import { CancelPaymentModal } from "@/components/payments/cancel-payment-modal";
-import { isActiveReturn, returnCancellation, type ReturnCancellation } from "@/lib/returns/active";
+import {
+  isActiveRefund,
+  isActiveReturn,
+  refundCancellation,
+  returnCancellation,
+  type RefundCancellation,
+  type ReturnCancellation,
+  type WithRefundCancellation,
+} from "@/lib/returns/active";
+import { CancelRefundModal } from "@/components/ap-bills/cancel-refund-modal";
 import { CancelReturnModal } from "@/components/ap-bills/cancel-return-modal";
 import { PaymentsTable } from "@/components/payments/payments-table";
 
@@ -49,7 +58,12 @@ type CreditNoteDetail = {
   ap_return_credits: {
     id: string;
     amount: number;
-    ap_return_credit_refunds: { amount: number }[];
+    ap_return_credit_refunds: ({
+      id: string;
+      amount: number;
+      source_ref: string;
+      journal_entries: { entry_date: string } | null;
+    } & WithRefundCancellation<RefundCancellation>)[];
   }[];
 };
 
@@ -101,6 +115,7 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [cancellingPayment, setCancellingPayment] = useState<PaymentRow | null>(null);
   const [cancellingReturn, setCancellingReturn] = useState<CreditNoteDetail | null>(null);
+  const [cancellingRefund, setCancellingRefund] = useState<{ id: string; source_ref: string; amount: number } | null>(null);
   // Kolam barang (null kalau bukan tagihan barang) -- lihat docs/domain/accounts-payable.md "Tagihan Dulu, Barang Menyusul".
   const poolQuery = usePool(id);
 
@@ -150,7 +165,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       supabase
         .from("returns")
         .select(
-          "id, credit_note_date, source_ref, amount, created_at, return_cancellations(reason, cancelled_at), return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits:return_credits(id, amount, ap_return_credit_refunds:return_credit_refunds(amount))"
+          "id, credit_note_date, source_ref, amount, created_at, return_cancellations(reason, cancelled_at), return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits:return_credits(id, amount, ap_return_credit_refunds:return_credit_refunds(id, amount, source_ref, journal_entries(entry_date), return_credit_refund_cancellations(reason, money_moved, cancelled_at)))"
         )
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND")
@@ -584,7 +599,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                     .filter(isActiveReturn)
                     .flatMap((cn) =>
                     cn.ap_return_credits.map((rc) => {
-                      const used = rc.ap_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
+                      const used = rc.ap_return_credit_refunds.filter(isActiveRefund).reduce((sum, r) => sum + r.amount, 0);
                       const remaining = rc.amount - used;
                       return (
                         <tr key={rc.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -610,6 +625,45 @@ export function ApBillDetailView({ id }: { id: string }) {
                   )}
                 </tbody>
               </table>
+              {creditNotes
+                .filter(isActiveReturn)
+                .some((cn) => cn.ap_return_credits.some((rc) => rc.ap_return_credit_refunds.length > 0)) && (
+                <div className="border-t border-slate-100 px-4 py-3">
+                  <p className="mb-2 text-sm font-medium text-black">Riwayat Pencairan Tunai</p>
+                  <ul className="flex flex-col gap-1 text-sm">
+                    {creditNotes
+                      .filter(isActiveReturn)
+                      .flatMap((cn) => cn.ap_return_credits.flatMap((rc) => rc.ap_return_credit_refunds))
+                      .map((rf) => {
+                        const cancellation = refundCancellation(rf);
+                        return (
+                          <li key={rf.id} className={`flex flex-wrap items-center gap-x-3 ${cancellation ? "text-slate-400" : ""}`}>
+                            <span>{rf.journal_entries?.entry_date ?? ""}</span>
+                            <span>{rf.source_ref}</span>
+                            <span className="font-mono">{rf.amount.toLocaleString("id-ID")}</span>
+                            {cancellation ? (
+                              <span className="text-xs">
+                                <span className="rounded-full bg-red-50 px-2 py-0.5 text-red-600">Dibatalkan</span>{" "}
+                                {cancellation.cancelled_at.slice(0, 10)} — {cancellation.reason}
+                              </span>
+                            ) : (
+                              canWrite &&
+                              !isCancelled && (
+                                <button
+                                  type="button"
+                                  className="text-xs text-red-600 hover:underline"
+                                  onClick={() => setCancellingRefund({ id: rf.id, source_ref: rf.source_ref, amount: rf.amount })}
+                                >
+                                  Batalkan Pencairan
+                                </button>
+                              )
+                            )}
+                          </li>
+                        );
+                      })}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -668,6 +722,7 @@ export function ApBillDetailView({ id }: { id: string }) {
 
 
       <CancelBillModal billId={bill.id} open={showCancelBill} onClose={() => setShowCancelBill(false)} onDone={refreshAfterCancel} />
+      <CancelRefundModal refund={cancellingRefund} onClose={() => setCancellingRefund(null)} onDone={refreshAfterCancel} />
       <CancelReturnModal
         ret={
           cancellingReturn && {

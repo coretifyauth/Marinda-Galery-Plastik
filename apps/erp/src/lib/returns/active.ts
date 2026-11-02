@@ -19,3 +19,25 @@ export function returnCancellation<T>(ret: WithReturnCancellation<T>): T | null 
 export function isActiveReturn(ret: WithReturnCancellation<unknown>): boolean {
   return returnCancellation(ret) === null;
 }
+
+// Pencairan tunai saldo retur supplier yang dibatalkan (return_credit_refund_cancellations, migration 0062) tidak dihitung
+// lagi sebagai uang yang sudah kembali -- mirror return_credit_refund_is_active() di database.
+export type RefundCancellation = {
+  reason: string;
+  money_moved: boolean;
+  cancelled_at: string;
+};
+
+export type WithRefundCancellation<T = { refund_id: string }> = {
+  return_credit_refund_cancellations?: T | T[] | null;
+};
+
+export function refundCancellation<T>(refund: WithRefundCancellation<T>): T | null {
+  const c = refund.return_credit_refund_cancellations;
+  if (Array.isArray(c)) return c[0] ?? null;
+  return c ?? null;
+}
+
+export function isActiveRefund(refund: WithRefundCancellation<unknown>): boolean {
+  return refundCancellation(refund) === null;
+}

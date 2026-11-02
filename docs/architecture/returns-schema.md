@@ -15,6 +15,7 @@ dari migration incremental lama (sudah dihapus, historinya ada di `git log`).
 |---|---|---|
 | `returns` | Spine — 1 baris = 1 kejadian retur (AR atau AP), nunjuk ke jurnal kontra/pengurang | `transactions` (invoice/bill asal), `journal_entries` |
 | `return_lines` | Rincian item retur, kedua arah (AR & AP) — dibedakan kolom `type`, sama seperti `returns` | `returns`, `items`, `goods_notes` (`type='OUTBOUND'`, cuma sisi AR) |
+| `return_credit_refund_cancellations` | Penanda pencairan tunai saldo Piutang Retur Supplier yang dibatalkan — append-only, ada `money_moved` (migration `0062_batalkan_pencairan_saldo_retur.sql`) | `return_credit_refunds` (PK = `refund_id`), `journal_entries` |
 | `return_cancellations` | Penanda retur ke supplier (AP, Opsi A) yang dibatalkan — append-only, 1 baris = 1 retur dibatalkan (migration `0061_batalkan_retur_supplier.sql`) | `returns` (PK = `return_id`), `journal_entries` (jurnal pembalik retur dan jurnal pembalik saldo) |
 
 ## Retur Barang dari Customer (AR)
@@ -121,7 +122,7 @@ Beda dari sisi AR: baris `type='OUTBOUND'` gak pernah punya `goods_issue_id`/`hp
 | Total qty Opsi A + Opsi B (gabungan) untuk 1 item di 1 bill gak boleh lebihi qty yang diterima | Fungsi gabungan `purchase_returned_qty()` (didefinisikan di `replacements-schema.md`, menjumlahkan dari `return_lines` DAN `replacement_lines` type=`OUTBOUND`) |
 | Saldo Piutang Retur Supplier cuma bisa dicairkan tunai | Dijaga di `return-credits-schema.md`, bukan di sini |
 | Retur yang dibatalkan dianggap tidak pernah ada: gak mengurangi sisa tagihan, gak memakai jatah qty/nilai, saldonya gak bisa dicairkan | Fungsi `return_is_active(return_id)` (tidak ada baris di `return_cancellations`) dipakai `ap_bill_remaining`, `purchase_returned_qty`, `credit_notes_no_over_return`, `return_credit_remaining`, `cancel_payment`, `cancel_ap_bill`, `ap_bill_cancellation_preview` |
-| Retur yang saldonya sudah dicairkan tunai gak bisa dibatalkan | `cancel_ap_return` menolak kalau ada `return_credit_refunds` untuk saldo itu; kedua sisi memakai advisory lock `return_credit:<id>` supaya tidak berpapasan |
+| Retur yang saldonya punya pencairan tunai aktif gak bisa dibatalkan; pencairan dibatalkan dulu | `cancel_ap_return` menolak kalau ada `return_credit_refunds` aktif (`return_credit_refund_is_active`) untuk saldo itu; `cancel_return_credit_refund` membalik jurnal pencairan; kedua sisi memakai advisory lock `return_credit:<id>` supaya tidak berpapasan |
 | Retur dibatalkan terbaru dulu per tagihan | `cancel_ap_return` menolak kalau ada retur aktif lain yang lebih baru (`created_at`, `id`) di tagihan yang sama |
 | Retur gak boleh dicatat ke periode tertutup | Aturan umum lewat `create_journal_entry` |
 | Opsi C (tulis-jadi-beban tanpa kompensasi) tidak tersedia sebagai jalur retur | Tidak ada RPC/kolom untuk jalur ini — kasus ini ditangani lewat Stock Opname biasa |

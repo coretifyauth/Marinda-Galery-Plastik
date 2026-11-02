@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
-import { isActiveReturn, type WithReturnCancellation } from "@/lib/returns/active";
+import { isActiveRefund, isActiveReturn, type WithRefundCancellation, type WithReturnCancellation } from "@/lib/returns/active";
 
 export type SupplierBalanceKind = "uang_muka" | "kelebihan_retur";
 
@@ -36,7 +36,7 @@ type ReturnCreditRow = {
   id: string;
   amount: number;
   returns: ({ source_ref: string; credit_note_date: string; transaction_id: string; } & WithReturnCancellation) | null;
-  return_credit_refunds: { amount: number }[];
+  return_credit_refunds: ({ amount: number } & WithRefundCancellation)[];
 };
 
 const EPSILON = 0.005;
@@ -54,7 +54,7 @@ export async function fetchSupplierBalances(supplierId: string): Promise<Supplie
       .order("deposit_date", { ascending: false }),
     supabase
       .from("return_credits")
-      .select("id, amount, returns(source_ref, credit_note_date, transaction_id, return_cancellations(return_id)), return_credit_refunds(amount)")
+      .select("id, amount, returns(source_ref, credit_note_date, transaction_id, return_cancellations(return_id)), return_credit_refunds(amount, return_credit_refund_cancellations(refund_id))")
       .eq("counterparty_id", supplierId)
       .eq("type", "OUTBOUND"),
   ]);
@@ -75,7 +75,7 @@ export async function fetchSupplierBalances(supplierId: string): Promise<Supplie
 
   const creditRows: SupplierBalanceRow[] = [];
   for (const rc of (rcRes.data ?? []) as unknown as ReturnCreditRow[]) {
-    const remaining = rc.amount - rc.return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
+    const remaining = rc.amount - rc.return_credit_refunds.filter(isActiveRefund).reduce((sum, r) => sum + r.amount, 0);
     if (remaining <= EPSILON || !rc.returns || !isActiveReturn(rc.returns)) continue;
     creditRows.push({
       kind: "kelebihan_retur",

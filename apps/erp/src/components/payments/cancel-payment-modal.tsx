@@ -14,17 +14,19 @@ export function MoneyMovedField({
   value,
   onChange,
   moneyMovedLabel,
+  rerecordText = "Setelah ini wajib catat ulang pembayaran yang benar supaya saldo kas/bank cocok.",
 }: {
   value: boolean | null;
   onChange: (value: boolean) => void;
   moneyMovedLabel: string;
+  rerecordText?: string;
 }) {
   return (
     <fieldset className="flex flex-col gap-2 text-sm text-slate-700">
       <legend className="mb-1 font-medium text-black">Apakah uangnya benar-benar berpindah?</legend>
       <label className="flex items-start gap-2">
         <input type="radio" className="mt-1" checked={value === true} onChange={() => onChange(true)} />
-        <span>Ya, {moneyMovedLabel}. Setelah ini wajib catat ulang pembayaran yang benar supaya saldo kas/bank cocok.</span>
+        <span>Ya, {moneyMovedLabel}. {rerecordText}</span>
       </label>
       <label className="flex items-start gap-2">
         <input type="radio" className="mt-1" checked={value === false} onChange={() => onChange(false)} />

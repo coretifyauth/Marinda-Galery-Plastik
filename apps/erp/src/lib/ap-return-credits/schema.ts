@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isActiveRefund, type WithRefundCancellation } from "@/lib/returns/active";
 
 export const refundApReturnCreditSchema = z.object({
   credit_id: z.string().uuid("Pilih saldo kredit retur"),
@@ -18,13 +19,13 @@ export type ApReturnCredit = {
   created_at: string;
   counterparties: { name: string };
   ap_returns: { source_ref: string; credit_note_date: string };
-  ap_return_credit_refunds: {
+  ap_return_credit_refunds: ({
     id: string;
     amount: number;
     source_ref: string;
     journal_entry_id: string;
     created_at: string;
-  }[];
+  } & WithRefundCancellation)[];
 };
 
 /**
@@ -36,6 +37,6 @@ export type ApReturnCredit = {
 export function returnCreditRemaining(
   credit: Pick<ApReturnCredit, "amount" | "ap_return_credit_refunds">
 ): { used: number; remaining: number } {
-  const used = credit.ap_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
+  const used = credit.ap_return_credit_refunds.filter(isActiveRefund).reduce((sum, r) => sum + r.amount, 0);
   return { used, remaining: credit.amount - used };
 }

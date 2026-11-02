@@ -1,5 +1,6 @@
 "use client";
 
+import { isActiveRefund, type WithRefundCancellation } from "@/lib/returns/active";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -20,7 +21,7 @@ type ReturnCreditContext = {
   id: string;
   amount: number;
   returns: { source_ref: string } | null;
-  return_credit_refunds: { amount: number }[];
+  return_credit_refunds: ({ amount: number } & WithRefundCancellation)[];
 };
 
 export default function ApBillRefundPiutangReturPage() {
@@ -44,7 +45,7 @@ export default function ApBillRefundPiutangReturPage() {
       supabase.from("transactions").select("source_ref").eq("id", id).eq("type", "INBOUND").single(),
       supabase
         .from("return_credits")
-        .select("id, amount, returns(source_ref), return_credit_refunds(amount)")
+        .select("id, amount, returns(source_ref), return_credit_refunds(amount, return_credit_refund_cancellations(refund_id))")
         .eq("id", creditId)
         .single(),
       fetchDefaultAccounts(),
@@ -135,7 +136,7 @@ export default function ApBillRefundPiutangReturPage() {
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
-  const used = credit.return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
+  const used = credit.return_credit_refunds.filter(isActiveRefund).reduce((sum, r) => sum + r.amount, 0);
   const remaining = credit.amount - used;
 
   return (
