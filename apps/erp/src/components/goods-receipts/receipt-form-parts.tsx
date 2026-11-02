@@ -2,7 +2,7 @@
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { ReceiptTotals } from "@/lib/goods-receipts/calc";
+import { receiptLineGross, type ReceiptTotals } from "@/lib/goods-receipts/calc";
 
 const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
 
@@ -89,17 +89,64 @@ export function ReceiptDiscountSection({
   );
 }
 
-export function ReceiptTotalsCard({ totals }: { totals: ReceiptTotals }) {
+export type ReceiptCardLine = { name: string; uom: string; qty: number; unitCost: number; discount: number };
+
+/**
+ * Rincian per barang (nama, qty, subtotal, diskon, total) + ringkasan. Diskon baris sudah termasuk selisih
+ * pembulatan harga satuan (lihat normalizeReceiptLine), makanya bisa muncul diskon kecil walau gak diisi.
+ */
+export function ReceiptTotalsCard({ totals, lines = [] }: { totals: ReceiptTotals; lines?: ReceiptCardLine[] }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      {lines.length > 0 && (
+        <div className="mb-4 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-slate-500">
+              <tr className="border-b border-slate-200">
+                <th className="w-8 py-1.5 pr-3 font-medium">No</th>
+                <th className="py-1.5 pr-3 font-medium">Barang</th>
+                <th className="px-3 py-1.5 text-right font-medium">Qty</th>
+                <th className="px-3 py-1.5 text-right font-medium">Subtotal</th>
+                <th className="px-3 py-1.5 text-right font-medium">Diskon</th>
+                <th className="py-1.5 pl-3 text-right font-medium">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => {
+                const gross = receiptLineGross(l.qty, l.unitCost);
+                return (
+                  <tr key={i} className="border-b border-slate-100">
+                    <td className="py-1.5 pr-3 text-slate-500">{i + 1}</td>
+                    <td className="py-1.5 pr-3 text-black">{l.name}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">
+                      {l.qty.toLocaleString("id-ID")} {l.uom}
+                    </td>
+                    <td className="px-3 py-1.5 text-right font-mono">{rp(gross)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono text-emerald-600">
+                      {l.discount > 0 ? `-${rp(l.discount)}` : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="py-1.5 pl-3 text-right font-mono text-black">{rp(gross - l.discount)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
       <div className="flex items-center justify-between text-sm text-slate-500">
         <span>Subtotal</span>
         <span className="font-mono">{rp(totals.subtotal)}</span>
       </div>
-      {totals.totalDiscount > 0 && (
+      {totals.itemDiscountTotal > 0 && (
         <div className="flex items-center justify-between text-sm text-emerald-600">
-          <span>Diskon</span>
-          <span className="font-mono">-{rp(totals.totalDiscount)}</span>
+          <span>Diskon item</span>
+          <span className="font-mono">-{rp(totals.itemDiscountTotal)}</span>
+        </div>
+      )}
+      {totals.extraDiscount > 0 && (
+        <div className="flex items-center justify-between text-sm text-emerald-600">
+          <span>Diskon tambahan dokumen</span>
+          <span className="font-mono">-{rp(totals.extraDiscount)}</span>
         </div>
       )}
       <p className="mt-2 text-sm text-slate-500">Nilai Barang Masuk</p>

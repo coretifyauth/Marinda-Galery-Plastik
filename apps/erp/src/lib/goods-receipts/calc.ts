@@ -21,6 +21,9 @@ export type ReceiptTotals = {
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const round3 = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 
+/** Nilai kotor 1 baris (qty x harga, 2 desimal) -- dipakai rincian per barang di kartu total. */
+export const receiptLineGross = (qty: number, unitCost: number) => round2(qty * unitCost);
+
 export function receiptTotals(lines: ReceiptCalcLine[], extraDiscount: number): ReceiptTotals {
   let subtotal = 0;
   let itemDiscountTotal = 0;

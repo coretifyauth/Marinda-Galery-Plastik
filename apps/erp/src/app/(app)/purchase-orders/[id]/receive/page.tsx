@@ -299,7 +299,8 @@ export default function ReceivePurchaseOrderPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <p className="mb-3 text-sm font-medium text-black">Item yang Diterima (sisa PO)</p>
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[2rem_1fr_minmax(16rem,auto)] gap-2 text-sm font-medium text-slate-500">
+                <span>No</span>
                 <span>Item</span>
                 <span>Qty, Satuan & Harga (sesuai nota)</span>
               </div>
@@ -307,8 +308,9 @@ export default function ReceivePurchaseOrderPage() {
               {lines.map((line, i) => (
                 <div
                   key={line.order_line_id}
-                  className="grid grid-cols-[1fr_minmax(16rem,auto)] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
+                  className="grid grid-cols-[2rem_1fr_minmax(16rem,auto)] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
                 >
+                  <span className="flex items-center text-sm text-slate-500">{i + 1}</span>
                   <span className="flex items-center text-sm text-slate-700">{line.item_label}</span>
                   <div className="flex flex-col gap-2">
                     <UnitCostQtyInput
@@ -349,7 +351,13 @@ export default function ReceivePurchaseOrderPage() {
             ]}
           />
 
-          <ReceiptTotalsCard totals={totals} />
+          <ReceiptTotalsCard
+            totals={totals}
+            lines={activeLines.map((l) => {
+              const it = po?.order_lines.find((x) => x.id === l.order_line_id)?.items;
+              return { name: it?.name ?? "-", uom: it?.uom ?? "", qty: l.qty, unitCost: l.unitCost, discount: l.discount };
+            })}
+          />
 
           {formError && <FormError>{formError}</FormError>}
 

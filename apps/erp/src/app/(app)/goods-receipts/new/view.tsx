@@ -255,7 +255,8 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
             <p className="mb-3 text-sm font-medium text-black">Item Diterima</p>
             <div className="flex flex-col gap-2">
-              <div className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
+              <div className="grid grid-cols-[2rem_1fr_minmax(16rem,auto)_2.5rem] gap-2 text-sm font-medium text-slate-500">
+                <span>No</span>
                 <span>Item</span>
                 <span>Qty, Satuan & Harga (sesuai nota)</span>
                 <span />
@@ -266,8 +267,9 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
                 return (
                   <div
                     key={i}
-                    className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
+                    className="grid grid-cols-[2rem_1fr_minmax(16rem,auto)_2.5rem] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
                   >
+                    <span className="flex items-center text-sm text-slate-500">{i + 1}</span>
                     <ItemPicker
                       value={line.item_id}
                       onChange={(id) => updateLine(i, { item_id: id, qty_received: "", unit_cost: "", item_discount: "" })}
@@ -330,7 +332,13 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
             ]}
           />
 
-          <ReceiptTotalsCard totals={totals} />
+          <ReceiptTotalsCard
+            totals={totals}
+            lines={activeLines.map((l) => {
+              const it = items.find((x) => x.id === l.item_id);
+              return { name: it?.name ?? "-", uom: it?.uom ?? "", qty: l.qty, unitCost: l.unitCost, discount: l.discount };
+            })}
+          />
 
           {formError && <FormError>{formError}</FormError>}
 
