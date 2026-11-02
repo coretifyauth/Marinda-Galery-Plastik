@@ -203,7 +203,7 @@ export default function NewPurchaseOrderPage() {
                   <div key={i} className="grid grid-cols-[1fr_minmax(16rem,auto)_2.5rem] gap-2">
                     <ItemPicker
                       value={line.item_id}
-                      onChange={(id) => updateLine(i, { item_id: id, qty_ordered: "", unit_cost_expected: "" })}
+                      onChange={(id) => updateLine(i, { item_id: id, qty_ordered: "", unit_cost_expected: "", entered: undefined })}
                       onResolve={remember}
                     />
                     {line.item_id && selectedItem ? (

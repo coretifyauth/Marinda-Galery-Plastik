@@ -272,7 +272,7 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
                     <span className="flex items-center text-sm text-slate-500">{i + 1}</span>
                     <ItemPicker
                       value={line.item_id}
-                      onChange={(id) => updateLine(i, { item_id: id, qty_received: "", unit_cost: "", item_discount: "" })}
+                      onChange={(id) => updateLine(i, { item_id: id, qty_received: "", unit_cost: "", item_discount: "", entered: undefined })}
                       onResolve={remember}
                     />
                     {line.item_id && selectedItem ? (

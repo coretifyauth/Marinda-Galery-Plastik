@@ -268,7 +268,7 @@ export default function NewSalesOrderPage() {
                   <div key={i} className="grid grid-cols-[1fr_minmax(14rem,auto)_2.5rem] gap-2">
                     <ItemPicker
                       value={line.item_id}
-                      onChange={(id) => updateLine(i, { item_id: id, qty_ordered: "", unit_price: "" })}
+                      onChange={(id) => updateLine(i, { item_id: id, qty_ordered: "", unit_price: "", entered: undefined })}
                       onResolve={remember}
                       sellableOnly
                     />
