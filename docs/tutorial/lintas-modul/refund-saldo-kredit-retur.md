@@ -34,5 +34,5 @@ Saat sebuah retur (dari pelanggan maupun ke supplier) nilainya melebihi sisa out
 ## Kesalahan Umum
 
 - **Salah arah kas (Tunai vs Transfer Bank)** — pastikan metode yang dipilih sesuai kondisi fisik uang yang benar-benar berpindah.
-- **Mengira saldo kredit ini otomatis cair sendiri tanpa tindakan** — tidak, ini murni liability/asset yang menunggu di neraca sampai ada tindakan eksplisit (refund tunai, atau untuk AR bisa juga dipakai untuk [tukar-barang-garansi.md](../accounts-receivable/tukar-barang-garansi.md) alih-alih direfund).
+- **Mengira saldo kredit ini otomatis cair sendiri tanpa tindakan** — tidak, ini murni liability/asset yang menunggu di neraca sampai ada tindakan eksplisit (refund tunai).
 - **Refund melebihi sisa yang tercatat** — sistem membatasi berdasarkan kolom Sisa yang tersedia saat itu.

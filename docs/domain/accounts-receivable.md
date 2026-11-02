@@ -180,6 +180,8 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo 
 
 ### Penukaran Barang Pasca-Retur (Garansi)
 
+> **DICABUT 2026-11-02** (keputusan owner): tidak ada lagi UI/RPC untuk mencatat penggantian barang garansi. Tabelnya dipertahankan sebagai riwayat baca-saja (`docs/architecture/replacements-schema.md`). Teks di bawah hanya konteks desain lama.
+
 Penukaran barang berdiri sendiri dari retur, diseragamkan dengan cara pembelian menangani kasus serupa (tukar barang ke supplier) — customer harus pilih SATU jalan sejak awal: **retur (dapat kredit/diskon) ATAU ganti barang**, gak bisa dua-duanya buat barang yang sama. Karena pilihannya dipisah sejak awal, penukaran barang gak perlu "mengoreksi" apa pun.
 
 **Cara Kerja**

@@ -44,7 +44,7 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `returns-schema.md` — gabungan nota kredit retur AR + AP (dulu `credit-notes-schema.md`).
 - `return-credits-schema.md` — gabungan saldo kredit retur AR + AP.
 - `deposits-schema.md` — gabungan uang muka AR + AP.
-- `replacements-schema.md` — gabungan ganti barang garansi AR + tukar barang ke pemasok AP (retur Opsi B), 2026-09-09.
+- `replacements-schema.md` — gabungan ganti barang garansi AR + tukar barang ke pemasok AP (retur Opsi B), 2026-09-09. **Fitur DICABUT 2026-11-02** (migration `0063_cabut_tukar_barang.sql`): jalur pembuatan baru dibuang, tabel dipertahankan sebagai riwayat baca-saja.
 - `app-settings-schema.md` (dulu `tax-settings-schema.md`, digabung dengan `company_settings`+`pos_settings` 2026-09-14) — Pengaturan PPN + identitas perusahaan + walk-in customer POS, 1 baris dipakai bareng AR/AP/POS/print.
 - `items-schema.md` — master barang, satuan jual/harga, Kode Scan Barang.
 - `item-discount-rules-schema.md` — aturan diskon penjualan per barang/kategori barang (trade discount, sisi jual doang), 2026-09-29.
@@ -60,10 +60,10 @@ ERD & struktur data, dalam bahasa non-teknis + tabel (bukan DDL mentah, bukan ba
 - `print-templates-schema.md` dihapus 2026-09-14 — isinya (`document_signatories`, identitas perusahaan) sudah tuntas dipindah/dihapus: kop surat jadi bagian `app-settings-schema.md`, blok tanda tangan (`document_signatories`) di-drop total (fitur gak dipakai lagi, lihat `docs/domain/print-templates.md`).
 
 ### tutorial/
-User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial` — cakupan modul sudah lengkap. Disegmentasi jadi 9 subfolder modul (39 file total):
+User guide operasional per task/workflow ("klik di mana, isi apa"), dibangun lewat skill `/tutorial` — cakupan modul sudah lengkap. Disegmentasi jadi 9 subfolder modul (38 file total):
 - `chart-of-accounts/` — `tambah-akun-baru.md`.
 - `general-ledger/` — `buat-jurnal-manual.md`, `lihat-buku-besar-akun.md`.
-- `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `tukar-barang-garansi.md`, `uang-muka-ar.md`, `batalkan-invoice-ar.md`.
+- `accounts-receivable/` — `tambah-pelanggan-baru.md`, `buat-invoice-ar.md`, `terima-pembayaran-ar.md`, `retur-barang-ar.md`, `uang-muka-ar.md`, `batalkan-invoice-ar.md`.
 - `accounts-payable/` — `tambah-supplier-baru.md`, `buat-bill-ap.md`, `buat-tagihan-barang.md`, `bayar-bill-ap.md`, `retur-barang-ap.md`, `uang-muka-ap.md`, `batalkan-bill-ap.md`, `koreksi-salah-input.md`.
 - `inventory/` — `tambah-item-master.md`, `atur-satuan-harga-barcode.md`, `kelola-kategori-brand-barang.md`, `buat-purchase-order.md`, `terima-barang-grn.md`, `jual-barang-goods-issue.md`, `buat-resep-bom.md`, `buat-production-order.md`, `buat-sales-order.md`, `kirim-penuhi-sales-order.md`, `stock-opname.md`, `lihat-stock-position.md`.
 - `financial-reports/` — `lihat-laporan-keuangan.md`, `tutup-buku-periode.md`.

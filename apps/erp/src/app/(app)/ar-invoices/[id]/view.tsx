@@ -6,7 +6,6 @@ import { supabase } from "@/lib/supabase/client";
 import { invoiceStatus, type ArInvoice } from "@/lib/ar-invoices/schema";
 import { type GoodsIssueForInvoice } from "@/lib/ar-credit-notes/schema";
 import { depositStatus, type ArDeposit } from "@/lib/ar-deposits/schema";
-import { type WarrantyReplacement } from "@/lib/ar-warranty-replacements/schema";
 import { returnCreditRemaining, type ArReturnCredit } from "@/lib/ar-return-credits/schema";
 import type { ChargeCategoryWithAccount } from "@/lib/charge-lines/schema";
 import { PAYMENT_ROW_COLUMNS, type PaymentRow } from "@/lib/payments/active";
@@ -92,7 +91,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
-  const [replacements, setReplacements] = useState<WarrantyReplacement[]>([]);
 
   const load = useCallback(async () => {
     const { data: inv, error: invErr } = await supabase
@@ -115,7 +113,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       { data: entries, error: entriesErr },
       { data: pay, error: payErr },
       { data: cns, error: cnErr },
-      { data: reps, error: repErr },
       { data: gi },
       { data: creditLineRows },
       { data: chargeTypeRows },
@@ -147,14 +144,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
         .eq("transaction_id", id)
         .eq("type", "INBOUND")
         .order("credit_note_date"),
-      supabase
-        .from("replacements")
-        .select(
-          "id, invoice_id:transaction_id, replacement_date, source_ref, created_at, replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
-        )
-        .eq("transaction_id", id)
-        .eq("type", "INBOUND")
-        .order("replacement_date"),
       supabase
         .from("goods_notes")
         .select(
@@ -200,7 +189,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
     setCreditLines((creditLineRows ?? []) as unknown as InvoiceCreditLine[]);
     setChargeTypes((chargeTypeRows ?? []) as unknown as ChargeCategoryWithAccount[]);
-    setReplacements((reps ?? []) as unknown as WarrantyReplacement[]);
     setGoodsIssue((gi ?? null) as unknown as GoodsIssueForInvoice | null);
     setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
     setCustomerDeposits((custDeposits ?? []) as unknown as ArDeposit[]);
@@ -209,7 +197,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
       entriesErr?.message ??
         payErr?.message ??
         cnErr?.message ??
-        repErr?.message ??
         depAppErr?.message ??
         custDepositsErr?.message ??
         custReturnCreditsErr?.message ??
@@ -292,9 +279,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
   );
   const canApplyDeposit = canWrite && !isCancelled && outstanding > 0 && availableDeposits.length > 0;
-  // Ganti Barang independen dari credit note sekarang (mirror create_replacement type=OUTBOUND AP) --
-  // cuma butuh goods_issue ada (invoice financial-only gak punya barang fisik buat ditukar).
-  const canReplace = canWrite && !isCancelled && !!goodsIssue;
 
   // Cetak selalu render dari state yang barusan di-`load()` -- gak ada snapshot tersimpan,
   // jadi cetak ulang kapan pun otomatis nunjukkan kondisi terkini (retur/write-off/pembatalan
@@ -444,10 +428,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "DP Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Retur", badge: creditNotes.length },
-    // Penggantian Barang (replacement type=INBOUND) wajib ada goods_issue di invoice ini --
-    // create_replacement nolak kalau invoice-nya financial-only (gak ada barang fisik keluar).
-    // Gak ada gunanya ditampilin buat invoice financial-only.
-    ...(!isFinancialOnly ? [{ key: "replacements", label: "Penggantian Barang", badge: replacements.length }] : []),
   ];
 
   return (
@@ -607,18 +587,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
 
       {activeTab === "retur" && (
         <div className="flex flex-col gap-3">
-          {(canRetur || canReplace) && (
+          {canRetur && (
             <div className="flex justify-end gap-2">
-              {canReplace && (
-                <Button variant="toolbar" onClick={() => router.push(`/ar-invoices/${id}/tukar-barang`)}>
-                  Ganti Barang
-                </Button>
-              )}
-              {canRetur && (
-                <Button variant="toolbar" onClick={() => router.push(`/ar-invoices/${id}/retur`)}>
-                  Retur
-                </Button>
-              )}
+              <Button variant="toolbar" onClick={() => router.push(`/ar-invoices/${id}/retur`)}>
+                Retur
+              </Button>
             </div>
           )}
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -720,50 +693,6 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
               </table>
             </div>
           )}
-        </div>
-      )}
-
-      {activeTab === "replacements" && (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                <th className="px-4 py-2">Tanggal</th>
-                <th className="px-4 py-2">Rujukan Dokumen</th>
-                <th className="px-4 py-2">Item Diganti</th>
-                <th className="px-4 py-2 text-right">Biaya</th>
-              </tr>
-            </thead>
-            <tbody>
-              {replacements.map((r) => (
-                <tr key={r.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                  <td className="whitespace-nowrap px-4 py-2">{r.replacement_date}</td>
-                  <td className="px-4 py-2">{r.source_ref}</td>
-                  <td className="px-4 py-2">
-                    <ul className="space-y-0.5">
-                      {r.replacement_lines.map((l) => (
-                        <li key={l.item_id}>
-                          {l.items.name} — {l.qty_replaced} {l.items.uom}
-                        </li>
-                      ))}
-                    </ul>
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono">
-                    {r.replacement_lines
-                      .reduce((sum, l) => sum + l.total_cost, 0)
-                      .toLocaleString("id-ID")}
-                  </td>
-                </tr>
-              ))}
-              {replacements.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                    Belum ada penggantian barang.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
       )}
 

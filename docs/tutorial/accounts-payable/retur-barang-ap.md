@@ -27,24 +27,15 @@ Dipakai kalau supplier setuju mengurangi tagihan sebesar barang yang kurang atau
 5. Cek kartu **Nilai Barang Kurang / Dikembalikan** di sisi kanan — di situ terlihat berapa yang **mengurangi utang** dan berapa yang **jadi saldo di supplier**.
 6. Klik **Simpan**.
 
-### Opsi B — Tukar Barang
+### Tukar Barang (sudah dicabut)
 
-Dipakai kalau supplier mengganti barang rusak dengan barang baik, **tanpa mengubah nilai tagihan sama sekali**.
-
-1. Di detail bill, klik tombol **Tukar Barang**.
-2. Baca catatan: ini **murni reklasifikasi stok** (barang rusak keluar, barang baik masuk) — Utang Usaha bill ini tetap penuh, tidak disentuh sama sekali.
-3. Isi **Tanggal**, lalu **Qty Tukar** per item.
-4. Klik **Simpan Tukar Barang**.
+Fitur **Tukar Barang** (supplier mengganti barang rusak dengan barang baik tanpa mengubah tagihan) **dicabut 2026-11-02** dan tombolnya sudah tidak ada. Kalau supplier mengganti barang, catat lewat retur di atas (kalau utang dikurangi) atau Stock Opname, dan catat barang pengganti yang datang sebagai barang masuk dari tagihan yang sesuai.
 
 ## Hasil Akhir
 
 - **Opsi A**: jurnal debit Utang Usaha, kredit Akun Persediaan/Beban terkait. Kalau nominal retur melebihi sisa outstanding bill (bill sudah lunas), kelebihannya otomatis jadi **saldo di supplier** (akun Piutang Retur Supplier) dan muncul di tabel **Saldo di Supplier (dari kelebihan retur)** di tab yang sama. Saldo itu bisa diminta kembali tunai lewat tombol **Minta Kembali Tunai**, dan terlihat juga di tab **Saldo di Supplier** pada detail supplier. Saat ini saldo kelebihan retur hanya bisa diminta kembali tunai, belum bisa dipakai memotong tagihan lain.
-- **Opsi B**: jurnal murni reklasifikasi Akun Persediaan (debit barang masuk, kredit barang keluar) — tidak menyentuh Utang Usaha.
-- Kedua opsi berbagi kuota qty yang sama per item (satu item yang sudah diklaim penuh lewat salah satu opsi tidak bisa diklaim lagi lewat opsi lain).
 
 ## Kesalahan Umum
 
-- **Salah pilih opsi untuk kesepakatan yang sebenarnya terjadi** — cek dulu hasil negosiasi dengan supplier (uang kembali vs barang pengganti) sebelum memilih tombol; keduanya punya efek jurnal yang berbeda ke Utang Usaha.
-- **Mengira Opsi B mengurangi Utang Usaha** — tidak, cuma Opsi A yang menyentuh Utang Usaha; Opsi B murni soal stok.
-- **Mencoba klaim qty lebih dari sisa yang tersedia** — qty dibatasi gabungan dari kedua opsi; kalau item sudah diklaim penuh lewat kombinasi opsi sebelumnya, form akan menampilkan "sudah diklaim penuh".
+- **Mencoba klaim qty lebih dari sisa yang tersedia** — qty dibatasi total qty yang diterima dikurangi yang sudah diretur; kalau item sudah diklaim penuh, form akan menampilkan "sudah diklaim penuh".
 - **Mencari tombol Write-off/Tulis-jadi-Beban di halaman ini** — sudah tidak ada. Barang yang supplier tolak kompensasi sama sekali sekarang dicatat lewat Stock Opname, bukan dari halaman detail bill.

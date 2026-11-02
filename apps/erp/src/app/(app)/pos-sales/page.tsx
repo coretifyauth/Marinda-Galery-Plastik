@@ -52,6 +52,10 @@ export default function PosSalesPage() {
   const salesQuery = usePosSales(filters);
   const sales = salesQuery.data?.rows ?? [];
   const total = salesQuery.data?.total ?? 0;
+  // Baris akumulasi = jumlah baris yang tampil di halaman ini. Transaksi dibatalkan tidak dihitung
+  // (pendapatannya sudah dibalik). Total seluruh hasil filter butuh RPC (lihat tech-stack-decisions.md).
+  const countedSales = sales.filter((s) => s.status !== "dibatalkan");
+  const pageGrandTotal = countedSales.reduce((sum, s) => sum + s.total, 0);
 
   useEffect(() => {
     let active = true;
@@ -195,6 +199,18 @@ export default function PosSalesPage() {
               </tr>
             )}
           </tbody>
+          {sales.length > 0 && (
+            <tfoot>
+              <tr className="border-t-2 border-slate-300 bg-slate-50 font-medium text-black">
+                <td colSpan={4} className="px-4 py-2">
+                  {total > sales.length ? "Total halaman ini" : "Total"} ({countedSales.length} transaksi
+                  {countedSales.length < sales.length ? ", tanpa yang dibatalkan" : ""})
+                </td>
+                <td className="px-4 py-2 text-right font-mono">{pageGrandTotal.toLocaleString("id-ID")}</td>
+                <td className="px-4 py-2" />
+              </tr>
+            </tfoot>
+          )}
         </table>
         <Pagination
           page={page}

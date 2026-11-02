@@ -19,6 +19,17 @@ Sebelum modul transaksi (AR, AP, Inventory) bisa dipakai dengan benar — hampir
 4. Pilih akun baru dari dropdown (hanya leaf account yang muncul).
 5. Klik **Simpan**.
 
+### Toko jual-beli: satu akun persediaan
+
+Kalau toko hanya membeli lalu menjual (tidak produksi), arahkan dua slot persediaan ke akun yang sama supaya saldo persediaan tidak terpecah dan tidak ada akun yang minus.
+
+> Untuk database yang sudah berjalan, langkah 1 sampai 3 di bawah dikerjakan otomatis oleh migration `0064_satukan_akun_persediaan.sql` (ganti nama akun 1400, pindahkan slot, dan jurnal reklasifikasi dengan nominal dihitung dari buku besar). Yang tetap manual: deploy POS versi baru lebih dulu, dan mengarsipkan akun 1420 setelah semua kasir memakai versi baru.
+
+1. Pilih satu akun persediaan (mis. ganti nama akun Persediaan Bahan Baku menjadi **Persediaan Barang Dagang** lewat halaman Akun).
+2. Di tab **Default Akun**, ubah slot **Persediaan Bahan Baku** dan slot **Persediaan Barang Jadi** supaya keduanya menunjuk akun itu.
+3. Kalau sebelumnya sudah ada saldo minus di akun lama, pindahkan dengan satu jurnal reklasifikasi lewat preset jurnal (Debit akun yang minus, Kredit akun yang kelebihan, sebesar saldo minusnya).
+4. Perbarui aplikasi kasir (POS) ke versi terbaru. POS versi lama masih mengkredit akun Barang Jadi dan membuat saldo minus kembali.
+
 ## Hasil Akhir
 
 - Slot Default Akun yang sudah diisi langsung dipakai otomatis oleh field terkunci di form transaksi (mis. field "Akun Piutang Usaha" di [buat-invoice-ar.md](../accounts-receivable/buat-invoice-ar.md)) — user form transaksi tidak lagi memilih akun bebas, cukup lihat konfirmasinya.

@@ -88,9 +88,13 @@ type CheckoutResult = {
 // server menurunkannya dari metode bayar lewat Default Akun cash.tunai/cash.bank.
 const ACCOUNT_CODES = {
   PENDAPATAN_TOKO: "4100",
-  HPP: "5100",
-  PERSEDIAAN_BARANG_JADI: "1420",
 } as const;
+
+// Akun persediaan (kredit) dan HPP (debit) saat HPP diakui dibaca dari Default Akun (sama dengan semua jalur
+// penjualan di ERP), BUKAN kode akun yang ditulis di sini -- dulu hardcode "1420"/"5100" sehingga POS tetap
+// mengkredit Persediaan Barang Jadi walau toko jual-beli sudah memakai satu akun persediaan.
+const INVENTORY_ROLE_KEY = "inventory.finished_good";
+const HPP_ROLE_KEY = "inventory.hpp";
 
 // Tiap fetcher: coba Supabase seperti biasa -> sukses -> tulis-tembus ke Dexie
 // (cache buat dibaca offline nanti) -> gagal (offline) -> baca balik dari Dexie;
@@ -121,13 +125,18 @@ async function fetchItemRows(): Promise<ItemRow[]> {
 
 async function fetchAccountIds(): Promise<Record<string, string>> {
   try {
-    const { data, error } = await supabase
-      .from("accounts")
-      .select("id, code")
-      .in("code", Object.values(ACCOUNT_CODES));
-    if (error) throw new Error(error.message);
+    const [accountsRes, roleRes] = await Promise.all([
+      supabase.from("accounts").select("id, code").in("code", Object.values(ACCOUNT_CODES)),
+      supabase
+        .from("app_default_account_settings")
+        .select("role_key, account_id")
+        .in("role_key", [INVENTORY_ROLE_KEY, HPP_ROLE_KEY]),
+    ]);
+    if (accountsRes.error) throw new Error(accountsRes.error.message);
+    if (roleRes.error) throw new Error(roleRes.error.message);
     const codeToId: Record<string, string> = {};
-    for (const acc of data ?? []) codeToId[acc.code as string] = acc.id as string;
+    for (const acc of accountsRes.data ?? []) codeToId[acc.code as string] = acc.id as string;
+    for (const row of roleRes.data ?? []) codeToId[row.role_key as string] = row.account_id as string;
     await setKeyValue("accounts", codeToId);
     return codeToId;
   } catch (err) {
@@ -828,6 +837,13 @@ export default function CheckoutPage() {
       const changeNum = isCash ? changeGivenNum : null;
       const roundingAmount = isCash ? (cashSettlement?.ok ? cashSettlement.gain : 0) : bankSettlement.gain;
 
+      // Cache lama (sebelum akun persediaan dibaca dari Default Akun) belum punya akun ini; jangan kirim kosong ke server.
+      const inventoryAccountId = accountIds[INVENTORY_ROLE_KEY];
+      const hppAccountId = accountIds[HPP_ROLE_KEY];
+      if (!inventoryAccountId || !hppAccountId) {
+        throw new Error("Akun persediaan/HPP (Default Akun) belum termuat — sambungkan ke internet sebentar lalu coba lagi");
+      }
+
       const saleDate = saleDateOverride ?? todayLocal();
       if (saleDate > todayLocal()) throw new Error("Tanggal transaksi gak boleh lebih dari hari ini");
 
@@ -836,8 +852,8 @@ export default function CheckoutPage() {
         p_customer_id: customerId || null,
         p_cash_account_id: null,
         p_revenue_account_id: accountIds[ACCOUNT_CODES.PENDAPATAN_TOKO],
-        p_hpp_account_id: accountIds[ACCOUNT_CODES.HPP],
-        p_finished_good_account_id: accountIds[ACCOUNT_CODES.PERSEDIAAN_BARANG_JADI],
+        p_hpp_account_id: hppAccountId,
+        p_finished_good_account_id: inventoryAccountId,
         p_extra_credit_lines: resolvedExtraLines,
         p_apply_tax: applyTax && !!taxSettings?.is_active,
         // Diskon manual 1 nominal per transaksi -- server yang validasi (< total net) & bagi ke

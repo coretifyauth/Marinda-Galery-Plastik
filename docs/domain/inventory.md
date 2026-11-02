@@ -181,6 +181,27 @@ Membatalkan barang masuk butuh seluruh qty-nya masih di stok. Kalau sebagian sud
 **Common Mistakes**
 - Menghitung HPP berdasarkan **kapan utang ke supplier dibayar**, bukan berdasarkan **kapan barangnya terjual** — dua hal yang sama sekali gak berhubungan. HPP baru diakui persis di titik Goods Issue ini, gak lebih cepat dan gak lebih lambat.
 
+### Satu Akun Persediaan untuk Toko Jual-Beli
+
+**Cara Kerja**
+- Sistem membedakan dua akun persediaan: **Persediaan Bahan Baku** (tempat barang masuk saat dibeli) dan **Persediaan Barang Jadi** (tempat biaya pokok dikurangi saat barang terjual). Pembagian ini cocok untuk usaha yang memproduksi: bahan baku dibeli, diproduksi, lalu barang jadi dijual.
+- Untuk toko yang **murni jual-beli**, barang yang dibeli adalah barang yang sama yang dijual. Kalau dua akun itu dipakai apa adanya, barang masuk lewat akun pertama dan keluar lewat akun kedua: akun pertama kelihatan kelebihan, akun kedua bersaldo **minus**, padahal jumlah keduanya benar.
+- Aturan akuntansinya: **barang keluar dari akun yang sama dengan tempat barang itu masuk.** Karena itu toko jual-beli memakai **satu akun persediaan** (mis. "Persediaan Barang Dagang") untuk pembelian maupun penjualan. Caranya lewat pengaturan Default Akun: peran persediaan untuk pembelian dan peran persediaan untuk penjualan diarahkan ke akun yang sama.
+- Kasir (POS) mengikuti pengaturan yang sama dengan penjualan lewat halaman ERP, jadi semua jalur penjualan mengurangi akun persediaan yang sama.
+
+**Aturan Bisnis**
+- Dua peran Default Akun boleh menunjuk ke akun yang sama; sistem tidak melarangnya.
+- Perubahan Default Akun tidak mengoreksi transaksi lama. Saldo minus yang sudah terlanjur terbentuk dipindahkan dengan **satu jurnal reklasifikasi** (Debit akun yang minus, Kredit akun yang kelebihan, sebesar saldo minusnya).
+- Jumlah kedua akun persediaan tidak berubah oleh perbaikan ini; yang berubah hanya pembagiannya. HPP, laba rugi, dan total aset tetap sama.
+
+**Skenario**
+- Beli 100 pcs Rp10.000 lalu jual 40 pcs: sebelum perbaikan, Bahan Baku Rp1.000.000 dan Barang Jadi minus Rp400.000. Sesudah perbaikan, satu akun Rp600.000.
+
+**Common Mistakes**
+- Mengira laporan laba rugi ikut salah karena saldo minus. HPP-nya benar; yang janggal hanya pembagian aset.
+- Memperbaiki saldo minus dengan mengedit HPP atau mengubah jurnal lama. Cukup jurnal reklasifikasi, jurnal lama tidak disentuh.
+- Lupa bahwa kasir (POS) dulu menulis akun Barang Jadi langsung di programnya, tidak membaca Default Akun, sehingga mengubah Default Akun saja tidak cukup sebelum POS diperbarui.
+
 ### Kategori & Brand Barang
 
 **Cara Kerja**

@@ -67,19 +67,6 @@ type CreditNoteDetail = {
   }[];
 };
 
-type ReplacementDetail = {
-  id: string;
-  replacement_date: string;
-  source_ref: string;
-  created_at: string;
-  replacement_lines: {
-    item_id: string;
-    qty_replaced: number;
-    total_cost: number;
-    items: { name: string; uom: string };
-  }[];
-};
-
 type DepositApplicationDetail = {
   id: string;
   amount: number;
@@ -103,7 +90,6 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [journalEntries, setJournalEntries] = useState<JournalEntryDetail[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [creditNotes, setCreditNotes] = useState<CreditNoteDetail[]>([]);
-  const [replacements, setReplacements] = useState<ReplacementDetail[]>([]);
   const [goodsReceipt, setGoodsReceipt] = useState<GoodsReceiptForBill | null>(null);
   const [depositApplications, setDepositApplications] = useState<DepositApplicationDetail[]>([]);
   const [supplierDeposits, setSupplierDeposits] = useState<ApDeposit[]>([]);
@@ -140,7 +126,6 @@ export function ApBillDetailView({ id }: { id: string }) {
       { data: entries, error: entriesErr },
       { data: pays, error: paysErr },
       { data: cns, error: cnErr },
-      { data: reps, error: repErr },
       { data: grn },
       { data: depApps, error: depAppErr },
       { data: supDeposits, error: supDepositsErr },
@@ -170,14 +155,6 @@ export function ApBillDetailView({ id }: { id: string }) {
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND")
         .order("credit_note_date"),
-      supabase
-        .from("replacements")
-        .select(
-          "id, replacement_date, source_ref, created_at, replacement_lines(item_id, qty_replaced, total_cost, items(name, uom))"
-        )
-        .eq("transaction_id", id)
-        .eq("type", "OUTBOUND")
-        .order("replacement_date"),
       fetchGoodsReceiptForBill(id).then((grn) => ({ data: grn })),
       supabase
         .from("deposit_applications")
@@ -201,7 +178,6 @@ export function ApBillDetailView({ id }: { id: string }) {
     setJournalEntries((entries ?? []) as unknown as JournalEntryDetail[]);
     setPayments((pays ?? []) as unknown as PaymentRow[]);
     setCreditNotes((cns ?? []) as unknown as CreditNoteDetail[]);
-    setReplacements((reps ?? []) as unknown as ReplacementDetail[]);
     setGoodsReceipt((grn ?? null) as unknown as GoodsReceiptForBill | null);
     setDepositApplications((depApps ?? []) as unknown as DepositApplicationDetail[]);
     setSupplierDeposits((supDeposits ?? []) as unknown as ApDeposit[]);
@@ -209,7 +185,6 @@ export function ApBillDetailView({ id }: { id: string }) {
       entriesErr?.message ??
         paysErr?.message ??
         cnErr?.message ??
-        repErr?.message ??
         depAppErr?.message ??
         supDepositsErr?.message ??
         null
@@ -255,7 +230,6 @@ export function ApBillDetailView({ id }: { id: string }) {
   const canWrite = roles.includes("admin") || roles.includes("accountant");
   const canPay = canWrite && !isCancelled && outstanding > 0.005;
   const canRetur = canWrite && !isCancelled;
-  const canReplace = canWrite && !isCancelled && goodsReceipt !== null;
   const canCancel = canWrite && !isCancelled;
   const availableDeposits = supplierDeposits.filter(
     (dep) => depositStatus(dep, reversedEntryIds).remaining > 0.005
@@ -270,12 +244,9 @@ export function ApBillDetailView({ id }: { id: string }) {
     { key: "pembayaran", label: "Pembayaran", badge: payments.length },
     { key: "dp", label: "Uang Muka Diterapkan", badge: depositApplications.length },
     { key: "retur", label: "Barang Kurang / Retur", badge: creditNotes.length },
-    // Tukar Barang wajib qty fisik + goods receipt (create_replacement nolak
-    // kalau gak ada) -- gak ada gunanya ditampilin buat bill financial-only, submit-nya bakal
-    // ketolak RPC. Lihat docs/domain/accounts-payable.md submodule "Retur Barang ke Supplier".
     // Opsi C (Tulis-jadi-Beban / purchase_writeoffs) DICABUT -- barang rusak yang supplier
     // tolak kompensasi sekarang lewat stock_opname generic, bukan RPC khusus AP.
-    ...(goodsReceipt ? [{ key: "tukar", label: "Tukar Barang", badge: replacements.length }] : []),
+    // Tukar Barang (Opsi B) juga dicabut 2026-11-02 -- lihat docs/domain/accounts-payable.md.
   ];
 
   const detailGroups = [
@@ -668,58 +639,6 @@ export function ApBillDetailView({ id }: { id: string }) {
           )}
         </div>
       )}
-
-      {activeTab === "tukar" && (
-        <div className="flex flex-col gap-3">
-          {canReplace && (
-            <div className="flex justify-end">
-              <Button variant="toolbar" onClick={() => router.push(`/ap-bills/${id}/tukar-barang`)}>
-                Tukar Barang
-              </Button>
-            </div>
-          )}
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
-                  <th className="px-4 py-2">Tanggal</th>
-                  <th className="px-4 py-2">Rujukan Dokumen</th>
-                  <th className="px-4 py-2">Item Ditukar</th>
-                  <th className="px-4 py-2 text-right">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {replacements.map((r) => (
-                  <tr key={r.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
-                    <td className="whitespace-nowrap px-4 py-2">{r.replacement_date}</td>
-                    <td className="px-4 py-2">{r.source_ref}</td>
-                    <td className="px-4 py-2">
-                      <ul className="space-y-0.5">
-                        {r.replacement_lines.map((l) => (
-                          <li key={l.item_id}>
-                            {l.items.name} — {l.qty_replaced} {l.items.uom}
-                          </li>
-                        ))}
-                      </ul>
-                    </td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {r.replacement_lines.reduce((sum, l) => sum + l.total_cost, 0).toLocaleString("id-ID")}
-                    </td>
-                  </tr>
-                ))}
-                {replacements.length === 0 && (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
-                      Belum ada tukar barang.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
 
       <CancelBillModal billId={bill.id} open={showCancelBill} onClose={() => setShowCancelBill(false)} onDone={refreshAfterCancel} />
       <CancelRefundModal refund={cancellingRefund} onClose={() => setCancellingRefund(null)} onDone={refreshAfterCancel} />
