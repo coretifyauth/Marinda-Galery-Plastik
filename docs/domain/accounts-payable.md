@@ -19,7 +19,7 @@ Struktur AP mirror persis AR (Customer jadi Supplier, invoice jadi bill, tapi pa
 - Bill/pembayaran gak boleh diedit/dihapus setelah dibuat — koreksi cuma lewat pembatalan (reversing entry) atau dokumen koreksi, lihat submodule "Koreksi Salah Input".
 - Pembayaran boleh kurang dari sisa tagihan (cicil), gak boleh lebih (overpay ditolak keras).
 - Jatuh tempo dihitung sekali pas bill dibuat dari termin supplier saat itu, gak retroaktif ikut berubah kalau termin supplier berubah belakangan.
-- Bill cuma bisa dibatalkan kalau gak ada pembayaran aktif maupun retur. Pembayaran yang salah dibatalkan dulu, atau sekaligus lewat Batalkan Tagihan; retur masih menghalangi karena retur sendiri belum bisa dibatalkan.
+- Bill cuma bisa dibatalkan kalau gak ada pembayaran aktif maupun retur. Pembayaran yang salah dibatalkan dulu, atau sekaligus lewat Batalkan Tagihan; retur aktif masih menghalangi, jadi **Batalkan Retur** dulu.
 
 **Skenario**
 - Bill lunas tepat waktu — 1 pembayaran nutup 1 bill penuh sekaligus.
@@ -85,13 +85,17 @@ Salah input itu kejadian biasa, dan pembukuan gak boleh diedit. Jadi tiap jenis 
 **Cara Kerja**
 - **Batalkan Pembayaran** — jurnal pembayaran dibalik (Debit Kas/Bank, Kredit Utang Usaha, termasuk selisih pembulatannya) dan nilainya kembali jadi sisa tagihan. Ini artinya "catatannya salah", bukan "uangnya kembali". Kalau uangnya benar-benar berpindah, pembayaran yang benar wajib dicatat ulang supaya saldo kas/bank cocok dengan rekening koran. Pengguna wajib menjawab apakah uangnya berpindah, dan jawabannya tersimpan.
 - **Batalkan Tagihan** — satu tombol yang membatalkan kebalikan dari urutan pencatatan: barang masuk, pembayaran, penerapan uang muka, koreksi tagihan, lalu tagihannya. Semua berhasil atau semua batal, jadi gak ada keadaan setengah batal. Sebelum jalan, sistem menampilkan apa saja yang akan ikut dibatalkan, atau apa yang menghalangi dan jalan keluarnya.
+- **Batalkan Retur** (retur ke supplier Opsi A) — jurnal retur dibalik (Debit Persediaan, Kredit Utang Usaha), stok kembali bertambah pada nilai yang sama persis dengan yang keluar saat retur, dan kalau retur itu menghasilkan saldo Piutang Retur Supplier, jurnal saldo ikut dibalik. Dokumen retur tetap ada, ditandai dibatalkan beserta alasan dan tanggalnya. Setelah itu tagihan dan barang masuknya bisa dibatalkan lewat jalur biasa.
 - **Koreksi Tagihan** (hanya Tagihan Barang) — nilai nota salah, atau supplier mengeluarkan nota kredit/debit. Tagihan turun: Debit Utang Usaha, Kredit Pembelian Belum Diterima. Tagihan naik: Debit Pembelian Belum Diterima, Kredit Utang Usaha. Utang dan barang yang belum diterima selalu berubah bersama.
 - **Koreksi Barang Masuk** — lihat `docs/domain/inventory.md` submodule "Koreksi Barang Masuk".
 
 **Aturan Bisnis**
 - Pembayaran gak bisa dibatalkan kalau kelebihan retur di tagihan itu sudah jadi saldo di supplier, atau uangnya sudah dilepas jadi uang muka dari sisa barang: kedua angka itu dihitung dengan asumsi tagihan sudah dibayar.
 - Penurunan tagihan gak boleh melebihi barang yang belum diterima maupun sisa utang. Bagian yang sudah dibayar keluar lewat Tutup Sisa Barang (jadi uang muka).
-- Batalkan Tagihan ditolak kalau sudah ada retur, tukar barang, atau penutupan sisa barang, karena ketiganya belum bisa dibatalkan. Nilai yang salah dikoreksi lewat Koreksi Tagihan.
+- Batalkan Tagihan ditolak kalau masih ada retur aktif (batalkan returnya dulu), atau sudah ada tukar barang atau penutupan sisa barang, karena keduanya belum bisa dibatalkan. Nilai yang salah dikoreksi lewat Koreksi Tagihan.
+- Retur hanya bisa dibatalkan kalau saldo Piutang Retur Supplier-nya belum dicairkan tunai sama sekali (uangnya sudah kembali ke kas, jadi gak bisa dibalik begitu saja), dan hanya yang **terbaru dulu** di tagihan itu: saldo retur yang lebih baru dihitung dengan memperhitungkan retur sebelumnya.
+- Retur yang dibatalkan gak dihitung lagi: qty-nya bebas diklaim ulang lewat retur atau tukar barang, dan sisa tagihan menghitungnya seolah gak pernah ada. Pembayaran yang tadinya diblokir saldo retur jadi bisa dibatalkan.
+- Retur yang sudah dibatalkan gak bisa dibatalkan lagi, dan tukar barang (Opsi B) belum punya jalur pembatalan.
 - Barang masuk lama (dibuat bareng tagihannya) hanya bisa dibatalkan lewat tagihannya selama stoknya masih utuh; belum ada jalur koreksinya.
 - Semua jurnal pembalik bertanggal hari pembatalan, jadi laporan periode yang sudah ditutup gak berubah.
 
@@ -103,7 +107,7 @@ Salah input itu kejadian biasa, dan pembukuan gak boleh diedit. Jadi tiap jenis 
 
 **Common Mistakes**
 - Mengira Batalkan Pembayaran mengembalikan uang: kalau transfernya benar terjadi dan gak dicatat ulang, saldo bank di sistem jadi lebih besar dari rekening koran.
-- Memakai retur untuk salah ketik: utang turun atau muncul saldo di supplier yang fiktif, dan tagihannya gak bisa dibatalkan lagi.
+- Memakai retur untuk salah ketik: utang turun atau muncul saldo di supplier yang fiktif. Kalau sudah terlanjur, Batalkan Retur membersihkannya (selama saldonya belum dicairkan), tapi lain kali pakai Batalkan Tagihan atau Koreksi.
 - Memakai stock opname untuk salah ketik: kesalahan input jadi beban kerugian, dan barang yang belum diterima tetap salah.
 
 ### Diskon Pembelian (Trade Discount)
@@ -157,6 +161,7 @@ Form retur memvalidasi kategori akun: akun Persediaan gak bisa "diretur" lewat j
 - Retur (Opsi A), bill udah lunas — jurnal sama tetap jalan (outstanding jadi minus), otomatis direklasifikasi jadi saldo Piutang Retur Supplier.
 - Retur (Opsi B) — tukar barang, berdiri sendiri, Utang Usaha gak kesentuh, independen dari status bayar.
 - Saldo Piutang Retur Supplier dicairkan tunai.
+- Retur dicatat padahal salah input (bukan barang yang benar-benar dikembalikan) — Batalkan Retur, lalu Batalkan Tagihan kalau tagihannya juga salah. Kalau saldo retur sudah dicairkan tunai, retur gak bisa dibatalkan.
 - 1 bill dipecah campuran — sebagian qty diretur (Opsi A, dapat potongan utang), sebagian qty lain dari bill yang sama ditukar (Opsi B) — dua kejadian independen, sama-sama dibatasi qty fisik yang diterima.
 
 **Common Mistakes**

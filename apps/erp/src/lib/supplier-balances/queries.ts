@@ -34,7 +34,7 @@ type DepositRow = {
 type ReturnCreditRow = {
   id: string;
   amount: number;
-  returns: { source_ref: string; credit_note_date: string; transaction_id: string } | null;
+  returns: { source_ref: string; credit_note_date: string; transaction_id: string; return_cancellations: { return_id: string }[] } | null;
   return_credit_refunds: { amount: number }[];
 };
 
@@ -53,7 +53,7 @@ export async function fetchSupplierBalances(supplierId: string): Promise<Supplie
       .order("deposit_date", { ascending: false }),
     supabase
       .from("return_credits")
-      .select("id, amount, returns(source_ref, credit_note_date, transaction_id), return_credit_refunds(amount)")
+      .select("id, amount, returns(source_ref, credit_note_date, transaction_id, return_cancellations(return_id)), return_credit_refunds(amount)")
       .eq("counterparty_id", supplierId)
       .eq("type", "OUTBOUND"),
   ]);
@@ -75,7 +75,7 @@ export async function fetchSupplierBalances(supplierId: string): Promise<Supplie
   const creditRows: SupplierBalanceRow[] = [];
   for (const rc of (rcRes.data ?? []) as unknown as ReturnCreditRow[]) {
     const remaining = rc.amount - rc.return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
-    if (remaining <= EPSILON || !rc.returns) continue;
+    if (remaining <= EPSILON || !rc.returns || rc.returns.return_cancellations.length > 0) continue;
     creditRows.push({
       kind: "kelebihan_retur",
       id: rc.id,

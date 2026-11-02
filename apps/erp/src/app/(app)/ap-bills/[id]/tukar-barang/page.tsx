@@ -31,6 +31,7 @@ type ReplaceLineInput = {
 
 type CreditNoteDetail = {
   id: string;
+  return_cancellations: { return_id: string }[];
   return_lines: { item_id: string; qty_returned: number }[];
 };
 
@@ -73,7 +74,7 @@ export default function ApBillTukarBarangPage() {
         fetchDefaultAccounts(),
         supabase
           .from("returns")
-          .select("id, return_lines(item_id, qty_returned)")
+          .select("id, return_cancellations(return_id), return_lines(item_id, qty_returned)")
           .eq("transaction_id", id)
           .eq("type", "OUTBOUND"),
         supabase
@@ -94,6 +95,7 @@ export default function ApBillTukarBarangPage() {
     // per item yang bisa diklaim, mau lewat jalur mana pun.
     const claimed = new Map<string, number>();
     for (const cn of (cns ?? []) as unknown as CreditNoteDetail[]) {
+      if (cn.return_cancellations.length > 0) continue; // retur dibatalkan: qty-nya bebas diklaim lagi
       for (const l of cn.return_lines) {
         claimed.set(l.item_id, (claimed.get(l.item_id) ?? 0) + l.qty_returned);
       }

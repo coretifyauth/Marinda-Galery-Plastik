@@ -32,6 +32,7 @@ type ReturnLineInput = {
 
 type CreditNoteDetail = {
   id: string;
+  return_cancellations: { return_id: string }[];
   return_lines: { item_id: string; qty_returned: number }[];
 };
 
@@ -65,7 +66,7 @@ export default function ApBillReturPage() {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, return_cancellations(return_id), ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -99,7 +100,7 @@ export default function ApBillReturPage() {
         .not("reverses_entry_id", "is", null),
       supabase
         .from("returns")
-        .select("id, return_lines(item_id, qty_returned)")
+        .select("id, return_cancellations(return_id), return_lines(item_id, qty_returned)")
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND"),
       supabase
@@ -143,6 +144,7 @@ export default function ApBillReturPage() {
     setReturCreditAccountId(debitAccountOptions[0]?.id ?? "");
     const claimed = new Map<string, number>();
     for (const cn of (cns ?? []) as unknown as CreditNoteDetail[]) {
+      if (cn.return_cancellations.length > 0) continue; // retur dibatalkan: qty-nya bebas diklaim lagi
       for (const l of cn.return_lines) {
         claimed.set(l.item_id, (claimed.get(l.item_id) ?? 0) + l.qty_returned);
       }

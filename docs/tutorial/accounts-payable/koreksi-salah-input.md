@@ -9,6 +9,7 @@ Saat ada yang salah dicatat, walau tagihannya sudah dibayar atau barangnya sudah
 | Pembayaran salah nominal, tagihan, tanggal, atau metode | **Batalkan Pembayaran**, lalu catat ulang |
 | Barang masuk salah item, qty, atau harga | **Koreksi Barang Masuk** |
 | Nilai nota salah di Tagihan Barang, atau ada nota kredit/debit supplier | **Koreksi Tagihan** |
+| Retur dicatat padahal salah input (barangnya tidak benar-benar dikembalikan) | **Batalkan Retur** |
 | Tagihan salah total (mis. salah supplier) | **Batalkan Tagihan** ([batalkan-bill-ap.md](batalkan-bill-ap.md)) |
 
 ## Prasyarat
@@ -37,16 +38,27 @@ Saat ada yang salah dicatat, walau tagihannya sudah dibayar atau barangnya sudah
 2. Pilih **Tagihan turun** atau **Tagihan naik**, isi **Nominal**, **Tanggal**, **Alasan**, dan nomor nota kredit/debit kalau ada.
 3. Klik **Simpan Koreksi**.
 
+### D. Batalkan Retur
+
+1. Buka detail tagihan, tab **Barang Kurang / Retur**. Tombol **Batalkan Retur** muncul di retur yang **terbaru** (kalau ada beberapa retur, batalkan dari yang terbaru).
+2. Baca apa yang akan berubah, isi **Alasan**, lalu klik **Batalkan Retur**.
+3. Kalau tagihannya juga salah, lanjut **Batalkan Tagihan**: barang masuk dan pembayaran ikut dibatalkan lewat tombol itu.
+
+Ditolak kalau saldo di supplier dari retur itu sudah dicairkan tunai (uangnya sudah kembali ke kas).
+
 ## Hasil Akhir
 
 - **Batalkan Pembayaran**: jurnal dibalik, nilainya kembali jadi sisa tagihan. Baris lama tetap tampil dengan tanda dibatalkan beserta alasannya.
 - **Koreksi Barang Masuk**: dokumen lama dibatalkan dan dokumen baru dibuat, saling tertaut di halaman detailnya. Stok dan harga rata-rata menyesuaikan. Selisih harga atas barang yang sudah terjual masuk HPP periode berjalan.
+- **Batalkan Retur**: jurnal retur dibalik, stok kembali bertambah, dan saldo di supplier dari retur itu ikut dibalik. Baris retur tetap tampil dengan tanda dibatalkan beserta alasannya. Pembayaran yang tadinya diblokir saldo retur jadi bisa dibatalkan.
 - **Koreksi Tagihan**: utang dan **Belum diterima** berubah bersama, tercatat di **Riwayat Koreksi Tagihan**.
 
 ## Kesalahan Umum
 
 - **Mengira Batalkan Pembayaran mengembalikan uang** — itu hanya membalik catatan. Kalau transfernya benar terjadi, wajib dicatat ulang supaya saldo bank cocok dengan rekening koran.
-- **Pesan "kelebihan retur sudah jadi saldo"** — pembayaran itu tidak bisa dibatalkan karena saldo di supplier dihitung dari situ.
+- **Pesan "kelebihan retur sudah jadi saldo"** — pembayaran itu tidak bisa dibatalkan karena saldo di supplier dihitung dari situ. Batalkan retur yang menghasilkan saldo itu dulu (kalau salah input), atau minta kembali tunai saldonya.
+- **Batalkan Retur ditolak karena saldo sudah dicairkan tunai** — uangnya sudah masuk kas, jadi retur tidak bisa dibalik begitu saja. Catat ulang pengembaliannya secara manual atau konsultasikan ke admin.
+- **Batalkan Retur ditolak karena ada retur lebih baru** — batalkan retur yang terbaru dulu.
 - **Pesan "uangnya sudah dilepas jadi uang muka"** — uang itu sudah keluar lewat Tutup Sisa Barang, jadi pembayarannya tidak bisa dibatalkan.
 - **Penurunan tagihan ditolak karena melebihi sisa utang** — tagihannya sudah dibayar. Bagian yang sudah dibayar keluar lewat **Tutup Sisa Barang** jadi uang muka, atau batalkan pembayarannya dulu kalau catatannya yang salah.
 - **Penurunan tagihan ditolak karena melebihi barang yang belum diterima** — kurangi dulu barang masuknya lewat Koreksi Barang Masuk.

@@ -7,7 +7,7 @@ Saat tagihan yang dicatat ternyata salah total (mis. salah supplier, salah nota)
 ## Prasyarat
 
 - Login dengan role **admin** atau **accountant**.
-- Tagihan belum punya **retur**, **tukar barang**, atau **penutupan sisa barang** (ketiganya belum bisa dibatalkan). Pembayaran, barang masuk, dan uang muka yang diterapkan ikut dibatalkan otomatis.
+- Tagihan tidak punya **retur aktif** (kalau ada, **Batalkan Retur** dulu, lihat [koreksi-salah-input.md](koreksi-salah-input.md) bagian D), dan belum punya **tukar barang** atau **penutupan sisa barang** (keduanya belum bisa dibatalkan). Pembayaran, barang masuk, dan uang muka yang diterapkan ikut dibatalkan otomatis.
 - Stok barang dari tagihan ini masih utuh. Kalau sebagian sudah terjual, pakai [koreksi-salah-input.md](koreksi-salah-input.md).
 - Tagihan **lama** yang dibuat bareng barang masuknya mengikuti syarat yang sama; stoknya dikurangi lagi saat dibatalkan.
 

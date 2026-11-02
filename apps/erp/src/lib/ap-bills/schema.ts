@@ -28,7 +28,8 @@ export type ApBill = {
   created_at: string;
   counterparties: { name: string };
   ap_payments: ({ amount: number } & WithCancellation)[];
-  ap_returns?: { amount: number; ap_return_credits?: { amount: number }[] }[];
+  /** `return_cancellations` terisi = retur sudah dibatalkan (migration 0061) dan tidak dihitung. */
+  ap_returns?: { amount: number; return_cancellations?: { return_id: string }[]; ap_return_credits?: { amount: number }[] }[];
   ap_deposit_applications?: { amount: number }[];
   /** Koreksi Tagihan (migration 0060): + naik, - turun. */
   ap_bill_adjustments?: { amount: number }[];
@@ -99,9 +100,10 @@ export function billStatus(
 } {
   const allocated = bill.ap_payments.filter(isActivePayment).reduce((sum, a) => sum + a.amount, 0);
   const adjusted = (bill.ap_bill_adjustments ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const returned = (bill.ap_returns ?? []).reduce((sum, c) => sum + c.amount, 0);
+  const activeReturns = (bill.ap_returns ?? []).filter((c) => (c.return_cancellations ?? []).length === 0);
+  const returned = activeReturns.reduce((sum, c) => sum + c.amount, 0);
   const depositApplied = (bill.ap_deposit_applications ?? []).reduce((sum, a) => sum + a.amount, 0);
-  const returnCreditExcess = (bill.ap_returns ?? []).reduce(
+  const returnCreditExcess = activeReturns.reduce(
     (sum, c) => sum + (c.ap_return_credits ?? []).reduce((s, r) => s + r.amount, 0),
     0
   );

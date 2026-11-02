@@ -19,6 +19,7 @@ import { usePool } from "@/lib/ap-bills/pool";
 import { GoodsPoolSection } from "@/components/ap-bills/goods-pool-section";
 import { CancelBillModal } from "@/components/ap-bills/cancel-bill-modal";
 import { CancelPaymentModal } from "@/components/payments/cancel-payment-modal";
+import { CancelReturnModal } from "@/components/ap-bills/cancel-return-modal";
 import { PaymentsTable } from "@/components/payments/payments-table";
 
 type JournalEntryDetail = {
@@ -36,6 +37,8 @@ type CreditNoteDetail = {
   source_ref: string;
   amount: number;
   created_at: string;
+  /** Terisi = retur sudah dibatalkan (migration 0061). */
+  return_cancellations: { reason: string; cancelled_at: string }[];
   return_lines: {
     item_id: string;
     qty_returned: number;
@@ -96,6 +99,7 @@ export function ApBillDetailView({ id }: { id: string }) {
   const [showCancelBill, setShowCancelBill] = useState(false);
   const [cancelReason, setCancelReason] = useState<string | null>(null);
   const [cancellingPayment, setCancellingPayment] = useState<PaymentRow | null>(null);
+  const [cancellingReturn, setCancellingReturn] = useState<CreditNoteDetail | null>(null);
   // Kolam barang (null kalau bukan tagihan barang) -- lihat docs/domain/accounts-payable.md "Tagihan Dulu, Barang Menyusul".
   const poolQuery = usePool(id);
 
@@ -103,7 +107,7 @@ export function ApBillDetailView({ id }: { id: string }) {
     const { data: b, error: billErr } = await supabase
       .from("transactions")
       .select(
-        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
+        "id, supplier_id:counterparty_id, bill_date:date, due_date, description, source_ref, supplier_document_ref, amount, journal_entry_id, created_at, counterparties(name), ap_payments:payments(amount, payment_cancellations(payment_id)), ap_returns:returns(amount, return_cancellations(return_id), ap_return_credits:return_credits(amount)), ap_deposit_applications:deposit_applications(amount), ap_bill_adjustments(amount)"
       )
       .eq("id", id)
       .eq("type", "INBOUND")
@@ -145,7 +149,7 @@ export function ApBillDetailView({ id }: { id: string }) {
       supabase
         .from("returns")
         .select(
-          "id, credit_note_date, source_ref, amount, created_at, return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits:return_credits(id, amount, ap_return_credit_refunds:return_credit_refunds(amount))"
+          "id, credit_note_date, source_ref, amount, created_at, return_cancellations(reason, cancelled_at), return_lines(item_id, qty_returned, total_cost, items(name, uom)), ap_return_credits:return_credits(id, amount, ap_return_credit_refunds:return_credit_refunds(amount))"
         )
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND")
@@ -484,10 +488,39 @@ export function ApBillDetailView({ id }: { id: string }) {
               <tbody>
                 {creditNotes.map((cn) => {
                   const isFull = cn.return_lines.length > 0;
+                  const cancellation = cn.return_cancellations[0];
+                  // Server menolak membatalkan retur kalau masih ada retur aktif yang lebih baru -- tombol hanya di yang terbaru.
+                  const newestActiveId = [...creditNotes]
+                    .filter((c) => c.return_cancellations.length === 0)
+                    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0]?.id;
                   return (
-                    <tr key={cn.id} className="border-b border-slate-100 align-top hover:bg-slate-50">
+                    <tr
+                      key={cn.id}
+                      className={`border-b border-slate-100 align-top hover:bg-slate-50 ${cancellation ? "text-slate-400" : ""}`}
+                    >
                       <td className="whitespace-nowrap px-4 py-2">{cn.credit_note_date}</td>
-                      <td className="px-4 py-2">{cn.source_ref}</td>
+                      <td className="px-4 py-2">
+                        {cn.source_ref}
+                        {cancellation && (
+                          <div className="mt-1 flex flex-col gap-0.5 text-xs">
+                            <span className="w-fit rounded-full bg-red-50 px-2 py-0.5 text-red-600">Dibatalkan</span>
+                            <span>
+                              {cancellation.cancelled_at.slice(0, 10)} — {cancellation.reason}
+                            </span>
+                          </div>
+                        )}
+                        {!cancellation && canWrite && !isCancelled && cn.id === newestActiveId && (
+                          <div className="mt-1">
+                            <button
+                              type="button"
+                              className="text-xs text-red-600 hover:underline"
+                              onClick={() => setCancellingReturn(cn)}
+                            >
+                              Batalkan Retur
+                            </button>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-4 py-2">
                         <span
                           className={`rounded-full px-2 py-0.5 text-xs ${
@@ -526,7 +559,7 @@ export function ApBillDetailView({ id }: { id: string }) {
             </table>
           </div>
 
-          {creditNotes.some((cn) => cn.ap_return_credits.length > 0) && (
+          {creditNotes.some((cn) => cn.return_cancellations.length === 0 && cn.ap_return_credits.length > 0) && (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-100 px-4 py-2">
                 <span className="text-sm font-medium text-black">Saldo di Supplier (dari kelebihan retur)</span>
@@ -546,7 +579,9 @@ export function ApBillDetailView({ id }: { id: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {creditNotes.flatMap((cn) =>
+                  {creditNotes
+                    .filter((cn) => cn.return_cancellations.length === 0)
+                    .flatMap((cn) =>
                     cn.ap_return_credits.map((rc) => {
                       const used = rc.ap_return_credit_refunds.reduce((sum, r) => sum + r.amount, 0);
                       const remaining = rc.amount - used;
@@ -632,6 +667,19 @@ export function ApBillDetailView({ id }: { id: string }) {
 
 
       <CancelBillModal billId={bill.id} open={showCancelBill} onClose={() => setShowCancelBill(false)} onDone={refreshAfterCancel} />
+      <CancelReturnModal
+        ret={
+          cancellingReturn && {
+            id: cancellingReturn.id,
+            source_ref: cancellingReturn.source_ref,
+            amount: cancellingReturn.amount,
+            hasStock: cancellingReturn.return_lines.length > 0,
+            hasCredit: cancellingReturn.ap_return_credits.length > 0,
+          }
+        }
+        onClose={() => setCancellingReturn(null)}
+        onDone={refreshAfterCancel}
+      />
       <CancelPaymentModal
         payment={cancellingPayment}
         moneyMovedLabel="uangnya sudah keluar ke supplier"

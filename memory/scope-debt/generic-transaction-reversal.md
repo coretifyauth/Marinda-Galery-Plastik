@@ -35,7 +35,7 @@ Reversal GRN diimplementasikan lewat perluasan `cancel_ap_bill` (migration `0052
 
 ## Update (2026-10-31) — pembayaran standalone selesai
 
-`cancel_payment` dan `cancel_ap_bill_cascade` (migration `0060`) menutup sisa scope pembayaran. Yang belum ada: pembatalan untuk retur, tukar barang, dan penutupan sisa barang. Fungsi `reverse_transaction` generik tetap gak dibangun: `cancel_ap_bill_cascade` hanya sisi AP.
+`cancel_payment` dan `cancel_ap_bill_cascade` (migration `0060`) menutup sisa scope pembayaran. Yang belum ada: pembatalan untuk tukar barang dan penutupan sisa barang. Pembatalan retur ke supplier (Opsi A) selesai di migration `0061` (2026-11-02), lewat tabel pendamping `return_cancellations` dan `cancel_ap_return`; retur customer (AR) belum. Fungsi `reverse_transaction` generik tetap gak dibangun: `cancel_ap_bill_cascade` hanya sisi AP.
 
 ## Referensi
 

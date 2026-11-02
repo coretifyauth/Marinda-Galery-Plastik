@@ -6,6 +6,8 @@ Saat barang yang diterima dari supplier bermasalah (rusak/salah kirim/kualitas t
 
 Kalau supplier **menolak kompensasi sama sekali** (tidak mau mengurangi tagihan, tidak mau kirim pengganti), barang rusak itu dicatat lewat **Stock Opname** (penyesuaian stok fisik), bukan lewat halaman ini — lihat panduan Stock Opname.
 
+> Retur dicatat padahal salah input (barangnya tidak benar-benar dikembalikan)? Jangan dibiarkan: batalkan lewat **Batalkan Retur**, lihat [koreksi-salah-input.md](koreksi-salah-input.md) bagian D.
+
 ## Prasyarat
 
 - Login dengan role **admin** atau **accountant**.
