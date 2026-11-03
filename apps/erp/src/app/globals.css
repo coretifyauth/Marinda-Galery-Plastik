@@ -32,3 +32,59 @@ body {
   max-width: 100%;
   height: auto;
 }
+
+/* ---------------------------------------------------------------------------------------------
+   Dark mode (kelas `dark` di <html>, diatur lib/theme.ts + skrip di app/layout.tsx).
+   Tailwind v4 membaca warna dari variabel CSS, jadi cukup membalik skala slate (50 <-> 900) dan menggelapkan
+   latar tint (50/100/200) per warna di bawah `.dark`, tanpa menyentuh class di tiap komponen. `white`/`black`
+   tidak dibalik lewat variabel karena text-white di atas tombol berwarna harus tetap putih -- ditangani per class.
+   --------------------------------------------------------------------------------------------- */
+.dark {
+  color-scheme: dark;
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+
+  --color-slate-50: #0f172a;
+  --color-slate-100: #1e293b;
+  --color-slate-200: #334155;
+  --color-slate-300: #475569;
+  --color-slate-400: #64748b;
+  --color-slate-500: #94a3b8;
+  --color-slate-600: #cbd5e1;
+  --color-slate-700: #e2e8f0;
+  --color-slate-800: #f1f5f9;
+  --color-slate-900: #f8fafc;
+
+  --color-blue-50: #172554;
+  --color-blue-100: #1e3a8a;
+  --color-blue-200: #1e40af;
+  --color-emerald-50: #022c22;
+  --color-emerald-200: #065f46;
+  --color-green-50: #052e16;
+  --color-red-50: #450a0a;
+  --color-red-100: #7f1d1d;
+  --color-red-200: #991b1b;
+  --color-amber-50: #422006;
+  --color-amber-100: #713f12;
+  --color-amber-200: #854d0e;
+  --color-purple-50: #3b0764;
+}
+
+.dark .bg-white { background-color: #111b2e; }
+.dark .text-black { color: #f1f5f9; }
+
+/* teks berwarna: dipilih per class supaya background tombol (bg-blue-600, bg-emerald-600, ...) tidak ikut berubah */
+.dark .text-blue-600 { color: #60a5fa; }
+.dark .text-blue-700 { color: #93c5fd; }
+.dark .text-blue-800, .dark .text-blue-900 { color: #bfdbfe; }
+.dark .text-emerald-600 { color: #34d399; }
+.dark .text-emerald-700 { color: #6ee7b7; }
+.dark .text-emerald-800 { color: #a7f3d0; }
+.dark .text-green-700 { color: #86efac; }
+.dark .text-red-600 { color: #f87171; }
+.dark .text-red-700 { color: #fca5a5; }
+.dark .text-red-800 { color: #fecaca; }
+.dark .text-amber-600 { color: #fbbf24; }
+.dark .text-amber-700 { color: #fcd34d; }
+.dark .text-amber-800 { color: #fde68a; }
+.dark .text-purple-700 { color: #d8b4fe; }

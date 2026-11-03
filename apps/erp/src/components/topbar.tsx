@@ -29,6 +29,7 @@ const routeLabels: Record<string, string> = {
   "/goods-issues": "Barang Keluar",
   "/stock-opnames": "Stock Opname",
   "/settings/charges": "Pengaturan",
+  "/settings/appearance": "Tampilan",
 };
 
 function getBreadcrumb(pathname: string): string[] {

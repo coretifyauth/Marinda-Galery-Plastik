@@ -40,6 +40,7 @@ import {
   Percent,
   Gift,
   Settings,
+  Palette,
   UserCog,
   X,
 } from "lucide-react";
@@ -248,13 +249,24 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         <Link
           href="/settings/charges"
           className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm ${
-            pathname.startsWith("/settings") && !pathname.startsWith("/settings/users")
+            pathname.startsWith("/settings") && !pathname.startsWith("/settings/users") && !pathname.startsWith("/settings/appearance")
               ? "bg-slate-100 font-medium text-blue-700"
               : "text-slate-600 hover:bg-slate-50"
           }`}
         >
           <Settings className="h-4 w-4" />
           Pengaturan
+        </Link>
+        <Link
+          href="/settings/appearance"
+          className={`flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm ${
+            pathname.startsWith("/settings/appearance")
+              ? "bg-slate-100 font-medium text-blue-700"
+              : "text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <Palette className="h-4 w-4" />
+          Tampilan
         </Link>
       </div>
       </aside>
