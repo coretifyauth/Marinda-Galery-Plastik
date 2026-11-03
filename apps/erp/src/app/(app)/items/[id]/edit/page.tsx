@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase/client";
 import { itemTypes, updateItemSchema, type Item } from "@/lib/items/schema";
 import type { ItemCategory } from "@/lib/item-categories/schema";
@@ -25,6 +26,7 @@ const itemTypeLabel: Record<string, string> = {
 export default function EditItemPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [checkingSession, setCheckingSession] = useState(true);
   const [item, setItem] = useState<Item | null>(null);
   const [categories, setCategories] = useState<ItemCategory[]>([]);
@@ -115,6 +117,7 @@ export default function EditItemPage() {
       setEditError(error.message);
       return;
     }
+    await queryClient.invalidateQueries({ queryKey: ["item_units_all"] });
     router.push(`/items/${item.id}`);
   }
 
@@ -210,7 +213,7 @@ export default function EditItemPage() {
               {editUom !== item.uom && (
                 <p className="text-xs text-amber-600">
                   ⚠ Satuan dasar dipakai buat semua pelacakan stok (PO/GRN/BOM/Production/Barang Keluar) —
-                  ganti ini gak mengonversi ulang riwayat transaksi, cuma label tampilan ke depannya.
+                  ganti ini gak mengonversi ulang riwayat transaksi, cuma label tampilan. Nama di daftar satuan jual (baris satuan dasar) ikut berubah otomatis.
                 </p>
               )}
             </div>

@@ -12,6 +12,7 @@ import { DetailRows } from "@/components/ui/detail-rows";
 import { Tabs, type TabDef } from "@/components/ui/tabs";
 import { LoadingScreen } from "@/components/ui/loading-screen";
 import { QtyCell } from "@/components/goods-issues/issue-lines-table";
+import { grossMargin as calcGrossMargin, splitInvoiceLines } from "@/lib/goods-issues/margin";
 
 type GoodsIssueDetail = {
   id: string;
@@ -186,18 +187,11 @@ export function GoodsIssueDetailView({ id }: { id: string }) {
 
   // Pecahan invoice dari transaction_lines. "Biaya tambahan" = baris non-pajak yang akunnya ada di katalog
   // charge_categories (module ar/pos) -- heuristik yang sama dengan cetak invoice. Sisanya = penjualan barang (net diskon).
-  const goodsRevenue = invoiceLines
-    .filter((l) => !l.is_tax && !chargeAccountIds.has(l.account_id))
-    .reduce((s, l) => s + l.amount, 0);
-  const extraCharges = invoiceLines
-    .filter((l) => !l.is_tax && chargeAccountIds.has(l.account_id))
-    .reduce((s, l) => s + l.amount, 0);
-  const ppn = invoiceLines.filter((l) => l.is_tax).reduce((s, l) => s + l.amount, 0);
+  const { goodsRevenue, extraCharges, ppn } = splitInvoiceLines(invoiceLines, chargeAccountIds);
   const discount = issue.ar_invoices.discount_amount;
   const grossSales = goodsRevenue + discount;
 
-  const grossProfit = goodsRevenue - totalHpp;
-  const grossMargin = goodsRevenue > 0 ? (grossProfit / goodsRevenue) * 100 : null;
+  const { profit: grossProfit, marginPct: grossMargin } = calcGrossMargin(goodsRevenue, totalHpp);
 
   const returnAmount = returnRows.reduce((s, r) => s + r.amount, 0);
   const returnHpp = returnRows

@@ -16,7 +16,7 @@ export type GoodsIssueFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, transaction_id, journal_entry_id, order_id, order:orders(source_ref), note_date, source_ref, created_at, created_by, ar_invoices:transactions!inner(source_ref, amount, status, counterparties(name)), goods_note_lines(id, item_id, qty, total_cost, order_line_id, items(name, uom, item_units(unit_label, conversion_factor)))";
+  "id, transaction_id, journal_entry_id, order_id, order:orders(source_ref), note_date, source_ref, created_at, created_by, ar_invoices:transactions!inner(source_ref, amount, status, counterparties(name), transaction_lines(account_id, amount, is_tax)), goods_note_lines(id, item_id, qty, total_cost, order_line_id, items(name, uom, item_units(unit_label, conversion_factor)))";
 
 export async function fetchGoodsIssues(
   filters: GoodsIssueFilters
@@ -52,5 +52,18 @@ export function useGoodsIssues(filters: GoodsIssueFilters) {
     queryFn: () => fetchGoodsIssues(filters),
     placeholderData: keepPreviousData,
     staleTime: 15_000,
+  });
+}
+
+/** Akun kategori biaya tambahan (AR dan POS) — pembeda biaya tambahan dari penjualan barang di baris invoice. */
+export function useChargeAccountIds() {
+  return useQuery({
+    queryKey: ["charge_account_ids_ar_pos"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("charge_categories").select("account_id").in("module", ["ar", "pos"]);
+      if (error) throw new Error(error.message);
+      return new Set(((data ?? []) as { account_id: string }[]).map((c) => c.account_id));
+    },
+    staleTime: 60_000,
   });
 }

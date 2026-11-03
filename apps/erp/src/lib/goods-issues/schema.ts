@@ -37,7 +37,13 @@ export type GoodsIssue = {
   source_ref: string;
   created_at: string;
   created_by: string | null;
-  ar_invoices: { source_ref: string; amount: number; status: string; counterparties: { name: string } };
+  ar_invoices: {
+    source_ref: string;
+    amount: number;
+    status: string;
+    counterparties: { name: string };
+    transaction_lines: { account_id: string; amount: number; is_tax: boolean }[];
+  };
   goods_note_lines: {
     id: string;
     item_id: string;

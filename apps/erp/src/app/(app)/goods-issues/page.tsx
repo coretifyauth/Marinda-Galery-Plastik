@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsIssues } from "@/lib/goods-issues/queries";
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useChargeAccountIds, useGoodsIssues } from "@/lib/goods-issues/queries";
+import { grossMargin, splitInvoiceLines } from "@/lib/goods-issues/margin";
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { IssueLinesTable } from "@/components/goods-issues/issue-lines-table";
@@ -56,6 +57,7 @@ export default function GoodsIssuesPage() {
   const issues = issuesQuery.data?.rows ?? [];
   const userEmails = useUserEmails(issues.map((gi) => gi.created_by)).data ?? {};
   const total = issuesQuery.data?.total ?? 0;
+  const chargeAccountIds = useChargeAccountIds().data;
 
   useEffect(() => {
     let active = true;
@@ -133,6 +135,7 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-2">Barang Keluar</th>
               <th className="px-4 py-2 text-right">Nilai Invoice</th>
               <th className="px-4 py-2 text-right">Total HPP</th>
+              <th className="px-4 py-2 text-right">Laba Kotor (Margin)</th>
               <th className="px-4 py-2">Status</th>
               <th className="px-4 py-2">Invoice</th>
               <th className="px-4 py-2">Dibuat Oleh</th>
@@ -185,6 +188,7 @@ export default function GoodsIssuesPage() {
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5">
                 <select
                   aria-label="Filter status"
@@ -205,6 +209,14 @@ export default function GoodsIssuesPage() {
             {issues.map((gi) => {
               const totalHpp = gi.goods_note_lines.reduce((sum, l) => sum + l.total_cost, 0);
               const cancelled = gi.ar_invoices.status === "dibatalkan";
+              // Margin dari penjualan barang (net diskon, tanpa PPN & biaya tambahan) dikurangi HPP; belum dikurangi retur.
+              const margin =
+                !cancelled && chargeAccountIds
+                  ? grossMargin(
+                      splitInvoiceLines(gi.ar_invoices.transaction_lines ?? [], chargeAccountIds).goodsRevenue,
+                      totalHpp
+                    )
+                  : null;
               return (
                 <tr
                   key={gi.id}
@@ -226,6 +238,20 @@ export default function GoodsIssuesPage() {
                     {gi.ar_invoices.amount.toLocaleString("id-ID")}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{totalHpp.toLocaleString("id-ID")}</td>
+                  <td className="px-4 py-2 text-right font-mono">
+                    {margin ? (
+                      <div className={margin.profit < 0 ? "text-red-600" : "text-emerald-700"}>
+                        {margin.profit.toLocaleString("id-ID")}
+                        <div className="text-xs">
+                          {margin.marginPct != null
+                            ? `${margin.marginPct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`
+                            : "—"}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2">
                     {cancelled ? (
                       <CancelledBadge />
@@ -251,7 +277,7 @@ export default function GoodsIssuesPage() {
             })}
             {issues.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={11} className="px-4 py-6 text-center text-slate-400">
                   {issuesQuery.isLoading ? <InlineSpinner /> : "Belum ada barang keluar."}
                 </td>
               </tr>
