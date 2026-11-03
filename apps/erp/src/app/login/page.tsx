@@ -40,7 +40,7 @@ export default function LoginPage() {
       setError("Akun ini gak punya akses ke ERP -- kalau ini akun kasir, masuk lewat aplikasi POS.");
       return;
     }
-    router.push("/accounts");
+    router.push("/dashboard");
   }
 
   return (

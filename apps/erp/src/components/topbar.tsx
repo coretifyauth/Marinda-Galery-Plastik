@@ -6,6 +6,8 @@ import { ChevronDown, Menu } from "lucide-react";
 import { supabase } from "@/lib/supabase/client";
 
 const routeLabels: Record<string, string> = {
+  "/dashboard": "Dashboard",
+  "/dashboard/arus-barang": "Arus Barang",
   "/accounts": "Chart of Accounts",
   "/journal-entries": "Jurnal Umum",
   "/general-ledger": "Buku Besar",

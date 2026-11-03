@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -33,6 +34,7 @@ type LineInput = {
   order_line_id: string;
   item_id: string;
   item_label: string;
+  remaining: number;
   uom: string;
   qty_received: string;
   unit_cost: string;
@@ -96,7 +98,8 @@ export default function ReceivePurchaseOrderPage() {
         .map((l) => ({
           order_line_id: l.id,
           item_id: l.item_id,
-          item_label: `${l.items.name} (sisa ${lineRemaining(l)} ${l.items.uom})`,
+          item_label: l.items.name,
+          remaining: lineRemaining(l),
           uom: l.items.uom,
           qty_received: String(lineRemaining(l)),
           unit_cost: String(l.unit_price),
@@ -311,7 +314,12 @@ export default function ReceivePurchaseOrderPage() {
                   className="grid grid-cols-[2rem_1fr_minmax(16rem,auto)] gap-2 border-b border-slate-200 pb-3 last:border-b-0 last:pb-0"
                 >
                   <span className="flex items-center text-sm text-slate-500">{i + 1}</span>
-                  <span className="flex items-center text-sm text-slate-700">{line.item_label}</span>
+                  <span className="flex items-center text-sm text-slate-700">
+                    {line.item_label}
+                    <span className="ml-1 text-slate-500">
+                      (sisa <ItemQty itemId={line.item_id} qty={line.remaining} uom={line.uom} />)
+                    </span>
+                  </span>
                   <div className="flex flex-col gap-2">
                     <UnitCostQtyInput
                       key={draft.restoreKey}
@@ -355,7 +363,7 @@ export default function ReceivePurchaseOrderPage() {
             totals={totals}
             lines={activeLines.map((l) => {
               const it = po?.order_lines.find((x) => x.id === l.order_line_id)?.items;
-              return { name: it?.name ?? "-", uom: it?.uom ?? "", qty: l.qty, unitCost: l.unitCost, discount: l.discount };
+              return { itemId: l.item_id, name: it?.name ?? "-", uom: it?.uom ?? "", qty: l.qty, unitCost: l.unitCost, discount: l.discount };
             })}
           />
 

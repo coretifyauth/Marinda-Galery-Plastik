@@ -30,6 +30,9 @@ export type GoodsIssue = {
   id: string;
   transaction_id: string;
   journal_entry_id: string;
+  order_id: string | null;
+  /** Sales Order asal, kalau ada (kosong = dijual langsung). */
+  order: { source_ref: string } | null;
   note_date: string;
   source_ref: string;
   created_at: string;
@@ -41,6 +44,6 @@ export type GoodsIssue = {
     qty: number;
     total_cost: number;
     order_line_id: string | null;
-    items: { name: string; uom: string };
+    items: { name: string; uom: string; item_units: { unit_label: string; conversion_factor: number }[] };
   }[];
 };

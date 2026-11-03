@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -522,7 +523,7 @@ export function ApBillDetailView({ id }: { id: string }) {
                           <ul className="space-y-0.5">
                             {cn.return_lines.map((l) => (
                               <li key={l.item_id}>
-                                {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
+                                {l.items.name} — <ItemQty itemId={l.item_id} qty={l.qty_returned} uom={l.items.uom} /> (cost{" "}
                                 {l.total_cost.toLocaleString("id-ID")})
                               </li>
                             ))}

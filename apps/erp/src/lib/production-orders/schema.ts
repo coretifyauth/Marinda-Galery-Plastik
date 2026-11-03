@@ -18,7 +18,7 @@ export type ProductionOrder = {
   source_ref: string;
   journal_entry_id: string;
   created_at: string;
-  bom_headers: { items: { name: string } };
+  bom_headers: { finished_item_id: string; items: { name: string; uom: string } };
   production_order_lines: {
     id: string;
     item_id: string;

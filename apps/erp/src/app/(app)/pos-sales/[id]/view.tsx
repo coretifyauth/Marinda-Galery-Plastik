@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -19,7 +20,7 @@ type JournalEntryDetail = {
   journal_lines: { id: string; debit: number; credit: number; accounts: { code: string; name: string } }[];
 };
 
-type SaleLine = { id: string; itemName: string; uom: string; qty: number; unitPrice: number; lineAmount: number };
+type SaleLine = { id: string; itemId: string | null; itemName: string; uom: string; qty: number; unitPrice: number; lineAmount: number };
 
 type CategoryLine = { id: string; accountName: string; amount: number; isTax: boolean };
 
@@ -74,7 +75,7 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
   const [{ data: gi, error: giErr }, { data: pay, error: payErr }] = await Promise.all([
     supabase
       .from("goods_notes")
-      .select("id, journal_entry_id, goods_note_lines(id, qty, unit_price, total_cost, items(name, uom))")
+      .select("id, journal_entry_id, goods_note_lines(id, item_id, qty, unit_price, total_cost, items(name, uom))")
       .eq("transaction_id", id)
       .eq("type", "OUTBOUND")
       .maybeSingle(),
@@ -92,7 +93,7 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
   const goodsIssue = gi as unknown as {
     id: string;
     journal_entry_id: string;
-    goods_note_lines: { id: string; qty: number; unit_price: number | null; total_cost: number; items: { name: string; uom: string } | null }[];
+    goods_note_lines: { id: string; item_id: string; qty: number; unit_price: number | null; total_cost: number; items: { name: string; uom: string } | null }[];
   };
   const payment = pay as unknown as {
     id: string;
@@ -136,6 +137,7 @@ async function loadDetail(id: string): Promise<PosSaleDetail | null> {
 
   const lines: SaleLine[] = goodsIssue.goods_note_lines.map((l) => ({
     id: l.id,
+    itemId: l.item_id,
     itemName: l.items?.name ?? "-",
     uom: l.items?.uom ?? "",
     qty: l.qty,
@@ -343,7 +345,7 @@ export function PosSaleDetailView({ id }: { id: string }) {
                 <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2">{l.itemName}</td>
                   <td className="px-4 py-2 text-right font-mono">
-                    {l.qty} {l.uom}
+                    <ItemQty itemId={l.itemId} qty={l.qty} uom={l.uom} />
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{l.unitPrice.toLocaleString("id-ID")}</td>
                   <td className="px-4 py-2 text-right font-mono">{l.lineAmount.toLocaleString("id-ID")}</td>

@@ -30,6 +30,29 @@ const itemTypeLabel: Record<string, string> = {
 
 type ItemRef = { category_id: string | null; brand_id: string | null };
 
+/**
+ * Satuan jual 1 barang, terbesar -> terkecil: nama, isi (dalam satuan dasar), dan harga. Satuan tanpa harga
+ * (belum dijual) diredupkan; satuan default jual diberi penanda kecil.
+ */
+function UnitList({ units, baseUom }: { units: ItemUnit[]; baseUom: string }) {
+  if (units.length === 0) return <span className="text-slate-400">-</span>;
+  const sorted = [...units].sort((a, b) => Number(b.conversion_factor) - Number(a.conversion_factor));
+  return (
+    <div className="grid grid-cols-[auto_auto_auto] items-baseline justify-start gap-x-4 gap-y-0.5 text-xs">
+      {sorted.map((u) => (
+        <div key={u.id} className={`contents ${u.price == null ? "text-slate-400" : "text-slate-700"}`}>
+          <span className="font-medium">
+            {u.unit_label}
+            {u.is_default_sale && <span className="ml-1 font-normal text-slate-400">(default)</span>}
+          </span>
+          <span className="text-slate-400">{u.is_base ? "satuan dasar" : `= ${u.conversion_factor} ${baseUom}`}</span>
+          <span className="text-right font-mono">{u.price != null ? u.price.toLocaleString("id-ID") : "—"}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ItemsPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
@@ -90,7 +113,7 @@ export default function ItemsPage() {
   const loadAux = useCallback(async () => {
     const [{ data: units }, { data: cats }, { data: brs }, { data: refs, error: refsError }] =
       await Promise.all([
-        supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base"),
+        supabase.from("item_units").select("id, item_id, unit_label, conversion_factor, price, is_base, is_default_sale"),
         supabase.from("item_categories").select("id, name, archived_at").order("name"),
         supabase.from("item_brands").select("id, name, archived_at").order("name"),
         supabase.from("items").select("category_id, brand_id"),
@@ -227,7 +250,7 @@ export default function ItemsPage() {
                 <th className="px-4 py-2">Nama</th>
                 <th className="px-4 py-2">Tipe</th>
                 <th className="px-4 py-2">Satuan Dasar</th>
-                <th className="px-4 py-2">Satuan Jual</th>
+                <th className="px-4 py-2">Satuan Jual (isi · harga)</th>
                 <th className="px-4 py-2">Kategori</th>
                 <th className="px-4 py-2">Brand</th>
                 <th className="px-4 py-2">Akun Persediaan</th>
@@ -312,11 +335,7 @@ export default function ItemsPage() {
                     </td>
                     <td className="px-4 py-2">{item.uom}</td>
                     <td className="px-4 py-2">
-                      {units.length > 0
-                        ? units
-                            .map((u) => `${u.unit_label}${u.price != null ? ` (${u.price.toLocaleString("id-ID")})` : ""}`)
-                            .join(", ")
-                        : "-"}
+                      <UnitList units={units} baseUom={item.uom} />
                     </td>
                     <td className="px-4 py-2">{category ? category.name : "-"}</td>
                     <td className="px-4 py-2">{brand ? brand.name : "-"}</td>

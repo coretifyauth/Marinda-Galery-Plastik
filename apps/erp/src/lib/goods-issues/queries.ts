@@ -9,13 +9,14 @@ export type GoodsIssueFilters = {
   dateFrom: string;
   dateTo: string;
   sourceRefSearch: string;
+  salesOrderId: string;
   status: "aktif" | "" | "dibatalkan"; // "aktif" = default, sembunyikan yang dibatalkan
   page: number;
   pageSize: number;
 };
 
 const SELECT_COLUMNS =
-  "id, transaction_id, journal_entry_id, note_date, source_ref, created_at, created_by, ar_invoices:transactions!inner(source_ref, amount, status, counterparties(name)), goods_note_lines(id, item_id, qty, total_cost, items(name, uom))";
+  "id, transaction_id, journal_entry_id, order_id, order:orders(source_ref), note_date, source_ref, created_at, created_by, ar_invoices:transactions!inner(source_ref, amount, status, counterparties(name)), goods_note_lines(id, item_id, qty, total_cost, order_line_id, items(name, uom, item_units(unit_label, conversion_factor)))";
 
 export async function fetchGoodsIssues(
   filters: GoodsIssueFilters
@@ -34,6 +35,7 @@ export async function fetchGoodsIssues(
   if (filters.dateTo) query = query.lte("note_date", filters.dateTo);
 
   const sourceRefTerm = filters.sourceRefSearch.trim();
+  if (filters.salesOrderId) query = query.eq("order_id", filters.salesOrderId);
   if (sourceRefTerm) query = query.ilike("source_ref", `%${sourceRefTerm}%`);
 
   if (filters.status === "aktif") query = query.neq("ar_invoices.status", "dibatalkan");

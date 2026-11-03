@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -60,7 +61,10 @@ export function BomDetailView({ id }: { id: string }) {
       title: "Informasi BOM",
       rows: [
         { label: "Barang Jadi", value: bom.items.name },
-        { label: "Output per Batch", value: `${bom.output_qty} ${bom.items.uom}` },
+        {
+          label: "Output per Batch",
+          value: <ItemQty itemId={bom.finished_item_id} qty={bom.output_qty} uom={bom.items.uom} />,
+        },
         {
           label: "Status",
           value: (
@@ -108,7 +112,7 @@ export function BomDetailView({ id }: { id: string }) {
               <tr key={line.id} className="border-b border-slate-100 hover:bg-slate-50">
                 <td className="px-4 py-2 font-medium text-black">{line.items.name}</td>
                 <td className="px-4 py-2 text-right font-mono">
-                  {line.qty_per_batch} {line.items.uom}
+                  <ItemQty itemId={line.raw_material_item_id} qty={line.qty_per_batch} uom={line.items.uom} />
                 </td>
               </tr>
             ))}

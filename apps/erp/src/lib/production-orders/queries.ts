@@ -15,7 +15,7 @@ export type ProductionOrderFilters = {
 };
 
 const SELECT_COLUMNS =
-  "id, bom_header_id, qty_produced, production_date, source_ref, journal_entry_id, created_at, bom_headers(items(name)), production_order_lines(id, item_id, qty_consumed, total_cost, items(name, uom))";
+  "id, bom_header_id, qty_produced, production_date, source_ref, journal_entry_id, created_at, bom_headers(finished_item_id, items(name, uom)), production_order_lines(id, item_id, qty_consumed, total_cost, items(name, uom))";
 
 export async function fetchProductionOrders(
   filters: ProductionOrderFilters

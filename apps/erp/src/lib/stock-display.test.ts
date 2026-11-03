@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatStockPerUnit } from "./stock-display";
+import { formatStockBreakdown, formatStockPerUnit } from "./stock-display";
 
 const units = [
   { unit_label: "box", conversion_factor: 100 },
@@ -39,5 +39,28 @@ describe("formatStockPerUnit", () => {
 
   it("avg cost pecahan gak bocor artefak float", () => {
     expect(formatStockPerUnit(1, 33.33, "pcs", [{ unit_label: "lusin", conversion_factor: 12 }])[1].avgCost).toBe("399,96");
+  });
+});
+
+describe("formatStockBreakdown", () => {
+  const u = [
+    { unit_label: "ikat", conversion_factor: 200 },
+    { unit_label: "bungkus", conversion_factor: 10 },
+    { unit_label: "lembar", conversion_factor: 1 },
+  ];
+
+  it("kombinasi satuan + total satuan dasar dalam kurung", () => {
+    expect(formatStockBreakdown(234, "lembar", u)).toBe("1 ikat 3 bungkus 4 lembar (234 lembar)");
+    expect(formatStockBreakdown(230, "lembar", u)).toBe("1 ikat 3 bungkus (230 lembar)");
+  });
+
+  it("tanpa satuan besar yang terpakai: apa adanya, tanpa kurung", () => {
+    expect(formatStockBreakdown(7, "lembar", u)).toBe("7 lembar");
+    expect(formatStockBreakdown(7, "lembar", [])).toBe("7 lembar");
+  });
+
+  it("nol dan pecahan", () => {
+    expect(formatStockBreakdown(0, "lembar", u)).toBe("0 lembar");
+    expect(formatStockBreakdown(10.5, "lembar", u)).toBe("1 bungkus 0.5 lembar (10.5 lembar)");
   });
 });

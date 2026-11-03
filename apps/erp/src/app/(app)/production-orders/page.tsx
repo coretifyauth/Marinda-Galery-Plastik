@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -189,13 +190,15 @@ export default function ProductionOrdersPage() {
                 >
                   <td className="px-4 py-2">{po.source_ref}</td>
                   <td className="px-4 py-2 font-medium text-black">{po.bom_headers.items.name}</td>
-                  <td className="px-4 py-2">{po.qty_produced}</td>
+                  <td className="px-4 py-2">
+                    <ItemQty itemId={po.bom_headers.finished_item_id} qty={po.qty_produced} uom={po.bom_headers.items.uom} />
+                  </td>
                   <td className="whitespace-nowrap px-4 py-2">{po.production_date}</td>
                   <td className="px-4 py-2">
                     <ul className="space-y-0.5">
                       {po.production_order_lines.map((l) => (
                         <li key={l.id}>
-                          {l.items.name} — {l.qty_consumed} {l.items.uom} = {l.total_cost.toLocaleString("id-ID")}
+                          {l.items.name} — <ItemQty itemId={l.item_id} qty={l.qty_consumed} uom={l.items.uom} /> = {l.total_cost.toLocaleString("id-ID")}
                         </li>
                       ))}
                     </ul>

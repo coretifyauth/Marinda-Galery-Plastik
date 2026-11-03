@@ -42,7 +42,7 @@ export default function SignupPage() {
         setMessage("Akun kasir berhasil dibuat -- login-nya lewat aplikasi POS, bukan di sini.");
         return;
       }
-      router.push("/accounts");
+      router.push("/dashboard");
       return;
     }
     setMessage(

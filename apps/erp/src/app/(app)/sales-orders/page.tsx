@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -212,7 +213,7 @@ export default function SalesOrdersPage() {
                   <ul className="space-y-0.5">
                     {so.order_lines.map((l) => (
                       <li key={l.id}>
-                        {l.items.name} — {l.qty_ordered} {l.items.uom} @ {l.unit_price.toLocaleString("id-ID")}
+                        {l.items.name} — <ItemQty itemId={l.item_id} qty={l.qty_ordered} uom={l.items.uom} /> @ {l.unit_price.toLocaleString("id-ID")}
                       </li>
                     ))}
                   </ul>

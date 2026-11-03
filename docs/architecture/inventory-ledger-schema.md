@@ -113,11 +113,28 @@ Sumber dari `replacements-schema.md` type=`OUTBOUND` (opsi "tukar barang" pada r
 | `inventory_movements` | tiap baris nunjuk ke TEPAT SATU dari 6 kemungkinan | penerimaan barang, produksi (hasil & konsumsi), retur dari customer, opname, goods issue (termasuk POS, sejak diunifikasi ke mesin Goods Issue umum), retur ke pemasok, ganti/tukar barang (garansi maupun ke pemasok) |
 | Tukar barang ke pemasok (`replacements-schema.md`, `type='OUTBOUND'`) | SATU-SATUNYA kasus 1 dokumen sumber = 2 baris ledger sekaligus | `inventory_movements` |
 
+## Dashboard Arus Barang
+
+Konsep bisnis: `docs/domain/inventory.md` submodule "Dashboard Arus Barang". Migration: `supabase/migrations/0067_report_item_flow.sql`. **Tidak ada tabel baru** — satu fungsi baca di atas `inventory_movements_with_source`, `inventory_movements`, `inventory_balances`, dan `items`.
+
+| Aksi | Fungsi | Efek | Guard |
+|---|---|---|---|
+| Ambil arus barang semua item dalam periode | `report_item_flow(p_from, p_to)` | Satu baris per barang, dengan `breakdown` (jsonb: array `{label, in, out}` per `source_label` view mutasi) untuk periode itu. Urut nama lalu id (stabil untuk paginasi `.range`). Juga mengembalikan `opening` dan `current_qty` yang tidak dipakai dashboard sekarang | Murni baca, `security invoker` |
+
+Aplikasi (`apps/erp/src/lib/inventory/flow.ts`) hanya memakai empat `source_label`: `Penjualan (Kirim Barang)` dan `Pembatalan Barang Keluar` untuk **Terjual**, `Pembelian (Terima Barang)` dan `Pembatalan Barang Masuk` untuk **Dibeli**. Label lain diabaikan. Daftar satuan tiap barang dibaca langsung dari `item_units` (`unit_label`, `conversion_factor`, `is_default_sale`); satuan default = `is_default_sale`, fallback satuan dasar. Barang tanpa penjualan/pembelian disaring di aplikasi.
+
+**Keterbatasan yang diketahui**
+- Pemetaan bergantung pada teks `source_label` di view; kalau label di view diganti, `flow.ts` dan tesnya harus ikut diganti.
+- Fungsi masih menghitung `opening` (memindai seluruh riwayat sebelum `p_from`) walau dashboard tidak memakainya; bisa diramping-kan lewat migration pengganti.
+- Retur, produksi, opname, dan garansi sengaja tidak dihitung.
+- Tidak ada dimensi lokasi/gudang: stok hanya dicatat per barang.
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat saldo stok & Kartu Stok | Semua user yang sudah login |
+| Melihat Dashboard Arus Barang | Semua user yang sudah login — hanya membaca mutasi dan saldo yang sudah bisa dilihat di Kartu Stok |
 | Menambah/mengubah saldo stok (`inventory_balances`) | Role `admin` — selalu lewat RPC transaksi, tidak pernah diubah manual langsung |
 | Menulis baris Kartu Stok (`inventory_movements`) | Role `admin` — kecuali RPC penjualan POS yang `security definer`, tetap bisa insert lewat privilege pemilik fungsi walau role kasir sendiri gak punya akses insert langsung |
 | Mengedit/menghapus baris Kartu Stok atau saldo stok secara manual | **Tidak ada seorang pun** |

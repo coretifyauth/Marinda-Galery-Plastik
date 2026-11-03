@@ -341,7 +341,7 @@ export function NewGoodsReceiptView({ initialBillId }: { initialBillId: string }
             totals={totals}
             lines={activeLines.map((l) => {
               const it = items.find((x) => x.id === l.item_id);
-              return { name: it?.name ?? "-", uom: it?.uom ?? "", qty: l.qty, unitCost: l.unitCost, discount: l.discount };
+              return { itemId: l.item_id, name: it?.name ?? "-", uom: it?.uom ?? "", qty: l.qty, unitCost: l.unitCost, discount: l.discount };
             })}
           />
 

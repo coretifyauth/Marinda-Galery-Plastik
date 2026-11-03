@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase/client";
 import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, useGoodsIssues } from "@/lib/goods-issues/queries";
 import { useUserEmails } from "@/lib/user-emails/queries";
 import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
+import { IssueLinesTable } from "@/components/goods-issues/issue-lines-table";
 import { Button } from "@/components/ui/button";
 import { CancelledBadge, cancelledRowClass } from "@/components/ui/cancelled";
 import { FormError } from "@/components/ui/form-message";
@@ -16,13 +17,17 @@ import { LoadingScreen, InlineSpinner } from "@/components/ui/loading-screen";
 const compactFilterInputClass =
   "w-full rounded border border-slate-200 bg-white px-1.5 py-1 text-xs font-normal normal-case text-slate-700 placeholder:text-slate-400 focus:border-blue-600 focus:outline-none focus:ring-1 focus:ring-blue-600/40";
 
+type SalesOrderOption = { id: string; source_ref: string };
+
 export default function GoodsIssuesPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
+  const [salesOrders, setSalesOrders] = useState<SalesOrderOption[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
 
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [salesOrderFilter, setSalesOrderFilter] = useState("");
   const [refSearchInput, setRefSearchInput] = useState("");
   const [statusFilter, setStatusFilter] = useState<"aktif" | "" | "dibatalkan">("aktif");
   const [page, setPage] = useState(0);
@@ -31,7 +36,7 @@ export default function GoodsIssuesPage() {
 
   // Filter berubah -> balik ke halaman 1 (pola "adjust state during render", bukan useEffect --
   // lihat journal-entries/page.tsx).
-  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${statusFilter}|${pageSize}`;
+  const filterKey = `${dateFrom}|${dateTo}|${debouncedRefSearch}|${salesOrderFilter}|${statusFilter}|${pageSize}`;
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
     setPrevFilterKey(filterKey);
@@ -42,6 +47,7 @@ export default function GoodsIssuesPage() {
     dateFrom,
     dateTo,
     sourceRefSearch: debouncedRefSearch,
+    salesOrderId: salesOrderFilter,
     status: statusFilter,
     page,
     pageSize,
@@ -64,6 +70,13 @@ export default function GoodsIssuesPage() {
         .eq("user_id", session.user.id);
       if (!active) return;
       setRoles(((roleRows ?? []) as { role_name: string }[]).map((r) => r.role_name));
+      const { data } = await supabase
+        .from("orders")
+        .select("id, source_ref")
+        .eq("direction", "SALE")
+        .order("order_date", { ascending: false });
+      if (!active) return;
+      setSalesOrders((data ?? []) as SalesOrderOption[]);
       setCheckingSession(false);
     });
     return () => {
@@ -113,25 +126,43 @@ export default function GoodsIssuesPage() {
         <table className="w-full text-left text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-xs font-medium uppercase text-slate-500">
+              <th className="px-4 py-2">Nomor</th>
               <th className="px-4 py-2">Pelanggan</th>
-              <th className="px-4 py-2">Invoice</th>
+              <th className="px-4 py-2">SO</th>
               <th className="px-4 py-2">Tanggal</th>
-              <th className="px-4 py-2">Item Keluar (HPP, satuan dasar)</th>
-              <th className="px-4 py-2 text-right">Pendapatan</th>
+              <th className="px-4 py-2">Barang Keluar</th>
+              <th className="px-4 py-2 text-right">Nilai Invoice</th>
               <th className="px-4 py-2 text-right">Total HPP</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Invoice</th>
               <th className="px-4 py-2">Dibuat Oleh</th>
             </tr>
             <tr className="border-b border-slate-200 bg-slate-50/50">
-              <th className="px-4 py-1.5" />
               <th className="px-4 py-1.5">
                 <input
                   type="text"
-                  placeholder="Cari source ref..."
+                  aria-label="Cari nomor"
+                  placeholder="Cari nomor..."
                   value={refSearchInput}
                   onChange={(e) => setRefSearchInput(e.target.value)}
                   className={compactFilterInputClass}
                 />
+              </th>
+              <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5">
+                <select
+                  aria-label="Filter sales order"
+                  value={salesOrderFilter}
+                  onChange={(e) => setSalesOrderFilter(e.target.value)}
+                  className={compactFilterInputClass}
+                >
+                  <option value="">Semua SO</option>
+                  {salesOrders.map((so) => (
+                    <option key={so.id} value={so.id}>
+                      {so.source_ref}
+                    </option>
+                  ))}
+                </select>
               </th>
               <th className="px-4 py-1.5">
                 <div className="flex gap-1">
@@ -167,6 +198,7 @@ export default function GoodsIssuesPage() {
                 </select>
               </th>
               <th className="px-4 py-1.5" />
+              <th className="px-4 py-1.5" />
             </tr>
           </thead>
           <tbody>
@@ -181,17 +213,14 @@ export default function GoodsIssuesPage() {
                   }`}
                   onClick={() => router.push(`/goods-issues/${gi.id}`)}
                 >
+                  <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-slate-600">{gi.source_ref}</td>
                   <td className="px-4 py-2 font-medium text-black">{gi.ar_invoices.counterparties.name}</td>
-                  <td className="px-4 py-2">{gi.ar_invoices.source_ref}</td>
+                  <td className="px-4 py-2">
+                    {gi.order?.source_ref ?? <span className="text-slate-400">— (langsung)</span>}
+                  </td>
                   <td className="whitespace-nowrap px-4 py-2">{gi.note_date}</td>
                   <td className="px-4 py-2">
-                    <ul className="space-y-0.5">
-                      {gi.goods_note_lines.map((l) => (
-                        <li key={l.id}>
-                          {l.items.name} — {l.qty} {l.items.uom} = {l.total_cost.toLocaleString("id-ID")}
-                        </li>
-                      ))}
-                    </ul>
+                    <IssueLinesTable lines={gi.goods_note_lines} />
                   </td>
                   <td className="px-4 py-2 text-right font-mono">
                     {gi.ar_invoices.amount.toLocaleString("id-ID")}
@@ -201,8 +230,20 @@ export default function GoodsIssuesPage() {
                     {cancelled ? (
                       <CancelledBadge />
                     ) : (
-                      <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Normal</span>
+                      <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs text-green-700">Aktif</span>
                     )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-xs text-slate-600">
+                    <button
+                      type="button"
+                      className="text-blue-600 hover:underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        router.push(`/ar-invoices/${gi.transaction_id}`);
+                      }}
+                    >
+                      Lihat invoice
+                    </button>
                   </td>
                   <td className="px-4 py-2 text-slate-500">{(gi.created_by && userEmails[gi.created_by]) ?? "-"}</td>
                 </tr>
@@ -210,7 +251,7 @@ export default function GoodsIssuesPage() {
             })}
             {issues.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={10} className="px-4 py-6 text-center text-slate-400">
                   {issuesQuery.isLoading ? <InlineSpinner /> : "Belum ada barang keluar."}
                 </td>
               </tr>

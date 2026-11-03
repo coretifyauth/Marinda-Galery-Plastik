@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase/client";
@@ -52,6 +53,7 @@ const CLEAR_DEFAULT_KEY = "__clear_default__";
 
 export function ItemDetailView({ id }: { id: string }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const [checkingSession, setCheckingSession] = useState(true);
@@ -74,6 +76,8 @@ export function ItemDetailView({ id }: { id: string }) {
 
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [editUnitPrice, setEditUnitPrice] = useState("");
+  const [editUnitFactor, setEditUnitFactor] = useState("");
+  const [editUnitLabel, setEditUnitLabel] = useState("");
   const [savingUnitId, setSavingUnitId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState("units");
@@ -103,7 +107,8 @@ export function ItemDetailView({ id }: { id: string }) {
           .from("item_units")
           .select("id, item_id, unit_label, conversion_factor, price, is_base, barcode, is_default_sale")
           .eq("item_id", id)
-          .order("is_base", { ascending: false }),
+          .order("is_base", { ascending: false })
+          .order("conversion_factor", { ascending: true }),
         supabase.from("item_categories").select("id, name, archived_at").order("name"),
         supabase.from("item_brands").select("id, name, archived_at").order("name"),
       ]);
@@ -174,6 +179,7 @@ export function ItemDetailView({ id }: { id: string }) {
   }
 
   const canWrite = roles.includes("admin") || roles.includes("accountant");
+  const isAdmin = roles.includes("admin");
   const inventoryAccount = getLeafAccounts(accounts).find((a) => a.id === item.inventory_account_id);
   const totalQty = balance?.qty_on_hand ?? 0;
   const totalValue = (balance?.qty_on_hand ?? 0) * (balance?.avg_cost ?? 0);
@@ -259,7 +265,7 @@ export function ItemDetailView({ id }: { id: string }) {
   async function handleDeleteUnit(unitId: string) {
     const ok = await confirm({
       title: "Hapus Satuan Jual",
-      message: "Hapus satuan jual ini? Kalau cuma mau ubah harga, pakai tombol Ubah -- gak perlu hapus.",
+      message: "Hapus satuan jual ini? Kalau cuma mau ubah harga atau faktor konversi, pakai tombol Ubah -- gak perlu hapus.",
       confirmLabel: "Hapus",
       danger: true,
     });
@@ -282,23 +288,67 @@ export function ItemDetailView({ id }: { id: string }) {
   function startEditPrice(unit: ItemUnit) {
     setEditingUnitId(unit.id);
     setEditUnitPrice(unit.price != null ? String(unit.price) : "");
+    setEditUnitFactor(String(unit.conversion_factor));
+    setEditUnitLabel(unit.unit_label);
   }
 
-  async function handleSavePrice(unitId: string) {
+  async function handleSavePrice(unit: ItemUnit) {
     const parsed = editUnitPrice.trim() === "" ? null : Number(editUnitPrice);
     if (parsed != null && (Number.isNaN(parsed) || parsed < 0)) {
       toast.error("Harga harus angka dan gak boleh negatif.");
       return;
     }
-    setSavingUnitId(unitId);
-    const { error } = await supabase.from("item_units").update({ price: parsed }).eq("id", unitId);
+
+    // Nama satuan non-dasar (satuan dasar harus tetap sama dengan satuan barang). Label cuma disimpan di item_units,
+    // tidak disalin ke dokumen, jadi mengganti nama aman.
+    const label = editUnitLabel.trim();
+    const labelChanged = !unit.is_base && isAdmin && label !== unit.unit_label;
+    if (labelChanged && label === "") {
+      toast.error("Nama satuan wajib diisi.");
+      return;
+    }
+
+    // Faktor konversi cuma bisa diubah admin (RLS update item_units) dan bukan buat satuan dasar (selalu 1).
+    const factor = Number(editUnitFactor);
+    const factorChanged = !unit.is_base && isAdmin && factor !== Number(unit.conversion_factor);
+    if (factorChanged) {
+      if (!Number.isInteger(factor) || factor < 2) {
+        toast.error("Faktor konversi harus bilangan bulat, minimal 2.");
+        return;
+      }
+      const ok = await confirm({
+        title: "Ubah Faktor Konversi",
+        message: `Ubah faktor "${unit.unit_label}" dari ${unit.conversion_factor} menjadi ${factor}? Stok dan riwayat tidak berubah (tersimpan di satuan dasar), tapi tampilan qty semua dokumen, termasuk yang lama, akan memakai faktor baru. Harga satuan ini tidak ikut berubah, jadi cek ulang harganya.`,
+        confirmLabel: "Ubah Faktor",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+
+    setSavingUnitId(unit.id);
+    const { data, error } = await supabase
+      .from("item_units")
+      .update({
+        price: parsed,
+        ...(factorChanged ? { conversion_factor: factor } : {}),
+        ...(labelChanged ? { unit_label: label } : {}),
+      })
+      .eq("id", unit.id)
+      .select("id");
     setSavingUnitId(null);
     if (error) {
-      toast.error(error.message);
+      // 23505 = unique (item_id, unit_label): nama itu sudah dipakai satuan lain barang ini.
+      toast.error(error.code === "23505" ? `Barang ini sudah punya satuan bernama "${label}".` : error.message);
+      return;
+    }
+    // RLS yang menolak update tidak mengembalikan error, hanya nol baris.
+    if (!data || data.length === 0) {
+      toast.error("Perubahan ditolak — hanya admin yang boleh mengubah satuan.");
       return;
     }
     setEditingUnitId(null);
-    toast.success("Harga satuan berhasil diperbarui.");
+    toast.success(factorChanged || labelChanged ? "Satuan berhasil diperbarui." : "Harga satuan berhasil diperbarui.");
+    await queryClient.invalidateQueries({ queryKey: ["item_units_all"] });
     await load();
   }
 
@@ -431,7 +481,7 @@ export function ItemDetailView({ id }: { id: string }) {
           ],
         })}
         ${stockCardSummary([
-          { label: "Stok Saat Ini", value: `${formatStockBreakdown(totalQty, item.uom, units)} (total ${totalQty} ${item.uom})`, accent: true },
+          { label: "Stok Saat Ini", value: formatStockBreakdown(totalQty, item.uom, units), accent: true },
           { label: "Total Masuk", value: formatStockBreakdown(totalIn, item.uom, units) },
           { label: "Total Keluar", value: formatStockBreakdown(totalOut, item.uom, units) },
         ])}
@@ -573,14 +623,40 @@ export function ItemDetailView({ id }: { id: string }) {
             {units.map((u) => (
               <tr key={u.id} className="border-b border-slate-100">
                 <td className="px-4 py-2">
-                  {u.unit_label}
+                  {editingUnitId === u.id && !u.is_base && isAdmin ? (
+                    <div className="w-36">
+                      <Input
+                        value={editUnitLabel}
+                        onChange={(e) => setEditUnitLabel(e.target.value)}
+                        aria-label="Nama satuan"
+                      />
+                    </div>
+                  ) : (
+                    u.unit_label
+                  )}
                   {u.is_base && (
                     <span className="ml-1.5 rounded-full bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700">
                       dasar
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-2 text-right font-mono">{u.conversion_factor}</td>
+                <td className="px-4 py-2 text-right font-mono">
+                  {editingUnitId === u.id && !u.is_base && isAdmin ? (
+                    <div className="ml-auto w-24">
+                      <Input
+                        type="number"
+                        min="2"
+                        step="1"
+                        value={editUnitFactor}
+                        onChange={(e) => setEditUnitFactor(e.target.value)}
+                        className="text-right"
+                        aria-label="Faktor konversi"
+                      />
+                    </div>
+                  ) : (
+                    u.conversion_factor
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right font-mono">
                   {editingUnitId === u.id ? (
                     <div className="ml-auto w-28">
@@ -664,7 +740,7 @@ export function ItemDetailView({ id }: { id: string }) {
                           <Button
                             type="button"
                             variant="toolbar-primary"
-                            onClick={() => handleSavePrice(u.id)}
+                            onClick={() => handleSavePrice(u)}
                             disabled={savingUnitId === u.id}
                           >
                             {savingUnitId === u.id ? "..." : "Simpan"}

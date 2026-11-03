@@ -177,9 +177,48 @@ Satu-satunya bagian di modul ini yang beneran **menulis** data (bukan cuma memba
 | Income Statement | mengecualikan baris dari | `period_closings.journal_entry_id` |
 | Trial Balance & Balance Sheet | TIDAK mengecualikan, ikut memperhitungkan | entry penutup dari `period_closings` |
 
+## Dashboard Penjualan & Pembelian
+
+Konsep bisnis: `docs/domain/financial-reports.md` submodule "Dashboard Penjualan & Pembelian". Migration: `supabase/migrations/0066_report_sales_purchase_monthly.sql`. **Tidak ada tabel baru** — satu fungsi baca yang menjumlahkan dokumen transaksi per bulan (agregat di database, bukan fetch mentah lalu dijumlah di JS, supaya tidak terpotong batas baris PostgREST).
+
+**Peta Data (ERD)**
+
+| Tabel/View (dibaca) | Dipakai untuk |
+|---|---|
+| `transactions` (OUTBOUND, status bukan `dibatalkan`) + `transaction_lines` | Penjualan barang (baris non-pajak yang akunnya bukan kategori biaya tambahan `charge_categories` module `ar`/`pos`) dan diskon (`transactions.discount_amount`), per bulan `transactions.date`. Hanya transaksi yang punya barang keluar (`goods_notes` OUTBOUND) |
+| `goods_notes` OUTBOUND + `goods_note_lines` | HPP (`total_cost`), per bulan `note_date`, hanya dari transaksi yang tidak dibatalkan |
+| `returns` (`type='INBOUND'`) + `return_lines` | Retur penjualan (`amount`) dan HPP dikembalikan (`total_cost` baris yang `hpp_reversal_journal_entry_id`-nya terisi), per bulan `credit_note_date` |
+| `goods_receipts_overview` (view, status `aktif`) | Pembelian = `total_value` barang masuk aktif, per bulan `note_date` |
+| `returns` (`type='OUTBOUND'`, `return_is_active`) | Retur ke supplier (`amount`), per bulan `credit_note_date` |
+
+**Alur Teknis (RPC)**
+
+| Aksi | Fungsi | Efek | Guard |
+|---|---|---|---|
+| Ambil ringkasan penjualan & pembelian per bulan | `report_sales_purchase_monthly(p_from, p_to)` | Satu baris per bulan dari bulan `p_from` sampai bulan `p_to` (bulan tanpa transaksi tetap muncul dengan nol): `sales_goods`, `discount`, `sales_return`, `hpp`, `hpp_returned`, `purchases`, `purchase_return`. Laba kotor dan margin dihitung di aplikasi dari kolom-kolom ini | Murni baca, `security invoker` (RLS tetap berlaku) |
+
+**Aturan Bisnis → RPC**
+
+| Aturan (dari docs/domain) | Dijaga oleh |
+|---|---|
+| Invoice/POS/tagihan batal tidak dihitung | Filter `status <> 'dibatalkan'` untuk penjualan dan HPP; barang masuk lewat status `aktif` di view |
+| PPN dan biaya tambahan bukan penjualan barang | Baris `is_tax` dan baris dengan akun kategori `charge_categories` (module `ar` dan `pos`) dikeluarkan — heuristik yang sama dengan cetak invoice |
+| Penjualan dan HPP harus dibandingkan pada populasi yang sama | Invoice AR manual tanpa barang keluar (jasa dsb.) tidak dihitung, karena tidak punya HPP dan akan menggelembungkan margin |
+| Retur dihitung di bulan retur dibuat | Retur dikelompokkan per `credit_note_date`, bukan tanggal dokumen asal |
+| Pembelian saat barang diterima | Sumber pembelian adalah barang masuk (`note_date`), bukan tanggal tagihan |
+
+**Keterbatasan yang diketahui**
+- Biaya tambahan diidentifikasi lewat akun kategori, jadi kalau satu akun dipakai sekaligus oleh Penjualan utama dan kategori biaya tambahan, nilainya terhitung sebagai biaya tambahan.
+- Nominal retur penjualan adalah angka yang diinput saat retur dan bisa termasuk PPN (halaman retur tidak memisahkan PPN).
+- Pendapatan dari invoice tanpa barang (jasa) tidak muncul di dashboard ini, meski ada di Laba Rugi.
+- Koreksi Tagihan (nota kredit/debit supplier) tidak masuk Pembelian, dan selisih HPP dari Koreksi Barang Masuk tidak masuk HPP.
+- Retur penjualan belum punya jalur pembatalan; kalau nanti ada, perhitungan retur di fungsi ini harus ikut menyaring retur yang dibatalkan.
+- Angka tidak dijamin sama persis dengan Laba Rugi: dokumen vs jurnal, dan jurnal manual tanpa dokumen tidak ikut.
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
 |---|---|
 | Melihat semua 4 laporan | Semua user yang sudah login — sama seperti hak akses tab Ledger di halaman akun individual, gak ada pembatasan tambahan karena laporan cuma menggabungkan data yang sudah bisa dilihat per-akun |
 | Menutup periode (tutup buku) | Role `admin` atau `accountant` |
+| Melihat Dashboard Penjualan & Pembelian | Semua user yang sudah login — hanya membaca dokumen yang sudah bisa dilihat di daftarnya masing-masing |

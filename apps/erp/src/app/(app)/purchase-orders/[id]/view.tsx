@@ -1,5 +1,8 @@
 "use client";
 
+import { useItemUnitMap } from "@/lib/item-units/use-item-unit-map";
+import { formatStockBreakdown } from "@/lib/stock-display";
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -31,6 +34,7 @@ const statusLabel: Record<string, string> = {
 
 export function PurchaseOrderDetailView({ id }: { id: string }) {
   const router = useRouter();
+  const itemUnitMap = useItemUnitMap();
   const [checkingSession, setCheckingSession] = useState(true);
   const [po, setPo] = useState<PurchaseOrder | null>(null);
   const [grns, setGrns] = useState<GrnRef[]>([]);
@@ -130,7 +134,7 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
         const subtotal = l.qty_ordered * l.unit_price;
         return `<tr>
           <td>${escapeHtml(l.items.name)}</td>
-          <td class="num">${l.qty_ordered} ${escapeHtml(l.items.uom)}</td>
+          <td class="num">${escapeHtml(formatStockBreakdown(l.qty_ordered, l.items.uom, itemUnitMap.get(l.item_id) ?? []))}</td>
           <td class="num">Rp${l.unit_price.toLocaleString("id-ID")}</td>
           <td class="num">Rp${subtotal.toLocaleString("id-ID")}</td>
         </tr>`;
@@ -238,8 +242,12 @@ export function PurchaseOrderDetailView({ id }: { id: string }) {
                     <td className="px-4 py-2 font-medium text-black">
                       {l.items.name} ({l.items.uom})
                     </td>
-                    <td className="px-4 py-2 text-right font-mono">{l.qty_ordered}</td>
-                    <td className="px-4 py-2 text-right font-mono">{received}</td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      <ItemQty itemId={l.item_id} qty={l.qty_ordered} uom={l.items.uom} />
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      <ItemQty itemId={l.item_id} qty={received} uom={l.items.uom} />
+                    </td>
                     <td className="px-4 py-2 text-right font-mono">
                       {l.unit_price.toLocaleString("id-ID")}
                     </td>

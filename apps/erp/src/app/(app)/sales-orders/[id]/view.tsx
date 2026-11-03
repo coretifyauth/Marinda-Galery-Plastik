@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -191,8 +192,12 @@ export function SalesOrderDetailView({ id }: { id: string }) {
                     <td className="px-4 py-2 font-medium text-black">
                       {l.items.name} ({l.items.uom})
                     </td>
-                    <td className="px-4 py-2 text-right font-mono">{l.qty_ordered}</td>
-                    <td className="px-4 py-2 text-right font-mono">{issued}</td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      <ItemQty itemId={l.item_id} qty={l.qty_ordered} uom={l.items.uom} />
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      <ItemQty itemId={l.item_id} qty={issued} uom={l.items.uom} />
+                    </td>
                     <td className="px-4 py-2 text-right font-mono">{l.unit_price.toLocaleString("id-ID")}</td>
                   </tr>
                 );
@@ -244,7 +249,9 @@ export function SalesOrderDetailView({ id }: { id: string }) {
                     <td className="px-4 py-2">
                       {f.items.name} ({f.items.uom})
                     </td>
-                    <td className="px-4 py-2 text-right font-mono">{f.qty}</td>
+                    <td className="px-4 py-2 text-right font-mono">
+                      <ItemQty itemId={f.item_id} qty={f.qty} uom={f.items.uom} />
+                    </td>
                   </tr>
                 ))}
                 {fulfillments.length === 0 && (

@@ -163,3 +163,37 @@ Modul ini beda dari modul-modul pencatatan transaksi: **gak ada catatan baru, ga
 - Ngebolehin transaksi baru bertanggal masuk ke periode yang udah dilaporkan ke pihak luar — angka yang udah jadi dasar keputusan orang lain jadi diam-diam berubah tanpa mereka tau.
 - Nutup buku sesering mungkin (misal tiap minggu) cuma buat "biar rapi" — makin sering dikunci, makin gede risiko transaksi telat kejebak gak bisa dikoreksi ke tanggal aslinya.
 - Berharap ada jalan buat "buka lagi" periode yang salah ditutup — sengaja gak ada jalurnya, filosofinya periode yang udah dipegang pihak luar gak boleh diam-diam berubah.
+
+### Dashboard Penjualan & Pembelian
+
+**Cara Kerja**
+- Halaman awal setelah login. Tujuannya satu: pemilik usaha langsung tahu **performa bulan ini dibanding bulan-bulan sebelumnya** tanpa membuka daftar invoice atau tagihan satu per satu.
+- Murni lapisan baca, sama seperti 4 laporan di atas: tidak ada transaksi baru. Bedanya, angka dashboard dihitung dari **dokumen transaksi** (invoice, POS, retur, barang masuk), bukan dari saldo akun buku besar. Konsekuensinya, angkanya bisa diurai per dokumen, tapi bisa selisih tipis dari Laba Rugi (misalnya pembulatan, atau jurnal manual yang tidak punya dokumen).
+- Satu bulan ditampilkan sebagai satu kolom, dengan kartu ringkasan untuk bulan terpilih dan tren beberapa bulan terakhir:
+  ```
+  Penjualan Bersih = Penjualan Barang (setelah diskon, tanpa PPN) - Retur Penjualan
+  HPP              = HPP barang keluar - HPP barang retur yang dikembalikan ke stok
+  Laba Kotor       = Penjualan Bersih - HPP          (margin = Laba Kotor / Penjualan Bersih)
+  Pembelian Bersih = Nilai Barang Masuk - Retur ke Supplier
+  ```
+- **Pembelian dihitung saat barang diterima**, bukan saat tagihan dibuat (keputusan owner 2026-11-03). Tagihan barang yang barangnya belum datang belum masuk angka pembelian. Akibatnya angka ini bisa berbeda dari total di menu Tagihan.
+- **Retur dihitung di bulan retur dibuat**, bukan di bulan invoice atau tagihan asalnya. Angka bulan yang sudah lewat tidak berubah diam-diam, dan cocok dengan jurnal retur di Laba Rugi.
+- Invoice, POS, dan tagihan yang dibatalkan tidak ikut dihitung.
+- Hanya penjualan **barang** yang dihitung (invoice yang punya barang keluar, termasuk POS). Invoice jasa tanpa barang tidak ikut, karena tidak punya HPP dan akan membuat margin tampak terlalu besar.
+
+**Aturan Bisnis**
+- PPN bukan pendapatan dan bukan pembelian: dikeluarkan dari semua angka.
+- Biaya tambahan di invoice (misalnya ongkir) bukan penjualan barang: dikeluarkan dari Penjualan Bersih dan dari Laba Kotor.
+- Pembelian **bukan biaya**. Pembelian menambah Persediaan; biayanya baru muncul sebagai HPP saat barang terjual. Karena itu dashboard tidak pernah menghitung "penjualan - pembelian".
+- Dashboard tidak mengunci atau mengubah apa pun, jadi periode yang sudah ditutup buku tetap bisa dilihat.
+
+**Skenario**
+- Bulan ini beli stok Rp12 juta, jual (setelah diskon) Rp9 juta, retur Rp0,5 juta, HPP Rp5,5 juta: Penjualan Bersih Rp8,5 juta, Laba Kotor Rp3 juta (margin sekitar 35%), Pembelian Bersih Rp12 juta. Stok bertambah Rp6,5 juta, dan itu tidak mengurangi laba.
+- Invoice Oktober Rp1 juta diretur Rp200 ribu pada November: Oktober tetap Rp1 juta, November dikurangi Rp200 ribu.
+- Tagihan supplier tanggal 28 Oktober, barang datang 3 November: pembelian masuk November.
+
+**Common Mistakes**
+- Mengurangkan pembelian dari penjualan dan menyebutnya laba.
+- Mengira pendapatan jasa ikut di dashboard ini; yang dihitung hanya penjualan barang.
+- Menganggap penjualan sama dengan uang masuk. Penjualan yang belum dibayar sudah terhitung; yang belum terbayar adalah Piutang.
+- Mengharapkan angka dashboard sama persis dengan total menu Invoice atau Tagihan: dashboard membuang PPN, biaya tambahan, dan dokumen batal, dan menghitung pembelian dari barang masuk.

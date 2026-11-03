@@ -315,16 +315,7 @@ export default function InventoryPage() {
                     ))}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2 text-right font-mono">
-                    {perUnit.map((u) => (
-                      <div key={u.unitLabel}>
-                        {u.qty} {u.unitLabel}
-                      </div>
-                    ))}
-                    {perUnit.length > 1 && qty > 0 && (
-                      <div className="mt-0.5 text-xs text-slate-400">
-                        {formatStockBreakdown(qty, item.uom, item.item_units)}
-                      </div>
-                    )}
+                    {formatStockBreakdown(qty, item.uom, item.item_units)}
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{(qty * avgCost).toLocaleString("id-ID")}</td>
                 </tr>

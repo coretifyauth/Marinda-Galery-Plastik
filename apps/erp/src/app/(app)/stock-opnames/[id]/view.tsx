@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -147,16 +148,16 @@ export function StockOpnameDetailView({ id }: { id: string }) {
                   <tr key={l.id} className="border-b border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-2">{l.items.name}</td>
                     <td className="px-4 py-2 text-right font-mono">
-                      {l.qty_system} {l.items.uom}
+                      <ItemQty itemId={l.item_id} qty={l.qty_system} uom={l.items.uom} />
                     </td>
                     <td className="px-4 py-2 text-right font-mono">
-                      {l.qty_actual} {l.items.uom}
+                      <ItemQty itemId={l.item_id} qty={l.qty_actual} uom={l.items.uom} />
                     </td>
                     <td
                       className={`px-4 py-2 text-right font-mono ${variance < 0 ? "text-red-600" : "text-emerald-600"}`}
                     >
-                      {variance > 0 ? "+" : ""}
-                      {variance} {l.items.uom}
+                      {variance > 0 ? "+" : variance < 0 ? "−" : ""}
+                      <ItemQty itemId={l.item_id} qty={Math.abs(variance)} uom={l.items.uom} />
                     </td>
                     <td className="px-4 py-2 text-right font-mono">{value.toLocaleString("id-ID")}</td>
                   </tr>

@@ -33,12 +33,7 @@ function QtyCell({ line }: { line: ReceiptLine }) {
       </>
     );
   }
-  return (
-    <>
-      <div>{formatStockBreakdown(line.qty, line.items.uom, units)}</div>
-      <div className="text-xs text-slate-400">= {line.qty} {line.items.uom}</div>
-    </>
-  );
+  return <>{formatStockBreakdown(line.qty, line.items.uom, units)}</>;
 }
 
 /**

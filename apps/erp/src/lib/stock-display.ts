@@ -1,15 +1,14 @@
 export type StockBreakdownUnit = { unit_label: string; conversion_factor: number };
 
 /**
- * Greedy breakdown dari qty satuan dasar ke satuan campuran terbesar->terkecil
- * (mis. 166 pcs -> "1 box, 1 pack, 4 pcs"), niru pola nilai uang recehan.
- * Bukan pencarian kombinasi optimal — kalau conversion_factor antar satuan gak
- * bersarang rapi (bukan kelipatan), hasilnya tetap benar secara matematis
- * (jumlah semua bagian x faktornya = qtyBase) tapi bisa keliatan "boros" di
- * satuan tertentu. Diterima sebagai trade-off — cukup buat skala barang di bisnis ini.
+ * Qty satuan dasar -> kombinasi satuan terbesar->terkecil, diikuti total satuan dasar dalam kurung
+ * (mis. 234 lembar -> "1 ikat 3 bungkus (234 lembar)"). Greedy, niru pola nilai uang recehan.
+ * Bukan pencarian kombinasi optimal — kalau conversion_factor antar satuan gak bersarang rapi,
+ * hasilnya tetap benar secara matematis (jumlah semua bagian x faktornya = qtyBase).
  *
- * Fallback: item tanpa item_units (atau cuma factor<=1) -> tampil apa adanya
- * "{qty} {baseUom}", sama kayak sebelum fitur ini ada.
+ * Tanpa satuan lebih besar yang terpakai (item tanpa item_units, atau qty lebih kecil dari satuan
+ * terkecil di atas dasar) -> tampil apa adanya "{qty} {baseUom}" tanpa kurung, karena kurungnya
+ * cuma mengulang angka yang sama.
  */
 export function formatStockBreakdown(qtyBase: number, baseUom: string, units: StockBreakdownUnit[]): string {
   if (!qtyBase) return `0 ${baseUom}`;
@@ -29,11 +28,10 @@ export function formatStockBreakdown(qtyBase: number, baseUom: string, units: St
   }
 
   const baseAmount = Number((remaining + fraction).toFixed(3));
-  if (baseAmount > 0 || parts.length === 0) {
-    parts.push(`${baseAmount} ${baseUom}`);
-  }
-
-  return parts.join(", ");
+  const total = `${Number(qtyBase.toFixed(3))} ${baseUom}`;
+  if (parts.length === 0) return total;
+  if (baseAmount > 0) parts.push(`${baseAmount} ${baseUom}`);
+  return `${parts.join(" ")} (${total})`;
 }
 
 /**

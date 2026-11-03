@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -146,13 +147,13 @@ export default function BomPage() {
               >
                 <td className="px-4 py-2 font-medium text-black">{bom.items.name}</td>
                 <td className="px-4 py-2">
-                  {bom.output_qty} {bom.items.uom}
+                  <ItemQty itemId={bom.finished_item_id} qty={bom.output_qty} uom={bom.items.uom} />
                 </td>
                 <td className="px-4 py-2">
                   <ul className="space-y-0.5">
                     {bom.bom_lines.map((l) => (
                       <li key={l.id}>
-                        {l.items.name} — {l.qty_per_batch} {l.items.uom}
+                        {l.items.name} — <ItemQty itemId={l.raw_material_item_id} qty={l.qty_per_batch} uom={l.items.uom} />
                       </li>
                     ))}
                   </ul>

@@ -237,6 +237,7 @@ Membatalkan barang masuk butuh seluruh qty-nya masih di stok. Kalau sebagian sud
   - **Beli** (Purchase Order, Terima Barang): user pilih **1 satuan** juga (dropdown SEMUA satuan barang itu, gak difilter yang punya harga jual), lalu isi qty **dan** harga beli MANUAL untuk satuan itu. Beda dari sisi jual: harga beli gak pernah otomatis, karena harga jual ke customer (yang tersimpan di data satuan barang) gak ada hubungannya sama harga beli dari supplier — sistem ini gak nyimpen "harga beli referensi" terpisah. Kalau 1 kali terima barang campur kemasan dengan harga beda per satuan, dipecah jadi beberapa baris (1 baris = 1 satuan).
 
 **Aturan Bisnis**
+- **Format tampil qty di seluruh aplikasi**: jumlah selalu ditampilkan dalam kombinasi satuan dari yang terbesar, diikuti total satuan dasar dalam kurung, misalnya `1 ikat 3 bungkus (234 lembar)`. Bagian yang nol tidak ditampilkan. Kalau jumlahnya lebih kecil dari satuan terkecil di atas satuan dasar (atau barang hanya punya satuan dasar), tampil biasa tanpa kurung, misalnya `7 lembar`. Ini hanya tampilan: stok dan perhitungan tetap di satuan dasar.
 - Tiap barang maksimal punya 1 "satuan dasar" (faktor konversi wajib 1) — sisanya boleh berapa pun satuan tambahan.
 - Qty yang beneran dikonsumsi/ditambah ke stok SELALU di satuan dasar, gak peduli kombinasi/pilihan satuan apa yang dipakai user pas input.
 - Harga tiap satuan independen — gak wajib proporsional ke harga satuan dasar. Nominal invoice/pesanan **otomatis diturunkan** dari harga satuan yang dipilih di sisi jual; nominal PO/Terima Barang tetap ketik manual (gak ada harga beli referensi tersimpan).
@@ -340,3 +341,30 @@ Membatalkan barang masuk butuh seluruh qty-nya masih di stok. Kalau sebagian sud
 
 **Common Mistakes**
 - Menganggap Kartu Stok sebagai sumber kebenaran baru buat saldo stok — posisi stok (qty & harga rata-rata berjalan) yang sudah ada tetap yang utama, Kartu Stok cuma riwayat pendukung yang menjelaskan bagaimana angka itu terbentuk.
+
+### Dashboard Arus Barang
+
+**Cara Kerja**
+- Kartu Stok menjawab "kenapa stok **satu** barang segini". Dashboard Arus Barang menjawab untuk **semua barang sekaligus** dalam satu periode: **barang apa yang terjual** dan **barang apa yang dibeli**, masing-masing berapa banyak. Hanya dua hal itu yang dilacak.
+- Murni lapisan baca di atas riwayat mutasi yang sama dengan Kartu Stok. Tidak ada pencatatan baru, dan saldo stok tidak dihitung ulang.
+- Periode dipilih bebas. Pengguna memilih **Barang Keluar (Terjual)**, yang menjadi pilihan awal, atau **Barang Masuk (Dibeli)**. Tabel berisi barang dan qty-nya.
+  ```
+  Terjual = Penjualan (invoice dan POS) - penjualan yang dibatalkan
+  Dibeli  = Barang diterima dari supplier - penerimaan yang dibatalkan
+  ```
+- Retur (dari customer maupun ke supplier), produksi, selisih opname, dan penggantian garansi **tidak dihitung**. Semuanya tetap terlihat di Kartu Stok barang itu.
+- **Hanya barang yang punya penjualan atau pembelian di periode yang tampil.**
+- **Qty tampil dalam kombinasi satuan** (format baku di seluruh aplikasi, lihat submodule "Satuan Jual & Harga"). Semua satuan barang dipakai, dan daftar satuannya ditampilkan sebagai chip di bawah nama barang. Nama barang menaut ke Kartu Stoknya.
+
+**Aturan Bisnis**
+- Dokumen yang dibatalkan bukan penjualan atau pembelian, jadi qty-nya dikurangkan dari angka terjual atau dibeli.
+- Karena hanya dua jenis kejadian yang dihitung, angka di sini **bukan** perubahan stok. Saldo awal + masuk − keluar tidak sama dengan saldo akhir, dan dashboard ini memang tidak menampilkan saldo.
+- Qty antarbarang tidak dijumlahkan karena satuannya bisa berbeda. Konversi satuan hanya tampilan; stok tetap di satuan dasar.
+
+**Skenario**
+- Tepung: terima dari supplier 300, penerimaan 50 dibatalkan, jual 120, penjualan 20 dibatalkan, dipakai produksi 200, opname -10. Dibeli = 250, Terjual = 100. Produksi dan opname tidak muncul di sini.
+- Barang tanpa penjualan selama periode: tidak muncul di daftar Barang Keluar.
+
+**Common Mistakes**
+- Mengira angka Terjual atau Dibeli sama dengan perubahan stok. Retur, produksi, dan opname ikut mengubah stok tetapi tidak dihitung di sini.
+- Menjumlahkan qty barang berbeda satuan menjadi satu angka.

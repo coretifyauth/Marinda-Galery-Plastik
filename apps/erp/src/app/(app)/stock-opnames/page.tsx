@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -158,11 +159,11 @@ export default function StockOpnamesPage() {
                       const variance = l.qty_actual - l.qty_system;
                       return (
                         <li key={l.id}>
-                          {l.items.name} — sistem {l.qty_system} {l.items.uom}, fisik {l.qty_actual}{" "}
-                          {l.items.uom}{" "}
+                          {l.items.name} — sistem <ItemQty itemId={l.item_id} qty={l.qty_system} uom={l.items.uom} />, fisik{" "}
+                          <ItemQty itemId={l.item_id} qty={l.qty_actual} uom={l.items.uom} />{" "}
                           <span className={variance < 0 ? "text-red-600" : "text-emerald-600"}>
-                            ({variance > 0 ? "+" : ""}
-                            {variance} {l.items.uom})
+                            ({variance > 0 ? "+" : variance < 0 ? "−" : ""}
+                            <ItemQty itemId={l.item_id} qty={Math.abs(variance)} uom={l.items.uom} />)
                           </span>
                         </li>
                       );

@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -30,7 +31,7 @@ export function ProductionOrderDetailView({ id }: { id: string }) {
     const { data: po, error: poErr } = await supabase
       .from("production_orders")
       .select(
-        "id, bom_header_id, qty_produced, production_date, source_ref, journal_entry_id, created_at, bom_headers(items(name)), production_order_lines(id, item_id, qty_consumed, total_cost, items(name, uom))"
+        "id, bom_header_id, qty_produced, production_date, source_ref, journal_entry_id, created_at, bom_headers(finished_item_id, items(name, uom)), production_order_lines(id, item_id, qty_consumed, total_cost, items(name, uom))"
       )
       .eq("id", id)
       .single();
@@ -85,7 +86,10 @@ export function ProductionOrderDetailView({ id }: { id: string }) {
         { label: "Barang Jadi", value: order.bom_headers.items.name },
         { label: "Rujukan Dokumen", value: order.source_ref },
         { label: "Tanggal Produksi", value: order.production_date },
-        { label: "Qty Produksi", value: String(order.qty_produced) },
+        {
+          label: "Qty Produksi",
+          value: <ItemQty itemId={order.bom_headers.finished_item_id} qty={order.qty_produced} uom={order.bom_headers.items.uom} />,
+        },
       ],
     },
     {
@@ -132,7 +136,7 @@ export function ProductionOrderDetailView({ id }: { id: string }) {
                 <tr key={line.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2 font-medium text-black">{line.items.name}</td>
                   <td className="px-4 py-2 text-right font-mono">
-                    {line.qty_consumed} {line.items.uom}
+                    <ItemQty itemId={line.item_id} qty={line.qty_consumed} uom={line.items.uom} />
                   </td>
                   <td className="px-4 py-2 text-right font-mono">{line.total_cost.toLocaleString("id-ID")}</td>
                 </tr>

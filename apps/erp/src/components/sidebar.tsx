@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
 import {
   BookOpenCheck,
+  LayoutDashboard,
+  ArrowLeftRight,
   ScrollText,
   BookOpenText,
   Users,
@@ -43,6 +45,15 @@ import {
 } from "lucide-react";
 
 const navGroups = [
+  {
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    items: [
+      // exact: /dashboard adalah prefix /dashboard/arus-barang, jangan ikut menyala di sana.
+      { href: "/dashboard", label: "Penjualan & Pembelian", icon: TrendingUp, exact: true },
+      { href: "/dashboard/arus-barang", label: "Arus Barang", icon: ArrowLeftRight },
+    ],
+  },
   {
     label: "Akuntansi",
     icon: Calculator,
@@ -199,8 +210,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 />
               </button>
               {isOpen &&
-                group.items.map(({ href, label, icon: Icon }) => {
-                  const active = pathname.startsWith(href);
+                group.items.map(({ href, label, icon: Icon, ...rest }) => {
+                  const active = "exact" in rest && rest.exact ? pathname === href : pathname.startsWith(href);
                   return (
                     <Link
                       key={href}

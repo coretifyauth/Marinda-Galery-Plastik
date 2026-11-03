@@ -1,5 +1,6 @@
 "use client";
 
+import { ItemQty } from "@/components/ui/item-qty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { receiptLineGross, type ReceiptTotals } from "@/lib/goods-receipts/calc";
@@ -89,7 +90,7 @@ export function ReceiptDiscountSection({
   );
 }
 
-export type ReceiptCardLine = { name: string; uom: string; qty: number; unitCost: number; discount: number };
+export type ReceiptCardLine = { itemId?: string; name: string; uom: string; qty: number; unitCost: number; discount: number };
 
 /**
  * Rincian per barang (nama, qty, subtotal, diskon, total) + ringkasan. Diskon baris sudah termasuk selisih
@@ -119,7 +120,7 @@ export function ReceiptTotalsCard({ totals, lines = [] }: { totals: ReceiptTotal
                     <td className="py-1.5 pr-3 text-slate-500">{i + 1}</td>
                     <td className="py-1.5 pr-3 text-black">{l.name}</td>
                     <td className="px-3 py-1.5 text-right font-mono">
-                      {l.qty.toLocaleString("id-ID")} {l.uom}
+                      <ItemQty itemId={l.itemId} qty={l.qty} uom={l.uom} />
                     </td>
                     <td className="px-3 py-1.5 text-right font-mono">{rp(gross)}</td>
                     <td className="px-3 py-1.5 text-right font-mono text-emerald-600">

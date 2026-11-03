@@ -1,5 +1,8 @@
 "use client";
 
+import { useItemUnitMap } from "@/lib/item-units/use-item-unit-map";
+import { formatStockBreakdown } from "@/lib/stock-display";
+import { ItemQty } from "@/components/ui/item-qty";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
@@ -70,6 +73,7 @@ const statusStyle: Record<string, string> = {
 
 export function ArInvoiceDetailView({ id }: { id: string }) {
   const router = useRouter();
+  const itemUnitMap = useItemUnitMap();
   const [checkingSession, setCheckingSession] = useState(true);
   const [invoice, setInvoice] = useState<ArInvoice | null>(null);
   const [reversedEntryIds, setReversedEntryIds] = useState<Set<string>>(new Set());
@@ -300,11 +304,11 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
             return hasItemPrice
               ? `<tr>
                   <td>${escapeHtml(l.items.name)}</td>
-                  <td class="num">${l.qty} ${escapeHtml(l.items.uom)}</td>
+                  <td class="num">${escapeHtml(formatStockBreakdown(l.qty, l.items.uom, itemUnitMap.get(l.item_id) ?? []))}</td>
                   <td class="num">${unitPrice != null ? `Rp${unitPrice.toLocaleString("id-ID")}` : "-"}</td>
                   <td class="num">${subtotal != null ? `Rp${subtotal.toLocaleString("id-ID")}` : "-"}</td>
                 </tr>`
-              : `<tr><td>${escapeHtml(l.items.name)}</td><td class="num">${l.qty} ${escapeHtml(l.items.uom)}</td></tr>`;
+              : `<tr><td>${escapeHtml(l.items.name)}</td><td class="num">${escapeHtml(formatStockBreakdown(l.qty, l.items.uom, itemUnitMap.get(l.item_id) ?? []))}</td></tr>`;
           })
           .join("")
       : "";
@@ -626,7 +630,7 @@ export function ArInvoiceDetailView({ id }: { id: string }) {
                           <ul className="space-y-0.5">
                             {cn.return_lines.map((l) => (
                               <li key={l.item_id}>
-                                {l.items.name} — {l.qty_returned} {l.items.uom} (cost{" "}
+                                {l.items.name} — <ItemQty itemId={l.item_id} qty={l.qty_returned} uom={l.items.uom} /> (cost{" "}
                                 {l.total_cost.toLocaleString("id-ID")})
                               </li>
                             ))}
