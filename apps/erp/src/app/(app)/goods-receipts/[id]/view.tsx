@@ -225,9 +225,14 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
         </div>
         <div className="flex items-center gap-2">
           {canAct && grn.is_legacy && (
-            <Button variant="toolbar" onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}>
-              Batalkan dari Tagihan
-            </Button>
+            <>
+              <Button variant="toolbar" onClick={() => router.push(`/goods-receipts/${grn.id}/koreksi-lama`)}>
+                Koreksi Satuan / Qty
+              </Button>
+              <Button variant="toolbar" onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}>
+                Batalkan dari Tagihan
+              </Button>
+            </>
           )}
           {canAct && !grn.is_legacy && (
             <>

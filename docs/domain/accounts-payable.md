@@ -97,7 +97,7 @@ Salah input itu kejadian biasa, dan pembukuan gak boleh diedit. Jadi tiap jenis 
 - Retur hanya bisa dibatalkan kalau saldo Piutang Retur Supplier-nya tidak punya pencairan tunai yang aktif. Kalau sudah dicairkan, **Batalkan Pencairan** dulu: jurnal pencairan (Debit Kas/Bank, Kredit Piutang Retur Supplier) dibalik, dengan pertanyaan wajib "apakah uangnya benar-benar berpindah" seperti Batalkan Pembayaran. Setelah itu saldo kembali utuh dan retur bisa dibatalkan. Retur juga hanya bisa dibatalkan yang **terbaru dulu** di tagihan itu: saldo retur yang lebih baru dihitung dengan memperhitungkan retur sebelumnya.
 - Retur yang dibatalkan gak dihitung lagi: qty-nya bebas diklaim ulang lewat retur atau tukar barang, dan sisa tagihan menghitungnya seolah gak pernah ada. Pembayaran yang tadinya diblokir saldo retur jadi bisa dibatalkan.
 - Retur yang sudah dibatalkan gak bisa dibatalkan lagi, dan tukar barang lama (Opsi B, fiturnya sudah dicabut) hanya bisa dibatalkan lewat `cancel_ap_replacement` tanpa UI; tukar barang yang dibatalkan tidak lagi dihitung sebagai klaim qty dan tidak menghalangi Koreksi Barang Masuk maupun Batalkan Tagihan.
-- Barang masuk lama (dibuat bareng tagihannya) hanya bisa dibatalkan lewat tagihannya selama stoknya masih utuh; belum ada jalur koreksinya.
+- Barang masuk lama (dibuat bareng tagihannya) bisa dibatalkan lewat tagihannya selama stoknya masih utuh. Kalau satuan atau qty-nya salah sedangkan tagihannya sudah benar, pakai Koreksi Satuan / Qty (lihat `docs/domain/inventory.md` submodule "Koreksi Barang Masuk").
 - Semua jurnal pembalik bertanggal hari pembatalan, jadi laporan periode yang sudah ditutup gak berubah.
 
 **Skenario**

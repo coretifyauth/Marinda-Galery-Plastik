@@ -212,7 +212,7 @@ export default function GoodsReceiptCorrectionPage() {
         <BackLink href={`/goods-receipts/${id}`} label="Kembali ke Detail Barang Masuk" />
         <FormError>
           {note.is_legacy
-            ? "Barang masuk lama (dibuat bareng tagihannya) belum punya jalur koreksi. Batalkan lewat tagihannya kalau stoknya masih utuh."
+            ? "Barang masuk lama (dibuat bareng tagihannya) dikoreksi lewat Koreksi Satuan / Qty di detail barang masuk, atau dibatalkan lewat tagihannya."
             : "Barang masuk ini sudah dibatalkan, jadi tidak bisa dikoreksi."}
         </FormError>
       </div>

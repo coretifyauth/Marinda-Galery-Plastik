@@ -250,6 +250,21 @@ Koreksi = batalkan dokumen lama + buat dokumen baru lewat `create_goods_receipt`
 Keterbatasan: `s` menganggap semua mutasi keluar sebagai konsumsi, dan `avg_cost` tersimpan 2 desimal, jadi nilai stok bisa selisih receh dari buku besar (pola yang sama dengan `cancel_goods_receipt`).
 
 
+## Koreksi Satuan / Qty Barang Masuk Lama
+
+Migration: `supabase/migrations/0069_koreksi_barang_masuk_lama.sql`. Tes: `supabase/tests/koreksi-barang-masuk-lama/`. Konsep bisnis: `docs/domain/inventory.md` submodule "Koreksi Barang Masuk". Menjawab celah di tabel "Keterbatasan" sebelumnya: barang masuk lama (`journal_entry_id` kosong) ditolak `revise_goods_receipt`.
+
+**Keputusan**: dokumen lama dibatalkan **tanpa jurnal** (baris `goods_note_cancellations` dengan `journal_entry_id` kosong) dan digantikan `goods_notes` INBOUND baru yang juga tanpa jurnal dan tanpa nomor (tetap "lama", tagihan/PO/supplier/tanggal sama). Nilai bersih tiap baris dipertahankan persis: `unit_cost` dibulatkan ke atas, selisih sen menjadi `discount_amount`. Keduanya dihubungkan lewat `goods_receipt_revisions` (sama dengan koreksi biasa).
+
+| Aksi | RPC | Efek | Guard |
+|---|---|---|---|
+| Koreksi satuan/qty barang masuk lama | `revise_legacy_goods_receipt(note, lines [{line_id, qty}], reason, entry_date)` | Mutasi kompensasi lama (-qty) dan baru (+qty) pada `entry_date`; saldo stok & `avg_cost` ditimpa dengan rumus `revise_goods_receipt` (nilai baris tetap => selisih nilai 0, seluruh efek lewat "selisih harga"); porsi yang sudah terjual dikoreksi lewat jurnal Persediaan/HPP pada `entry_date` | Hanya barang masuk lama; masih aktif (`goods_note_is_active`); semua baris dicantumkan tepat sekali, qty > 0 maksimal 3 desimal, minimal satu qty berubah; alasan wajib; `entry_date` >= tanggal dokumen & periode terbuka; stok tidak boleh negatif; qty aktif tidak boleh di bawah yang sudah diretur/ditukar |
+
+**Dampak ke fungsi lain**: penjaga `goods_notes_inbound_from_bill_guard` mendapat satu pengecualian sempit (dokumen tanpa jurnal & nomor hanya boleh disisipkan bila tagihannya tanpa kolam dan sudah punya barang masuk lama yang digantikan); `goods_note_is_active` kini juga menganggap barang masuk lama yang punya baris `goods_note_cancellations` tidak aktif; `cancel_ap_bill` melewati barang masuk lama yang sudah digantikan saat membalik stok tagihan lama; `ap_bill_cancellation_preview` hanya berubah teks petunjuk.
+
+**Keterbatasan**: koreksi yang menaikkan qty ditolak pemeriksa kelebihan-penerimaan bila barang masuk lama terhubung ke PO dan qty barunya melebihi qty pesanan (PO-nya ikut salah satuan: perbaiki PO dulu); jurnal koreksi memakai akun Persediaan item (setara akun tagihan lama sejak satu akun Persediaan); pembulatan `avg_cost` 2 desimal bisa menyisakan selisih sampai 0,005 x qty baru terhadap buku besar; pembagian porsi terjual/di stok adalah perkiraan (sama dengan koreksi biasa); `avg_cost` tersimpan 2 desimal sehingga nilai stok bisa selisih receh dari buku besar; hanya satuan/qty yang bisa diubah (item dan nilai baris tetap).
+
+
 ## Siapa Boleh Apa
 
 | Aksi | Siapa boleh |
