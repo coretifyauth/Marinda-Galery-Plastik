@@ -9,3 +9,7 @@ Cakupan: T1 retur sebagian lalu dibatalkan (sisa, stok, rata-rata, label Kartu S
 ## Migration 0062 (Batalkan Pencairan Saldo Retur)
 
 `test-0062.sql` (cara jalan sama): V1 kasus tagihan dibayar penuh + diretur penuh + saldo dicairkan tunai, diurai berurutan (pencairan, retur, pembayaran, barang masuk, tagihan) sampai semua akun nol; V2 pencairan yang dibatalkan boleh dicairkan lagi. Belum pernah dijalankan.
+
+## Migration 0065 (Batalkan Tukar Barang Lama)
+
+`test-0065.sql`: W1 tukar barang lama (ditanam langsung karena fiturnya dicabut) dihitung sebagai klaim qty dan menghalangi pembatalan tagihan; setelah `cancel_ap_replacement` klaim nol, stok tidak berubah, tagihan dan barang masuk bisa dibatalkan. Belum pernah dijalankan.

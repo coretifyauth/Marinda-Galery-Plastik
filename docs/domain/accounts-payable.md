@@ -93,10 +93,10 @@ Salah input itu kejadian biasa, dan pembukuan gak boleh diedit. Jadi tiap jenis 
 **Aturan Bisnis**
 - Pembayaran gak bisa dibatalkan kalau kelebihan retur di tagihan itu sudah jadi saldo di supplier, atau uangnya sudah dilepas jadi uang muka dari sisa barang: kedua angka itu dihitung dengan asumsi tagihan sudah dibayar.
 - Penurunan tagihan gak boleh melebihi barang yang belum diterima maupun sisa utang. Bagian yang sudah dibayar keluar lewat Tutup Sisa Barang (jadi uang muka).
-- Batalkan Tagihan ditolak kalau masih ada retur aktif (batalkan returnya dulu), atau sudah ada tukar barang atau penutupan sisa barang, karena keduanya belum bisa dibatalkan. Nilai yang salah dikoreksi lewat Koreksi Tagihan.
+- Batalkan Tagihan ditolak kalau masih ada retur aktif (batalkan returnya dulu), atau sudah ada tukar barang aktif (data lama; fiturnya sudah dicabut) atau penutupan sisa barang, karena keduanya belum bisa dibatalkan lewat tombol. Tukar barang lama dibereskan sekali lewat `cancel_ap_replacement` (SQL Editor, admin). Nilai yang salah dikoreksi lewat Koreksi Tagihan.
 - Retur hanya bisa dibatalkan kalau saldo Piutang Retur Supplier-nya tidak punya pencairan tunai yang aktif. Kalau sudah dicairkan, **Batalkan Pencairan** dulu: jurnal pencairan (Debit Kas/Bank, Kredit Piutang Retur Supplier) dibalik, dengan pertanyaan wajib "apakah uangnya benar-benar berpindah" seperti Batalkan Pembayaran. Setelah itu saldo kembali utuh dan retur bisa dibatalkan. Retur juga hanya bisa dibatalkan yang **terbaru dulu** di tagihan itu: saldo retur yang lebih baru dihitung dengan memperhitungkan retur sebelumnya.
 - Retur yang dibatalkan gak dihitung lagi: qty-nya bebas diklaim ulang lewat retur atau tukar barang, dan sisa tagihan menghitungnya seolah gak pernah ada. Pembayaran yang tadinya diblokir saldo retur jadi bisa dibatalkan.
-- Retur yang sudah dibatalkan gak bisa dibatalkan lagi, dan tukar barang (Opsi B) belum punya jalur pembatalan.
+- Retur yang sudah dibatalkan gak bisa dibatalkan lagi, dan tukar barang lama (Opsi B, fiturnya sudah dicabut) hanya bisa dibatalkan lewat `cancel_ap_replacement` tanpa UI; tukar barang yang dibatalkan tidak lagi dihitung sebagai klaim qty dan tidak menghalangi Koreksi Barang Masuk maupun Batalkan Tagihan.
 - Barang masuk lama (dibuat bareng tagihannya) hanya bisa dibatalkan lewat tagihannya selama stoknya masih utuh; belum ada jalur koreksinya.
 - Semua jurnal pembalik bertanggal hari pembatalan, jadi laporan periode yang sudah ditutup gak berubah.
 
