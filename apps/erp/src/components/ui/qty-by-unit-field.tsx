@@ -20,7 +20,7 @@ type Props = {
 };
 
 /**
- * Input qty untuk baris yang qty-nya dibatasi dokumen asal (retur, tukar barang, pengiriman SO).
+ * Input qty untuk baris yang qty-nya dibatasi dokumen asal (retur, pengiriman SO).
  * User ngisi per satuan (mis. 1 dus + 3 pcs), konversi ke satuan dasar dilakukan di sini --
  * form induk dan RPC tetap terima qty satuan dasar apa adanya. Batas ditampilin dalam satuan
  * campuran juga ("Maks 1 dus, 4 pcs"), jadi user gak perlu ngitung manual.

@@ -4,12 +4,12 @@ Skrip psql biasa, dijalankan di **database lokal Docker saja** — jangan pernah
 
 Cakupan: T1 retur sebagian lalu dibatalkan (sisa, stok, rata-rata, label Kartu Stok, lalu barang masuk dan tagihan bisa dibatalkan), T2 tagihan lunas dengan saldo retur (pembayaran diblokir, saldo nol setelah batal), T3 saldo sudah dicairkan tunai (retur ditolak dibatalkan), T4 urutan terbaru dulu plus pratinjau Batalkan Tagihan, T5 retur penuh dibatalkan lalu diretur ulang (cap nilai tagihan), plus invarian saldo Pembelian Belum Diterima dan jurnal seimbang.
 
-**Status:** ditulis bersama migration, belum pernah dijalankan (tidak ada Docker saat penulisan).
+**Status:** lulus di database lokal (diverifikasi sebelum dan sesudah migration `0070`, 2026-11-04).
 
 ## Migration 0062 (Batalkan Pencairan Saldo Retur)
 
-`test-0062.sql` (cara jalan sama): V1 kasus tagihan dibayar penuh + diretur penuh + saldo dicairkan tunai, diurai berurutan (pencairan, retur, pembayaran, barang masuk, tagihan) sampai semua akun nol; V2 pencairan yang dibatalkan boleh dicairkan lagi. Belum pernah dijalankan.
+`test-0062.sql` (cara jalan sama): V1 kasus tagihan dibayar penuh + diretur penuh + saldo dicairkan tunai, diurai berurutan (pencairan, retur, pembayaran, barang masuk, tagihan) sampai semua akun nol; V2 pencairan yang dibatalkan boleh dicairkan lagi. Lulus di database lokal (2026-11-04).
 
-## Migration 0065 (Batalkan Tukar Barang Lama)
+## Migration 0065
 
-`test-0065.sql`: W1 tukar barang lama (ditanam langsung karena fiturnya dicabut) dihitung sebagai klaim qty dan menghalangi pembatalan tagihan; setelah `cancel_ap_replacement` klaim nol, stok tidak berubah, tagihan dan barang masuk bisa dibatalkan. Belum pernah dijalankan.
+Dihapus bersama fiturnya di `0070` (tukar barang dicabut, tabelnya dibuang); `test-0065.sql` ikut dihapus.

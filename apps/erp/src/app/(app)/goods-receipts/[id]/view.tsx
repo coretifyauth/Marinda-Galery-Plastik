@@ -61,7 +61,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
 
     const [lines, baseRes, cancelRes, revisionRes] = await Promise.all([
       fetchLinesForNotes([id]),
-      supabase.from("goods_notes").select("journal_entry_id, transaction_id").eq("id", id).single(),
+      supabase.from("goods_notes").select("journal_entry_id").eq("id", id).single(),
       supabase.from("goods_note_cancellations").select("journal_entry_id").eq("goods_note_id", id).maybeSingle(),
       supabase
         .from("goods_receipt_revisions")
@@ -76,21 +76,13 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
     const revisionRow = (revisionRes.data ?? null) as unknown as RevisionLink | null;
     setRevision(revisionRow);
 
-    // Jurnal terkait: jurnal barang masuk + pembalik pembatalan. Barang masuk lama: jurnalnya ada di tagihan bawaannya.
+    // Jurnal terkait: jurnal barang masuk + pembalik pembatalan (+ jurnal HPP kalau ini hasil koreksi).
     const journalIds = new Set<string>();
-    const base = baseRes.data as { journal_entry_id: string | null; transaction_id: string | null } | null;
+    const base = baseRes.data as { journal_entry_id: string | null } | null;
     if (base?.journal_entry_id) journalIds.add(base.journal_entry_id);
     const cancelJournal = (cancelRes.data as { journal_entry_id: string | null } | null)?.journal_entry_id;
     if (cancelJournal) journalIds.add(cancelJournal);
     if (revisionRow?.new_goods_note_id === id && revisionRow.cogs_journal_entry_id) journalIds.add(revisionRow.cogs_journal_entry_id);
-    if (note.is_legacy && base?.transaction_id) {
-      const { data: bill } = await supabase
-        .from("transactions")
-        .select("journal_entry_id")
-        .eq("id", base.transaction_id)
-        .single();
-      if (bill?.journal_entry_id) journalIds.add(bill.journal_entry_id as string);
-    }
 
     if (journalIds.size > 0) {
       const { data: entries, error: entriesErr } = await supabase
@@ -224,17 +216,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {canAct && grn.is_legacy && (
-            <>
-              <Button variant="toolbar" onClick={() => router.push(`/goods-receipts/${grn.id}/koreksi-lama`)}>
-                Koreksi Satuan / Qty
-              </Button>
-              <Button variant="toolbar" onClick={() => router.push(`/ap-bills/${grn.bill_id}`)}>
-                Batalkan dari Tagihan
-              </Button>
-            </>
-          )}
-          {canAct && !grn.is_legacy && (
+          {canAct && (
             <>
               <Button variant="toolbar" onClick={() => router.push(`/goods-receipts/${grn.id}/koreksi`)}>
                 Koreksi Barang Masuk
@@ -249,8 +231,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
 
       {isCancelled && (
         <CancelledBanner>
-          barang masuk ini tidak valid. Stok sudah dikurangi lagi
-          {grn.is_legacy ? " dan tagihannya dibatalkan." : " dan jurnalnya dibalik; nilainya kembali ke barang yang belum diterima dari tagihan."}
+          barang masuk ini tidak valid. Stok sudah dikurangi lagi dan jurnalnya dibalik; nilainya kembali ke barang yang belum diterima dari tagihan.
         </CancelledBanner>
       )}
       {revision && (
@@ -287,11 +268,7 @@ export function GoodsReceiptDetailView({ id }: { id: string }) {
 
       {activeTab === "lines" && (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <ReceiptLinesTable
-            lines={grn.goods_note_lines}
-            variant="detail"
-            billAmount={grn.is_legacy ? (grn.bill_amount ?? undefined) : undefined}
-          />
+          <ReceiptLinesTable lines={grn.goods_note_lines} variant="detail" />
         </div>
       )}
 

@@ -22,17 +22,15 @@ export type GoodsReceiptNote = {
   counterparty_id: string | null;
   supplier_name: string | null;
   note_date: string;
-  /** Nomor barang masuk (GRN-...). Kosong untuk barang masuk lama yang dibuat bareng tagihannya. */
-  source_ref: string | null;
+  /** Nomor barang masuk (GRN-...). */
+  source_ref: string;
   delivery_note_ref: string | null;
   order_id: string | null;
   order_ref: string | null;
-  /** Tagihan induk. Kosong hanya untuk riwayat alur lama yang sudah dibatalkan. */
-  bill_id: string | null;
+  /** Tagihan induk. */
+  bill_id: string;
   bill_ref: string | null;
   bill_amount: number | null;
-  /** Barang masuk lama (dibuat bareng tagihannya): jurnal Persediaan ada di jurnal tagihan, dibatalkan lewat tagihan. */
-  is_legacy: boolean;
   status: GoodsReceiptStatus;
   total_value: number;
   created_at: string;
@@ -40,7 +38,7 @@ export type GoodsReceiptNote = {
   goods_note_lines: GoodsReceiptLine[];
 };
 
-/** Nomor yang ditampilkan: nomor barang masuk, atau (alur lama) nomor tagihan bawaannya. */
-export function receiptNumber(grn: Pick<GoodsReceiptNote, "source_ref" | "bill_ref">): string {
-  return grn.source_ref ?? grn.bill_ref ?? "-";
+/** Nomor yang ditampilkan: nomor barang masuk. */
+export function receiptNumber(grn: Pick<GoodsReceiptNote, "source_ref">): string {
+  return grn.source_ref;
 }

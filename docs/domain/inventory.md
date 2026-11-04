@@ -90,7 +90,6 @@ Rata-Rata Tertimbang adalah satu-satunya metode costing yang dipakai sistem — 
 - **Gak ada revisi harga.** Salah item, qty, atau harga: batalkan barang masuknya lalu catat ulang dari tagihan yang sama (kolam otomatis kembali).
 - **Pembatalan barang masuk** membalik jurnal (Debit Pembelian Belum Diterima, Kredit Persediaan) dan mengurangi stok; ditolak kalau stok item itu gak cukup lagi atau barang masuknya sudah diretur.
 - **Diskon pembelian** diisi di barang masuk, di dua level: per item (alat bantu di layar yang otomatis terakumulasi ke diskon header) dan per dokumen. Diskon header gak boleh lebih kecil dari jumlah diskon item; selisih lebihnya dianggap diskon dokumen dan dibagi ke baris sebanding nilai. Diskon dihitung langsung ke biaya bersih item, jadi avg cost mencerminkan diskon yang sebenarnya.
-- **Data lama tetap berlaku apa adanya.** Barang masuk yang dibuat bareng tagihannya (sebelum fitur ini) tetap berjurnal Persediaan lawan Utang Usaha dan gak punya kolam. Barang masuk "belum ditagih" yang sempat dibuat oleh versi sebelumnya harus dibereskan (ditagih atau dibatalkan) sebelum alur lama dibongkar dari sistem.
 
 **Aturan Bisnis**
 - Barang masuk wajib dibuat dari satu tagihan barang aktif milik supplier yang sama; jumlah nilai bersihnya gak boleh melebihi kolam tagihan itu.
@@ -121,9 +120,9 @@ Membatalkan barang masuk butuh seluruh qty-nya masih di stok. Kalau sebagian sud
 - Porsi yang sudah terjual dihitung dari mutasi keluar sejak barang masuk itu dicatat. Dalam Rata-Rata Tertimbang, tiap kali barang keluar, nilai di dalam stok ikut keluar secara proporsional.
 
 **Aturan Bisnis**
-- Koreksi biasa ini hanya untuk barang masuk dari Tagihan Barang yang masih aktif. Barang masuk lama punya jalur sendiri (di bawah).
+- Koreksi biasa ini hanya untuk barang masuk dari Tagihan Barang yang masih aktif.
 - Wajib ada alasan, dan nilai barunya gak boleh melebihi nilai barang tagihan yang tersedia. Kalau nota memang lebih besar, naikkan dulu lewat Koreksi Tagihan.
-- Qty baru gak boleh lebih kecil dari yang sudah diretur atau ditukar di tagihan itu, dan stok tercatat harus cukup untuk dikurangi sebesar selisihnya.
+- Qty baru gak boleh lebih kecil dari yang sudah diretur di tagihan itu, dan stok tercatat harus cukup untuk dikurangi sebesar selisihnya.
 
 **Skenario**
 - Tercatat 100 pcs @Rp10.000, yang benar 80, 30 sudah terjual → stok 70 jadi 50, harga rata-rata tetap Rp10.000, HPP gak berubah, Rp200.000 kembali ke barang yang belum diterima.
@@ -133,15 +132,6 @@ Membatalkan barang masuk butuh seluruh qty-nya masih di stok. Kalau sebagian sud
 **Common Mistakes**
 - Mengira angka HPP pasti tepat kalau harga stok lain jauh berbeda dan sudah ada penjualan: pembagiannya perkiraan, karena Rata-Rata Tertimbang gak melacak batch. Total jurnal tetap seimbang dan nilai stok tetap cocok dengan buku besar.
 - Mengoreksi harga tanpa cek nota: harga jauh dari rata-rata stok memang diberi peringatan, tapi tetap bisa disimpan karena harga supplier bisa berubah.
-
-**Koreksi Satuan / Qty Barang Masuk Lama**
-- Barang masuk lama dibuat bareng tagihannya dan tidak punya jurnal sendiri: nilai Persediaannya ada di jurnal tagihan. Jalur koreksi biasa tidak bisa dipakai karena membalik jurnal dokumennya sendiri.
-- Jalur khusus ini untuk satu kasus: **tagihan dari supplier sudah benar, tetapi satuan atau qty barang yang dicatat salah** (misalnya 10 box tercatat 10 pcs). Yang diisi hanya qty yang benar per baris; item tidak berubah.
-- **Nilai tiap baris tetap persis sama**, jadi tagihan, utang, dan pembayaran tidak tersentuh dan tidak ada jurnal Persediaan baru. Harga per satuan dasar dihitung ulang otomatis (nilai dibagi qty baru; sisa sen ditampung di diskon baris).
-- Dokumen lama dibatalkan (tanpa jurnal) dan digantikan dokumen baru yang tetap berstatus "lama". Kartu Stok mencatat pembalikan dan penambahan pada tanggal koreksi.
-- Kalau sebagian barang sudah terjual dengan harga lama, selisih HPP-nya dikoreksi lewat satu jurnal (Debit Persediaan, Kredit HPP, atau sebaliknya) bertanggal koreksi, sama seperti koreksi biasa. Contoh: 10 pcs @ Rp10.000 jadi 1.440 pcs; 3 pcs sudah terjual dengan HPP Rp30.000 padahal seharusnya sekitar Rp208, sehingga HPP turun sekitar Rp29.792.
-- Ditolak kalau barang masuk atau tagihannya sudah dibatalkan, atau barang sudah diretur/ditukar melebihi qty setelah koreksi. Alasan wajib diisi, dan periode harus terbuka.
-- Kalau yang salah nilai tagihannya (bukan satuan/qty), jalurnya Koreksi Tagihan, bukan ini.
 
 ### Produksi (Bill of Materials & Production Order)
 
@@ -362,7 +352,7 @@ Membatalkan barang masuk butuh seluruh qty-nya masih di stok. Kalau sebagian sud
   Terjual = Penjualan (invoice dan POS) - penjualan yang dibatalkan
   Dibeli  = Barang diterima dari supplier - penerimaan yang dibatalkan
   ```
-- Retur (dari customer maupun ke supplier), produksi, selisih opname, dan penggantian garansi **tidak dihitung**. Semuanya tetap terlihat di Kartu Stok barang itu.
+- Retur (dari customer maupun ke supplier), produksi, dan selisih opname **tidak dihitung**. Semuanya tetap terlihat di Kartu Stok barang itu.
 - **Hanya barang yang punya penjualan atau pembelian di periode yang tampil.**
 - **Qty tampil dalam kombinasi satuan** (format baku di seluruh aplikasi, lihat submodule "Satuan Jual & Harga"). Semua satuan barang dipakai, dan daftar satuannya ditampilkan sebagai chip di bawah nama barang. Nama barang menaut ke Kartu Stoknya.
 

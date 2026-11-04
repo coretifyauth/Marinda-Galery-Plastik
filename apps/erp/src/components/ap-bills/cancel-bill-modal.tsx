@@ -15,7 +15,6 @@ type Preview = {
   bill_ref: string;
   amount: number;
   goods_receipts: { id: string; source_ref: string; total_value: number }[];
-  legacy_goods_receipts: number;
   payments: { id: string; source_ref: string; amount: number; payment_date: string }[];
   deposit_applications: { source_ref: string; amount: number }[];
   adjustments: { source_ref: string; amount: number }[];
@@ -116,7 +115,6 @@ export function CancelBillModal({
                       Barang masuk {g.source_ref} ({rp(g.total_value)}), stok berkurang lagi
                     </li>
                   ))}
-                  {preview.legacy_goods_receipts > 0 && <li>Barang masuk bawaan tagihan ini, stok berkurang lagi</li>}
                   {preview.payments.map((p) => (
                     <li key={p.id}>
                       Pembayaran {p.source_ref} ({rp(p.amount)})

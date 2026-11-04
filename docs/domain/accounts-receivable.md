@@ -150,17 +150,16 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo 
 - **Cuma SATU cara aktif nyelesaiin saldo ini** — TIDAK BOLEH "dititip"/dipakai motong invoice lain:
   1. **Direfund tunai** — Debit Saldo Kredit Retur Customer, Kredit Kas/Bank.
 
-  Penukaran barang pasca-retur (lihat submodule "Penukaran Barang Pasca-Retur") gak berhubungan sama saldo kredit retur sama sekali — customer harus pilih SATU dari awal: retur (dapat kredit/diskon) atau ganti barang, gak bisa dua-duanya buat barang yang sama.
 - Kenapa opsi "dipakai motong invoice lain" gak dibolehkan: sama alasan larangan overpay jadi saldo mengambang di Konsep Inti — gak mau ada saldo yang "ngambang" bisa dipakai kapan aja ke invoice mana aja.
 - Sengaja gak ada batas waktu retur (umur invoice vs tanggal retur). Retur diterima/ditolak murni keputusan manual staf di luar sistem.
 - Batasan yang tetap dijaga otomatis: retur gak boleh dicatat ke periode akuntansi yang udah ditutup — ini soal integritas pembukuan umum (semua transaksi tunduk aturan ini), bukan aturan khusus retur.
-- Retur bukan penukaran barang — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Penukaran barang pasca-retur (garansi) adalah submodule terpisah.
+- Retur bukan penukaran barang — retur cuma "barang balik", gak otomatis bikin barang pengganti keluar lagi. Fitur ganti barang garansi sudah dicabut (2026-11-02).
 
 **Aturan Bisnis**
 - Total retur (akumulasi) terhadap 1 invoice gak boleh ngelebihin nilai invoice itu (jalur financial-only) atau qty yang beneran terjual (jalur full).
 - Retur harus tetap bisa dibuat walau invoice udah lunas/ada pembayaran — beda dari pembatalan invoice biasa yang menolak kalau udah ada pembayaran.
 - Retur gak boleh dicatat ke periode yang sudah ditutup.
-- Saldo kredit retur cuma boleh diselesaikan lewat refund tunai — gak boleh dipakai motong invoice lain, dan gak berhubungan sama penukaran barang pasca-retur (2 mekanisme independen, lihat submodule "Penukaran Barang Pasca-Retur").
+- Saldo kredit retur cuma boleh diselesaikan lewat refund tunai — gak boleh dipakai motong invoice lain.
 - Total yang dicairkan/disettle dari saldo kredit retur gak boleh melebihi nominal saldo yang tersisa.
 
 **Skenario**
@@ -177,39 +176,6 @@ Kalkulasi outstanding invoice (`ar_invoice_remaining()`) mengikutsertakan saldo 
 - Excess dari retur dihitung dari seluruh nominal retur (bukan cuma bagian yang ngelebihin sisa tagihan) — bikin dobel hitung kalau sisa tagihannya masih ada sebagian.
 - Kasih jalan lagi buat saldo kredit retur "dititip"/dipakai motong invoice lain — keputusan bisnis udah eksplisit cuma refund tunai.
 - Nyoba klasifikasi kondisi barang (layak jual/rusak) di titik retur — itu bukan lagi tanggung jawab alur retur, barang rusak ditangani belakangan lewat Stock Opname setelah retur selesai direstock.
-
-### Penukaran Barang Pasca-Retur (Garansi)
-
-> **DICABUT 2026-11-02** (keputusan owner): tidak ada lagi UI/RPC untuk mencatat penggantian barang garansi. Tabelnya dipertahankan sebagai riwayat baca-saja (`docs/architecture/replacements-schema.md`). Teks di bawah hanya konteks desain lama.
-
-Penukaran barang berdiri sendiri dari retur, diseragamkan dengan cara pembelian menangani kasus serupa (tukar barang ke supplier) — customer harus pilih SATU jalan sejak awal: **retur (dapat kredit/diskon) ATAU ganti barang**, gak bisa dua-duanya buat barang yang sama. Karena pilihannya dipisah sejak awal, penukaran barang gak perlu "mengoreksi" apa pun.
-
-**Cara Kerja**
-- Customer punya barang bermasalah (garansi kualitas) DAN minta barang pengganti — bukan hadiah, customer memang berhak dapat barang layak jual sebagai ganti barang cacat. Bedanya sama retur biasa: retur murni "barang balik, tagihan berkurang"; ini "barang cacat ditukar barang baik" — secara net customer tetap bayar penuh nilai barang yang akhirnya dia terima, cuma gak ada penerbitan tagihan baru buat barang pengganti itu.
-- Kenapa gak lewat proses pengeluaran barang/penjualan biasa: proses itu selalu bikin tagihan baru (Debit Piutang Usaha, Kredit Pendapatan). Barang pengganti bukan penjualan baru, jadi kalau dipaksa lewat situ, piutang customer numpuk palsu dan Pendapatan Penjualan kegedean padahal bukan penjualan beneran.
-- Jurnal cost barang pengganti — **satu-satunya jurnal** yang tercipta, gak ada jurnal lain:
-  ```
-  Debit Harga Pokok Penjualan
-    Kredit Persediaan Barang Jadi
-  ```
-  Piutang Usaha customer sama sekali gak disentuh oleh penukaran barang.
-- **Satu barang, satu jalan kompensasi.** Begitu qty tertentu dari satu invoice udah "dipakai" lewat retur (dapat kredit/diskon), qty yang sama gak bisa lagi diajukan buat ganti barang — dan sebaliknya, qty yang udah dipakai ganti barang gak bisa lagi diretur. Sisa yang masih bisa diproses (baik lewat retur maupun ganti barang) selalu dihitung dari total qty terjual dikurangi SEMUA yang udah "diklaim" lewat jalur manapun — jadi gak peduli customer mau retur duluan atau ganti barang duluan, hasil akhirnya tetap konsisten: gak ada barang yang dikompensasi dua kali.
-- **Ganti barang gak bisa diajukan buat tagihan yang gak pernah ada barang fisiknya** (misal tagihan jasa) — cuma berlaku buat tagihan yang beneran mengeluarkan barang dari gudang.
-- Barang pengganti diambil dari stok aktif yang sama dengan stok jualan biasa — aman karena retur yang **rusak** (submodule "Retur Barang" di atas) TIDAK PERNAH masuk ke stok aktif sama sekali (langsung jadi Beban Kerugian Barang Rusak, gak direstock), jadi gak ada resiko barang cacat yang balik ikut kepakai lagi buat penukaran.
-
-**Aturan Bisnis**
-- Satu barang yang terjual cuma bisa dikompensasi lewat SATU jalan — retur atau ganti barang, gak bisa dua-duanya, berlaku dari sisi mana pun duluan diajukan.
-- Ganti barang wajib menunjuk tagihan yang beneran punya barang fisik keluar — gak berlaku buat tagihan jasa/financial-only.
-- Total qty yang ditukar (dikurangi yang udah diretur) gak boleh melebihi qty yang beneran terjual.
-
-**Skenario**
-- Penukaran barang pasca-retur/garansi — 1 jurnal (HPP/Persediaan Barang Jadi), gak nyentuh Piutang Usaha/Pendapatan sama sekali, dibatasi sisa qty yang belum "diklaim" lewat retur maupun ganti barang sebelumnya.
-
-**Common Mistakes**
-- Penukaran barang lewat proses pengeluaran barang biasa (bikin tagihan lagi) — piutang & pendapatan numpuk palsu padahal gak ada penjualan baru.
-- Barang pengganti diambil dari stok bekas retur (barang rusak yang baru balik) — harusnya dari stok fresh/layak jual, barang rusak gak dipakai ganti lagi.
-- Nganggep proteksi "gak boleh dikompensasi dobel" cukup dicek dari 1 arah aja (misal cuma pas mau ganti barang) — customer yang retur dulu BARU ganti barang buat barang yang sama juga harus tetap dicegah, bukan cuma arah sebaliknya.
-- Mengira penukaran barang perlu menunjuk retur yang sudah ada — keduanya berdiri sendiri-sendiri, gak saling bergantung.
 
 ### Uang Muka / DP (Deposit)
 

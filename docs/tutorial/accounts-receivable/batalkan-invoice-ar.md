@@ -8,7 +8,7 @@ Saat invoice yang dibuat ternyata salah total (mis. salah input, salah customer)
 
 - Login dengan role **admin** atau **accountant**.
 - Invoice ini **tidak punya pembayaran aktif**. Kalau ada, buka tab **Pembayaran**, klik **Batalkan** di tiap barisnya, isi alasan, dan jawab apakah uangnya benar-benar diterima. Tombol batalkan invoice muncul setelah itu.
-- Invoice dari barang keluar (Goods Issue) **boleh** dibatalkan, asal belum ada retur atau penggantian barang. Bisa dibatalkan dari detail invoice atau dari detail **Barang Keluar** (tombol **Batalkan Barang Keluar**) — hasilnya sama.
+- Invoice dari barang keluar (Goods Issue) **boleh** dibatalkan, asal belum ada retur. Bisa dibatalkan dari detail invoice atau dari detail **Barang Keluar** (tombol **Batalkan Barang Keluar**) — hasilnya sama.
 
 ## Langkah-Langkah
 

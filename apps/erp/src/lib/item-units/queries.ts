@@ -3,7 +3,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { ItemUnit } from "./schema";
 
 // Satuan (item_units) buat sekumpulan item sekaligus -- dipakai form yang barisnya sudah
-// ditentukan dari dokumen asal (retur, tukar barang, pengiriman SO), bukan dipilih lewat
+// ditentukan dari dokumen asal (retur, pengiriman SO), bukan dipilih lewat
 // ItemPicker (yang sudah bawa item_units sendiri lewat useItemCache).
 export async function fetchItemUnitsForItems(itemIds: string[]): Promise<ItemUnit[]> {
   if (itemIds.length === 0) return [];

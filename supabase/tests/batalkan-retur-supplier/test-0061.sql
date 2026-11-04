@@ -4,6 +4,17 @@
 begin;
 select set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated","email":"tester@example.com"}', true);
 
+-- Akun default tidak lagi di-seed migration (0033): siapkan seperti fixture lain (tagihan-dulu-barang-menyusul/fixtures-live-like.sql).
+insert into app_user_signup_whitelist (email, role_name) values ('tester@example.com', 'admin') on conflict do nothing;
+insert into auth.users (id, email, aud, role) values ('11111111-1111-1111-1111-111111111111', 'tester@example.com', 'authenticated', 'authenticated') on conflict do nothing;
+insert into app_user_roles (user_id, role_name) values ('11111111-1111-1111-1111-111111111111', 'admin') on conflict do nothing;
+do $$ begin
+  if not exists (select 1 from app_settings) then
+    perform bootstrap_default_accounts();
+    perform complete_onboarding('Toko Uji');
+  end if;
+end $$;
+
 create or replace function pg_temp.assert_eq(p_label text, p_actual numeric, p_expected numeric, p_tol numeric default 0.01) returns void language plpgsql as $$
 begin
   if p_actual is null or abs(p_actual - p_expected) > p_tol then

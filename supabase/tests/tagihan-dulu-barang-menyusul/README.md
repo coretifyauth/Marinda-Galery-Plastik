@@ -1,6 +1,7 @@
 # Tes SQL — Tagihan Dulu, Barang Menyusul (migration 0057 dan 0058)
 
 Skrip psql biasa (bukan pgTAP), dijalankan di **database lokal Docker saja** — jangan pernah diarahkan ke database live.
+**Catatan (0070, 2026-11-04):** ini tes TAHAP historis, hanya valid pada skema 0055-0058 (memakai bentuk barang masuk lama dan `create_replacement` yang kemudian dibuang di 0063/0070). Jangan dijalankan di skema terbaru; tes regresi terkini ada di `koreksi-salah-input/` dan `batalkan-retur-supplier/`.
 Menggantikan tes lama `goods-received-not-invoiced/` (alur barang masuk tanpa tagihan, sudah dibuang; ada di riwayat git).
 
 Urutan (dari root repo; `<db>` = `supabase_db_<project_id>`, `run` = `docker exec -i <db> psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1`):

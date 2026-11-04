@@ -7,7 +7,7 @@ Saat tagihan yang dicatat ternyata salah total (mis. salah supplier, salah nota)
 ## Prasyarat
 
 - Login dengan role **admin** atau **accountant**.
-- Tagihan tidak punya **retur aktif** (kalau ada, **Batalkan Retur** dulu, lihat [koreksi-salah-input.md](koreksi-salah-input.md) bagian D), dan belum punya **penutupan sisa barang** atau **tukar barang lama** (fitur tukar barang sudah dicabut, tapi baris lama tetap menghalangi; keduanya belum bisa dibatalkan). Pembayaran, barang masuk, dan uang muka yang diterapkan ikut dibatalkan otomatis.
+- Tagihan tidak punya **retur aktif** (kalau ada, **Batalkan Retur** dulu, lihat [koreksi-salah-input.md](koreksi-salah-input.md) bagian D), dan belum punya **penutupan sisa barang** (penutupan belum bisa dibatalkan). Pembayaran, barang masuk, dan uang muka yang diterapkan ikut dibatalkan otomatis.
 - Stok barang dari tagihan ini masih utuh. Kalau sebagian sudah terjual, pakai [koreksi-salah-input.md](koreksi-salah-input.md).
 - Tagihan **lama** yang dibuat bareng barang masuknya mengikuti syarat yang sama; stoknya dikurangi lagi saat dibatalkan.
 
@@ -28,5 +28,4 @@ Saat tagihan yang dicatat ternyata salah total (mis. salah supplier, salah nota)
 - **Memakai retur untuk salah input** — retur mencatat barang yang benar-benar kembali. Untuk salah ketik pakai [koreksi-salah-input.md](koreksi-salah-input.md).
 - **Lupa mencatat ulang pembayaran** — pembatalan hanya membalik catatan. Kalau transfernya benar terjadi dan tidak dicatat ulang, saldo bank di sistem lebih besar dari rekening koran.
 - **Ditolak karena sisa barang sudah ditutup** — penutupan (**Tutup Sisa Barang**) tidak bisa dibatalkan, jadi tagihannya juga tidak bisa. Nilai yang salah dikoreksi lewat **Koreksi Tagihan**.
-- **Tagihan lama ditolak karena stok tidak cukup** — barang masuk lama belum punya jalur koreksi; hubungi admin.
 - **Membatalkan tagihan hanya karena nominal nota beda** — tidak perlu, cukup **Koreksi Tagihan**.

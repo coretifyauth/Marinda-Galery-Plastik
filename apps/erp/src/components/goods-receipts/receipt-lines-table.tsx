@@ -43,11 +43,9 @@ function QtyCell({ line }: { line: ReceiptLine }) {
 export function ReceiptLinesTable({
   lines,
   variant,
-  billAmount,
 }: {
   lines: ReceiptLine[];
   variant: "detail" | "compact";
-  billAmount?: number;
 }) {
   const totals = receiptLinesTotals(lines);
 
@@ -77,8 +75,6 @@ export function ReceiptLinesTable({
       </table>
     );
   }
-
-  const extra = billAmount != null ? round2(billAmount - totals.net) : 0;
 
   return (
     <table className="w-full text-left text-sm">
@@ -159,22 +155,6 @@ export function ReceiptLinesTable({
             </td>
             <td className="px-4 py-1.5 text-right font-mono">{rupiah(totals.net)}</td>
           </tr>
-          {billAmount != null && extra !== 0 && (
-            <tr className="bg-slate-50/60">
-              <td colSpan={5} className="px-4 py-1.5 text-right text-slate-500">
-                PPN &amp; biaya tambahan
-              </td>
-              <td className="px-4 py-1.5 text-right font-mono">{rupiah(extra)}</td>
-            </tr>
-          )}
-          {billAmount != null && (
-            <tr className="border-t border-slate-200 bg-slate-50 font-semibold text-black">
-              <td colSpan={5} className="px-4 py-2 text-right">
-                Total Tagihan
-              </td>
-              <td className="px-4 py-2 text-right font-mono">{rupiah(billAmount)}</td>
-            </tr>
-          )}
         </tfoot>
       )}
     </table>

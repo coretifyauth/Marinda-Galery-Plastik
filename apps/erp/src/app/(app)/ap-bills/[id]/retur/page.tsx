@@ -37,13 +37,6 @@ type CreditNoteDetail = {
   return_lines: { item_id: string; qty_returned: number }[];
 };
 
-type ReplacementDetail = {
-  id: string;
-  /** Terisi = tukar barang lama sudah dibatalkan (migration 0065) dan tidak dihitung sebagai klaim qty. */
-  replacement_cancellations?: { replacement_id: string } | { replacement_id: string }[] | null;
-  replacement_lines: { item_id: string; qty_replaced: number }[];
-};
-
 export default function ApBillReturPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -87,7 +80,6 @@ export default function ApBillReturPage() {
       { data: itemAccountRows },
       { data: reversedRows },
       { data: cns, error: cnErr },
-      { data: reps, error: repErr },
       { data: grn },
     ] = await Promise.all([
       fetchDefaultAccounts(),
@@ -104,11 +96,6 @@ export default function ApBillReturPage() {
       supabase
         .from("returns")
         .select("id, return_cancellations(return_id), return_lines(item_id, qty_returned)")
-        .eq("transaction_id", id)
-        .eq("type", "OUTBOUND"),
-      supabase
-        .from("replacements")
-        .select("id, replacement_cancellations(replacement_id), replacement_lines(item_id, qty_replaced)")
         .eq("transaction_id", id)
         .eq("type", "OUTBOUND"),
       fetchGoodsReceiptForBill(id).then((grn) => ({ data: grn })),
@@ -134,7 +121,7 @@ export default function ApBillReturPage() {
     setIsCancelled(reversedIds.has(loadedBill.journal_entry_id));
     const loadedGoodsReceipt = (grn ?? null) as unknown as GoodsReceiptForBill | null;
     setGoodsReceipt(loadedGoodsReceipt);
-    setLoadError(cnErr?.message ?? repErr?.message ?? null);
+    setLoadError(cnErr?.message ?? null);
 
     // Isi form awal -- setara openReturForm() di view.tsx lama, tapi sekarang dijalankan
     // begitu data bill kelar dimuat karena halaman ini SATU-SATUNYA tujuan (bukan modal).
@@ -150,15 +137,6 @@ export default function ApBillReturPage() {
       if (!isActiveReturn(cn)) continue; // retur dibatalkan: qty-nya bebas diklaim lagi
       for (const l of cn.return_lines) {
         claimed.set(l.item_id, (claimed.get(l.item_id) ?? 0) + l.qty_returned);
-      }
-    }
-    for (const r of (reps ?? []) as unknown as ReplacementDetail[]) {
-      const cancelled = Array.isArray(r.replacement_cancellations)
-        ? r.replacement_cancellations.length > 0
-        : r.replacement_cancellations != null;
-      if (cancelled) continue;
-      for (const l of r.replacement_lines) {
-        claimed.set(l.item_id, (claimed.get(l.item_id) ?? 0) + l.qty_replaced);
       }
     }
     setReturLines(
@@ -407,7 +385,7 @@ export default function ApBillReturPage() {
                 ))}
                 {returLines.length === 0 && (
                   <p className="text-sm text-slate-400">
-                    Semua item di bill ini udah diklaim penuh (retur atau tukar barang).
+                    Semua item di bill ini udah diklaim penuh oleh retur.
                   </p>
                 )}
               </div>

@@ -63,4 +63,3 @@ Kalau saldo di supplier dari retur itu sudah dicairkan tunai, retur ditolak diba
 - **Penurunan tagihan ditolak karena melebihi sisa utang** — tagihannya sudah dibayar. Bagian yang sudah dibayar keluar lewat **Tutup Sisa Barang** jadi uang muka, atau batalkan pembayarannya dulu kalau catatannya yang salah.
 - **Penurunan tagihan ditolak karena melebihi barang yang belum diterima** — kurangi dulu barang masuknya lewat Koreksi Barang Masuk.
 - **Koreksi Barang Masuk ditolak karena nilainya melebihi nilai tagihan** — naikkan dulu lewat Koreksi Tagihan.
-- **Barang masuk lama tidak punya tombol Koreksi** — barang masuk yang dibuat bareng tagihannya hanya bisa dibatalkan lewat tagihan, selama stoknya masih utuh.

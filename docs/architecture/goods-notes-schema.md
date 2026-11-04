@@ -43,8 +43,8 @@ cuma tabel penyimpanannya.
 |---|---|---|
 | `type` | `INBOUND` (dulu GRN) atau `OUTBOUND` (dulu Goods Issue) | Menentukan arah fisik & kolom mana yang wajib terisi |
 | `transaction_id` | Tagihan (Bill, INBOUND) atau Invoice (OUTBOUND) | **Wajib** — INBOUND: tagihan barang tempat barang masuk itu dibuat (tepat satu); OUTBOUND: invoice yang dibuat bersamaan. `0056` melonggarkannya untuk INBOUND; rancangan `0057` menegakkannya lagi lewat trigger INSERT |
-| `journal_entry_id` | Jurnal HPP (OUTBOUND: Debit HPP, Kredit Persediaan Barang Jadi) | OUTBOUND wajib. INBOUND lama (`bundled`): NULL, jurnal Persediaan ada di jurnal tagihannya. INBOUND alur baru: Debit Persediaan / Kredit Pembelian Belum Diterima |
-| `source_ref` | Nomor dokumen internal | OUTBOUND wajib. INBOUND lama: NULL. INBOUND alur baru: nomor `GRN` dari penomoran dokumen `goods_receipts` |
+| `journal_entry_id` | Jurnal HPP (OUTBOUND: Debit HPP, Kredit Persediaan Barang Jadi) | Wajib untuk OUTBOUND dan INBOUND. INBOUND: Debit Persediaan / Kredit Pembelian Belum Diterima (diwajibkan trigger `goods_notes_inbound_from_bill_guard`; bentuk lama tanpa jurnal dibuang di `0070`) |
+| `source_ref` | Nomor dokumen internal | Wajib. INBOUND: nomor `GRN` dari penomoran dokumen `goods_receipts` |
 | `order_id` | Order asal, kalau ada | Opsional — INBOUND harus dari Purchase Order kalau diisi, OUTBOUND harus dari Sales Order |
 | `delivery_note_ref` | Nomor Surat Jalan dari counterparty | Murni catatan referensi teks — dalam praktiknya cuma keisi sisi INBOUND |
 | `note_date` | Tanggal kejadian fisik (terima/kirim) | — |
@@ -67,8 +67,8 @@ cuma tabel penyimpanannya.
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Catat penerimaan barang (INBOUND) | `create_goods_receipt` | Barang masuk dibuat **dari satu tagihan barang** (jurnal Debit Persediaan / Kredit Pembelian Belum Diterima, `avg_cost` langsung dihitung) — lihat section "Barang Masuk dari Tagihan" di bawah | Lihat section di bawah |
-| Batalkan penerimaan barang (INBOUND) | `cancel_goods_receipt` (barang masuk alur baru) atau `cancel_ap_bill` (tagihan lama alur `bundled`; migration `0052`/`0053`) | Barang masuk alur baru: jurnal dibalik, stok dan `avg_cost` dikurangi, kolam tagihan kembali. Tagihan lama: jurnal tagihan dibalik dan stok dikurangi (`avg_cost` dari nilai persediaan sisa), status "dibatalkan" diturunkan dari status tagihan (tabel immutable, tak ada kolom status) | Lihat section di bawah; untuk tagihan lama: ditolak kalau tagihan punya pembayaran/retur/DP/tukar barang, sudah pernah dibatalkan, atau stok item tinggal < qty diterima |
-| Batalkan pengiriman barang (OUTBOUND) | `cancel_ar_invoice` (invoice pasangannya; migration `0052`) | Jurnal invoice + jurnal HPP dibalik; tiap baris: `qty_on_hand` ditambah balik (`avg_cost` tetap — konsumsi gak pernah mengubahnya), mutasi kompensasi (qty positif) ke Kartu Stok berlabel "Pembatalan Barang Keluar"; status Sales Order dihitung ulang | Ditolak kalau invoice punya pembayaran/retur/penggantian barang atau sudah pernah dibatalkan. Qty yang dibatalkan dibebaskan dari SO. Invoice POS yang sudah lunas tetap lewat `void_pos_transaction` |
+| Batalkan penerimaan barang (INBOUND) | `cancel_goods_receipt` | Jurnal dibalik, stok dan `avg_cost` dikurangi, kolam tagihan kembali; status "dibatalkan" ditandai baris `goods_note_cancellations` (tabel immutable, tak ada kolom status) | Lihat section di bawah |
+| Batalkan pengiriman barang (OUTBOUND) | `cancel_ar_invoice` (invoice pasangannya; migration `0052`) | Jurnal invoice + jurnal HPP dibalik; tiap baris: `qty_on_hand` ditambah balik (`avg_cost` tetap — konsumsi gak pernah mengubahnya), mutasi kompensasi (qty positif) ke Kartu Stok berlabel "Pembatalan Barang Keluar"; status Sales Order dihitung ulang | Ditolak kalau invoice punya pembayaran/retur atau sudah pernah dibatalkan. Qty yang dibatalkan dibebaskan dari SO. Invoice POS yang sudah lunas tetap lewat `void_pos_transaction` |
 | Catat pengiriman barang (OUTBOUND, + invoice + pengakuan HPP sekaligus) | `create_goods_issue` | 1 panggilan: (1) bikin invoice + jurnal Debit Piutang/Kredit Pendapatan (nilai per baris sudah net diskon, dihitung & dikirim client sebelum RPC dipanggil); (2) konsumsi tiap barang jadi dari stok (Weighted Average, gak kepengaruh diskon jual — HPP soal cost barang keluar, bukan harga jual); (3) bikin jurnal **kedua** — Debit HPP, Kredit Persediaan Barang Jadi; (4) insert `goods_notes`(`type='OUTBOUND'`)+`goods_note_lines` (termasuk `discount_rule_id`/`discount_amount` per baris, audit trail); (5) catat mutasi keluar ke Kartu Stok | Sales Order tujuan (kalau diisi) harus `direction='SALE'` dan belum dibatalkan; qty keluar per baris order gak boleh melebihi sisa dipesan; qty keluar gak boleh melebihi stok tersedia |
 
 **Aturan Bisnis → RPC**
@@ -103,7 +103,7 @@ cuma tabel penyimpanannya.
 
 Catatan lintas modul: retur customer (pembalikan stok+HPP dari OUTBOUND) dan retur ke supplier
 (pembalikan dari INBOUND) didokumentasikan di `returns-schema.md`/`return-credits-schema.md`, bukan
-di sini. Tukar/ganti barang pasca-retur (Opsi B, kedua arah) di `replacements-schema.md`.
+di sini. Tukar/ganti barang pasca-retur (Opsi B) sudah dicabut (`0063`) dan tabelnya dibuang di `0070`.
 
 ## Barang Masuk dari Tagihan (Tagihan Dulu, Barang Menyusul)
 
@@ -153,10 +153,10 @@ transactions (tagihan AP, type=INBOUND)
 |---|---|---|---|
 | Buat tagihan barang | `create_ap_bill_with_goods_pool` (baru) | Membungkus `create_transaction('INBOUND', …)`: baris debit pertama = Pembelian Belum Diterima sebesar bagian barang (`p_goods_amount`), lalu baris biaya tambahan/PPN seperti tagihan biasa, lawan Utang Usaha. Insert `ap_bill_goods_pools` di transaksi yang sama | `p_goods_amount > 0`; supplier valid |
 | Catat barang masuk | `create_goods_receipt` (signature baru: `p_bill_id` menggantikan param supplier; `p_order_id` opsional) | (1) kunci baris tagihan (`pg_advisory_xact_lock`); (2) supplier dari tagihan; (3) diskon header diproratakan (`grn_prorate_discount`); (4) total nilai bersih ≤ sisa kolam; (5) jurnal Debit Persediaan / Kredit Pembelian Belum Diterima; (6) insert `goods_notes` + `goods_note_lines`, Kartu Stok +qty; (7) per item `inventory_add_billed(item, qty, net_unit_cost)` | Tagihan INBOUND, belum dibatalkan, punya kolam; PO (kalau ada) belum dibatalkan, supplier sama, qty ≤ sisa; `unit_cost > 0`; `assert_period_open` |
-| Batalkan barang masuk | `cancel_goods_receipt` (ditulis ulang) | Membalik jurnal (Debit Pembelian Belum Diterima / Kredit Persediaan), stok dan `avg_cost` dikurangi (rumus pembalikan nilai, sama dengan jalur tagihan lama), Kartu Stok kompensasi, insert `goods_note_cancellations`. Kolam otomatis kembali (diturunkan) | Stok item cukup dan nilai persediaan sisa cukup dibalik; belum ada retur/tukar atas item itu di tagihannya; periode terbuka |
+| Batalkan barang masuk | `cancel_goods_receipt` (ditulis ulang) | Membalik jurnal (Debit Pembelian Belum Diterima / Kredit Persediaan), stok dan `avg_cost` dikurangi (rumus pembalikan nilai, sama dengan jalur tagihan lama), Kartu Stok kompensasi, insert `goods_note_cancellations`. Kolam otomatis kembali (diturunkan) | Stok item cukup dan nilai persediaan sisa cukup dibalik; belum ada retur atas item itu di tagihannya; periode terbuka |
 | Lepas sisa kolam | `release_ap_bill_pool` (baru) | `kind='pembulatan'`: Debit Beban Selisih Pembulatan / Kredit Pembelian Belum Diterima. `kind='uang_muka'`: jurnal Debit Uang Muka Pembelian / Kredit Pembelian Belum Diterima, lalu insert `deposits` (sumber = pelepasan kolam). Insert `bill_pool_releases` | Pembulatan: harus seluruh sisa kolam dan sisa < satuan pembulatan bank (`payment_rounding_unit('BANK')`, default Rp1). Uang muka: `amount ≤ min(sisa, dibayar − terpakai)`, dengan dibayar = pembayaran + uang muka aktif yang diterapkan ke tagihan itu, terpakai = nilai bersih barang masuk aktif |
-| Batalkan tagihan | `cancel_ap_bill` (diperluas) | Tagihan barang: membalik jurnal tagihan. Tagihan lama (`bundled`): cabang pembalikan stok (0053) tetap, kini membaca `goods_notes.transaction_id` | Guard lama (pembayaran/retur/DP/tukar barang) tetap. **Baru:** tagihan barang ditolak kalau masih punya barang masuk aktif atau pelepasan kolam |
-| Retur ke supplier, tukar barang ke supplier | `create_ap_return`, trigger `return_lines_no_over_return_outbound`, `replacement_lines_no_over_claim` | Dibaca lewat `goods_notes.transaction_id` (bukan `goods_note_billings`); batas qty = total qty diterima semua barang masuk aktif di tagihan itu, per item | Tidak berubah selain sumber datanya |
+| Batalkan tagihan | `cancel_ap_bill` (diperluas) | Tagihan barang: membalik jurnal tagihan. Cabang tagihan lama (`bundled`, pembalikan stok 0053) dibuang di `0070` | Guard: pembayaran aktif, retur aktif, DP. **Baru:** tagihan barang ditolak kalau masih punya barang masuk aktif atau pelepasan kolam |
+| Retur ke supplier | `create_ap_return`, trigger `return_lines_no_over_return_outbound` | Dibaca lewat `goods_notes.transaction_id` (bukan `goods_note_billings`); batas qty = total qty diterima semua barang masuk aktif di tagihan itu, per item | Tidak berubah selain sumber datanya |
 | Status tagihan | `recompute_transaction_status` | `origin` tagihan INBOUND dibaca dari `goods_notes.transaction_id` | — |
 
 ### Rumus penting
@@ -200,7 +200,7 @@ Skema `archive` tidak diekspos ke API (hanya `public`), jadi data tetap ada tanp
 | Fungsi/area | Perubahan |
 |---|---|
 | `consume_weighted_average`, `inventory_restore_stock`, `record_stock_opname`, produksi, tukar barang, `cancel_ar_invoice`, `create_ar_return`, `void_pos_transaction` | **0057: tidak diubah** (`qty_unbilled` selalu 0 sehingga perilakunya sama dengan sebelum 0056). **0058:** disederhanakan setelah kolomnya dibuang |
-| `goods_note_is_active` | Barang masuk aktif = tidak ada di `goods_note_cancellations` dan (kalau tagihannya lama `bundled`) tagihannya belum dibatalkan |
+| `goods_note_is_active` | Barang masuk aktif = tidak ada di `goods_note_cancellations` (cabang tagihan lama `bundled` dibuang di `0070`) |
 | `recompute_order_status`, `goods_note_lines_no_over_fulfill`, `cancel_order` | Tidak berubah (memakai `goods_note_is_active`) |
 | `bootstrap_default_accounts` | Ditambah akun Pembelian Belum Diterima + peran Default Akun baru (pola `0054`/`0056`); DB yang sudah ter-onboard dibuatkan akun + peran lewat blok guard `app_settings` |
 | Migration `0059` (view baca saja) | `goods_receipts_overview` (daftar/detail barang masuk: status aktif/dibatalkan, tagihan induk, nilai) menggantikan `goods_notes_with_billing_status`; `ap_bills_with_status` mendapat kolom `has_goods_pool` untuk label/filter tipe "Tagihan Barang" di daftar tagihan |
@@ -225,7 +225,7 @@ Migration: `supabase/migrations/0060_koreksi_salah_input.sql`. Konsep bisnis: `d
 
 **Keputusan**
 
-Koreksi = batalkan dokumen lama + buat dokumen baru lewat `create_goods_receipt`, dalam satu transaksi. Dokumen hasil koreksi adalah barang masuk biasa, jadi retur, tukar barang, sisa barang, Purchase Order, dan pembatalan bekerja tanpa cabang khusus. Tabel `goods_note_revisions` lama (0056, dibuang 0058) menyimpan harga efektif di samping dokumen, yang memaksa semua pembaca mengetahuinya; desain itu sengaja gak dipakai lagi.
+Koreksi = batalkan dokumen lama + buat dokumen baru lewat `create_goods_receipt`, dalam satu transaksi. Dokumen hasil koreksi adalah barang masuk biasa, jadi retur, sisa barang, Purchase Order, dan pembatalan bekerja tanpa cabang khusus. Tabel `goods_note_revisions` lama (0056, dibuang 0058) menyimpan harga efektif di samping dokumen, yang memaksa semua pembaca mengetahuinya; desain itu sengaja gak dipakai lagi.
 
 **Peta Data (ERD)**
 
@@ -237,7 +237,7 @@ Koreksi = batalkan dokumen lama + buat dokumen baru lewat `create_goods_receipt`
 
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
-| Koreksi barang masuk | `revise_goods_receipt` | (1) foto stok tiap item yang terlibat; (2) mutasi kompensasi + jurnal pembalik dokumen lama, tanpa guard stok penuh; (3) `create_goods_receipt` dengan nilai benar; (4) saldo stok final ditimpa dari foto + rumus; (5) jurnal koreksi HPP kalau perlu | Bukan barang masuk lama; belum dibatalkan; alasan dan minimal 1 baris wajib; periode terbuka; sisa barang cukup (dari `create_goods_receipt`); stok cukup dikurangi selisihnya; qty baru gak di bawah yang sudah diretur/ditukar |
+| Koreksi barang masuk | `revise_goods_receipt` | (1) foto stok tiap item yang terlibat; (2) mutasi kompensasi + jurnal pembalik dokumen lama, tanpa guard stok penuh; (3) `create_goods_receipt` dengan nilai benar; (4) saldo stok final ditimpa dari foto + rumus; (5) jurnal koreksi HPP kalau perlu | Belum dibatalkan; alasan dan minimal 1 baris wajib; periode terbuka; sisa barang cukup (dari `create_goods_receipt`); stok cukup dikurangi selisihnya; qty baru gak di bawah yang sudah diretur |
 | Porsi nilai yang masih di stok | `goods_receipt_stock_share` | Mundur dari stok sekarang lewat `inventory_movements` sesudah dokumen dibuat: tiap mutasi keluar o dari stok Q menyisakan (Q−o)/Q nilai di dalam stok | Dijepit 0–1 |
 
 **Rumus per item** (q0,v0 = lama; q1,v1 = baru; Q,V = stok sebelum koreksi; s = porsi di stok)
@@ -250,19 +250,13 @@ Koreksi = batalkan dokumen lama + buat dokumen baru lewat `create_goods_receipt`
 Keterbatasan: `s` menganggap semua mutasi keluar sebagai konsumsi, dan `avg_cost` tersimpan 2 desimal, jadi nilai stok bisa selisih receh dari buku besar (pola yang sama dengan `cancel_goods_receipt`).
 
 
-## Koreksi Satuan / Qty Barang Masuk Lama
+## Pembersihan Logic Data Lama (0070)
 
-Migration: `supabase/migrations/0069_koreksi_barang_masuk_lama.sql`. Tes: `supabase/tests/koreksi-barang-masuk-lama/`. Konsep bisnis: `docs/domain/inventory.md` submodule "Koreksi Barang Masuk". Menjawab celah di tabel "Keterbatasan" sebelumnya: barang masuk lama (`journal_entry_id` kosong) ditolak `revise_goods_receipt`.
+Migration: `supabase/migrations/0070_hapus_logic_data_lama.sql`. Setelah semua data transaksional live dihapus (2026-11-04), jalur yang hanya melayani baris lama dibuang. Yang hilang dari bagian ini: bentuk barang masuk lama `bundled` (INBOUND tanpa jurnal sendiri), fungsi `revise_legacy_goods_receipt` dan halaman Koreksi Satuan / Qty Barang Masuk Lama (`0069`), cabang `journal_entry_id IS NULL` di `goods_note_is_active`, `goods_notes_inbound_from_bill_guard`, `cancel_ap_bill`, `ap_bill_cancellation_preview`, `cancel_goods_receipt`, `revise_goods_receipt`, `recompute_transaction_status`, serta kolom `is_legacy` di view `goods_receipts_overview`. `goods_note_cancellations.journal_entry_id` kembali `NOT NULL` (tiap pembatalan atau koreksi selalu punya jurnal pembalik).
 
-**Keputusan**: dokumen lama dibatalkan **tanpa jurnal** (baris `goods_note_cancellations` dengan `journal_entry_id` kosong) dan digantikan `goods_notes` INBOUND baru yang juga tanpa jurnal dan tanpa nomor (tetap "lama", tagihan/PO/supplier/tanggal sama). Nilai bersih tiap baris dipertahankan persis: `unit_cost` dibulatkan ke atas, selisih sen menjadi `discount_amount`. Keduanya dihubungkan lewat `goods_receipt_revisions` (sama dengan koreksi biasa).
+Tabel `replacements`, `replacement_lines`, `replacement_cancellations`, kolom `inventory_movements.replacement_line_id`, dan jenis dokumen `purchase_replacements` / `warranty_replacements` ikut dibuang (fiturnya dicabut di `0063`). Pagar awal migration menolak berjalan kalau masih ada baris di tabel-tabel itu atau barang masuk tanpa jurnal.
 
-| Aksi | RPC | Efek | Guard |
-|---|---|---|---|
-| Koreksi satuan/qty barang masuk lama | `revise_legacy_goods_receipt(note, lines [{line_id, qty}], reason, entry_date)` | Mutasi kompensasi lama (-qty) dan baru (+qty) pada `entry_date`; saldo stok & `avg_cost` ditimpa dengan rumus `revise_goods_receipt` (nilai baris tetap => selisih nilai 0, seluruh efek lewat "selisih harga"); porsi yang sudah terjual dikoreksi lewat jurnal Persediaan/HPP pada `entry_date` | Hanya barang masuk lama; masih aktif (`goods_note_is_active`); semua baris dicantumkan tepat sekali, qty > 0 maksimal 3 desimal, minimal satu qty berubah; alasan wajib; `entry_date` >= tanggal dokumen & periode terbuka; stok tidak boleh negatif; qty aktif tidak boleh di bawah yang sudah diretur/ditukar |
-
-**Dampak ke fungsi lain**: penjaga `goods_notes_inbound_from_bill_guard` mendapat satu pengecualian sempit (dokumen tanpa jurnal & nomor hanya boleh disisipkan bila tagihannya tanpa kolam dan sudah punya barang masuk lama yang digantikan); `goods_note_is_active` kini juga menganggap barang masuk lama yang punya baris `goods_note_cancellations` tidak aktif; `cancel_ap_bill` melewati barang masuk lama yang sudah digantikan saat membalik stok tagihan lama; `ap_bill_cancellation_preview` hanya berubah teks petunjuk.
-
-**Keterbatasan**: koreksi yang menaikkan qty ditolak pemeriksa kelebihan-penerimaan bila barang masuk lama terhubung ke PO dan qty barunya melebihi qty pesanan (PO-nya ikut salah satuan: perbaiki PO dulu); jurnal koreksi memakai akun Persediaan item (setara akun tagihan lama sejak satu akun Persediaan); pembulatan `avg_cost` 2 desimal bisa menyisakan selisih sampai 0,005 x qty baru terhadap buku besar; pembagian porsi terjual/di stok adalah perkiraan (sama dengan koreksi biasa); `avg_cost` tersimpan 2 desimal sehingga nilai stok bisa selisih receh dari buku besar; hanya satuan/qty yang bisa diubah (item dan nilai baris tetap).
+Barang masuk yang salah satuan atau qty-nya sekarang hanya punya satu jalur: Koreksi Barang Masuk (`revise_goods_receipt`) atau Batalkan Barang Masuk.
 
 
 ## Siapa Boleh Apa

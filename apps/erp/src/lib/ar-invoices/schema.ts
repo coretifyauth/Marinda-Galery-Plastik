@@ -80,8 +80,7 @@ export type ArInvoiceStatus = "lunas" | "sebagian" | "belum" | "dibatalkan";
  * `0020_ar_invoice_remaining_return_credit_fix.sql`), bukan cuma ngurangin lewat `ar_returns`
  * doang. Tanpa add-back ini outstanding bisa keliatan minus padahal GL-nya udah balance. Saldo
  * kredit itu sendiri gak lagi bisa "dititip" motong invoice lain (dicabut, lihat "Saldo Kredit
- * dari Retur") — resolusinya cuma refund tunai (ganti barang pasca-retur/garansi berdiri sendiri,
- * gak nyentuh Piutang Usaha sama sekali — lihat `replacements-schema.md`).
+ * dari Retur") — resolusinya cuma refund tunai (fitur ganti barang garansi sudah dicabut).
  * `ar_deposit_applications` selalu aktif kalau invoice-nya masih hidup (belum
  * dibatalkan) — begitu invoice dibatalkan, `cancel_ar_invoice` nolak keras kalau udah ada
  * write-off (gak bisa dibatalkan lewat jalur itu), jadi gak perlu exclude yang di-reverse

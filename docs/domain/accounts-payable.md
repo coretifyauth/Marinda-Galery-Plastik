@@ -93,11 +93,10 @@ Salah input itu kejadian biasa, dan pembukuan gak boleh diedit. Jadi tiap jenis 
 **Aturan Bisnis**
 - Pembayaran gak bisa dibatalkan kalau kelebihan retur di tagihan itu sudah jadi saldo di supplier, atau uangnya sudah dilepas jadi uang muka dari sisa barang: kedua angka itu dihitung dengan asumsi tagihan sudah dibayar.
 - Penurunan tagihan gak boleh melebihi barang yang belum diterima maupun sisa utang. Bagian yang sudah dibayar keluar lewat Tutup Sisa Barang (jadi uang muka).
-- Batalkan Tagihan ditolak kalau masih ada retur aktif (batalkan returnya dulu), atau sudah ada tukar barang aktif (data lama; fiturnya sudah dicabut) atau penutupan sisa barang, karena keduanya belum bisa dibatalkan lewat tombol. Tukar barang lama dibereskan sekali lewat `cancel_ap_replacement` (SQL Editor, admin). Nilai yang salah dikoreksi lewat Koreksi Tagihan.
+- Batalkan Tagihan ditolak kalau masih ada retur aktif (batalkan returnya dulu), atau sudah ada penutupan sisa barang, karena penutupan belum bisa dibatalkan lewat tombol. Nilai yang salah dikoreksi lewat Koreksi Tagihan.
 - Retur hanya bisa dibatalkan kalau saldo Piutang Retur Supplier-nya tidak punya pencairan tunai yang aktif. Kalau sudah dicairkan, **Batalkan Pencairan** dulu: jurnal pencairan (Debit Kas/Bank, Kredit Piutang Retur Supplier) dibalik, dengan pertanyaan wajib "apakah uangnya benar-benar berpindah" seperti Batalkan Pembayaran. Setelah itu saldo kembali utuh dan retur bisa dibatalkan. Retur juga hanya bisa dibatalkan yang **terbaru dulu** di tagihan itu: saldo retur yang lebih baru dihitung dengan memperhitungkan retur sebelumnya.
-- Retur yang dibatalkan gak dihitung lagi: qty-nya bebas diklaim ulang lewat retur atau tukar barang, dan sisa tagihan menghitungnya seolah gak pernah ada. Pembayaran yang tadinya diblokir saldo retur jadi bisa dibatalkan.
-- Retur yang sudah dibatalkan gak bisa dibatalkan lagi, dan tukar barang lama (Opsi B, fiturnya sudah dicabut) hanya bisa dibatalkan lewat `cancel_ap_replacement` tanpa UI; tukar barang yang dibatalkan tidak lagi dihitung sebagai klaim qty dan tidak menghalangi Koreksi Barang Masuk maupun Batalkan Tagihan.
-- Barang masuk lama (dibuat bareng tagihannya) bisa dibatalkan lewat tagihannya selama stoknya masih utuh. Kalau satuan atau qty-nya salah sedangkan tagihannya sudah benar, pakai Koreksi Satuan / Qty (lihat `docs/domain/inventory.md` submodule "Koreksi Barang Masuk").
+- Retur yang dibatalkan gak dihitung lagi: qty-nya bebas diklaim ulang lewat retur, dan sisa tagihan menghitungnya seolah gak pernah ada. Pembayaran yang tadinya diblokir saldo retur jadi bisa dibatalkan.
+- Retur yang sudah dibatalkan gak bisa dibatalkan lagi.
 - Semua jurnal pembalik bertanggal hari pembatalan, jadi laporan periode yang sudah ditutup gak berubah.
 
 **Skenario**
@@ -142,25 +141,19 @@ Form retur memvalidasi kategori akun: akun Persediaan gak bisa "diretur" lewat j
     - Bill belum lunas/sebagian: **Debit Utang Usaha, Kredit Persediaan Bahan Baku** — utang beneran berkurang sejumlah nilai retur, gak lewat akun perantara.
     - Bill udah lunas penuh (atau retur ngelebihin sisa outstanding): jurnal yang sama tetap jalan dulu (bikin outstanding minus) → excess-nya **otomatis** direklasifikasi jadi saldo baru **Piutang Retur Supplier** (akun asset baru) — mirror mekanisme saldo kredit retur di AR, tapi arah aset kebalik (di AR itu liability kita ke customer; di sini asset kita ke supplier, karena supplier yang "berutang" balik ke kita). Saldo ini partial-capable, **cuma bisa dicairkan tunai** (Debit Kas/Bank, Kredit Piutang Retur Supplier) — gak bisa dipakai motong bill lain.
     - Kenapa gak butuh akun kontra (beda dari AR yang pakai kontra-revenue "Retur & Potongan Penjualan"): sisi debit bill (Persediaan Bahan Baku) itu akun **neraca** (asset), bukan akun laporan laba-rugi kayak Pendapatan — retur boleh langsung mengurangi Persediaan tanpa lewat akun perantara.
-  - **Opsi B — Tukar Barang** (supplier kirim barang pengganti, bukan kurangin utang) — **DICABUT 2026-11-02**: tidak ada lagi UI/RPC untuk mencatatnya (lihat `docs/architecture/replacements-schema.md`); baris lama tersisa sebagai riwayat. Penjelasan di bawah soal Opsi B hanya konteks desain lama:
-    - **Berdiri sendiri, gak lewat retur Opsi A sama sekali** — kalau Opsi B dianggap tambahan DI ATAS Opsi A untuk porsi barang yang sama, supplier jadi ngasih 2 kompensasi sekaligus (kurangi utang DAN kirim barang pengganti tanpa nagih balik) buat 1 kejadian rusak yang sama, gak masuk akal secara bisnis. Makanya Opsi A dan Opsi B saling eksklusif per porsi barang (lihat Aturan Bisnis).
-    - **Berlaku sama persis di semua status bayar** — Utang Usaha **gak pernah kesentuh**, mau bill-nya lunas, sebagian, atau belum dibayar sama sekali.
-    - Jurnal: **Debit Persediaan Bahan Baku** (barang baru masuk) **/ Kredit Persediaan Bahan Baku** (barang rusak keluar) — net nol, murni reklasifikasi fisik (barang keluar-masuk dicatat biar jejak audit per-kejadian lengkap), tanpa baris Beban — karena perusahaan gak kehilangan nilai apa pun (dapat gantinya senilai sama).
 - Sengaja gak ada batas waktu retur (umur bill vs tanggal retur) — sama seperti di AR. Retur ke supplier diterima/ditolak murni keputusan manual staf di luar sistem.
-- **Kedua opsi berbagi 1 batas fisik yang sama**: total qty yang diklaim lewat opsi mana pun (A atau B), buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu. Karena batasnya di level fisik (bukan per-mekanisme), 1 bill boleh dipecah campuran — sebagian qty diretur (Opsi A), sebagian ditukar (Opsi B) — sesuai hasil negosiasi nyata per porsi barangnya, gak harus 1 kejadian = 1 resolusi seragam buat seluruh bill.
+- **Batas fisik retur**: total qty retur aktif buat 1 item di 1 bill yang sama gak boleh ngelebihin qty yang beneran diterima di bill itu.
 - Catatan implementasi: fitur ini nanganin item dengan metode costing Rata-Rata Tertimbang — satu-satunya metode yang ada sekarang (FIFO sudah dihapus total dari sistem). Nilai barang yang diretur/ditukar dihitung dari harga rata-rata **saat kejadiannya terjadi**, bukan harga asal pas barang diterima — konsisten dengan cara Rata-Rata Tertimbang bekerja di modul Inventory (gak nyimpen asal-usul per batch).
 - **Barang rusak yang supplier tolak kompensasi sama sekali** (gak mau kurangi utang, gak mau kirim pengganti) — dicatat lewat penyesuaian stok fisik (Stock Opname), bukan lewat RPC khusus AP. Konsekuensinya: catatan kerugiannya gak otomatis tertaut ke bill/supplier spesifik yang jadi penyebabnya, staf yang input harus inget sendiri gak dobel-klaim qty yang sama lewat jalur retur di atas.
 
 **Aturan Bisnis**
-- Opsi A dan Opsi B saling eksklusif **per porsi barang yang sama** — 1 unit barang cuma bisa diklaim lewat salah satu opsi, gak boleh jalan bareng buat porsi yang sama (itu kompensasi ganda dari sisi supplier). Porsi yang beda dalam 1 bill yang sama boleh pakai opsi berbeda-beda.
-- Total qty yang diklaim lewat Opsi A dan Opsi B sekaligus, buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu.
+- Total qty retur aktif, buat 1 item di 1 bill yang sama, gak boleh ngelebihin qty yang beneran diterima di bill itu.
 - Total saldo Piutang Retur Supplier yang dicairkan tunai gak boleh ngelebihin nominal awal saldo itu.
 - Retur gak boleh dicatat ke periode akuntansi yang udah ditutup — soal integritas pembukuan umum, bukan aturan khusus retur.
 
 **Skenario**
 - Retur (Opsi A), bill belum lunas — utang beneran berkurang.
 - Retur (Opsi A), bill udah lunas — jurnal sama tetap jalan (outstanding jadi minus), otomatis direklasifikasi jadi saldo Piutang Retur Supplier.
-- Retur (Opsi B) — tukar barang, berdiri sendiri, Utang Usaha gak kesentuh, independen dari status bayar.
 - Saldo Piutang Retur Supplier dicairkan tunai.
 - Retur dicatat padahal salah input (bukan barang yang benar-benar dikembalikan) — Batalkan Retur, lalu Batalkan Tagihan kalau tagihannya juga salah. Kalau saldo retur sudah dicairkan tunai, retur gak bisa dibatalkan.
 - 1 bill dipecah campuran — sebagian qty diretur (Opsi A, dapat potongan utang), sebagian qty lain dari bill yang sama ditukar (Opsi B) — dua kejadian independen, sama-sama dibatasi qty fisik yang diterima.

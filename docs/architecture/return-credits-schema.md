@@ -62,7 +62,7 @@ Kolom penting: `credit_id`, `amount`, `source_ref` (di sini baru ada dokumen sum
 | Aksi | RPC | Efek | Guard |
 |---|---|---|---|
 | Cairkan saldo kredit jadi tunai | `refund_return_credit` | `type` dilihat otomatis dari `return_credits` (caller gak perlu kirim). INBOUND: Debit akun saldo kredit (liability) / Kredit Kas. OUTBOUND: Debit Kas / Kredit akun saldo kredit (asset) | Trigger `return_credit_refunds_guard` menolak kalau `amount` melebihi sisa saldo (`return_credit_remaining`); RLS insert admin/accountant |
-| Saldo kredit sisa dihitung | Fungsi `return_credit_remaining(credit_id)` | `amount` awal dikurangi total refund yang sudah dicairkan — dihitung on-the-fly, gak disimpan sebagai kolom. Satu-satunya disposisi aktif cuma refund tunai (jalur "settle lewat ganti barang" sudah dicabut, lihat `replacements-schema.md`) | Dipakai bareng oleh trigger guard di atas |
+| Saldo kredit sisa dihitung | Fungsi `return_credit_remaining(credit_id)` | `amount` awal dikurangi total refund yang sudah dicairkan — dihitung on-the-fly, gak disimpan sebagai kolom. Satu-satunya disposisi aktif cuma refund tunai (jalur "settle lewat ganti barang" sudah dicabut) | Dipakai bareng oleh trigger guard di atas |
 
 **Aturan Bisnis → RPC**
 

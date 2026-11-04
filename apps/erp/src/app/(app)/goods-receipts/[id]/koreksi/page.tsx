@@ -206,15 +206,11 @@ export default function GoodsReceiptCorrectionPage() {
     return <FormError>{loadError ?? "Barang masuk gak ditemukan."}</FormError>;
   }
 
-  if (note.status === "dibatalkan" || note.is_legacy) {
+  if (note.status === "dibatalkan") {
     return (
       <div className="flex w-full flex-1 flex-col gap-6">
         <BackLink href={`/goods-receipts/${id}`} label="Kembali ke Detail Barang Masuk" />
-        <FormError>
-          {note.is_legacy
-            ? "Barang masuk lama (dibuat bareng tagihannya) dikoreksi lewat Koreksi Satuan / Qty di detail barang masuk, atau dibatalkan lewat tagihannya."
-            : "Barang masuk ini sudah dibatalkan, jadi tidak bisa dikoreksi."}
-        </FormError>
+        <FormError>Barang masuk ini sudah dibatalkan, jadi tidak bisa dikoreksi.</FormError>
       </div>
     );
   }

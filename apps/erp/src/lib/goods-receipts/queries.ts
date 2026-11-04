@@ -120,7 +120,7 @@ export async function fetchGoodsReceiptsForBill(billId: string): Promise<GoodsRe
 }
 
 // Seluruh barang masuk AKTIF 1 tagihan, digabung PER ITEM: qty dijumlah, harga = nilai bersih / qty. Dipakai layar
-// retur/tukar barang/detail tagihan (batas qty retur = total qty diterima semua barang masuk tagihan itu).
+// retur/detail tagihan (batas qty retur = total qty diterima semua barang masuk tagihan itu).
 // Null kalau tagihan tanpa barang masuk aktif.
 export async function fetchGoodsReceiptForBill(billId: string): Promise<GoodsReceiptForBill | null> {
   const { data, error } = await supabase
