@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase/client";
 import type { Account } from "@/lib/accounts/schema";
-import { fetchAccountBalancesBetween, fetchAccounts, fetchLinesUpTo } from "./balances";
+import { fetchAccountBalancesBetween, fetchAccounts, fetchLinesUpTo, moneyEquals, sumMoney } from "./balances";
 import { computeIncomeStatement } from "./income-statement";
 import { fetchClosingJournalEntryIds } from "./period-closing";
 import { computeTrialBalance } from "./trial-balance";
@@ -28,9 +28,8 @@ function childrenOf(accounts: Account[], parentCode: string): Account[] {
 }
 
 function sumByAccountIds(balances: TrialBalance["balances"], accountIds: Set<string>): number {
-  return balances
-    .filter((b) => accountIds.has(b.id))
-    .reduce((sum, b) => sum + b.balance, 0);
+  // sumMoney (sen), bukan `+` float -- lihat catatan di `toCents` (balances.ts).
+  return sumMoney(balances.filter((b) => accountIds.has(b.id)).map((b) => b.balance));
 }
 
 /**
@@ -63,7 +62,7 @@ function operatingWorkingCapitalDeltas(
     if (fixedAssetFamilyIds.has(account.id)) continue;
     if (account.category === "liability" && FINANCING_LIABILITY_CODES.includes(account.code)) continue;
 
-    const delta = (endById.get(account.id) ?? 0) - (startById.get(account.id) ?? 0);
+    const delta = sumMoney([endById.get(account.id) ?? 0, -(startById.get(account.id) ?? 0)]);
     if (delta === 0) continue;
 
     const contribution = account.normal_balance === "debit" ? -delta : delta;
@@ -165,19 +164,19 @@ export function computeCashFlow(
 ): CashFlow {
   const incomeStatement = computeIncomeStatement(accounts, periodLines, startDate, endDate, closingEntryIds);
 
-  const depreciationAddBack = incomeStatement.expenses
-    .filter((b) => DEPRECIATION_ACCOUNT_CODES.includes(b.code))
-    .reduce((sum, b) => sum + b.balance, 0);
+  const depreciationAddBack = sumMoney(
+    incomeStatement.expenses.filter((b) => DEPRECIATION_ACCOUNT_CODES.includes(b.code)).map((b) => b.balance)
+  );
 
   const kasIds = new Set(childrenOf(accounts, "1000").map((a) => a.id));
 
   const operatingWorkingCapital = operatingWorkingCapitalDeltas(accounts, tbStart, tbEnd);
-  const workingCapitalContribution = operatingWorkingCapital.reduce((sum, l) => sum + l.contribution, 0);
+  const workingCapitalContribution = sumMoney(operatingWorkingCapital.map((l) => l.contribution));
 
-  const operating = incomeStatement.netIncome + depreciationAddBack + workingCapitalContribution;
+  const operating = sumMoney([incomeStatement.netIncome, depreciationAddBack, workingCapitalContribution]);
 
   const { investing, financing } = investingFinancing;
-  const netChange = operating + investing + financing;
+  const netChange = sumMoney([operating, investing, financing]);
 
   const beginningCash = sumByAccountIds(tbStart.balances, kasIds);
   const endingCash = sumByAccountIds(tbEnd.balances, kasIds);
@@ -195,6 +194,20 @@ export function computeCashFlow(
     beginningCash,
     endingCash,
   };
+}
+
+/**
+ * Kas Akhir hasil hitungan (Kas Awal + Kenaikan Kas Bersih) -- dijumlah dalam sen, bukan `+`
+ * float: `10000 + 14094.94` bisa jadi `24094.940000000002`, dan `===` ke saldo Kas Trial Balance
+ * bikin halaman Cash Flow nampilin "Gak match" padahal buku besar benar.
+ */
+export function computedEndingCash(cf: Pick<CashFlow, "beginningCash" | "netChange">): number {
+  return sumMoney([cf.beginningCash, cf.netChange]);
+}
+
+/** Validasi rekonsiliasi: Kas Awal + Kenaikan Kas Bersih harus sama dengan saldo Kas Trial Balance (presisi sen). */
+export function isCashReconciled(cf: Pick<CashFlow, "beginningCash" | "netChange" | "endingCash">): boolean {
+  return moneyEquals(computedEndingCash(cf), cf.endingCash);
 }
 
 export async function getCashFlow(startDate: string, endDate: string): Promise<CashFlow> {

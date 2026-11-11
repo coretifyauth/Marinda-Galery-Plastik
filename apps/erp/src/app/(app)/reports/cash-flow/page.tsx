@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase/client";
-import { getCashFlow } from "@/lib/reports/cash-flow";
+import { computedEndingCash, getCashFlow, isCashReconciled } from "@/lib/reports/cash-flow";
 import type { CashFlow } from "@/lib/reports/types";
 import { BackLink } from "@/components/ui/back-link";
 import { Label } from "@/components/ui/label";
@@ -76,7 +76,7 @@ export default function CashFlowPage() {
     load(start, end);
   }
 
-  const reconciled = report ? report.beginningCash + report.netChange === report.endingCash : false;
+  const reconciled = report ? isCashReconciled(report) : false;
 
   return (
     <div className="flex w-full flex-1 flex-col gap-6">
@@ -148,7 +148,7 @@ export default function CashFlowPage() {
               <div className="mt-1 flex justify-between border-t border-slate-200 pt-1 font-medium text-black">
                 <span>= Kas Akhir (hasil hitungan)</span>
                 <span className="font-mono">
-                  {(report.beginningCash + report.netChange).toLocaleString("id-ID")}
+                  {computedEndingCash(report).toLocaleString("id-ID")}
                 </span>
               </div>
               <div className="mt-1 flex justify-between text-slate-500">

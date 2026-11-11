@@ -8,7 +8,7 @@ import { computeAccountBalances, moneyEquals, rollupAccountBalances, sumBalances
 import { computeTrialBalance } from "./trial-balance";
 import { computeIncomeStatement } from "./income-statement";
 import { computeBalanceSheet } from "./balance-sheet";
-import { computeCashFlow, classifyInvestingFinancing } from "./cash-flow";
+import { computeCashFlow, classifyInvestingFinancing, computedEndingCash, isCashReconciled } from "./cash-flow";
 import type { EntryLine } from "./types";
 
 /**
@@ -316,6 +316,54 @@ describe("computeCashFlow — akun neraca baru otomatis ke-track (regresi bug mi
     expect(cf.beginningCash + cf.netChange).toBe(cf.endingCash);
     expect(cf.endingCash).toBe(10_200_000); // 10.500.000 dari fixture asal, dikurangi 300.000
     expect(cf.operating).toBe(200_000); // 500.000 dari fixture asal, dikurangi kontribusi -300.000
+  });
+});
+
+describe("computeCashFlow — saldo bernilai sen (regresi alarm palsu '✗ Gak match')", () => {
+  // Buku besar balance persis dalam sen, tapi dengan `+` float biasa Kas Awal + Kenaikan Kas
+  // jadi 24094.940000000002 vs Kas Akhir 24094.94 -- halaman Cash Flow dulu nampilin
+  // "Gak match" padahal buku besarnya benar (angka di layar identik setelah dibulatkan).
+  const senLines: FixtureLine[] = [
+    { journal_entry_id: "s0-a", account_id: kas.id, debit: 10_000, credit: 0, entry_date: "2026-06-01" },
+    { journal_entry_id: "s0-b", account_id: modal.id, debit: 0, credit: 10_000, entry_date: "2026-06-01" },
+    // Laba 10.114,04 tunai
+    { journal_entry_id: "s1-a", account_id: kas.id, debit: 10_114.04, credit: 0, entry_date: "2026-07-10" },
+    { journal_entry_id: "s1-b", account_id: pendapatan.id, debit: 0, credit: 10_114.04, entry_date: "2026-07-10" },
+    // Utang Usaha naik 3.980,90 dengan Kas masuk
+    { journal_entry_id: "s2-a", account_id: kas.id, debit: 3_980.9, credit: 0, entry_date: "2026-07-20" },
+    { journal_entry_id: "s2-b", account_id: utangUsaha.id, debit: 0, credit: 3_980.9, entry_date: "2026-07-20" },
+  ];
+  const upTo = (date: string) => senLines.filter((l) => l.entry_date <= date);
+  const between = (start: string, end: string) => senLines.filter((l) => l.entry_date >= start && l.entry_date <= end);
+
+  const cf = computeCashFlow(
+    accounts,
+    between("2026-07-01", "2026-07-31"),
+    { investing: 0, financing: 0 },
+    computeTrialBalance(accounts, upTo("2026-06-30"), "2026-06-30"),
+    computeTrialBalance(accounts, upTo("2026-07-31"), "2026-07-31"),
+    "2026-07-01",
+    "2026-07-31"
+  );
+
+  it("angka hasil bersih dari ekor float", () => {
+    expect(cf.beginningCash).toBe(10_000);
+    expect(cf.operating).toBe(14_094.94);
+    expect(cf.netChange).toBe(14_094.94);
+    expect(cf.endingCash).toBe(24_094.94);
+  });
+
+  it("`+` float biasa memang meleset -- inilah jebakan yang bikin `===` salah menolak", () => {
+    expect(cf.beginningCash + cf.netChange).not.toBe(cf.endingCash);
+  });
+
+  it("isCashReconciled: Kas Awal + Kenaikan Kas = Kas Akhir (presisi sen)", () => {
+    expect(computedEndingCash(cf)).toBe(24_094.94);
+    expect(isCashReconciled(cf)).toBe(true);
+  });
+
+  it("isCashReconciled tetap menangkap selisih sungguhan (Rp0,01)", () => {
+    expect(isCashReconciled({ ...cf, endingCash: cf.endingCash + 0.01 })).toBe(false);
   });
 });
 
