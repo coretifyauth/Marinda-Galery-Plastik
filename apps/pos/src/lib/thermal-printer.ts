@@ -5,7 +5,7 @@
  * dipilih karena kasir butuh cetak cepat tanpa interupsi tiap transaksi.
  */
 import { invoke } from "@tauri-apps/api/core";
-import { roundingReceiptLine, type ReceiptData } from "./print-window";
+import { RECEIPT_FOOTER, roundingReceiptLine, type ReceiptData } from "./print-window";
 
 const ESC = 0x1b;
 const GS = 0x1d;
@@ -35,6 +35,22 @@ function padRow(left: string, right: string, width = LINE_WIDTH): string {
   return left + " ".repeat(space) + right;
 }
 
+/** Bungkus teks ke baris <= width kolom (per kata), buat teks rata tengah yang panjang. */
+function wrapText(text: string, width = LINE_WIDTH): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (cur && cur.length + 1 + word.length > width) {
+      out.push(cur);
+      cur = word;
+    } else {
+      cur = cur ? `${cur} ${word}` : word;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 function dashLine(width = LINE_WIDTH): string {
   return "-".repeat(width);
 }
@@ -60,8 +76,14 @@ class EscPosBuilder {
 export function buildReceiptEscPos(data: ReceiptData): Uint8Array {
   const b = new EscPosBuilder().raw(CMD.init).raw(CMD.alignCenter);
 
-  if (data.companyName) b.raw(CMD.boldOn).text(data.companyName).raw(CMD.boldOff);
-  b.text(data.dateTime).text(data.sourceRef).raw(CMD.alignLeft).text(dashLine());
+  if (data.companyName) {
+    // Double size = lebar kolom jadi setengah (16), nama panjang dibungkus manual.
+    b.raw(CMD.boldOn).raw(CMD.doubleSizeOn);
+    for (const l of wrapText(data.companyName, LINE_WIDTH / 2)) b.text(l);
+    b.raw(CMD.doubleSizeOff).raw(CMD.boldOff);
+  }
+  if (data.companyAddress) for (const l of wrapText(data.companyAddress)) b.text(l);
+  b.text(data.dateTime).raw(CMD.alignLeft).text(dashLine());
 
   for (const l of data.lines) {
     b.text(l.name);
@@ -82,7 +104,9 @@ export function buildReceiptEscPos(data: ReceiptData): Uint8Array {
   const rounding = roundingReceiptLine(data);
   if (rounding) b.text(padRow(rounding.label, rounding.value));
   if (data.customerName) b.text(`Pelanggan: ${data.customerName}`);
-  b.raw(CMD.alignCenter).text("Terima kasih!").raw(CMD.feed(3));
+  b.raw(CMD.alignCenter);
+  for (const line of RECEIPT_FOOTER) for (const l of wrapText(line)) b.text(l);
+  b.raw(CMD.feed(3));
 
   return b.toBytes();
 }

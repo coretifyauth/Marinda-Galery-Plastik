@@ -228,15 +228,18 @@ async function fetchRoundingUnits(): Promise<RoundingUnits> {
 
 const rpx = (n: number) => `Rp${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
 
-async function fetchCompanyName(): Promise<string | null> {
+type CompanyProfile = { name: string | null; address: string | null };
+
+async function fetchCompanyProfile(): Promise<CompanyProfile> {
   try {
-    const { data, error } = await supabase.from("app_settings").select("name").maybeSingle();
+    const { data, error } = await supabase.from("app_settings").select("name, address").maybeSingle();
     if (error) throw new Error(error.message);
-    const name = ((data as { name: string } | null) ?? null)?.name ?? null;
-    await setKeyValue("company_settings", name);
-    return name;
+    const row = data as { name: string | null; address: string | null } | null;
+    const profile: CompanyProfile = { name: row?.name ?? null, address: row?.address ?? null };
+    await setKeyValue("company_profile", profile);
+    return profile;
   } catch (err) {
-    const cached = await getKeyValue<string | null>("company_settings");
+    const cached = await getKeyValue<CompanyProfile>("company_profile");
     if (cached !== undefined) return cached;
     throw err;
   }
@@ -441,9 +444,9 @@ function ReceiptPreview({ data }: { data: ReceiptData }) {
   return (
     <div className="mx-auto w-70 rounded border border-slate-200 bg-white p-3 font-mono text-xs text-slate-800">
       <div className="text-center">
-        {data.companyName && <div className="font-bold">{data.companyName}</div>}
+        {data.companyName && <div className="text-lg font-bold">{data.companyName}</div>}
+        {data.companyAddress && <div>{data.companyAddress}</div>}
         <div>{data.dateTime}</div>
-        <div>{data.sourceRef}</div>
       </div>
       <hr className="my-2 border-dashed border-slate-300" />
       {data.lines.map((l, i) => (
@@ -502,7 +505,11 @@ function ReceiptPreview({ data }: { data: ReceiptData }) {
         </div>
       )}
       {data.customerName && <div className="mt-1">Pelanggan: {data.customerName}</div>}
-      <div className="mt-2 text-center">Terima kasih!</div>
+      <div className="mt-2 text-center">
+        <div>Terima Kasih!</div>
+        <div>Pastikan Pembelian barang telah sesuai.</div>
+        <div>Barang yang telah dibeli tidak dapat dikembalikan</div>
+      </div>
     </div>
   );
 }
@@ -623,9 +630,9 @@ export default function CheckoutPage() {
     enabled: !checkingSession,
     staleTime: 10 * 60_000,
   });
-  const companyNameQuery = useQuery({
-    queryKey: ["company_settings"],
-    queryFn: fetchCompanyName,
+  const companyProfileQuery = useQuery({
+    queryKey: ["company_profile"],
+    queryFn: fetchCompanyProfile,
     enabled: !checkingSession,
     staleTime: 10 * 60_000,
   });
@@ -665,7 +672,8 @@ export default function CheckoutPage() {
   const customers = customersQuery.data ?? [];
   const chargeTypes = chargeTypesQuery.data ?? [];
   const taxSettings = taxSettingsQuery.data ?? null;
-  const companyName = companyNameQuery.data ?? null;
+  const companyName = companyProfileQuery.data?.name ?? null;
+  const companyAddress = companyProfileQuery.data?.address ?? null;
   const recentSales = recentSalesQuery.data ?? [];
   const applyTax = taxOverride ?? (taxSettings?.is_active ?? false);
 
@@ -1090,6 +1098,7 @@ export default function CheckoutPage() {
     const roundingAmount = sale.roundingAmount ?? 0;
     return {
       companyName,
+      companyAddress,
       sourceRef: sale.sourceRef,
       dateTime: new Date(sale.createdAt).toLocaleString("id-ID"),
       customerName: sale.customerName,

@@ -23,6 +23,9 @@ export type ReceiptExtraLine = { label: string; amount: number };
 
 export type ReceiptData = {
   companyName: string | null;
+  /** Alamat toko (app_settings.address) -- ditampilkan di header struk menggantikan nomor transaksi. */
+  companyAddress: string | null;
+  /** Nomor transaksi -- TIDAK dicetak di struk, cuma buat judul window print. */
   sourceRef: string;
   dateTime: string;
   customerName: string | null;
@@ -43,7 +46,14 @@ export type ReceiptData = {
   roundingAmount: number;
 };
 
-const rpFine = (n: number) => `Rp${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
+/** Footer struk (dipakai HTML, teks WA, dan thermal). */
+export const RECEIPT_FOOTER = [
+  "Terima Kasih!",
+  "Pastikan Pembelian barang telah sesuai.",
+  "Barang yang telah dibeli tidak dapat dikembalikan",
+];
+
+const rpFine =(n: number) => `Rp${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}`;
 
 /** Baris struk selisih pembulatan, null kalau gak ada -- dipakai HTML, teks WA, dan thermal. */
 export function roundingReceiptLine(data: ReceiptData): { label: string; value: string } | null {
@@ -69,9 +79,9 @@ export function buildReceiptHtml(data: ReceiptData): string {
 
   return `
     <div class="center">
-      ${data.companyName ? `<div class="bold">${escapeHtml(data.companyName)}</div>` : ""}
+      ${data.companyName ? `<div class="bold company">${escapeHtml(data.companyName)}</div>` : ""}
+      ${data.companyAddress ? `<div class="meta">${escapeHtml(data.companyAddress)}</div>` : ""}
       <div class="meta">${escapeHtml(data.dateTime)}</div>
-      <div class="meta">${escapeHtml(data.sourceRef)}</div>
     </div>
     <hr />
     ${lineRows}
@@ -89,7 +99,7 @@ export function buildReceiptHtml(data: ReceiptData): string {
       return r ? `<div class="row"><span>${r.label}</span><span>${r.value}</span></div>` : "";
     })()}
     ${data.customerName ? `<div class="meta" style="margin-top:6px">Pelanggan: ${escapeHtml(data.customerName)}</div>` : ""}
-    <div class="center meta" style="margin-top:10px">Terima kasih!</div>
+    <div class="center meta" style="margin-top:10px">${RECEIPT_FOOTER.map(escapeHtml).join("<br />")}</div>
   `;
 }
 
@@ -110,6 +120,7 @@ export function printReceipt(sourceRef: string, bodyHtml: string): boolean {
   .bold { font-weight: 700; }
   .meta { color: #000; font-size: 11px; }
   .total { font-size: 13px; }
+  .company { font-size: 16px; }
 </style>
 </head>
 <body>
@@ -127,8 +138,8 @@ ${bodyHtml}
 export function buildWhatsappReceiptText(data: ReceiptData): string {
   const lines: string[] = [];
   if (data.companyName) lines.push(`*${data.companyName}*`);
+  if (data.companyAddress) lines.push(data.companyAddress);
   lines.push(data.dateTime);
-  lines.push(data.sourceRef);
   lines.push("------------------------------");
   for (const l of data.lines) {
     lines.push(l.name);
@@ -145,7 +156,7 @@ export function buildWhatsappReceiptText(data: ReceiptData): string {
   const rounding = roundingReceiptLine(data);
   if (rounding) lines.push(`${rounding.label}: ${rounding.value}`);
   lines.push("");
-  lines.push("Terima kasih!");
+  lines.push(...RECEIPT_FOOTER);
   return lines.join("\n");
 }
 
